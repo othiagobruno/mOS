@@ -1,8 +1,10 @@
 /* Teste de host dos núcleos de controles do AppKit (NSSegmentedControl). Roda no Linux, sem VM:
- *   gcc -std=c11 -Wall -Wextra -DCX_SG_HOST -Iuserland/libsystem \
- *       userland/libsystem/appkit_segment_core.c userland/tests-appkit/controls_host.c \
+ *   gcc -std=c11 -Wall -Wextra -DCX_SG_HOST -DCX_DT_HOST -Iuserland/libsystem \
+ *       userland/libsystem/appkit_segment_core.c userland/libsystem/appkit_date_core.c userland/tests-appkit/controls_host.c \
  *       -o /tmp/appkit-controls-test && /tmp/appkit-controls-test */
 #include "appkit_segment_core.h"
+#include "appkit_date_core.h"
+#include <string.h>
 #include <stdio.h>
 
 static int ok, total;
@@ -58,6 +60,45 @@ int main(void) {
     check(s.n == 2 && sg_selected_segment(&s) == -1, "diminuir a contagem tira a seleção que sumiu");
     sg_set_count(&s, 100);
     check(s.n == SG_MAX, "teto de segmentos");
+    puts("datas");
+    dt_civil_t c;
+    dt_from_seconds(0, &c);
+    check(c.y == 1970 && c.mo == 1 && c.d == 1 && c.h == 0, "época");
+    dt_from_seconds(1794783600LL, &c);
+    check(c.y == 2026 && c.mo == 11 && c.d == 15 && c.h == 23 && c.mi == 0, "15/11/2026 23:00");
+    check(dt_to_seconds(&c) == 1794783600LL, "ida e volta");
+    dt_from_seconds(-86400, &c);
+    check(c.y == 1969 && c.mo == 12 && c.d == 31, "antes da época");
+    check(dt_days_in_month(2024, 2) == 29 && dt_days_in_month(1900, 2) == 28 && dt_days_in_month(2000, 2) == 29, "bissextos");
+    check(dt_weekday(2026, 11, 15) == 0 && dt_weekday(1970, 1, 1) == 4, "dia da semana (domingo = 0)");
+    c = (dt_civil_t){2024, 1, 31, 23, 59, 59};
+    dt_step(&c, DT_MONTH, 1);
+    check(c.mo == 2 && c.d == 29, "31/jan + 1 mês = 29/fev (o dia se ajusta)");
+    dt_step(&c, DT_DAY, 1);
+    check(c.d == 1 && c.mo == 2, "dia dá a volta dentro do mês");
+    dt_step(&c, DT_MINUTE, 1);
+    check(c.mi == 0 && c.h == 23, "minuto dá a volta sem mexer na hora");
+    dt_step(&c, DT_MONTH, -2);
+    check(c.mo == 12 && c.y == 2024, "mês dá a volta sem mexer no ano");
+    int acc = 0, na = 0;
+    check(dt_type_digit(&c, DT_DAY, 0, &acc, &na) == 0 && dt_type_digit(&c, DT_DAY, 7, &acc, &na) == 1 && c.d == 7, "digitar 0 7 no dia");
+    check(dt_type_digit(&c, DT_DAY, 4, &acc, &na) == 1 && c.d == 4, "4 no dia já completa (40 não existe)");
+    check(dt_type_digit(&c, DT_HOUR, 1, &acc, &na) == 0 && dt_type_digit(&c, DT_HOUR, 9, &acc, &na) == 1 && c.h == 19, "hora 19");
+    acc = na = 0;
+    dt_type_digit(&c, DT_YEAR, 2, &acc, &na); dt_type_digit(&c, DT_YEAR, 0, &acc, &na); dt_type_digit(&c, DT_YEAR, 3, &acc, &na);
+    check(dt_type_digit(&c, DT_YEAR, 0, &acc, &na) == 1 && c.y == 2030, "ano com 4 dígitos");
+    char buf[64]; int sp[DT_NFIELDS][2];
+    c = (dt_civil_t){2026, 11, 5, 9, 7, 3};
+    int nf = dt_format(&c, DT_EL_YEAR_MONTH_DAY | DT_EL_HOUR_MINUTE, buf, sizeof buf, sp);
+    check(nf == 5 && !strcmp(buf, "05/11/2026 09:07") && sp[2][0] == 6 && sp[2][1] == 10, "formato pt-BR e posições dos campos");
+    dt_format(&c, DT_EL_HOUR_MINUTE_SECOND, buf, sizeof buf, sp);
+    check(!strcmp(buf, "09:07:03"), "só hora com segundos");
+    int g[42];
+    dt_month_grid(2026, 11, g);
+    check(g[0] == 1 && g[29] == 30 && g[30] == -1, "novembro/2026 começa no domingo");
+    dt_month_grid(2026, 12, g);
+    check(g[0] == -29 && g[1] == -30 && g[2] == 1, "dezembro/2026 (começa na terça): 29 e 30 de novembro antes");
+    check(dt_clamp(5, 10, 20, 1, 1) == 10 && dt_clamp(25, 10, 20, 1, 1) == 20 && dt_clamp(25, 10, 20, 1, 0) == 25, "mínimo e máximo");
     printf("appkit-controls: %d/%d ok\n", ok, total);
     return ok == total ? 0 : 1;
 }

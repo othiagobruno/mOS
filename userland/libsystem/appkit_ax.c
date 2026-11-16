@@ -477,7 +477,11 @@ int cx_ax_copy(id elem, id attr, id *v) {
         return AX_OK;
     }
     if (!strcmp(name, "AXValue")) {
-        if (e->kind == AXK_VIEW) { if (v) *v = str_attr(e->obj, "stringValue"); return AX_OK; }
+        if (e->kind == AXK_VIEW) {   /* o campo seguro não expõe a senha (o macOS devolve vazio) */
+            extern BOOL cx_is_secure_field(id v);
+            if (v) *v = cx_is_secure_field(e->obj) ? cx_str("") : str_attr(e->obj, "stringValue");
+            return AX_OK;
+        }
         return AX_NOATTR;
     }
     if (!strcmp(name, "AXPosition") || !strcmp(name, "AXSize")) {
@@ -867,8 +871,11 @@ static const char *text_cstr(id obj, id *held) {
     if (!obj) return 0;
     if (is_a(obj, "NSTextView") && MSG(BOOL, obj, "respondsToSelector:", sel_registerName("string")))
         v = MSG0(id, obj, "string");
-    else if (is_a(obj, "NSTextField") && MSG(BOOL, obj, "respondsToSelector:", sel_registerName("stringValue")))
+    else if (is_a(obj, "NSTextField") && MSG(BOOL, obj, "respondsToSelector:", sel_registerName("stringValue"))) {
+        extern BOOL cx_is_secure_field(id v);
+        if (cx_is_secure_field(obj)) return "";
         v = MSG0(id, obj, "stringValue");
+    }
     else return 0;
     if (!v) return "";
     if (!cx_is_str(v)) return "";

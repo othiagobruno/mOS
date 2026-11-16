@@ -956,6 +956,9 @@ static u32 accent = 0xFF007AFF;
 
 static void draw_view_tree(id v, absr_t *a);
 static void draw_builtin(id v, absr_t *a);
+BOOL cx_is_secure_field(id v);
+static int tf_sel(vstate_t *s, int *a, int *b);
+static int tf_next(const char *t, int n, int k);
 static void draw_textview(id v, absr_t *a);
 static void draw_table(id t, absr_t *a);
 
@@ -1137,6 +1140,12 @@ static void layout_stack(id v) {
 }
 
 /* desenho dos controles nativos (coordenadas em pixels do conteúdo) */
+/* NSSecureTextField e subclasses: o texto não aparece nem sai por cópia */
+BOOL cx_is_secure_field(id v) {
+    static cx_class_t *sec;
+    if (!sec) sec = cx_class_named("NSSecureTextField");
+    return sec && v && cx_is_subclass(v->isa, sec);
+}
 static void draw_builtin(id v, absr_t *a) {
     vstate_t *s = vs(v);
     id f = s->font ? s->font : dflt_font();
@@ -1181,6 +1190,20 @@ static void draw_builtin(id v, absr_t *a) {
     case K_TEXT: {
         const char *t = cx_cstr(s->value ? s->value : cx_str(""));
         u32 n = (u32)strlen(t);
+        /* NSSecureTextField: um • por caractere, nunca o texto (antes a senha aparecia em claro) */
+        static char masked[3 * 512 + 1];
+        int secure_caret = -1;
+        if (cx_is_secure_field(v)) {
+            u32 o = 0, chars = 0;
+            for (u32 i = 0; i < n && o + 3 < sizeof masked; i++) {
+                if (((unsigned char)t[i] & 0xC0) == 0x80) continue;
+                if ((int)i < s->caret) chars++;
+                memcpy(masked + o, "\xE2\x80\xA2", 3); o += 3;
+            }
+            masked[o] = 0;
+            secure_caret = (int)chars * 3;
+            t = masked; n = o;
+        }
         u32 tc = s->text_color ? argb(s->text_color) : (s->enabled ? 0xF0000000 : 0x80000000);
         BOOL focused = s->window && ws(s->window)->first == v && s->editable;
         if (s->draws_bg || s->bezeled) {
@@ -1203,9 +1226,20 @@ static void draw_builtin(id v, absr_t *a) {
             if (s->alignment == 2) tx = x + (w - m.width) / 2;          /* NSTextAlignmentCenter */
             else if (s->alignment == 1) tx = x + w - pad - m.width;     /* direita */
             double base = y + (h + m.ascent - m.descent) / 2;
+            int sa, sb;
+            if (focused && tf_sel(s, &sa, &sb)) {
+                if (secure_caret >= 0) {   /* posições em bytes do texto real -> bytes da máscara */
+                    const char *rt = cx_cstr(s->value ? s->value : cx_str(""));
+                    int ca = 0, cb = 0;
+                    for (int k = 0; rt[k]; k++) if (((unsigned char)rt[k] & 0xC0) != 0x80) { if (k < sa) ca++; if (k < sb) cb++; }
+                    sa = ca * 3; sb = cb * 3;
+                }
+                double x0 = measure(t, (u32)sa, size, wt).width, x1 = measure(t, (u32)sb, size, wt).width;
+                g_fill(tx + x0, base - m.ascent, x1 - x0, m.ascent + m.descent, 0x55007AFF);
+            }
             g_text(tx, base, size, wt, tc, t, n);
             if (focused) {
-                gui_metrics_t cm = measure(t, (u32)s->caret, size, wt);
+                gui_metrics_t cm = measure(t, (u32)(secure_caret >= 0 ? secure_caret : s->caret), size, wt);
                 g_fill(tx + cm.width, base - m.ascent, 1.5, m.ascent + m.descent, accent);
             }
         }
@@ -1974,8 +2008,25 @@ static void ctl_mouse_down(id self, SEL c, id ev) {
         mark(self);
     } else if (s->kind == K_TEXT && s->editable) {
         id w = s->window;
+        BOOL was_first = w && ws(w)->first == self;
         if (w) w_make_first(w, 0, self);
-        s->caret = (int)strlen(cx_cstr(s->value ? s->value : cx_str("")));
+        const char *t = cx_cstr(s->value ? s->value : cx_str(""));
+        int n = (int)strlen(t);
+        if (!was_first) { s->anchor = 0; s->caret = n; s->has_anchor = n > 0; mark(self); return; }   /* 1º clique seleciona tudo, como o Cocoa */
+        if (evs(ev)->clicks >= 2) { s->anchor = 0; s->caret = n; s->has_anchor = YES; mark(self); return; }
+        absr_t ar;
+        abs_rect(self, &ar);
+        double size = s->font ? fnt(s->font)->size : 13;
+        int wt = s->font ? fnt(s->font)->weight : 0;
+        double px = evs(ev)->x - ar.tlx - (s->bezeled ? 5 : 2);
+        int best = 0;
+        if (!cx_is_secure_field(self))
+            for (int k = 0; k <= n; k = tf_next(t, n, k)) { if (measure(t, (u32)k, size, wt).width <= px + 3) best = k; else break; if (k == n) break; }
+        else { double bw = measure("\xE2\x80\xA2", 3, size, wt).width; int idx = bw > 0 ? (int)((px + bw / 2) / bw) : 0; for (int k = 0, c2 = 0; k <= n; k = tf_next(t, n, k), c2++) { if (c2 <= idx) best = k; if (k == n) break; } }
+        if (evs(ev)->mods & (1u << 17)) { if (!s->has_anchor) { s->anchor = s->caret; s->has_anchor = YES; } }
+        else s->has_anchor = NO;
+        s->caret = best;
+        mark(self);
     }
 }
 static void ctl_mouse_dragged(id self, SEL c, id ev) {
@@ -2001,37 +2052,101 @@ static void ctl_mouse_up(id self, SEL c, id ev) {
     }
     send_action(self);
 }
+static id pb_general(id cls, SEL c);
+static i64 pb_clear(id self, SEL c);
+static BOOL pb_set_string(id self, SEL c, id s, id type);
+static id pb_string(id self, SEL c, id type);
+extern id NSPasteboardTypeString;
+/* seleção do campo: [anchor, caret) quando has_anchor */
+static int tf_sel(vstate_t *s, int *a, int *b) {
+    if (!s->has_anchor || s->anchor == s->caret) return 0;
+    *a = s->anchor < s->caret ? s->anchor : s->caret;
+    *b = s->anchor < s->caret ? s->caret : s->anchor;
+    return 1;
+}
+/* troca [a, b) por ins (newlines viram espaço: o campo é de uma linha) */
+static void tf_replace(vstate_t *s, int a, int b, const char *ins) {
+    const char *t = cx_cstr(s->value ? s->value : cx_str(""));
+    int n = (int)strlen(t);
+    if (a < 0) a = 0;
+    if (b > n) b = n;
+    if (b < a) b = a;
+    size_t il = strlen(ins);
+    char *buf = malloc((size_t)n - (size_t)(b - a) + il + 1);
+    if (!buf) return;
+    memcpy(buf, t, (size_t)a);
+    for (size_t k = 0; k < il; k++) buf[a + k] = (ins[k] == '\n' || ins[k] == '\r') ? ' ' : ins[k];
+    strcpy(buf + a + il, t + b);
+    keep(&s->value, cx_str(buf));
+    free(buf);
+    s->caret = a + (int)il;
+    s->has_anchor = NO;
+}
+static int tf_prev(const char *t, int k) { if (k <= 0) return 0; k--; while (k > 0 && ((u8)t[k] & 0xC0) == 0x80) k--; return k; }
+static int tf_next(const char *t, int n, int k) { if (k >= n) return n; k++; while (k < n && ((u8)t[k] & 0xC0) == 0x80) k++; return k; }
+static void tf_move(vstate_t *s, int to, BOOL shift) {
+    if (shift) { if (!s->has_anchor) { s->anchor = s->caret; s->has_anchor = YES; } }
+    else s->has_anchor = NO;
+    s->caret = to;
+}
 static void tf_key(id self, id ev) {
     vstate_t *s = vs(self);
     evstate_t *e = evs(ev);
     const char *t = cx_cstr(s->value ? s->value : cx_str(""));
     int n = (int)strlen(t);
     if (s->caret > n) s->caret = n;
+    if (s->anchor > n) s->anchor = n;
     const char *ch = e->chars ? cx_cstr(e->chars) : "";
-    if (e->keycode == 51) {                       /* apagar */
-        if (s->caret > 0) {
-            int k = s->caret - 1;
-            while (k > 0 && ((u8)t[k] & 0xC0) == 0x80) k--;
-            char *b = malloc((size_t)n + 1);
-            memcpy(b, t, (size_t)k);
-            strcpy(b + k, t + s->caret);
-            s->value = cx_str(b);
-            free(b);
-            s->caret = k;
+    BOOL cmd = (e->mods & (1u << 20)) != 0, shift = (e->mods & (1u << 17)) != 0, opt = (e->mods & (1u << 19)) != 0;
+    int a, b;
+    BOOL sel = tf_sel(s, &a, &b);
+    BOOL secure = cx_is_secure_field(self);
+    if (cmd) {
+        char k = ch[0] >= 'A' && ch[0] <= 'Z' ? (char)(ch[0] + 32) : ch[0];
+        if (e->keycode == 123) { tf_move(s, 0, shift); mark(self); return; }
+        if (e->keycode == 124) { tf_move(s, n, shift); mark(self); return; }
+        if (e->keycode == 51) { if (sel) tf_replace(s, a, b, ""); else tf_replace(s, 0, s->caret, ""); goto changed; }
+        switch (k) {
+        case 'a': s->anchor = 0; s->has_anchor = YES; s->caret = n; mark(self); return;
+        case 'c': case 'x': {
+            if (!sel || secure) { if (secure) NSBeep(); return; }   /* o campo seguro não entrega a senha */
+            id g = pb_general(0, 0);
+            pb_clear(g, 0);
+            pb_set_string(g, 0, cx_str_n(t + a, (usize)(b - a)), NSPasteboardTypeString);
+            if (k == 'c') return;
+            tf_replace(s, a, b, "");
+            goto changed;
         }
-    } else if (e->keycode == 123) { if (s->caret > 0) { s->caret--; while (s->caret > 0 && ((u8)t[s->caret] & 0xC0) == 0x80) s->caret--; } }
-    else if (e->keycode == 124) { if (s->caret < n) { s->caret++; while (s->caret < n && ((u8)t[s->caret] & 0xC0) == 0x80) s->caret++; } }
-    else if (e->keycode == 36) { send_action(self); return; }
-    else if (ch[0] && (u8)ch[0] >= 32 && !(e->mods & (1u << 20))) {
-        size_t cl = strlen(ch);
-        char *b = malloc((size_t)n + cl + 1);
-        memcpy(b, t, (size_t)s->caret);
-        memcpy(b + s->caret, ch, cl);
-        strcpy(b + s->caret + cl, t + s->caret);
-        s->value = cx_str(b);
-        free(b);
-        s->caret += (int)cl;
+        case 'v': {
+            id str = pb_string(pb_general(0, 0), 0, NSPasteboardTypeString);
+            if (!str) return;
+            if (sel) tf_replace(s, a, b, cx_cstr(str)); else tf_replace(s, s->caret, s->caret, cx_cstr(str));
+            goto changed;
+        }
+        }
+        return;
+    }
+    if (e->keycode == 51) {                       /* apagar */
+        if (sel) tf_replace(s, a, b, "");
+        else if (s->caret > 0) tf_replace(s, opt ? 0 : tf_prev(t, s->caret), s->caret, "");
+        else return;
+    } else if (e->keycode == 117) {               /* apagar para frente */
+        if (sel) tf_replace(s, a, b, "");
+        else if (s->caret < n) tf_replace(s, s->caret, tf_next(t, n, s->caret), "");
+        else return;
+    } else if (e->keycode == 123) {
+        if (sel && !shift) { s->caret = a; s->has_anchor = NO; } else tf_move(s, tf_prev(t, s->caret), shift);
+        mark(self); return;
+    } else if (e->keycode == 124) {
+        if (sel && !shift) { s->caret = b; s->has_anchor = NO; } else tf_move(s, tf_next(t, n, s->caret), shift);
+        mark(self); return;
+    } else if (e->keycode == 115 || e->keycode == 126) { tf_move(s, 0, shift); mark(self); return; }
+    else if (e->keycode == 119 || e->keycode == 125) { tf_move(s, n, shift); mark(self); return; }
+    else if (e->keycode == 36 || e->keycode == 76) { send_action(self); return; }
+    else if (ch[0] && (u8)ch[0] >= 32 && (u8)ch[0] != 127) {
+        if (sel) tf_replace(s, a, b, ch); else tf_replace(s, s->caret, s->caret, ch);
     } else return;
+changed:
     mark(self);
     bind_push(self);
     id d = s->delegate;
