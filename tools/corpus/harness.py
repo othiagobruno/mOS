@@ -332,31 +332,6 @@ def cmd_baixar(args: argparse.Namespace) -> None:
             grava_manifesto(atual)
 
 
-def cmd_libsystem_ci(args: argparse.Namespace) -> None:
-    """Baixa o libSystem da main que o CI compilou (artefato libsystem-main do workflow 'corpus machocheck').
-
-    Só rede: o build fica no GitHub, não no PC do time. Grava em build/ci-lib e diz de qual commit veio.
-    """
-    destino = Path(args.dir)
-    runs = json.loads(subprocess.check_output(
-        ["gh", "run", "list", "--workflow", "compat-corpus.yml", "--branch", "main", "--event", "push",
-         "--status", "success", "--limit", "10", "--json", "databaseId,headSha"], cwd=ROOT, text=True))
-    for r in runs:
-        tmp = destino.with_name(destino.name + ".novo")
-        if tmp.exists():
-            shutil.rmtree(tmp)
-        p = subprocess.run(["gh", "run", "download", str(r["databaseId"]), "-n", "libsystem-main", "-D", str(tmp)],
-                           cwd=ROOT, text=True, capture_output=True)
-        if p.returncode == 0 and (tmp / "libSystem.mos").is_file():
-            if destino.exists():
-                shutil.rmtree(destino)
-            tmp.replace(destino)
-            print(f"libsystem-ci: main {r['headSha'][:10]} (run {r['databaseId']}) em {destino}")
-            return
-        shutil.rmtree(tmp, ignore_errors=True)
-    raise SystemExit("libsystem-ci: nenhum run verde da main com o artefato libsystem-main")
-
-
 def cmd_fetch(args: argparse.Namespace) -> None:
     man = load_manifest()
     apps = man["apps"]
@@ -710,9 +685,6 @@ def medida_atual(app: dict) -> bool:
 
 
 def origem_libsystem() -> str:
-    ci = ROOT / "build" / "ci-lib" / "commit.txt"
-    if ci.is_file():
-        return f"main {ci.read_text().strip()[:10]} (artefato libsystem-main do CI)"
     local = ROOT / "build" / "libSystem.origem"
     return local.read_text().strip() if local.is_file() else "desconhecido"
 
@@ -933,9 +905,6 @@ def cmd_hosttest(args: argparse.Namespace) -> None:
 def main() -> None:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
-    lc = sub.add_parser("libsystem-ci")
-    lc.add_argument("--dir", default=str(ROOT / "build" / "ci-lib"))
-    lc.set_defaults(func=cmd_libsystem_ci)
     bx = sub.add_parser("baixar")
     bx.add_argument("--fixar", action="store_true")
     bx.add_argument("ids", nargs="+")
