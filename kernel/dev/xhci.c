@@ -8,6 +8,7 @@
  * Referência: eXtensible Host Controller Interface for USB, rev. 1.2 (Intel).
  */
 #include "usb.h"
+#include "usb_iso.h"
 
 #define MAX_HC     4
 #define MAX_SLOTS  64
@@ -18,7 +19,7 @@
 
 /* tipos de TRB */
 enum {
-    TRB_NORMAL = 1, TRB_SETUP = 2, TRB_DATA = 3, TRB_STATUS = 4, TRB_LINK = 6,
+    TRB_NORMAL = 1, TRB_ISOCH = 5, TRB_SETUP = 2, TRB_DATA = 3, TRB_STATUS = 4, TRB_LINK = 6,
     TRB_ENABLE_SLOT = 9, TRB_DISABLE_SLOT = 10, TRB_ADDRESS_DEV = 11, TRB_CONFIG_EP = 12, TRB_EVAL_CTX = 13,
     TRB_RESET_EP = 14, TRB_STOP_EP = 15, TRB_SET_DEQ = 16,
     TRB_EV_TRANSFER = 32, TRB_EV_CMD = 33, TRB_EV_PORT = 34, TRB_EV_HOST = 37
@@ -33,7 +34,8 @@ enum {
 
 /* códigos de conclusão */
 enum { CC_SUCCESS = 1, CC_DATA_BUF = 2, CC_BABBLE = 3, CC_TRANSACTION = 4, CC_TRB = 5, CC_STALL = 6,
-       CC_SHORT = 13, CC_STOPPED = 26, CC_STOPPED_LEN = 27 };
+       CC_SHORT = 13, CC_RING_UNDERRUN = 14, CC_RING_OVERRUN = 15, CC_MISSED_SERVICE = 23,
+       CC_STOPPED = 26, CC_STOPPED_LEN = 27 };
 
 /* registradores operacionais */
 #define OP_USBCMD   0x00
@@ -88,6 +90,18 @@ typedef struct {
     u64  pend[ASYNC_N];      /* TRB pendente de cada fatia (0 = livre) */
     u64  retry_at;
     int  errors;
+    /* isócrono */
+    bool iso, iso_in, iso_ss;
+    u8   type, burst, mult, interval;           /* interval = expoente do EP context (2^n · 125 µs) */
+    u16  bpi;
+    u32  esit;                                  /* bytes por intervalo de serviço usados por TD */
+    int  iso_npkts, iso_nbufs;
+    u8  *iso_buf; u64 iso_phys; u32 iso_bytes;
+    u32 *iso_lens; int *iso_st;                 /* por TD */
+    u16 *iso_map;                               /* índice no anel → TD (0xFFFF = nenhum) */
+    u16 *iso_done;                              /* TDs concluídos por buffer */
+    usb_iso_cb iso_cb;
+    void *iso_ctx;
 } xep_t;
 
 typedef struct {
@@ -97,7 +111,7 @@ typedef struct {
     u8  *in, *out;
     u64  in_phys, out_phys;
     xep_t *ep[32];
-    u32  add_flags;
+    u32  add_flags, drop_flags;
     u8   max_dci;
 } xdev_t;
 
@@ -206,6 +220,7 @@ static void intr_queue(xhci_t *h, xdev_t *x, xep_t *ep, int k) {
     doorbell(h, x->slot, ep->dci);
 }
 
+static void iso_event(xhci_t *h, xdev_t *x, xep_t *ep, u64 p, int cc, u32 res);
 static void xfer_event(xhci_t *h, u32 d0, u32 d1, u32 d2, u32 d3) {
     u32 slot = d3 >> 24, epid = (d3 >> 16) & 0x1F;
     int cc = d2 >> 24;
@@ -215,6 +230,7 @@ static void xfer_event(xhci_t *h, u32 d0, u32 d1, u32 d2, u32 d3) {
     xdev_t *x = h->slots[slot];
     xep_t *ep = x->ep[epid];
     if (!ep || (d3 & (1u << 2))) return;   /* sem endpoint ou Event Data TRB */
+    if (ep->iso) { iso_event(h, x, ep, p, cc, res); return; }
 
     if (ep->async) {
         int k;
@@ -358,8 +374,15 @@ static xep_t *ep_new(xhci_t *h, u8 dci, u8 addr, u16 mps) {
     ep->dci = dci; ep->addr = addr; ep->mps = mps;
     return ep;
 }
+static void iso_free(xep_t *ep) {
+    if (ep->iso_buf) dfree(ep->iso_buf, ep->iso_bytes);
+    kfree(ep->iso_lens); kfree(ep->iso_st); kfree(ep->iso_map); kfree(ep->iso_done);
+    ep->iso_buf = NULL; ep->iso_lens = NULL; ep->iso_st = NULL; ep->iso_map = NULL; ep->iso_done = NULL;
+    ep->iso = false; ep->iso_cb = NULL;
+}
 static void ep_free(xep_t *ep) {
     if (!ep) return;
+    iso_free(ep);
     dfree(ep->ring.t, RING_TRBS * sizeof(trb_t));
     if (ep->buf) dfree(ep->buf, 4096);
     kfree(ep);
@@ -476,7 +499,9 @@ static u8 ep_interval(usb_dev_t *d, const usb_ep_desc_t *e, u8 type) {
     return CLAMP(n, 3, 10);
 }
 
-int xhci_add_endpoint(usb_dev_t *d, const usb_ep_desc_t *e, u8 burst) {
+int xhci_add_endpoint(usb_dev_t *d, const usb_ep_desc_t *e, u8 burst) { return xhci_add_endpoint_ss(d, e, burst, 0, 0); }
+
+int xhci_add_endpoint_ss(usb_dev_t *d, const usb_ep_desc_t *e, u8 burst, u8 mult, u16 bpi) {
     xhci_t *h = d->hc;
     xdev_t *x = d->hcpriv;
     if (!x) return USB_NODEV;
@@ -489,14 +514,22 @@ int xhci_add_endpoint(usb_dev_t *d, const usb_ep_desc_t *e, u8 burst) {
     u16 mps = e->wMaxPacketSize & 0x7FF;
     if (d->speed == USB_SPEED_HIGH && (type == USB_EP_INTR || type == USB_EP_ISOC)) burst = (e->wMaxPacketSize >> 11) & 3;
     if (d->speed < USB_SPEED_SUPER && type == USB_EP_BULK) burst = 0;
+    if (x->ep[dci] && (x->drop_flags & (1u << dci))) { ep_free(x->ep[dci]); x->ep[dci] = NULL; }   /* troca de alt: anel novo */
     if (!x->ep[dci]) x->ep[dci] = ep_new(h, dci, e->bEndpointAddress, mps);
     xep_t *ep = x->ep[dci];
     if (!ep) return USB_ERR;
     ep->mps = mps;
+    bool ss = d->speed >= USB_SPEED_SUPER;
+    if (!ss || type != USB_EP_ISOC) mult = 0;
+    ep->type = type; ep->burst = burst; ep->mult = mult; ep->bpi = bpi;
+    ep->interval = ep_interval(d, e, type);
     u32 *c = in_ctx(x, dci + 1);
     memset(c, 0, x->csz);
-    u32 esit = (type == USB_EP_INTR || type == USB_EP_ISOC) ? (u32)mps * (burst + 1) : 0;
-    c[0] = ((u32)ep_interval(d, e, type) << 16) | ((esit >> 16) << 24);
+    u32 esit = 0;
+    if (type == USB_EP_ISOC) esit = usb_iso_esit(mps, burst, mult, bpi, ss);
+    else if (type == USB_EP_INTR) esit = ss && bpi ? bpi : (u32)mps * (burst + 1);
+    ep->esit = esit;
+    c[0] = ((u32)ep->interval << 16) | ((u32)mult << 8) | ((esit >> 16) << 24);
     c[1] = ((type == USB_EP_ISOC ? 0u : 3u) << 1) | (xt << 3) | ((u32)burst << 8) | ((u32)mps << 16);
     u64 dq = ring_deq_ptr(&ep->ring);
     c[2] = (u32)dq; c[3] = (u32)(dq >> 32);
@@ -507,10 +540,13 @@ int xhci_add_endpoint(usb_dev_t *d, const usb_ep_desc_t *e, u8 burst) {
     return USB_OK;
 }
 
-static int configure(xhci_t *h, xdev_t *x, u32 add) {
+static int configure(xhci_t *h, xdev_t *x, u32 add, u32 drop) {
     u32 *ic = in_ctx(x, 0), *sc = in_ctx(x, 1);
-    ic[0] = 0;
+    ic[0] = drop & ~3u;                     /* drop+add do mesmo DCI (troca de alt): o xHC refaz o contexto (4.6.6) */
     ic[1] = add | 1;
+    u8 last = 1;                            /* Context Entries = último DCI válido depois do comando */
+    for (int i = 2; i < 32; i++) if (x->ep[i] && (!(drop & (1u << i)) || (add & (1u << i)))) last = (u8)i;
+    x->max_dci = last;
     sc[0] = (sc[0] & ~(0x1Fu << 27)) | ((u32)x->max_dci << 27);
     int cc = hc_cmd(h, (u32)x->in_phys, (u32)(x->in_phys >> 32), 0, TRB_TYPE(TRB_CONFIG_EP) | ((u32)x->slot << 24), 3000);
     if (cc != CC_SUCCESS) kprintf("xHCI: Configure Endpoint falhou no slot %u (código %d)\n", x->slot, cc);
@@ -520,9 +556,11 @@ static int configure(xhci_t *h, xdev_t *x, u32 add) {
 int xhci_commit_endpoints(usb_dev_t *d) {
     xdev_t *x = d->hcpriv;
     if (!x) return USB_NODEV;
-    if (!x->add_flags) return USB_OK;
-    int r = configure(d->hc, x, x->add_flags);
-    x->add_flags = 0;
+    if (!x->add_flags && !x->drop_flags) return USB_OK;
+    int r = configure(d->hc, x, x->add_flags, x->drop_flags);
+    for (int i = 2; i < 32; i++)                 /* soltos e não recolocados: libera o anel */
+        if ((x->drop_flags & (1u << i)) && !(x->add_flags & (1u << i)) && x->ep[i]) { ep_free(x->ep[i]); x->ep[i] = NULL; }
+    x->add_flags = 0; x->drop_flags = 0;
     return r;
 }
 
@@ -534,7 +572,7 @@ int xhci_set_hub(usb_dev_t *d, int nports, bool mtt, int ttt) {
     if (mtt) sc[0] |= 1u << 25;
     sc[1] = (sc[1] & 0x00FFFFFF) | ((u32)(nports & 0xFF) << 24);
     if (d->speed == USB_SPEED_HIGH) sc[2] = (sc[2] & ~(3u << 16)) | ((u32)(ttt & 3) << 16);
-    return configure(d->hc, x, 0);
+    return configure(d->hc, x, 0, 0);
 }
 
 static xep_t *find_ep(xdev_t *x, u8 addr) {
@@ -597,6 +635,122 @@ int xhci_intr_start(usb_dev_t *d, u8 addr, u16 len, usb_xfer_cb cb, void *ctx) {
     /* várias transferências na fila: o controlador continua amostrando o dispositivo mesmo se o
      * laço principal demorar (senão pressionar+soltar rápidos se fundem num relatório só) */
     for (int k = 0; k < ep->nslot; k++) intr_queue(h, x, ep, k);
+    return USB_OK;
+}
+
+/* ------------------------------------------------------------------ isócrono */
+static void iso_queue_buf(xhci_t *h, xdev_t *x, xep_t *ep, int b) {
+    if (!ep->iso_in) {                                    /* OUT: o driver enche o buffer e diz os tamanhos */
+        int st0 = USB_ISO_FILL;
+        u32 *lens = &ep->iso_lens[b * ep->iso_npkts];
+        int *st = &ep->iso_st[b * ep->iso_npkts];
+        for (int i = 0; i < ep->iso_npkts; i++) { lens[i] = 0; st[i] = 0; }
+        st[0] = st0;
+        if (ep->iso_cb) ep->iso_cb(x->ud, ep->addr, ep->iso_buf + (u64)b * ep->iso_npkts * ep->esit, ep->iso_npkts, lens, st, ep->iso_ctx);
+    }
+    ep->iso_done[b] = 0;
+    bool xhci10 = h->version >= 0x100;
+    for (int i = 0; i < ep->iso_npkts; i++) {
+        int td = b * ep->iso_npkts + i;
+        u32 len = ep->iso_in ? ep->esit : MIN(ep->iso_lens[td], ep->esit);
+        u64 a = ep->iso_phys + (u64)td * ep->esit;
+        u32 tbc, tlbpc;
+        usb_iso_td_fields(len, ep->mps, ep->burst, ep->iso_ss, xhci10, &tbc, &tlbpc);
+        u32 idx = ep->ring.enq;
+        ring_push(&ep->ring, (u32)a, (u32)(a >> 32), len, usb_iso_trb_d3(tbc, tlbpc, true, TRB_ISOCH), false);
+        ep->iso_map[idx] = (u16)td;
+        ep->iso_st[td] = 0;
+    }
+    doorbell(h, x->slot, ep->dci);
+}
+
+static void iso_event(xhci_t *h, xdev_t *x, xep_t *ep, u64 p, int cc, u32 res) {
+    if (p < ep->ring.phys || p >= ep->ring.phys + RING_TRBS * sizeof(trb_t)) return;
+    u32 idx = (u32)((p - ep->ring.phys) / sizeof(trb_t));
+    u16 td = ep->iso_map[idx];
+    if (td == 0xFFFF) return;
+    ep->iso_map[idx] = 0xFFFF;
+    int b = td / ep->iso_npkts;
+    u32 want = ep->iso_in ? ep->esit : MIN(ep->iso_lens[td], ep->esit);
+    if (cc == CC_SUCCESS || cc == CC_SHORT) { ep->iso_lens[td] = want - MIN(res, want); ep->iso_st[td] = 0; }
+    else if (cc == CC_MISSED_SERVICE || cc == CC_RING_UNDERRUN || cc == CC_RING_OVERRUN) { ep->iso_lens[td] = 0; ep->iso_st[td] = USB_TIMEOUT; }
+    else if (cc == CC_STOPPED || cc == CC_STOPPED_LEN) return;
+    else { ep->iso_lens[td] = 0; ep->iso_st[td] = USB_ERR; if (ep->errors++ < 4) kprintf("xHCI: isócrono ep %02x falhou (código %d)\n", ep->addr, cc); }
+    if (++ep->iso_done[b] < ep->iso_npkts) return;
+    if (ep->iso_in && ep->iso_cb)
+        ep->iso_cb(x->ud, ep->addr, ep->iso_buf + (u64)b * ep->iso_npkts * ep->esit, ep->iso_npkts,
+                   &ep->iso_lens[b * ep->iso_npkts], &ep->iso_st[b * ep->iso_npkts], ep->iso_ctx);
+    if (ep->iso && ep->iso_cb) iso_queue_buf(h, x, ep, b);
+}
+
+int xhci_iso_start(usb_dev_t *d, u8 addr, u32 esit, int npkts, int nbufs, usb_iso_cb cb, void *ctx) {
+    xhci_t *h = d->hc;
+    xdev_t *x = d->hcpriv;
+    if (!x || h->dead || !cb) return USB_NODEV;
+    xep_t *ep = find_ep(x, addr);
+    if (!ep || ep->type != USB_EP_ISOC || ep->async || ep->iso) return USB_ERR;
+    if (npkts < 1 || nbufs < 1 || npkts * nbufs > 240) return USB_ERR;   /* cabe no anel de 255 TRBs */
+    if (!esit || esit > ep->esit) esit = ep->esit;
+    if (!esit) return USB_ERR;
+    ep->esit = esit;
+    ep->iso_npkts = npkts; ep->iso_nbufs = nbufs;
+    int ntd = npkts * nbufs;
+    ep->iso_bytes = (u32)ALIGN_UP((u64)ntd * esit, 4096);
+    ep->iso_buf = dalloc(h, ep->iso_bytes, &ep->iso_phys);
+    ep->iso_lens = kcalloc((usize)ntd, sizeof(u32));
+    ep->iso_st = kcalloc((usize)ntd, sizeof(int));
+    ep->iso_map = kmalloc(RING_TRBS * sizeof(u16));
+    ep->iso_done = kcalloc((usize)nbufs, sizeof(u16));
+    if (!ep->iso_buf || !ep->iso_lens || !ep->iso_st || !ep->iso_map || !ep->iso_done) { iso_free(ep); return USB_ERR; }
+    if ((ep->iso_phys + ep->iso_bytes) >> 32 && !h->ac64) { iso_free(ep); return USB_ERR; }
+    memset(ep->iso_map, 0xFF, RING_TRBS * sizeof(u16));
+    ep->iso_in = (addr & 0x80) != 0;
+    ep->iso_ss = d->speed >= USB_SPEED_SUPER;
+    ep->iso_cb = cb; ep->iso_ctx = ctx; ep->errors = 0;
+    ep->iso = true;
+    for (int b = 0; b < nbufs; b++) iso_queue_buf(h, x, ep, b);
+    return USB_OK;
+}
+
+int xhci_iso_stop(usb_dev_t *d, u8 addr) {
+    xhci_t *h = d->hc;
+    xdev_t *x = d->hcpriv;
+    if (!x) return USB_NODEV;
+    xep_t *ep = find_ep(x, addr);
+    if (!ep || !ep->iso) return USB_ERR;
+    ep->iso = false;
+    if (!h->dead) {
+        hc_cmd(h, 0, 0, 0, TRB_TYPE(TRB_STOP_EP) | ((u32)ep->dci << 16) | ((u32)x->slot << 24), 1000);
+        u64 dq = ring_deq_ptr(&ep->ring);
+        hc_cmd(h, (u32)dq, (u32)(dq >> 32), 0, TRB_TYPE(TRB_SET_DEQ) | ((u32)ep->dci << 16) | ((u32)x->slot << 24), 1000);
+    }
+    iso_free(ep);
+    ep->esit = usb_iso_esit(ep->mps, ep->burst, ep->mult, ep->bpi, d->speed >= USB_SPEED_SUPER);
+    return USB_OK;
+}
+
+u32 xhci_iso_esit_max(usb_dev_t *d, u8 addr) {
+    xdev_t *x = d->hcpriv;
+    xep_t *ep = x ? find_ep(x, addr) : NULL;
+    return ep && ep->type == USB_EP_ISOC ? usb_iso_esit(ep->mps, ep->burst, ep->mult, ep->bpi, d->speed >= USB_SPEED_SUPER) : 0;
+}
+u32 xhci_iso_interval_us(usb_dev_t *d, u8 addr) {
+    xdev_t *x = d->hcpriv;
+    xep_t *ep = x ? find_ep(x, addr) : NULL;
+    return ep ? 125u << ep->interval : 0;
+}
+
+int xhci_drop_endpoint(usb_dev_t *d, u8 addr) {
+    xhci_t *h = d->hc;
+    xdev_t *x = d->hcpriv;
+    if (!x) return USB_NODEV;
+    xep_t *ep = find_ep(x, addr);
+    if (!ep) return USB_OK;
+    if (ep->iso) xhci_iso_stop(d, addr);
+    if (ep->async) { ep->async = false; ep->cb = NULL; }
+    if (!h->dead && ep_state(x, ep->dci) == 1)
+        hc_cmd(h, 0, 0, 0, TRB_TYPE(TRB_STOP_EP) | ((u32)ep->dci << 16) | ((u32)x->slot << 24), 1000);
+    x->drop_flags |= 1u << ep->dci;
     return USB_OK;
 }
 

@@ -4,12 +4,12 @@
  *   xhci.c        controlador xHCI (USB 1.1/2.0/3.x): anéis, contextos, transferências por polling
  *   usb.c         núcleo: enumeração, tabela de dispositivos, despacho para drivers de classe
  *   usb_hid.c     teclado (boot protocol), mouse e tablet/apontadores absolutos (report protocol)
- *   usb_hub.c     hubs USB 2.0 (um ou mais níveis)
+ *   usb_hub.c     hubs USB 2.0 e 3.x (um ou mais níveis)
  *   usb_msc.c     armazenamento em massa Bulk-Only (SCSI)
  *   bluetooth.c   Bluetooth HCI sobre USB
  *
  * Tudo funciona sem IRQ: usb_poll() (chamada no laço principal) consome o anel de eventos.
- * Transferências de controle/bulk são síncronas com timeout; interrupt IN é assíncrono
+ * Transferências de controle/bulk são síncronas com timeout; interrupt IN e isócrono são assíncronos
  * (callback chamado de dentro do processamento de eventos — o callback NÃO pode fazer
  * transferências síncronas; marque uma flag e trate em um *_poll()).
  */
@@ -57,12 +57,27 @@ enum { USB_KIND_UNKNOWN, USB_KIND_KEYBOARD, USB_KIND_MOUSE, USB_KIND_TABLET, USB
 #define USB_MAX_DEVS   32
 #define USB_MAX_IFACES 8
 #define USB_MAX_EPS    6
+#define USB_MAX_ALTS   12
+
+/* uma alternate setting (bAlternateSetting > 0): UVC e USB Audio põem os endpoints isócronos aqui */
+typedef struct {
+    u8  alt, nep;
+    usb_ep_desc_t ep[USB_MAX_EPS];
+    u8  ss_burst[USB_MAX_EPS], ss_mult[USB_MAX_EPS];
+    u16 ss_bpi[USB_MAX_EPS];         /* wBytesPerInterval do companion SuperSpeed */
+    const u8 *extra;
+    u16 extra_len;
+} usb_alt_t;
 
 typedef struct {
     u8  num, cls, sub, proto;
-    u8  nep;
+    u8  nep;                         /* endpoints da alternate setting atual (it->cur_alt) */
     usb_ep_desc_t ep[USB_MAX_EPS];
     u8  ss_burst[USB_MAX_EPS];
+    u8  ss_mult[USB_MAX_EPS];
+    u16 ss_bpi[USB_MAX_EPS];
+    u8  cur_alt, nalt;
+    usb_alt_t alts[USB_MAX_ALTS];    /* alt 0 também fica aqui (alts[0]) */
     const u8 *extra;     /* descritores de classe entre o descritor de interface e os endpoints */
     u16 extra_len;
     int driver;          /* índice do driver que reivindicou (-1 = nenhum) */
@@ -99,6 +114,25 @@ int  usb_control(usb_dev_t *d, u8 rt, u8 req, u16 val, u16 idx, u16 len, void *d
 int  usb_bulk(usb_dev_t *d, u8 ep_addr, void *buf, u32 len, u32 timeout_ms);             /* bytes ou <0 */
 int  usb_intr_start(usb_dev_t *d, u8 ep_addr, u16 len, usb_xfer_cb cb, void *ctx);         /* re-enfileira sozinho */
 int  usb_clear_halt(usb_dev_t *d, u8 ep_addr);
+/* SET_INTERFACE: troca a alternate setting; tira do controlador os endpoints da atual e põe os da nova
+ * (it->ep/nep passam a ser os da nova). Não pode ser chamada de dentro de callback USB. */
+int  usb_set_interface(usb_dev_t *d, usb_iface_t *it, u8 alt);
+
+/* isócrono (xHCI Isoch TRB, SIA): o endpoint precisa estar na alternate setting atual.
+ * Cada buffer tem `npkts` intervalos de serviço de até `esit` bytes (0 = o máximo do endpoint,
+ * mps·(burst+1)·(mult+1)); `nbufs` buffers giram na fila (npkts·nbufs ≤ 240).
+ *  IN:  ao completar um buffer, cb(d, ep, buf, npkts, lens, status, ctx) com o tamanho recebido de cada
+ *       intervalo em lens[i] e status[i] (0 ok, USB_ERR erro, USB_TIMEOUT intervalo perdido); depois o
+ *       buffer volta à fila sozinho.
+ *  OUT: cb é chamada antes de cada envio (inclusive o primeiro) com status[0] = USB_ISO_FILL: o driver
+ *       preenche buf e põe em lens[i] quantos bytes mandar em cada intervalo.
+ * O callback roda dentro do processamento de eventos: não pode fazer transferência síncrona. */
+#define USB_ISO_FILL 1
+typedef void (*usb_iso_cb)(usb_dev_t *d, u8 ep, u8 *buf, int npkts, u32 *lens, int *status, void *ctx);
+int  usb_iso_start(usb_dev_t *d, u8 ep_addr, u32 esit, int npkts, int nbufs, usb_iso_cb cb, void *ctx);
+int  usb_iso_stop(usb_dev_t *d, u8 ep_addr);
+u32  usb_iso_esit_max(usb_dev_t *d, u8 ep_addr);   /* bytes por intervalo de serviço do endpoint */
+u32  usb_iso_interval_us(usb_dev_t *d, u8 ep_addr); /* duração do intervalo de serviço */
 int  usb_get_descriptor(usb_dev_t *d, u8 type, u8 index, u16 lang, void *buf, u16 len);
 void usb_events(void);     /* processa eventos pendentes de todos os controladores (sem enumeração) */
 usb_dev_t *usb_attach(void *hc, usb_dev_t *parent, u8 port, u8 speed);                     /* enumera */
@@ -119,6 +153,9 @@ typedef struct {
     void (*poll)(void);
 } usb_driver_t;
 int  usb_add_ep(usb_dev_t *d, usb_iface_t *it, int idx);     /* registra it->ep[idx] no controlador */
+/* drivers de classe de outros módulos (UVC, áudio USB...): entram depois dos embutidos; os dispositivos
+ * já conectados são oferecidos ao driver novo na hora (probe, Configure Endpoint e start) */
+int  usb_register_driver(const usb_driver_t *drv);
 usb_ep_desc_t *usb_find_ep(usb_iface_t *it, u8 type, bool in, int *idx);
 
 /* hubs: atualiza o contexto do slot com dados do hub */
@@ -139,6 +176,12 @@ int  xhci_set_hub(usb_dev_t *d, int nports, bool mtt, int ttt);
 int  xhci_bulk(usb_dev_t *d, u8 ep, void *buf, u32 len, u32 timeout_ms);
 int  xhci_intr_start(usb_dev_t *d, u8 ep, u16 len, usb_xfer_cb cb, void *ctx);
 int  xhci_reset_endpoint(usb_dev_t *d, u8 ep);
+int  xhci_add_endpoint_ss(usb_dev_t *d, const usb_ep_desc_t *e, u8 burst, u8 mult, u16 bpi);
+int  xhci_drop_endpoint(usb_dev_t *d, u8 ep);       /* marca para o próximo commit e para o anel */
+int  xhci_iso_start(usb_dev_t *d, u8 ep, u32 esit, int npkts, int nbufs, usb_iso_cb cb, void *ctx);
+int  xhci_iso_stop(usb_dev_t *d, u8 ep);
+u32  xhci_iso_esit_max(usb_dev_t *d, u8 ep);
+u32  xhci_iso_interval_us(usb_dev_t *d, u8 ep);
 void xhci_free_device(usb_dev_t *d);
 int  xhci_slot_of(usb_dev_t *d);
 pci_dev_t *xhci_pci_of(usb_dev_t *d);   /* controlador PCI ao qual o dispositivo está ligado */
