@@ -3,7 +3,7 @@
 # opus_glue.c / aac_glue.cpp; o decodificador e o codificador H.264 (OpenH264 2.6.0, C++) com h264_glue.cpp e h264enc_glue.cpp.
 # Gera objetos freestanding em <saída>/midia e a lista em <saída>/midia/objs.txt.
 # Os símbolos internos dos codecs saem com visibilidade hidden: o lld os torna locais e o carregador do
-# kernel (que só exporta GLOBAL) não os mostra aos apps. Só cx_opus_*, cx_aac_*, cx_h264_* e cx_h264enc_* ficam visíveis.
+# kernel (que só exporta GLOBAL) não os mostra aos apps. Só cx_opus_*, cx_aac_*, cx_vorbis_*, cx_h264_* e cx_h264enc_* ficam visíveis.
 # uso: tools/build-midia.sh <saída> <zig> <zigdir> [jobs] [alvo: x86_64|aarch64]
 set -eu
 OUT=$1; ZIG=$2; ZIGDIR=$3; JOBS=${4:-2}; ARCH=${5:-x86_64}
@@ -67,6 +67,9 @@ while [ "$(jobs -rp | wc -l)" -gt 0 ]; do wait -n || fail=1; done
 [ "$fail" = 0 ] || { echo "build-midia: codec falhou" >&2; exit 1; }
 "$ZIG" "${CC[@]}" "${CF[@]}" -Wall "${OPI[@]}" -I"$R/userland/libsystem" -I"$SH" -isystem "$ZIGDIR/lib/include" \
     -c "$R/userland/host-audio/opus_glue.c" -o "$D/opus_glue.o"
+# Vorbis: stb_vorbis (domínio público/MIT) dentro da casca; só cx_vorbis_* visíveis
+"$ZIG" "${CC[@]}" "${CF[@]}" -fvisibility=hidden -I"$SH" -isystem "$ZIGDIR/lib/include" \
+    -c "$R/userland/host-audio/vorbis_glue.c" -o "$D/vorbis_glue.o"
 "$ZIG" "${CXX[@]}" "${CF[@]}" -std=c++11 -fno-exceptions -fno-rtti -nostdinc++ -fno-threadsafe-statics \
     "${FDI[@]}" -I"$R/userland/host-audio" -I"$SHM" -I"$SH" -isystem "$ZIGDIR/lib/include" \
     -c "$R/userland/host-audio/aac_glue.cpp" -o "$D/aac_glue.o"
