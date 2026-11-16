@@ -162,7 +162,7 @@ GLsync glFenceSync(GLenum cond, GLbitfield flags) {
 }
 static gl_sync_t *sync_of(GLsync s) { gl_sync_t *x = (gl_sync_t *)s; return x && x->magic == SYNC_MAGIC ? x : 0; }
 GLboolean glIsSync(GLsync s) { return sync_of(s) != 0; }
-void glDeleteSync(GLsync s) { GLC(); if (!s) return; gl_sync_t *x = sync_of(s); if (!x) GLERR(GL_INVALID_VALUE, ); x->magic = 0; free(x); }
+void glDeleteSync(GLsync s) { GLC(); if (!s) return; gl_sync_t *x = sync_of(s); if (!x) GLERR(GL_INVALID_VALUE, ); { extern void gl_debug_sync_deleted(const void *); gl_debug_sync_deleted(x); } x->magic = 0; free(x); }
 GLenum glClientWaitSync(GLsync s, GLbitfield flags, GLuint64 timeout) {
     GLC(GL_WAIT_FAILED);
     (void)timeout;

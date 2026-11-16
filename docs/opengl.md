@@ -20,6 +20,7 @@ caminho: a aceleração pela Radeon Vega do Thiago depende do driver da frente 1
 | `gl_glsl*.c` | GLSL 1.10–4.10: tradução para o dialeto do compilador de MSL, prelúdio com tipos, funções embutidas e todas as funções de textura, link, uniforms, blocos std140, embutidas do compat, programas separáveis e pipelines, `ARB_shader_objects` |
 | `gl_eval.c` | Avaliadores (`glMap*`, `glEval*`, `glMapGrid*`, `GL_AUTO_NORMAL`) e buffer de acumulação (`glAccum`) |
 | `gl_arbprog.c` | `ARB_vertex_program`/`ARB_fragment_program`: o assembly vira GLSL 1.20 compat (todas as instruções, vínculos `vertex.*`/`fragment.*`/`result.*`/`state.*`, `program.env/local`, endereçamento relativo, `TEX/TXB/TXP`, `KIL`, `_SAT`, opções de fog e posição invariante) |
+| `gl_debug.c` | `KHR_debug` (também nomes ARB/KHR), `EXT_debug_label`, `EXT_debug_marker`: log de 64 mensagens, callback, `glDebugMessageControl` por regra e por grupo, `glPush/PopDebugGroup`, rótulos na tabela de nomes de cada tipo e de sync; erros do GL viram mensagens da API com `GL_DEBUG_OUTPUT` ligado |
 | `gl_misc.c` | Queries, sync, `APPLE_fence`, objetos de transform feedback, renderização condicional |
 | `mtltex.c` | Formatos de pixel e amostragem, divididos com o Metal |
 | `appkit_nsopengl.c` | CGL e NSOpenGL ligados ao contexto GL: framebuffer do tamanho da view, `flushBuffer` → IOSurface BGRA no `contents` do layer, `CGLSetOffScreen`, `kCGLCPSurfaceBackingSize` |
@@ -37,16 +38,16 @@ textura + sampler preenchido a cada draw com a unidade escolhida por `glUniform1
 ```
 L=userland/libsystem
 gcc -std=gnu11 -O1 -w -fno-builtin -I tools/hostinc -I $L -o /tmp/gl_host tools/gl_host.c tools/gl_host_glsl.c \
-    $L/gl_ctx.c $L/gl_buf.c $L/gl_tex.c $L/gl_fbo.c $L/gl_raster.c $L/gl_ffp.c $L/gl_misc.c $L/gl_eval.c $L/gl_arbprog.c $L/gl_glsl.c \
+    $L/gl_ctx.c $L/gl_buf.c $L/gl_tex.c $L/gl_fbo.c $L/gl_raster.c $L/gl_ffp.c $L/gl_misc.c $L/gl_eval.c $L/gl_arbprog.c $L/gl_debug.c $L/gl_glsl.c \
     $L/gl_glsl_tr.c $L/gl_glsl_pre.c $L/mtltex.c $L/mtlshader.c $L/mtlexec.c $L/mslspirv.c -lm -lpthread && /tmp/gl_host
 ```
 
-Resultado registrado (16 nov.): `gl_host: 106/106 ok`. Confere clear/scissor, cobertura exata de um triângulo
+Resultado registrado (16 nov.): `gl_host: 126/126 ok`. Confere clear/scissor, cobertura exata de um triângulo
 (496 pixels em 32×32), gradiente, flat, depth, stencil, blending, textura nearest/modulate/luminância, BGRA, DXT1,
 FBO + blit + renderbuffer, lista de exibição, luz difusa, fog, seleção, arrays de cliente, VBO/EBO, VAO do APPLE com
 buffer apagado, GLSL 4.10 core (atributos, uniforms, `out`, função com `out`, erro de compilação no log), textura +
 `discard` + UBO std140 (offsets e tamanho), GLSL 1.10 compat (`ftransform`, `gl_Color`, `gl_TexCoord`), MRT com
-`gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`, programas ARB (vp com `state.matrix.mvp`, fp com `TEX`, `program.local`, `KIL`, `MUL_SAT`, erro de sintaxe com posição), `EXT_bindable_uniform`, `dFdx`/`dFdy`/`fwidth` com valor conhecido, nível de mipmap escolhido pela lod implícita, geometry shader (ponto → quadrado com cor interpolada, triângulos com bloco e `gl_PrimitiveIDIn`, erro de modo incompatível), pontilhado de linha (padrão, fator, contador contínuo no strip e reiniciado em `GL_LINES`) e de polígono (`LSB_FIRST`, `glGetPolygonStipple`, `glPopAttrib`, lista de exibição). Também roda no `tools/build.sh`.
+`gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`, programas ARB (vp com `state.matrix.mvp`, fp com `TEX`, `program.local`, `KIL`, `MUL_SAT`, erro de sintaxe com posição), `EXT_bindable_uniform`, `dFdx`/`dFdy`/`fwidth` com valor conhecido, nível de mipmap escolhido pela lod implícita, geometry shader (ponto → quadrado com cor interpolada, triângulos com bloco e `gl_PrimitiveIDIn`, erro de modo incompatível), pontilhado de linha (padrão, fator, contador contínuo no strip e reiniciado em `GL_LINES`) e de polígono (`LSB_FIRST`, `glGetPolygonStipple`, `glPopAttrib`, lista de exibição), depuração (rótulos KHR/EXT apagados com o objeto, erros do GL no log, controle por id herdado pelos grupos, push/pop, callback, marcadores do EXT). Também roda no `tools/build.sh`.
 
 `tools/nsopengl_host.c` (objetos compilados com as flags do libSystem): `CGLChoosePixelFormat`, contexto legado (2.1)
 e core (4.1), `flushBuffer` pondo o quadro BGRA no layer da view, `CGLSetOffScreen`, opções globais (`NSOpenGLGetOption`/`SetOption`/`GetVersion`), `CVOpenGLTextureCache` com `2vuy` e `420v`
@@ -71,6 +72,5 @@ Não houve VM nem app real nesta entrega: nada aqui diz que um app OpenGL espec�
   por pixel nesses shaders. Uma derivada cujo argumento depende de outra derivada usa 0 no vizinho.
 - Uma amostra por pixel (MSAA guarda uma amostra; o resolve é cópia). Sem anisotropia real.
 - Subrotinas do GLSL e binários de programa não existem (`GL_NUM_PROGRAM_BINARY_FORMATS` = 0).
-- `KHR_debug`/`EXT_debug_label`: aceitos, sem mensagens nem rótulos guardados.
 - Desempenho de CPU com o interpretador: UI, ferramentas e cenas simples; jogos pesados ficam lentos.
 - Processos do Chromium/Electron continuam sem OpenGL (a CGL recusa o pixel format): eles usam o Metal/SwiftShader.

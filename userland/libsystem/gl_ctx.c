@@ -12,17 +12,25 @@ void *pthread_getspecific(unsigned long k);
 int pthread_setspecific(unsigned long k, const void *v);
 
 /* ================================================================ nomes */
+static void names_free(gl_names_t *t) {
+    if (t->lab) for (u32 i = 0; i < t->cap; i++) free(t->lab[i]);
+    free(t->v); free(t->used); free(t->lab);
+    t->v = 0; t->used = 0; t->lab = 0; t->cap = t->n = 0;
+}
 static int names_grow(gl_names_t *t, u32 need) {
     if (need < t->cap) return 1;
     u32 nc = t->cap ? t->cap * 2 : 64;
     while (nc <= need) nc *= 2;
     void **v = realloc(t->v, nc * sizeof *v);
     u8 *u = realloc(t->used, nc);
-    if (!v || !u) { if (v) t->v = v; if (u) t->used = u; return 0; }
+    char **l = realloc(t->lab, nc * sizeof *l);
+    if (v) t->v = v;
+    if (u) t->used = u;
+    if (l) t->lab = l;
+    if (!v || !u || !l) return 0;
     memset(v + t->cap, 0, (nc - t->cap) * sizeof *v);
     memset(u + t->cap, 0, nc - t->cap);
-    t->v = v;
-    t->used = u;
+    memset(l + t->cap, 0, (nc - t->cap) * sizeof *l);
     t->cap = nc;
     return 1;
 }
@@ -42,7 +50,7 @@ void gl_names_reserve(gl_names_t *t, u32 name) {
 void *gl_names_get(gl_names_t *t, u32 name) { return name && name < t->cap ? t->v[name] : 0; }
 void gl_names_set(gl_names_t *t, u32 name, void *obj) { if (name && names_grow(t, name)) { t->v[name] = obj; t->used[name] = 1; if (name >= t->n) t->n = name + 1; } }
 int gl_names_is(gl_names_t *t, u32 name) { return name && name < t->cap && t->used[name]; }
-void gl_names_del(gl_names_t *t, u32 name) { if (name && name < t->cap) { t->v[name] = 0; t->used[name] = 0; } }
+void gl_names_del(gl_names_t *t, u32 name) { if (name && name < t->cap) { t->v[name] = 0; t->used[name] = 0; free(t->lab[name]); t->lab[name] = 0; } }
 
 /* ================================================================ contexto atual */
 static unsigned long g_key;
@@ -54,7 +62,7 @@ static void key_init(void) {
 }
 gl_ctx_t *gl_cur(void) { key_init(); return g_key_ok ? pthread_getspecific(g_key) : 0; }
 void gl_ctx_make_current(gl_ctx_t *C) { key_init(); if (g_key_ok) pthread_setspecific(g_key, C); }
-void gl_err(gl_ctx_t *C, GLenum e) { if (C && !C->err) C->err = e; }
+void gl_err(gl_ctx_t *C, GLenum e) { if (!C) return; if (!C->err) C->err = e; gl_debug_error(C, e); }
 GLenum glGetError(void) { GLC(GL_INVALID_OPERATION); GLenum e = C->err; C->err = GL_NO_ERROR; return e; }
 
 /* ================================================================ capacidades */
@@ -233,21 +241,20 @@ static void share_free(gl_ctx_t *C) {
     for (u32 i = 1; i < s->bufs.n; i++) { gl_buf_t *b = s->bufs.v ? s->bufs.v[i] : 0; if (b) { free(b->data); free(b); } }
     for (u32 i = 1; i < s->rbs.n; i++) { gl_rb_t *r = s->rbs.v ? s->rbs.v[i] : 0; if (r) { free(r->data); free(r); } }
     for (u32 i = 1; i < s->samps.n; i++) free(s->samps.v ? s->samps.v[i] : 0);
-    free(s->texs.v); free(s->texs.used); free(s->bufs.v); free(s->bufs.used); free(s->rbs.v); free(s->rbs.used);
-    free(s->samps.v); free(s->samps.used); free(s->progs.v); free(s->progs.used); free(s->lists.v); free(s->lists.used);
+    names_free(&s->texs); names_free(&s->bufs); names_free(&s->rbs); names_free(&s->samps); names_free(&s->progs); names_free(&s->lists);
     free(s);
 }
 void gl_ctx_destroy(gl_ctx_t *C) {
     if (!C) return;
     if (gl_cur() == C) gl_ctx_make_current(0);
+    gl_debug_free(C);
     free(C->fb_back.data); free(C->fb_front.data); free(C->fb_depth.data);
     for (int i = 0; i < 11; i++) gl_tex_free(C->tex_default[i]);
     for (u32 i = 1; i < C->vaos.n; i++) free(C->vaos.v ? C->vaos.v[i] : 0);
     for (u32 i = 1; i < C->fbos.n; i++) free(C->fbos.v ? C->fbos.v[i] : 0);
     for (u32 i = 1; i < C->queries.n; i++) free(C->queries.v ? C->queries.v[i] : 0);
     for (u32 i = 1; i < C->xfbs.n; i++) free(C->xfbs.v ? C->xfbs.v[i] : 0);
-    free(C->vaos.v); free(C->vaos.used); free(C->fbos.v); free(C->fbos.used); free(C->queries.v); free(C->queries.used);
-    free(C->xfbs.v); free(C->xfbs.used);
+    names_free(&C->vaos); names_free(&C->fbos); names_free(&C->queries); names_free(&C->xfbs);
     free(C->imv);
     free(C->ext_list);
     { void gl_eval_free(gl_ctx_t *C); gl_eval_free(C); }
@@ -855,6 +862,7 @@ static int get_any(gl_ctx_t *C, GLenum p, gv_t *g) {
     case GL_TEXTURE_COORD_ARRAY_BUFFER_BINDING: I1(buf_name(C->vao->ca_tc[C->client_unit].buf)); return 1;
     case GL_BLEND: gb(g, 1, (u8[]){(u8)C->blend_on[0]}); return 1;
     }
+    { long long dv; if (gl_debug_get(C, p, &dv)) { I1(dv); return 1; } }
     int b = cap_bit(C, p);
     if (b >= 0) { gb(g, 1, (u8[]){(u8)get_bit(C, b)}); return 1; }
     return 0;
@@ -943,6 +951,7 @@ void glGetPointerv(GLenum p, void **out) {
     case GL_SELECTION_BUFFER_POINTER: *out = C->sel_buf; return;
     case GL_FEEDBACK_BUFFER_POINTER: *out = C->fb_buf; return;
     }
+    if (gl_debug_getp(C, p, out)) return;
     GLERR(GL_INVALID_ENUM, );
 }
 
@@ -982,16 +991,4 @@ gl_buf_t **gl_buf_slot(gl_ctx_t *C, GLenum t) {
     return 0;
 }
 
-/* ================================================================ depuração (KHR_debug / EXT_debug_*) */
-void glDebugMessageCallback(GLDEBUGPROC cb, const void *user) { (void)cb; (void)user; }
-void glDebugMessageControl(GLenum s, GLenum t, GLenum sev, GLsizei n, const GLuint *ids, GLboolean en) { (void)s; (void)t; (void)sev; (void)n; (void)ids; (void)en; }
-void glDebugMessageInsert(GLenum s, GLenum t, GLuint id, GLenum sev, GLsizei n, const GLchar *m) { (void)s; (void)t; (void)id; (void)sev; (void)n; (void)m; }
-GLuint glGetDebugMessageLog(GLuint count, GLsizei bs, GLenum *s, GLenum *t, GLuint *ids, GLenum *sev, GLsizei *len, GLchar *log) {
-    (void)count; (void)bs; (void)s; (void)t; (void)ids; (void)sev; (void)len; (void)log;
-    return 0;   /* nenhuma mensagem é gerada: os erros ficam em glGetError */
-}
-void glPushGroupMarkerEXT(GLsizei n, const GLchar *m) { (void)n; (void)m; }
-void glPopGroupMarkerEXT(void) {}
-void glInsertEventMarkerEXT(GLsizei n, const GLchar *m) { (void)n; (void)m; }
-void glLabelObjectEXT(GLenum t, GLuint o, GLsizei n, const GLchar *l) { (void)t; (void)o; (void)n; (void)l; }
-void glGetObjectLabelEXT(GLenum t, GLuint o, GLsizei bs, GLsizei *len, GLchar *l) { (void)t; (void)o; if (len) *len = 0; if (l && bs > 0) l[0] = 0; }
+/* depuração (KHR_debug, EXT_debug_label, EXT_debug_marker): gl_debug.c */

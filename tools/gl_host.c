@@ -537,6 +537,106 @@ static void t_stipple(void) {
     gl_ctx_destroy(C);
 }
 
+/* KHR_debug, EXT_debug_label e EXT_debug_marker */
+void glObjectLabel(GLenum, GLuint, GLsizei, const GLchar *);
+void glGetObjectLabel(GLenum, GLuint, GLsizei, GLsizei *, GLchar *);
+void glPushDebugGroup(GLenum, GLuint, GLsizei, const GLchar *);
+void glPopDebugGroup(void);
+void glDebugMessageInsert(GLenum, GLenum, GLuint, GLenum, GLsizei, const GLchar *);
+void glDebugMessageControl(GLenum, GLenum, GLenum, GLsizei, const GLuint *, GLboolean);
+void glDebugMessageCallback(GLDEBUGPROC, const void *);
+GLuint glGetDebugMessageLog(GLuint, GLsizei, GLenum *, GLenum *, GLuint *, GLenum *, GLsizei *, GLchar *);
+char *strncpy(char *, const char *, unsigned long);
+static int cb_n; static GLenum cb_type; static GLuint cb_id; static const void *cb_user; static char cb_msg[64];
+static void dbg_cb(GLenum s, GLenum t, GLuint id, GLenum sev, GLsizei len, const char *m, const void *u) {
+    (void)s; (void)sev; (void)len;
+    cb_n++; cb_type = t; cb_id = id; cb_user = u;
+    strncpy(cb_msg, m, sizeof cb_msg - 1);
+}
+static void t_debug(void) {
+    gl_ctx_t *C = mk(0, 8, 8);
+    GLint v = 0;
+    glGetIntegerv(GL_MAX_LABEL_LENGTH, &v);
+    CHECK(v == 256, "GL_MAX_LABEL_LENGTH %d", v);
+    /* rótulos: KHR e EXT no mesmo lugar; apagar o objeto apaga o rótulo */
+    GLuint b;
+    glGenBuffers(1, &b);
+    glBindBuffer(GL_ARRAY_BUFFER, b);
+    glObjectLabel(GL_BUFFER, b, -1, "vertices");
+    char out[32] = {0};
+    GLsizei len = 0;
+    glGetObjectLabelEXT(GL_BUFFER_OBJECT_EXT, b, sizeof out, &len, out);
+    CHECK(len == 8 && !strcmp(out, "vertices"), "rótulo do buffer '%s' %d", out, len);
+    glGetObjectLabel(GL_BUFFER, b, 4, &len, out);
+    CHECK(len == 3 && !strcmp(out, "ver"), "rótulo cortado no bufSize '%s'", out);
+    GLuint sh = glCreateShader(GL_VERTEX_SHADER);
+    glLabelObjectEXT(GL_SHADER_OBJECT_EXT, sh, 0, "vs");
+    glGetObjectLabel(GL_SHADER, sh, sizeof out, &len, out);
+    CHECK(!strcmp(out, "vs"), "rótulo do shader pelo EXT");
+    glGetObjectLabel(GL_PROGRAM, sh, sizeof out, &len, out);
+    CHECK(glGetError() == GL_INVALID_VALUE, "shader não é programa");
+    glDeleteBuffers(1, &b);
+    glGenBuffers(1, &b);
+    glBindBuffer(GL_ARRAY_BUFFER, b);
+    glGetObjectLabel(GL_BUFFER, b, sizeof out, &len, out);
+    CHECK(len == 0 && out[0] == 0, "buffer novo sem o rótulo do apagado");
+    glObjectLabel(GL_TEXTURE, 999, -1, "x");
+    CHECK(glGetError() == GL_INVALID_VALUE, "rótulo de objeto que não existe");
+    glObjectLabel(0x1234, b, -1, "x");
+    CHECK(glGetError() == GL_INVALID_ENUM, "tipo de objeto inválido");
+    /* log: desligado não guarda; ligado guarda erros e mensagens da aplicação */
+    glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_OTHER, 7, GL_DEBUG_SEVERITY_HIGH, -1, "antes");
+    glGetIntegerv(GL_DEBUG_LOGGED_MESSAGES, &v);
+    CHECK(v == 0, "GL_DEBUG_OUTPUT desligado não registra (%d)", v);
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(0x1234);
+    (void)glGetError();
+    glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_OTHER, 7, GL_DEBUG_SEVERITY_HIGH, -1, "ola");
+    glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_OTHER, 8, GL_DEBUG_SEVERITY_LOW, -1, "baixa");
+    glGetIntegerv(GL_DEBUG_LOGGED_MESSAGES, &v);
+    CHECK(v == 2, "erro + mensagem no log, severidade baixa desligada (%d)", v);
+    GLenum src[4], typ[4], sev[4];
+    GLuint ids[4];
+    GLsizei lens[4];
+    char log[512];
+    GLuint got = glGetDebugMessageLog(4, sizeof log, src, typ, ids, sev, lens, log);
+    CHECK(got == 2 && src[0] == GL_DEBUG_SOURCE_API && typ[0] == GL_DEBUG_TYPE_ERROR && ids[0] == GL_INVALID_ENUM, "erro do GL vira mensagem da API");
+    CHECK(got == 2 && ids[1] == 7 && !strcmp(log + lens[0], "ola"), "mensagem da aplicação no log");
+    /* controle por id e grupos herdando o controle */
+    GLuint seven = 7;
+    glDebugMessageControl(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_OTHER, GL_DONT_CARE, 1, &seven, GL_FALSE);
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 1, -1, "passo");
+    glGetIntegerv(GL_DEBUG_GROUP_STACK_DEPTH, &v);
+    CHECK(v == 2, "profundidade do grupo %d", v);
+    glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_OTHER, 7, GL_DEBUG_SEVERITY_HIGH, -1, "calada");
+    glDebugMessageControl(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_OTHER, GL_DONT_CARE, 1, &seven, GL_TRUE);
+    glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_OTHER, 7, GL_DEBUG_SEVERITY_HIGH, -1, "no grupo");
+    glPopDebugGroup();
+    glDebugMessageInsert(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_OTHER, 7, GL_DEBUG_SEVERITY_HIGH, -1, "calada de novo");
+    got = glGetDebugMessageLog(4, sizeof log, src, typ, ids, sev, lens, log);
+    CHECK(got == 3 && typ[0] == GL_DEBUG_TYPE_PUSH_GROUP && typ[1] == GL_DEBUG_TYPE_OTHER && typ[2] == GL_DEBUG_TYPE_POP_GROUP,
+          "push, mensagem do grupo, pop (%u: %x %x %x)", got, typ[0], typ[1], typ[2]);
+    glPopDebugGroup();
+    CHECK(glGetError() == GL_STACK_UNDERFLOW, "pop sem grupo");
+    (void)glGetDebugMessageLog(4, sizeof log, src, typ, ids, sev, lens, log);
+    /* callback no lugar do log; marcador do EXT */
+    glDebugMessageCallback(dbg_cb, (void *)0x55);
+    void *p = 0;
+    glGetPointerv(GL_DEBUG_CALLBACK_FUNCTION, &p);
+    CHECK(p == (void *)dbg_cb, "GL_DEBUG_CALLBACK_FUNCTION");
+    glInsertEventMarkerEXT(0, "quadro");
+    CHECK(cb_n == 1 && cb_type == GL_DEBUG_TYPE_MARKER && !strcmp(cb_msg, "quadro") && cb_user == (void *)0x55, "marcador do EXT no callback");
+    glPushGroupMarkerEXT(0, "cena");
+    glPopGroupMarkerEXT();
+    CHECK(cb_n == 3 && cb_type == GL_DEBUG_TYPE_POP_GROUP && !strcmp(cb_msg, "cena"), "grupo do EXT");
+    glBindTexture(0x1234, 0);
+    CHECK(cb_n == 4 && cb_type == GL_DEBUG_TYPE_ERROR && cb_id == GL_INVALID_ENUM, "erro no callback");
+    (void)glGetError();
+    glGetIntegerv(GL_DEBUG_LOGGED_MESSAGES, &v);
+    CHECK(v == 0, "com callback o log fica vazio");
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks);
 int main(void) {
     t_clear_and_state();
@@ -549,6 +649,7 @@ int main(void) {
     t_eval_accum();
     t_arb_programs();
     t_stipple();
+    t_debug();
     gl_glsl_host_tests(&fails, &checks);
     printf("gl_host: %d/%d ok\n", checks - fails, checks);
     return fails != 0;
