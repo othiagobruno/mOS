@@ -154,6 +154,58 @@
 #define   USEC_BASE_DIV_MASK          0x7Fu
 #define   XTAL_REF_DIV_SHIFT          8
 #define   XTAL_REF_DIV_MASK           0x7F00u
+/* DCN 1.0 — motor DP_AUX (AUX0..5, passo 0x1C dwords; a instância é a mesma da linha DDC da saída) */
+#define AUX_STRIDE                    0x1Cu
+#define R_AUX_CONTROL(i)              DCN_REG(0x1F50 + (i) * AUX_STRIDE)
+#define R_AUX_SW_CONTROL(i)           DCN_REG(0x1F51 + (i) * AUX_STRIDE)
+#define R_AUX_ARB_CONTROL(i)          DCN_REG(0x1F52 + (i) * AUX_STRIDE)
+#define R_AUX_INTERRUPT_CONTROL(i)    DCN_REG(0x1F53 + (i) * AUX_STRIDE)
+#define R_AUX_SW_STATUS(i)            DCN_REG(0x1F54 + (i) * AUX_STRIDE)
+#define R_AUX_SW_DATA(i)              DCN_REG(0x1F56 + (i) * AUX_STRIDE)
+#define   AUX_EN                      0x1u
+#define   AUX_RESET                   0x10u
+#define   AUX_RESET_DONE              0x20u
+#define   AUX_SW_GO                   0x1u
+#define   AUX_SW_START_DELAY_MASK     0xF0u
+#define   AUX_SW_WR_BYTES_SHIFT       16
+#define   AUX_SW_WR_BYTES_MASK        0x1F0000u
+#define   AUX_ARB_STATUS_SHIFT        2
+#define   AUX_ARB_STATUS_MASK         0xCu
+#define   AUX_ST_SW                   1u
+#define   AUX_ST_DMCU                 2u
+#define   AUX_SW_USE_REQ              0x10000u
+#define   AUX_SW_DONE_USING           0x20000u
+#define   AUX_SW_DONE_ACK             0x2u
+#define   AUX_SW_DONE                 0x1u
+#define   AUX_SW_RX_TIMEOUT_STATE     0x70u
+#define   AUX_SW_RX_TIMEOUT           0x80u
+#define   AUX_SW_RX_OVERFLOW          0x100u
+#define   AUX_SW_HPD_DISCON           0x200u
+#define   AUX_SW_RX_INVALID_STOP      0x4000u
+#define   AUX_SW_RX_NO_DET            0x100000u
+#define   AUX_SW_RX_INVALID_H         0x400000u
+#define   AUX_SW_RX_INVALID_L         0x800000u
+#define   AUX_SW_REPLY_COUNT_SHIFT    24
+#define   AUX_SW_REPLY_COUNT_MASK     0x1F000000u
+#define   AUX_SW_DATA_RW              0x1u
+#define   AUX_SW_DATA_SHIFT           8
+#define   AUX_SW_DATA_MASK            0xFF00u
+#define   AUX_SW_INDEX_SHIFT          16
+#define   AUX_SW_AUTOINC_DISABLE      0x80000000u
+/* primeiro byte do pedido (comando nos bits 7..4) e códigos da resposta */
+#define AUX_CMD_I2C_WRITE     0x00u
+#define AUX_CMD_I2C_READ      0x10u
+#define AUX_CMD_READ          0x10u
+#define AUX_CMD_MOT           0x40u
+#define AUX_CMD_NATIVE_WRITE  0x80u
+#define AUX_CMD_NATIVE_READ   0x90u
+#define AUX_REPLY_ACK         0u
+#define AUX_REPLY_NACK        1u
+#define AUX_REPLY_DEFER       2u
+#define AUX_REPLY_I2C_NACK    4u
+#define AUX_REPLY_I2C_DEFER   8u
+#define AMD_NUM_AUX           6
+
 #define AMD_I2C_BUFFER   144u
 #define AMD_NUM_DDC      6
 

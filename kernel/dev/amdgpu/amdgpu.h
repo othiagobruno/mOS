@@ -15,6 +15,7 @@
 #include "amdgpu_base.h"
 #include "edid.h"
 #include "regs.h"
+#include "atom.h"
 
 #ifdef MOS_HOST_TEST
 #include "amdgpu_shim.h"      /* tools/: pci_dev_t e as funções do kernel que o teste simula */
@@ -44,6 +45,21 @@ typedef struct {
 #define AMD_SDMA_RING_BYTES  (64u * 1024u)
 #define AMD_VRAM_CHUNK  (64u * 1024u)
 #define AMD_VRAM_CHUNKS 4096u            /* 256 MiB visíveis pela CPU */
+
+/* saídas do VBIOS (vbios.c) */
+#define AMD_MAX_CONN 6
+enum { AMD_CONN_OTHER, AMD_CONN_DP, AMD_CONN_HDMI, AMD_CONN_EDP, AMD_CONN_DVI };
+typedef struct {
+    u16 object, encoder, device_tag;
+    u8  type;                 /* AMD_CONN_* */
+    int transmitter, link;    /* UNIPHY 0..2, link A (0) ou B (1); -1 = não é UNIPHY */
+    int ddc, hpd;             /* 0..5; -1 = sem */
+} amd_conn_t;
+typedef struct {
+    u32        dispclk_khz, dce_refclk_khz, i2c_refclk_khz, fw_revision;
+    u32        nconn;
+    amd_conn_t conn[AMD_MAX_CONN];
+} amd_vbios_info_t;
 
 #define AMD_VM_MAX_CHUNKS 64u            /* 64 x 16 tabelas de 4 KiB = até 2 GiB mapeados por processo */
 typedef struct {
@@ -122,11 +138,16 @@ typedef struct {
     u32           cring_dw, comp_seq;
     u64           cwptr;                 /* dwords, cresce sem dar a volta (o CP aplica a máscara) */
     u64           comp_timeouts, comp_eops, comp_ibs;
+    /* VBIOS (vbios.c) */
+    bool             vbios_ok;
+    amd_atom_t       atom;
+    amd_vbios_info_t vbios;
     /* DDC (ddc.c): EDID ao vivo por linha e contadores do motor de I2C */
     u8            ddc_edid[AMD_NUM_DDC][512];
     u32           ddc_edid_len[AMD_NUM_DDC];
     u32           ddc_mask;
     u64           i2c_ops, i2c_errors;
+    u64           aux_ops, aux_errors, aux_retries;
     /* repouso (engine.c, pm.c) */
     bool          dpms_off, s3_engines;
     u32           otg_saved;
@@ -246,12 +267,26 @@ u32        amdgpu_compute_done(amdgpu_t *a);
 /* Monta o preâmbulo de clear state (CSB) em buf (NULL = só conta). Devolve o tamanho em dwords. Lógica pura. */
 u32        amdgpu_gfx_csb(u32 *buf);
 
+/* VBIOS (vbios.c): imagem da VFCT, ATOM ligado ao MMIO e as saídas. amd_vfct_find e amd_vbios_parse são lógica
+ * pura. */
+int        amd_vfct_find(const u8 *vfct, u32 len, u16 vendor, u16 device, const u8 **img, u32 *img_len);
+int        amd_vbios_parse(amd_atom_t *at, amd_vbios_info_t *v);
+bool       amdgpu_vbios_init(amdgpu_t *a, const u8 *vfct, u32 len);
+bool       amdgpu_vbios_load(amdgpu_t *a);        /* kernel: acpi_find_table("VFCT") */
+
 /* DDC por hardware (ddc.c). ddc = 0..5 (DDC1..6). EDID: tamanho lido (múltiplo de 128) ou -MOS_*.
  * DDC/CI: VCP 0x10 = brilho. -MOS_ENXIO = ninguém responde na linha. */
 int        amdgpu_ddc_read_edid(amdgpu_t *a, u32 ddc, u8 *buf, u32 max);
 u32        amdgpu_ddc_probe(amdgpu_t *a);
 int        amdgpu_ddcci_get_vcp(amdgpu_t *a, u32 ddc, u8 vcp, u16 *cur, u16 *max);
 int        amdgpu_ddcci_set_vcp(amdgpu_t *a, u32 ddc, u8 vcp, u16 val);
+
+/* AUX do DisplayPort (aux.c). inst = 0..5 (a linha DDC da saída). cmd AUX_CMD_*; até 16 bytes por transação.
+ * Devolve os bytes transferidos ou -MOS_* (-MOS_ENXIO = NACK ou nada plugado). */
+int        amdgpu_aux_xfer(amdgpu_t *a, u32 inst, u8 cmd, u32 addr, u8 *buf, u32 len);
+int        amdgpu_dpcd_read(amdgpu_t *a, u32 inst, u32 addr, u8 *buf, u32 len);
+int        amdgpu_dpcd_write(amdgpu_t *a, u32 inst, u32 addr, const u8 *buf, u32 len);
+int        amdgpu_aux_read_edid(amdgpu_t *a, u32 inst, u8 *buf, u32 max);
 
 /* repouso: state 0 = s2idle (DPMS), 3 = S3 (motores param e voltam; a VRAM sobrevive). 0 ou -MOS_* */
 int        amdgpu_suspend(amdgpu_t *a, int state);

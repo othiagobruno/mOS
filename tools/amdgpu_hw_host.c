@@ -335,7 +335,7 @@ static bool gc_wreg(u32 off, u32 v) {
 
 /* ---------- motor de I2C do DCN simulado: um monitor (EDID com 3 blocos, DDC/CI) numa linha ---------- */
 static u8 i2c_buf[256]; static u32 i2c_wlen, i2c_rp;
-static int mon_ddc = 4;                 /* DDC5: a linha do HDMI */
+static int mon_ddc = 1;                 /* DDC2: a linha do HDMI no VBIOS do Thiago (I2C 0x91, HPD2) */
 static u8 mon_edid[384]; static u8 mon_seg, mon_off;
 static u16 mon_bright = 50; static u8 mon_reply[11]; static bool mon_has_reply, i2c_hw_owned;
 static u64 i2c_gos;
@@ -413,7 +413,64 @@ static bool i2c_wreg(u32 off, u32 v) {
     return false;
 }
 
+/* ---------- motor DP_AUX simulado: um sink DP na AUX0 (DPCD + EDID por I2C sobre AUX) ---------- */
+static u8 aux_wbuf[6][32], aux_rbuf[6][32]; static u32 aux_wi[6], aux_ri[6];
+static int aux_sink = 0, aux_defers;
+static u8 dpcd[0x1000];
+static u8 aux_i2c_seg, aux_i2c_off;
+static u64 aux_gos;
+static int aux_inst_of(u32 off) {
+    for (int i = 0; i < 6; i++) if (off >= R_AUX_CONTROL(i) && off <= R_AUX_SW_DATA(i)) return i;
+    return -1;
+}
+static void aux_go(int i) {
+    u8 *b = aux_wbuf[i];
+    u32 n = (regs[R_AUX_SW_CONTROL(i) / 4] & AUX_SW_WR_BYTES_MASK) >> AUX_SW_WR_BYTES_SHIFT;
+    u8 cmd = b[0] & 0xF0; u32 addr = (u32)(b[0] & 0xF) << 16 | (u32)b[1] << 8 | b[2];
+    u32 len = n > 3 ? (u32)b[3] + 1 : 0;
+    bool rd = cmd & AUX_CMD_READ, native = cmd & 0x80;
+    u32 st = AUX_SW_DONE, cnt = 1;
+    aux_gos++;
+    memset(aux_rbuf[i], 0, sizeof aux_rbuf[i]);
+    if (i != aux_sink) st |= AUX_SW_HPD_DISCON;
+    else if (aux_defers > 0) { aux_defers--; aux_rbuf[i][0] = (native ? AUX_REPLY_DEFER : AUX_REPLY_I2C_DEFER) << 4; }
+    else if (native) {
+        if (addr + len > sizeof dpcd) aux_rbuf[i][0] = AUX_REPLY_NACK << 4;
+        else if (rd) { memcpy(aux_rbuf[i] + 1, dpcd + addr, len); cnt += len; }
+        else memcpy(dpcd + addr, b + 4, len);
+    } else {
+        if (addr == 0x30 && !rd && len) aux_i2c_seg = b[4];
+        else if (addr == 0x50 && !rd && len) aux_i2c_off = b[4];
+        else if (addr == 0x50 && rd) { for (u32 k = 0; k < len; k++) { u32 at = aux_i2c_seg * 256u + aux_i2c_off + k; aux_rbuf[i][1 + k] = at < 384 ? mon_edid[at] : 0xFF; } aux_i2c_off = (u8)(aux_i2c_off + len); cnt += len; }
+        else if (len) aux_rbuf[i][0] = AUX_REPLY_I2C_NACK << 4;
+        if (!(cmd & AUX_CMD_MOT)) aux_i2c_seg = 0;      /* fim da transação I2C */
+    }
+    regs[R_AUX_SW_STATUS(i) / 4] = st | cnt << AUX_SW_REPLY_COUNT_SHIFT;
+}
+static bool aux_wreg(u32 off, u32 v) {
+    int i = aux_inst_of(off);
+    if (i < 0) return false;
+    if (off == R_AUX_ARB_CONTROL(i)) {
+        u32 st = (regs[off / 4] & AUX_ARB_STATUS_MASK) >> AUX_ARB_STATUS_SHIFT;
+        if (v & AUX_SW_DONE_USING) st = 0; else if ((v & AUX_SW_USE_REQ) && st != AUX_ST_DMCU) st = AUX_ST_SW;
+        regs[off / 4] = (v & ~(AUX_SW_DONE_USING | AUX_ARB_STATUS_MASK)) | st << AUX_ARB_STATUS_SHIFT;
+        return true;
+    }
+    if (off == R_AUX_CONTROL(i)) { regs[off / 4] = (v & AUX_RESET) ? v | AUX_RESET_DONE : v & ~AUX_RESET_DONE; return true; }
+    if (off == R_AUX_INTERRUPT_CONTROL(i)) { if (v & AUX_SW_DONE_ACK) regs[R_AUX_SW_STATUS(i) / 4] &= ~AUX_SW_DONE; regs[off / 4] = v & ~AUX_SW_DONE_ACK; return true; }
+    if (off == R_AUX_SW_DATA(i)) {
+        u32 d = (v & AUX_SW_DATA_MASK) >> AUX_SW_DATA_SHIFT, idx = (v >> AUX_SW_INDEX_SHIFT) & 0x1F;
+        if (v & AUX_SW_DATA_RW) { if (v & AUX_SW_AUTOINC_DISABLE) aux_ri[i] = idx; return true; }
+        if (v & AUX_SW_AUTOINC_DISABLE) aux_wi[i] = idx;
+        if (aux_wi[i] < 32) aux_wbuf[i][aux_wi[i]++] = (u8)d;
+        return true;
+    }
+    if (off == R_AUX_SW_CONTROL(i)) { regs[off / 4] = v & ~AUX_SW_GO; if (v & AUX_SW_GO) { aux_go(i); aux_wi[i] = 0; } return true; }
+    return false;
+}
+
 static bool engine_wreg(u32 off, u32 v) {
+    if (aux_wreg(off, v)) return true;
     if (i2c_wreg(off, v)) return true;
     if (gc_wreg(off, v)) return true;
     if (off == R_MP1_C2PMSG_66) {
@@ -452,6 +509,7 @@ static bool engine_wreg(u32 off, u32 v) {
 }
 
 u32 amd_host_rreg(u32 off) {
+    { int ai = aux_inst_of(off); if (ai >= 0 && off == R_AUX_SW_DATA(ai)) { u32 d = aux_ri[ai] < 32 ? aux_rbuf[ai][aux_ri[ai]] : 0; aux_ri[ai]++; return d << AUX_SW_DATA_SHIFT; } }
     if (off == R_DC_I2C_DATA) { u32 d = i2c_rp < sizeof i2c_buf ? i2c_buf[i2c_rp] : 0; i2c_rp++; return d << I2C_DATA_SHIFT; }
     if (off == R_VM_INV_ENG17_SEM) return 1;
     if (off >= AMD_MMIO_SIZE) { printf("FALHOU: leitura fora do BAR5 0x%x\n", off); total++; return 0xFFFFFFFFu; }
@@ -1162,13 +1220,46 @@ static void test_ddc(void) {
     CHECK(!amdgpu_ddcci_get_vcp(&dd, mon_ddc, 0x10, &cur, &max) && cur == 50 && max == 100, "brilho pelo DDC/CI (%u/%u)", cur, max);
     CHECK(!amdgpu_ddcci_set_vcp(&dd, mon_ddc, 0x10, 80) && !amdgpu_ddcci_get_vcp(&dd, mon_ddc, 0x10, &cur, NULL) && cur == 80 && mon_bright == 80, "brilho ajustado");
     CHECK(amdgpu_ddcci_get_vcp(&dd, mon_ddc, 0xF0, &cur, NULL) == -MOS_ENOENT, "controle que o monitor não tem");
-    CHECK(amdgpu_ddcci_get_vcp(&dd, 1, 0x10, &cur, NULL) == -MOS_ENXIO, "sem DDC/CI na linha");
+    CHECK(amdgpu_ddcci_get_vcp(&dd, 3, 0x10, &cur, NULL) == -MOS_ENXIO, "sem DDC/CI na linha");
     i2c_hw_owned = true;
     regs[R_DC_I2C_ARBITRATION / 4] = I2C_ST_USED_BY_HW << I2C_ARB_STATUS_SHIFT;
     CHECK(amdgpu_ddc_read_edid(&dd, mon_ddc, buf, sizeof buf) == -MOS_EBUSY, "motor com o firmware");
     i2c_hw_owned = false;
     regs[R_DC_I2C_ARBITRATION / 4] = 0;
     CHECK(dd.i2c_errors > 0 && dd.i2c_ops > 10, "contadores");
+}
+
+static void test_aux(void) {
+    edid_mode_t m = mode_5120();
+    boot_state(&m, 1);
+    pci_dev_t d = {0};
+    d.vendor = 0x1002; d.device = 0x15D8;
+    static amdgpu_t ax;
+    CHECK(amdgpu_probe(&ax, &d, 0xE0000000ull, 5120, 1440, 5120), "probe para o AUX");
+    mon_init();
+    memset(dpcd, 0, sizeof dpcd);
+    dpcd[0] = 0x12; dpcd[1] = 0x14; dpcd[2] = 0x84;              /* DPCD 1.2, HBR2, 4 vias com enhanced framing */
+    u8 cap[16];
+    CHECK(amdgpu_dpcd_read(&ax, 0, 0, cap, 3) == 3 && cap[0] == 0x12 && cap[1] == 0x14 && cap[2] == 0x84, "DPCD: capacidades do sink");
+    CHECK((regs[R_AUX_CONTROL(0) / 4] & AUX_EN) && ((regs[R_AUX_ARB_CONTROL(0) / 4] & AUX_ARB_STATUS_MASK) >> AUX_ARB_STATUS_SHIFT) == 0, "motor ligado e devolvido");
+    u8 w[2] = {0x14, 0x84};
+    CHECK(amdgpu_dpcd_write(&ax, 0, 0x100, w, 2) == 2 && dpcd[0x100] == 0x14 && dpcd[0x101] == 0x84, "DPCD: escrita (LINK_BW_SET, LANE_COUNT_SET)");
+    u8 big[40];
+    for (int k = 0; k < 40; k++) dpcd[0x200 + k] = (u8)(k * 3);
+    CHECK(amdgpu_dpcd_read(&ax, 0, 0x200, big, 40) == 40 && big[39] == 117, "DPCD: leitura em 3 transações");
+    aux_defers = 3;
+    u64 rt = ax.aux_retries;
+    CHECK(amdgpu_dpcd_read(&ax, 0, 0, cap, 1) == 1 && cap[0] == 0x12 && ax.aux_retries == rt + 3, "DEFER: repete até o ACK");
+    aux_defers = 50;
+    CHECK(amdgpu_dpcd_read(&ax, 0, 0, cap, 1) == -MOS_EAGAIN, "DEFER sem fim desiste");
+    aux_defers = 0;
+    u8 e[512];
+    CHECK(amdgpu_aux_read_edid(&ax, 0, e, sizeof e) == 384 && !memcmp(e, mon_edid, 384), "EDID por I2C sobre AUX (3 blocos)");
+    CHECK(amdgpu_dpcd_read(&ax, 2, 0, cap, 1) == -MOS_ENXIO, "AUX sem nada plugado");
+    CHECK(amdgpu_dpcd_read(&ax, 0, 0xFFF, cap, 2) == -MOS_ENXIO, "NACK do sink");
+    regs[R_AUX_ARB_CONTROL(1) / 4] = AUX_ST_DMCU << AUX_ARB_STATUS_SHIFT;
+    CHECK(amdgpu_dpcd_read(&ax, 1, 0, cap, 1) == -MOS_EBUSY, "AUX com o DMCU");
+    CHECK(amdgpu_aux_xfer(&ax, 0, AUX_CMD_NATIVE_READ, 0, cap, 17) == -MOS_EINVAL && amdgpu_aux_xfer(&ax, 6, AUX_CMD_NATIVE_READ, 0, cap, 1) == -MOS_EINVAL, "limites");
 }
 
 static int pm_regs_count;
@@ -1308,6 +1399,7 @@ int main(int argc, char **argv) {
     test_abi();
     test_pm();
     test_ddc();
+    test_aux();
     printf("amdgpu-hw-host: %d/%d ok\n", pass, total);
     return pass == total ? 0 : 1;
 }

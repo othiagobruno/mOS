@@ -184,7 +184,12 @@ u32 amdgpu_ddc_probe(amdgpu_t *a) {
     if (!a || !a->ready) return 0;
     u32 mask = 0;
     for (u32 d = 0; d < AMD_NUM_DDC; d++) {
-        int n = amdgpu_ddc_read_edid(a, d, a->ddc_edid[d], sizeof a->ddc_edid[d]);
+        /* com o VBIOS: DisplayPort lê pelo AUX da mesma linha; HDMI/DVI (e sem VBIOS) pelo I2C */
+        bool dp = false;
+        for (u32 c = 0; a->vbios_ok && c < a->vbios.nconn; c++)
+            if (a->vbios.conn[c].ddc == (int)d && (a->vbios.conn[c].type == AMD_CONN_DP || a->vbios.conn[c].type == AMD_CONN_EDP)) dp = true;
+        int n = dp ? amdgpu_aux_read_edid(a, d, a->ddc_edid[d], sizeof a->ddc_edid[d])
+                   : amdgpu_ddc_read_edid(a, d, a->ddc_edid[d], sizeof a->ddc_edid[d]);
         a->ddc_edid_len[d] = n > 0 ? (u32)n : 0;
         if (n > 0) mask |= 1u << d;
     }
