@@ -44,7 +44,9 @@ int cx_statx(const char *abs, int fd, mos_statx_t *st) {
     rq.path = (unsigned long long)abs;
     rq.buf = (unsigned long long)st;
     rq.size = sizeof *st;
-    return SYS2(SYS_FSMETA, MOS_FSM_STATX, &rq) < 0 ? -1 : 0;
+    long r = SYS2(SYS_FSMETA, MOS_FSM_STATX, &rq);
+    if (r < 0) { SET((int)-r); return -1; }              /* ENOENT etc.: quem chama devolve -1 com o errno certo */
+    return 0;
 }
 
 /* ======================================================================== xattr */
