@@ -477,20 +477,6 @@ static void app_run(id self, SEL c) {
     }
 }
 static void app_stop(id self, SEL c, id sender) { app_is_running = 0; if (orig_stop) orig_stop(self, c, sender); }
-/* -nextEventMatchingMask:untilDate:inMode:dequeue: (laço do Chromium). O AppKit do mOS despacha os
- * eventos da GUI direto (sem fila de NSEvent), então isto é uma volta do laço: CFRunLoop até o prazo
- * (no máximo 16 ms) e o bombeamento do AppKit; devolve nil. */
-int CFRunLoopRunInMode(void *mode, double seconds, unsigned char ret_after_source);
-static id app_next_event(id self, SEL c, u64 mask, id date, id mode, BOOL dequeue) {
-    (void)c; (void)mask; (void)mode; (void)dequeue;
-    (void)self;
-    double wait = date ? MSG0(double, date, "timeIntervalSinceNow") : 0;
-    if (wait > 0.016) wait = 0.016;
-    if (wait < 0) wait = 0;
-    CFRunLoopRunInMode(0, wait, 1);
-    if (cx_runloop_hook) cx_runloop_hook(cx_now() + 0.0005);
-    return 0;
-}
 static id b_res_loc(id self, SEL c, id name, id type, id dir, id loc) {
     (void)c;
     return cx_bundle_localized(self, name, type, dir, loc);
@@ -597,7 +583,7 @@ void cx_darwin_init(void) {
         extern void *class_replaceMethod(cx_class_t *c, SEL s, void *imp, const char *types);
         orig_run = (void (*)(id, SEL))class_replaceMethod(app, sel_registerName("run"), (void *)app_run, "v@:");
         orig_stop = (void (*)(id, SEL, id))class_replaceMethod(app, sel_registerName("stop:"), (void *)app_stop, "v@:@");
-        cx_add_method(app, "nextEventMatchingMask:untilDate:inMode:dequeue:", (void *)app_next_event);
+        /* -nextEventMatchingMask:untilDate:inMode:dequeue: é do AppKit (appkit.c): fila de eventos de verdade */
     }
     cx_class_t *bu = cx_class_named("NSBundle");
     if (bu) {

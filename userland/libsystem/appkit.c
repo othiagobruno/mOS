@@ -1894,7 +1894,8 @@ static BOOL tree_needs(id v) {
 
 /* ================================================================ NSEvent */
 typedef struct { u64 type; double x, y; u64 mods; u16 keycode; id chars; i64 clicks; id window; double dy;
-                 double ts; i64 wnum, d1, d2; short subtype; double dx; } evstate_t;
+                 double ts; i64 wnum, d1, d2; short subtype; double dx;
+                 gui_event_t g; u8 has_g; } evstate_t;   /* g: o evento do window server de origem (sendEvent:) */
 static evstate_t *evs(id e) { return ST(e); }
 /* o Chromium lê estes em todo evento de teclado/mouse (ui/events/cocoa); os que devolvem double/float não podem cair no
  * "ainda não implementado" (que só zera rax: xmm0 voltaria com lixo) */
@@ -1974,6 +1975,8 @@ static u16 mac_mod_keycode(int k) {
     default: return 0x7F;
     }
 }
+static id g_current_event;
+static void cx_set_current_event(id e) { if (e == g_current_event) return; objc_retain(e); if (g_current_event) objc_release(g_current_event); g_current_event = e; }
 static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
     id e = objc_autorelease(cx_alloc_instance(&NSEvent_c));
     evstate_t *s = calloc(1, sizeof *s);
@@ -1989,6 +1992,8 @@ static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
     s->dx = -g->h;   /* GEV_SCROLL: h > 0 = para a direita; no Cocoa deltaX > 0 rola para a esquerda (mesmo sinal do dy) */
     if (g->type == GEV_SCROLL && !g->h && (s->mods & (1u << 17))) { s->dx = s->dy; s->dy = 0; }   /* ⇧ + roda = horizontal, como no Mac */
     s->ts = (double)mach_absolute_time() / 1e9;
+    if (g) { s->g = *g; s->has_g = 1; }
+    cx_set_current_event(e);
     if (type == 10 || type == 11 || type == 12) {          /* keyDown / keyUp / flagsChanged */
         s->keycode = type == 12 ? mac_mod_keycode(g->key) : mac_keycode(g->key);
         if (type == 12) return e;
@@ -3402,19 +3407,12 @@ static int visible_windows(void) {
 /* uma volta do laço: eventos, timers, pintura. Devolve o tempo de espera sugerido (ms). */
 static void sync_menus(void);
 static void bind_refresh(void);
-static int pump(void) {
-    void *pool = objc_autoreleasePoolPush();
-    gui_event_t g;
-    int got = 0;
-    sync_menus();
-    bind_refresh();
-    while (SYS1(GUI_POLL, &g) == 1) { dispatch(&g); got++; }
-    double next = cx_run_timers();
-    cx_ca_poll();                              /* CALayerHost de outro processo: geração nova pede redesenho */
-    /* teto de 25 quadros/s por janela: o compositor do Chromium (e cada IOSurfaceUnlock de escrita, quartzcore.c)
-     * marca a janela a cada quadro, e o render_window (autolayout, composição inteira em software, flush, present)
-     * roda na thread principal — a mesma do JS do Electron. Sem teto, a thread principal do VS Code vivia
-     * redesenhando e a navegação da janela não andava. Cedo demais: s->needs fica ligado e o próximo pump desenha. */
+#include "appkit_evq_core.h"
+static evq_t g_pend;          /* eventos lidos por nextEventMatchingMask: que não casaram com a máscara */
+static id g_posted;           /* NSEvents de -postEvent:atStart: (NSMutableArray) */
+static int drain_posted(void);
+static void deliver(gui_event_t *g);
+static void render_due(void) {
     double now = cx_now();
     nsarr_t *a = (nsarr_t *)app_windows;
     for (u64 i = 0; a && i < a->n; i++) {
@@ -3425,11 +3423,244 @@ static int pump(void) {
         s->last_render = now;
         render_window(w);
     }
+}
+static int pump(void) {
+    void *pool = objc_autoreleasePoolPush();
+    gui_event_t g;
+    int got = 0;
+    sync_menus();
+    bind_refresh();
+    got += drain_posted();
+    while (evq_pop_front(&g_pend, &g)) { deliver(&g); got++; }   /* o que um laço de rastreio deixou para depois */
+    while (SYS1(GUI_POLL, &g) == 1) { deliver(&g); got++; }
+    double next = cx_run_timers();
+    cx_ca_poll();                              /* CALayerHost de outro processo: geração nova pede redesenho */
+    /* teto de 25 quadros/s por janela: o compositor do Chromium (e cada IOSurfaceUnlock de escrita, quartzcore.c)
+     * marca a janela a cada quadro, e o render_window (autolayout, composição inteira em software, flush, present)
+     * roda na thread principal — a mesma do JS do Electron. Sem teto, a thread principal do VS Code vivia
+     * redesenhando e a navegação da janela não andava. Cedo demais: s->needs fica ligado e o próximo pump desenha. */
+    render_due();
     objc_autoreleasePoolPop(pool);
     if (got) return 0;
     int ms = next < 0 ? 16 : (int)(next * 1000);
     return ms > 16 ? 16 : ms < 1 ? 1 : ms;
 }
+/* ================================================================ fila de eventos: nextEventMatchingMask:, sendEvent:
+ * Um laço de rastreio do app (arrastar, redimensionar um elemento, o -trackMouse: de uma célula) pede o próximo evento
+ * de um tipo; o que vier antes e não casar fica em g_pend e o pump entrega depois, na ordem. Um NSApplication ou
+ * NSWindow do app que sobrescreve -sendEvent: recebe o NSEvent antes do AppKit, como no macOS. */
+static void ap_send_event(id self, SEL c, id ev);
+static void w_send_event(id self, SEL c, id ev);
+IMP cx_msg_lookup(cx_class_t *c, SEL sel);
+static id window_by_number(i64 n) {
+    nsarr_t *a = (nsarr_t *)app_windows;
+    for (u64 i = 0; a && i < a->n; i++) if (MSG0(i64, a->items[i], "windowNumber") == n) return a->items[i];
+    return 0;
+}
+static id ap_window_with_number(id self, SEL c, i64 n) { (void)self; (void)c; return window_by_number(n); }
+static int overrides(id o, const char *sel, IMP ours) { return o && cx_msg_lookup(o->isa, sel_registerName(sel)) != ours; }
+/* janela que recebe um evento: teclas vão à janela-chave (como no dispatch) */
+static id event_window(const gui_event_t *g) {
+    id w = find_window((int)g->win);
+    unsigned t = evq_ns_type(g);
+    if ((t == 10 || t == 11 || t == 12) && g_key_window && ws(g_key_window)->visible && ws(g_key_window)->gid > 0 && w != g_key_window &&
+        (!w || (cx_responds(w->isa, sel_registerName("canBecomeKeyWindow")) && !MSG0(BOOL, w, "canBecomeKeyWindow"))))
+        w = g_key_window;
+    return w;
+}
+static id event_for(gui_event_t *g) {
+    unsigned t = evq_ns_type(g);
+    id w = t ? event_window(g) : 0;
+    return w ? make_event(t, w, g->x, g->y, g) : 0;
+}
+/* estado global de entrada (modificadores, botões, posição) para um evento que não passou pelo dispatch */
+static void note_input(const gui_event_t *g) {
+    g_mods = mac_mods(g->mods);
+    if (g->type >= GEV_MOUSE_DOWN && g->type <= GEV_SCROLL) {
+        g_pressed_buttons = (g->type == GEV_MOUSE_UP ? 0 : (g->buttons & 1) | (g->type == GEV_MOUSE_DOWN ? 1 : 0)) | (g->type == GEV_RIGHT_DOWN ? 2 : 0);
+        id w = find_window((int)g->win);
+        if (w) {
+            wstate_t *s = ws(w);
+            g_mouse_screen.x = s->frame.o.x + g->x;
+            g_mouse_screen.y = s->frame.o.y + (s->frame.s.h - g->y);
+            if (g->type == GEV_MOUSE_UP) s->mouse_view = 0;   /* o laço de rastreio consumiu o soltar */
+        }
+    }
+}
+static void deliver(gui_event_t *g) {
+    if (NSApp && evq_ns_type(g) && overrides(NSApp, "sendEvent:", (IMP)ap_send_event)) {
+        id ev = event_for(g);
+        if (ev) { MSG(void, NSApp, "sendEvent:", ev); return; }
+    }
+    id w = evq_ns_type(g) ? event_window(g) : 0;
+    if (w && overrides(w, "sendEvent:", (IMP)w_send_event)) {
+        id ev = event_for(g);
+        if (ev) { MSG(void, w, "sendEvent:", ev); return; }
+    }
+    dispatch(g);
+}
+static int drain_posted(void) {
+    int n = 0;
+    while (g_posted && MSG0(u64, g_posted, "count")) {
+        id ev = objc_retain(MSG(id, g_posted, "objectAtIndex:", (u64)0));
+        MSG(void, g_posted, "removeObjectAtIndex:", (u64)0);
+        cx_set_current_event(ev);
+        MSG(void, NSApp, "sendEvent:", ev);
+        objc_release(ev);
+        n++;
+    }
+    return n;
+}
+/* NSEvent → gui_event_t: o original, quando veio do window server; senão montado dos campos (eventos criados pelo app) */
+static int event_to_gui(id ev, gui_event_t *g) {
+    evstate_t *s = evs(ev);
+    if (s->has_g) { *g = s->g; return 1; }
+    memset(g, 0, sizeof *g);
+    g->type = evq_gev_from_ns((unsigned)s->type);
+    if (!g->type) return 0;
+    id w = s->window ? s->window : (s->wnum ? window_by_number(s->wnum) : 0);
+    if (!w) w = g_key_window;
+    if (!w) return 0;
+    g->win = (unsigned)ws(w)->gid;
+    g->x = (int)s->x;
+    g->y = (int)(win_h(w) - s->y);
+    g->mods = evq_mods_from_mac(s->mods);
+    g->clicks = (int)(s->clicks ? s->clicks : 1);
+    g->buttons = (s->type == 1 || s->type == 6) ? 1 : 0;
+    if (s->type == 22) { g->w = (int)-s->dy; g->h = (int)-s->dx; }
+    if (s->type == 10 || s->type == 11) {
+        const char *t = s->chars ? cx_cstr(s->chars) : "";
+        int n = 0;
+        while (t[n] && n < (int)sizeof g->text - 1) { g->text[n] = t[n]; n++; }
+        g->text[n] = 0;
+        g->key = (unsigned char)t[0];
+        u16 k = s->keycode;   /* setas e afins pelo código de tecla do Mac */
+        if (k == 126) g->key = 0x100; else if (k == 125) g->key = 0x101; else if (k == 123) g->key = 0x102; else if (k == 124) g->key = 0x103;
+        else if (k == 36) g->key = 10; else if (k == 51) g->key = 8; else if (k == 53) g->key = 27; else if (k == 48) g->key = 9;
+    }
+    return 1;
+}
+static void ap_send_event(id self, SEL c, id ev) {
+    (void)self; (void)c;
+    if (!ev) return;
+    u64 t = evs(ev)->type;
+    if (t == 15 || t == 16) return;                 /* app-defined/periódico: só quem os pediu (laço ou subclasse) */
+    gui_event_t g;
+    if (!event_to_gui(ev, &g)) return;
+    id w = event_window(&g);
+    if (w && overrides(w, "sendEvent:", (IMP)w_send_event)) { MSG(void, w, "sendEvent:", ev); return; }
+    dispatch(&g);
+}
+static void w_send_event(id self, SEL c, id ev) {
+    (void)c;
+    gui_event_t g;
+    if (!ev || !event_to_gui(ev, &g)) return;
+    g.win = (unsigned)ws(self)->gid;
+    dispatch(&g);
+}
+int CFRunLoopRunInMode(void *mode, double seconds, unsigned char return_after_source);
+static id ap_next_event(id self, SEL c, u64 mask, id date, id mode, BOOL dequeue) {
+    (void)self; (void)c; (void)mode;
+    double deadline = cx_now() + (date ? MSG0(double, date, "timeIntervalSinceNow") : 0);
+    for (;;) {
+        for (u64 i = 0, n = g_posted ? MSG0(u64, g_posted, "count") : 0; i < n; i++) {
+            id ev = MSG(id, g_posted, "objectAtIndex:", i);
+            u64 t = evs(ev)->type;
+            if (t >= 64 || !(mask & (1ULL << t))) continue;
+            objc_autorelease(objc_retain(ev));
+            if (dequeue) MSG(void, g_posted, "removeObjectAtIndex:", i);
+            cx_set_current_event(ev);
+            return ev;
+        }
+        gui_event_t g;
+        while (g_pend.n < EVQ_MAX && SYS1(GUI_POLL, &g) == 1) evq_push(&g_pend, &g);
+        int i = evq_find(&g_pend, mask);
+        if (i >= 0) {
+            gui_event_t ge = g_pend.ev[i];
+            id ev = event_for(&ge);
+            if (dequeue || !ev) { evq_remove(&g_pend, i); note_input(&ge); }
+            if (ev) return ev;
+            continue;
+        }
+        /* nada na máscara: uma volta do resto (fontes do CFRunLoop, timers, CALayerHost, desenho do que o laço mudou),
+         * como o run loop do macOS no modo pedido; com prazo vencido (nil, distantPast) volta nil depois desta volta */
+        void *pool = objc_autoreleasePoolPush();
+        CFRunLoopRunInMode(0, 0, 1);
+        cx_run_timers();
+        cx_ca_poll();
+        render_due();
+        objc_autoreleasePoolPop(pool);
+        if (g_posted && MSG0(u64, g_posted, "count")) continue;
+        if (cx_now() >= deadline) return 0;
+        double left = deadline - cx_now();
+        SYS1(SYS_SLEEP, left > 0.004 ? 4 : 1);
+    }
+}
+static id w_next_event(id self, SEL c, u64 mask) { (void)c; return ap_next_event(NSApp, 0, mask, MSG0(id, (id)cx_class_named("NSDate"), "distantFuture"), 0, YES); (void)self; }
+static id w_next_event_full(id self, SEL c, u64 mask, id date, id mode, BOOL dq) { (void)self; (void)c; return ap_next_event(NSApp, 0, mask, date, mode, dq); }
+static void ap_post_event(id self, SEL c, id ev, BOOL at_start) {
+    (void)self; (void)c;
+    if (!ev) return;
+    if (!g_posted) g_posted = objc_retain(MSG0(id, (id)cx_class_named("NSMutableArray"), "array"));
+    if (at_start) MSG(void, g_posted, "insertObject:atIndex:", ev, (u64)0);
+    else MSG(void, g_posted, "addObject:", ev);
+}
+static void ap_discard_events(id self, SEL c, u64 mask, id before) {
+    (void)self; (void)c;
+    double limit = before ? evs(before)->ts : 1e300;
+    evq_discard(&g_pend, mask);
+    for (u64 i = g_posted ? MSG0(u64, g_posted, "count") : 0; i-- > 0;) {
+        id ev = MSG(id, g_posted, "objectAtIndex:", i);
+        u64 t = evs(ev)->type;
+        if (t < 64 && (mask & (1ULL << t)) && evs(ev)->ts < limit) MSG(void, g_posted, "removeObjectAtIndex:", i);
+    }
+}
+static id ap_current_event(id self, SEL c) { (void)self; (void)c; return g_current_event; }
+/* NSEvent de mouse e teclado criados pelo app (para postEvent:/sendEvent: ou testes) */
+static id ev_mouse_make(id cls, SEL c, u64 type, NSPoint loc, u64 mods, double ts, i64 wnum, id ctx, i64 evnum, i64 clicks, float pressure) {
+    (void)cls; (void)c; (void)ctx; (void)evnum; (void)pressure;
+    id e = objc_autorelease(cx_alloc_instance(&NSEvent_c));
+    evstate_t *s = calloc(1, sizeof *s);
+    ST(e) = s;
+    s->type = type; s->x = loc.x; s->y = loc.y; s->mods = mods; s->clicks = clicks;
+    s->ts = ts > 0 ? ts : (double)mach_absolute_time() / 1e9;
+    s->wnum = wnum;
+    s->window = wnum ? window_by_number(wnum) : 0;
+    return e;
+}
+static id ev_key_make(id cls, SEL c, u64 type, NSPoint loc, u64 mods, double ts, i64 wnum, id ctx, id chars, id chars_nomods, BOOL rep, u16 code) {
+    (void)rep; (void)chars_nomods;
+    id e = ev_mouse_make(cls, c, type, loc, mods, ts, wnum, ctx, 0, 0, 0);
+    evstate_t *s = evs(e);
+    s->chars = chars ? objc_retain(chars) : 0;
+    s->keycode = code;
+    return e;
+}
+static id ev_enter_exit_make(id cls, SEL c, u64 type, NSPoint loc, u64 mods, double ts, i64 wnum, id ctx, i64 evnum, i64 tag, void *ud) {
+    (void)tag; (void)ud;
+    return ev_mouse_make(cls, c, type, loc, mods, ts, wnum, ctx, evnum, 0, 0);
+}
+/* eventos periódicos (NSEventTypePeriodic 16) para laços de rastreio com auto-repetição */
+static int g_periodic_on;
+static double g_periodic_period;
+static int g_periodic_gen;
+void *dispatch_get_main_queue(void);
+void dispatch_after_f(u64 when, void *q, void *ctx, void (*fn)(void *));
+u64 dispatch_time(u64 when, long delta);
+static void periodic_fire(void *ctx) {
+    if (!g_periodic_on || (int)(long)ctx != g_periodic_gen) return;
+    NSPoint p = {0, 0};
+    id ev = ev_other(0, 0, 16, p, g_mods, 0, 0, 0, 0, 0, 0);
+    ap_post_event(NSApp, 0, ev, NO);
+    dispatch_after_f(dispatch_time(0, (long)(g_periodic_period * 1e9)), dispatch_get_main_queue(), ctx, periodic_fire);
+}
+static void ev_start_periodic(id cls, SEL c, double delay, double period) {
+    (void)cls; (void)c;
+    g_periodic_on = 1; g_periodic_period = period > 0.001 ? period : 0.001; g_periodic_gen++;
+    dispatch_after_f(dispatch_time(0, (long)(delay * 1e9)), dispatch_get_main_queue(), (void *)(long)g_periodic_gen, periodic_fire);
+}
+static void ev_stop_periodic(id cls, SEL c) { (void)cls; (void)c; g_periodic_on = 0; g_periodic_gen++; }
+
 /* -[NSRunLoop run/runUntilDate:/runMode:beforeDate:] chegam aqui (foundation.c, cx_runloop_hook) de QUALQUER thread.
  * Só a thread principal bombeia o AppKit (eventos de janela, timers do Foundation, desenho). Uma thread de fundo roda o
  * CFRunLoop dela: é o que o MessagePumpNSRunLoop do Chromium espera (a fonte de trabalho dele está nesse run loop).
@@ -5502,6 +5733,9 @@ void cx_appkit_init(void) {
     M(NSApplication, "setActivationPolicy:", ap_set_policy); M(NSApplication, "activationPolicy", ap_policy);
     M(NSApplication, "activateIgnoringOtherApps:", ap_activate); M(NSApplication, "activate", ap_activate_simple);
     M(NSApplication, "setMainMenu:", ap_set_menu); M(NSApplication, "mainMenu", ap_menu); M(NSApplication, "terminate:", ap_terminate);
+    M(NSApplication, "nextEventMatchingMask:untilDate:inMode:dequeue:", ap_next_event); M(NSApplication, "postEvent:atStart:", ap_post_event);
+    M(NSApplication, "discardEventsMatchingMask:beforeEvent:", ap_discard_events); M(NSApplication, "currentEvent", ap_current_event);
+    M(NSApplication, "sendEvent:", ap_send_event); M(NSApplication, "windowWithWindowNumber:", ap_window_with_number);
     M(NSApplication, "stop:", ap_stop); M(NSApplication, "finishLaunching", ap_finish_launching); M(NSApplication, "windows", ap_windows);
     M(NSApplication, "orderedWindows", ap_ordered_windows);
     M(NSApplication, "keyWindow", ap_key_window); M(NSApplication, "mainWindow", ap_key_window); M(NSApplication, "sendAction:to:from:", ap_send_action);
@@ -5540,7 +5774,10 @@ void cx_appkit_init(void) {
     M(NSWindow, "setStyleMask:", w_set_style_mask); M(NSWindow, "styleMask", w_style_mask);
     M(NSWindow, "contentLayoutRect", w_content_layout_rect); M(NSWindow, "performWindowDragWithEvent:", w_perform_drag);
     M(NSWindow, "setCollectionBehavior:", noop1_m); M(NSWindow, "setAppearance:", noop1_m); M(NSWindow, "setFrameOrigin:", noop1_m);
-    M(NSWindow, "setFrameTopLeftPoint:", noop1_m); M(NSWindow, "windowNumber", w_number); M(NSWindow, "setTabbingMode:", noop1_m);
+    M(NSWindow, "setFrameTopLeftPoint:", noop1_m); M(NSWindow, "windowNumber", w_number);
+    M(NSWindow, "nextEventMatchingMask:", w_next_event); M(NSWindow, "nextEventMatchingMask:untilDate:inMode:dequeue:", w_next_event_full);
+    M(NSWindow, "postEvent:atStart:", ap_post_event); M(NSWindow, "discardEventsMatchingMask:beforeEvent:", ap_discard_events);
+    M(NSWindow, "sendEvent:", w_send_event); M(NSWindow, "currentEvent", ap_current_event); M(NSWindow, "setTabbingMode:", noop1_m);
     M(NSWindow, "occlusionState", w_occlusion); M(NSWindow, "convertRectToScreen:", w_convert_to_screen);
     M(NSWindow, "isKeyWindow", yes_m); M(NSWindow, "isMainWindow", yes_m);
     M(NSWindow, "setNextResponder:", w_set_next); M(NSWindow, "nextResponder", w_next);
@@ -5747,6 +5984,10 @@ void cx_appkit_init(void) {
     M(NSEvent, "window", ev_window); M(NSEvent, "scrollingDeltaY", ev_dy); M(NSEvent, "deltaY", ev_dy); M(NSEvent, "deltaX", ev_dx);
     M(NSEvent, "scrollingDeltaX", ev_dx); M(NSEvent, "isARepeat", no_m);
     CM(NSEvent, "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:", ev_other);
+    CM(NSEvent, "mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:", ev_mouse_make);
+    CM(NSEvent, "keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:", ev_key_make);
+    CM(NSEvent, "enterExitEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:trackingNumber:userData:", ev_enter_exit_make);
+    CM(NSEvent, "startPeriodicEventsAfterDelay:withPeriod:", ev_start_periodic); CM(NSEvent, "stopPeriodicEvents", ev_stop_periodic);
     M(NSEvent, "timestamp", ev_ts); M(NSEvent, "windowNumber", ev_wnum); M(NSEvent, "subtype", ev_subtype);
     M(NSEvent, "data1", ev_data1); M(NSEvent, "data2", ev_data2); M(NSEvent, "buttonNumber", ev_button);
     M(NSEvent, "pressure", ev_pressure); M(NSEvent, "deltaZ", ev_zero); M(NSEvent, "magnification", ev_zero);
