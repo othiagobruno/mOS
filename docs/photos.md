@@ -24,7 +24,7 @@ devolve `PHFetchResult` com `count` 0. Pasta inexistente também: o índice guar
 
 ## Metadados
 
-PNG e JPEG: `mos_img_decode` do ImageIO que está na main (`imageio_decode.c`).
+PNG, JPEG, GIF, TIFF, BMP e ICO: `mos_img_decode` do ImageIO do libSystem (`userland/libsystem/imageio.c`, codecs `iio_*.inc`).
 Este lado não altera o ImageIO. GIF e BMP não são decodificados por esse ImageIO;
 a largura e a altura saem do cabeçalho do arquivo. Vídeo MP4/MOV: `mvhd` (duração)
 e `tkhd` (quadro), se o atom estiver no trecho lido (até 16 MiB). Sem atom, duração 0

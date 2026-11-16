@@ -1,6 +1,6 @@
 /*
  * mOS — EXIF/TIFF de um JPEG (segmento APP1 "Exif\0\0") ou de um TIFF solto, sem runtime.
- * O ImageIO.m monta {TIFF}, {Exif} e Orientation com isto; tools/imageio_exif_test.c testa.
+ * imageio.c monta {TIFF}, {Exif} e Orientation com isto; tools/imageio_exif_test.c testa.
  */
 #ifndef MOS_IMAGEIO_EXIF_H
 #define MOS_IMAGEIO_EXIF_H

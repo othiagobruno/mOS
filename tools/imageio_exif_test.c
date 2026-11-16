@@ -1,11 +1,11 @@
-/* EXIF do ImageIO (userland/frameworks/ImageIO/imageio_exif.c): JPEG com APP1 little-endian e TIFF big-endian.
- *   zig cc -std=c11 -Wall -Wextra -Werror -Iuserland/frameworks/ImageIO tools/imageio_exif_test.c \
- *     userland/frameworks/ImageIO/imageio_exif.c -o /tmp/imageio_exif_test && /tmp/imageio_exif_test
+/* EXIF do ImageIO (userland/libsystem/iio_exif.inc): JPEG com APP1 little-endian e TIFF big-endian.
+ *   zig cc -std=c11 -Wall -Wextra -Werror -Iuserland/libsystem -x c tools/imageio_exif_test.c \
+ *     -x c userland/libsystem/iio_exif.inc -o /tmp/imageio_exif_test && /tmp/imageio_exif_test
  */
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include "imageio_exif.h"
+#include "iio_exif.h"
 
 static int fails;
 #define CHECK(c, m) do { if (!(c)) { fprintf(stderr, "FAIL %s\n", m); fails++; } else printf("ok %s\n", m); } while (0)

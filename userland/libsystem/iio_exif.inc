@@ -1,4 +1,4 @@
-#include "imageio_exif.h"
+#include "iio_exif.h"
 #include <string.h>
 
 typedef struct { const uint8_t *b; size_t n; int le; } tiff_t;

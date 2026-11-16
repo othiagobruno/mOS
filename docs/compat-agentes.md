@@ -51,7 +51,7 @@ um recurso opcional que espera o runtime Swift ([swift-objc-runtime.md](swift-ob
 - `vscode_fwclasses.c`: classes vazias `NSShadow`, `NSPopover`, `SFUniversalLink`, `LAAuthenticationView`,
   `ASWebAuthenticationSessionWebBrowserSessionManager` (Codex), `CNPostalAddressFormatter`, `MKLocalSearch*` (Grok Bot).
   `vscode_consts.c`: `kCGWindowAlpha`.
-- `userland/frameworks/ImageIO`: `kCGImageSourceShouldCacheImmediately` e `kCGImageSourceCreateThumbnailWithTransform`.
+- ImageIO (`userland/libsystem/imageio_cf.inc`; o dylib `userland/frameworks/ImageIO` saiu): `kCGImageSourceShouldCacheImmediately` e `kCGImageSourceCreateThumbnailWithTransform`.
 - `kernel/compat/macho.c`: `QuickLookThumbnailing.framework` na lista do carregador (o Codex o liga sem importar
   símbolos; pede `QLThumbnailGenerator` pelo nome).
 - `tools/stage-chromeapp.ps1` (novo): monta na imagem um app com o layout do Chrome que não é o Chrome (o Codex):

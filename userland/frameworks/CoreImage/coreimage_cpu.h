@@ -40,7 +40,7 @@ int mos_ci_render(mos_ci *im, double x, double y, int w, int h, uint32_t *px);
 /* Escreve o mesmo retângulo no formato MOS_CI_*. 0 = ok. */
 int mos_ci_render_format(mos_ci *im, double x, double y, int w, int h, int format, void *bytes, long row_bytes);
 
-/* PNG ou JPEG por mos_img_decode, extern do libSystem (grok_imageio.c). NULL se não for esses tipos. */
+/* PNG ou JPEG por mos_img_decode, extern do libSystem (imageio.c). NULL se não for esses tipos. */
 mos_ci *mos_ci_from_encoded(const uint8_t *data, size_t n);
 
 /* CIContext. cache=0 recalcula sempre. Um espaço de cor estrangeiro não é convertido. */

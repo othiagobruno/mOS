@@ -760,7 +760,7 @@ void *CGImageCreate(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, cons
     (void)space; (void)decode; (void)shouldInterpolate; (void)intent;
     cgobj_t *p = as_kind(provider, CGK_PR);
     if (!p || !w || !h || bpc != 8 || (bpp != 32 && bpp != 8)) return 0;
-    if ((u64)w * h * 4 > (32u << 20)) return 0;
+    if ((u64)w * h * 4 > (1ull << 30)) return 0;          /* 1 GiB: foto de 48 Mpx cabe */
     if (!bpr) bpr = w * (bpp / 8);
     if (!h || bpr > p->cb_size / h) return 0;
     cgobj_t *o = cg_new(&IM_c, CGK_IM);
@@ -834,7 +834,7 @@ void *CGBitmapContextCreate(void *data, size_t w, size_t h, size_t bpc, size_t b
     u32 bpp = ainfo == 7 ? 1 : 4;
     if (!bpr) bpr = w * bpp;
     if (bpr < w * bpp) return 0;
-    if ((u64)bpr * h > (32u << 20)) return 0;
+    if ((u64)bpr * h > (1ull << 30)) return 0;
     int owns = 0;
     if (!data) {
         data = malloc(bpr * h);
