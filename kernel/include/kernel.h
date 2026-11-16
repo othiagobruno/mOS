@@ -266,6 +266,11 @@ void   cpufreq_ap_tick(void);           /* tique do LAPIC de cada AP */
 int    cpufreq_current_mhz(void);
 int    cpufreq_states(u32 *mhz, int max);
 bool   acpi_ready(void);
+void   acpi_sleep(void);                /* repouso: S3 se tudo souber voltar, senão s2idle (dev/pm.c) */
+void   acpi_prepare_sleep(int state);   /* _TTS/_PTS/_SST e GPEs de despertar (3) ou só o indicador (0) */
+void   acpi_finish_wake(int state);
+void   acpi_enter_sleep_regs(int state);
+void   cpufreq_force_lowest(bool on);
 int    acpi_pci_irq(u8 bus, u8 dev, u8 fn, u8 pin);   /* INTx (0 = INTA) pelo _PRT, IRQ do 8259 ou -1 */
 const char *acpi_status(void);
 const void *acpi_find_table(const char *sig, int nth);

@@ -132,6 +132,15 @@ static void show(const char *label, aml_val_t *v, int ind) {
 }
 
 static int fails;
+static int wake_cb(aml_node_t *n, int d, void *c) {
+    (void)d;
+    if (n->type != AML_DEVICE || !aml_find(n, "_PRW")) return 0;
+    (*(int *)c)++;
+    aml_val_t r;
+    if (aml_find(n, "_DSW")) { aml_val_t a[3] = { aml_int(1), aml_int(3), aml_int(0) }; aml_eval_path(n, "_DSW", a, 3, &r); aml_val_free(&r); }
+    else if (aml_find(n, "_PSW")) { aml_val_t a = aml_int(1); aml_eval_path(n, "_PSW", &a, 1, &r); aml_val_free(&r); }
+    return 0;
+}
 /* PCI falso para o _PRT: 00:08.1 é ponte para o barramento 3 */
 static u32 fake_cfg(u8 bus, u8 dev, u8 fn, u8 off) {
     if (bus == 0 && dev == 8 && fn == 0) { if (off == 0) return 0x14521022; if (off == 0x0C) return 0x00800000; return 0; }
@@ -301,6 +310,22 @@ int main(int argc, char **argv) {
         check(a > 2 && a < 16 && c > 2 && c < 16, "_PRT resolve IRQs do 8259 (LNKA, LNKG)");
         check(b == -1, "LNKE: _SRS do firmware não programa (bug da BIOS), rota recusada");
         check(acpi_pci_irq_cfg(fake_cfg, 0, 0x14, 0, 0) == a && acpi_pci_irq_cfg(fake_cfg, 3, 0, 6, 2) == c, "_PRT estável (links já programados)");
+    }
+    /* sequência de S3 do firmware real: _TTS(3), _PTS(3), _SST(3), _DSW/_PSW nos dispositivos com _PRW, _WAK(3), _SST(1) */
+    {
+        u32 e1 = aml_errors(); u64 o;
+        if (aml_find(NULL, "\\_TTS")) aml_call_int1(NULL, "\\_TTS", 3, &o);
+        check(aml_call_int1(NULL, "\\_PTS", 3, &o) == AML_OK, "S3: _PTS(3)");
+        if (aml_find(NULL, "\\_SI._SST")) aml_call_int1(NULL, "\\_SI._SST", 3, &o);
+        int nw = 0, nd = 0;
+        aml_walk(NULL, wake_cb, &nw);
+        nd = nw;
+        aml_val_t a = aml_int(3), r;
+        check(aml_eval_path(NULL, "\\_WAK", &a, 1, &r) == AML_OK, "S3: _WAK(3)");
+        aml_val_free(&r);
+        if (aml_find(NULL, "\\_SI._SST")) aml_call_int1(NULL, "\\_SI._SST", 1, &o);
+        printf("S3: %d dispositivos de despertar (_PRW), %u erros na sequência\n", nd, aml_errors() - e1);
+        check(aml_errors() == e1, "S3: sequência sem erro de AML");
     }
     aml_node_t *pwrb = aml_find(NULL, "\\_SB.PWRB");
     if (pwrb) check(aml_device_match(pwrb, "PNP0C0C"), "PWRB é PNP0C0C");

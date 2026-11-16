@@ -172,6 +172,16 @@ static struct {
     bool          running, saw_motion, primed;
 } H;
 
+/* buffers de DMA reaproveitados: a retomada do S3 refaz a sonda na mesma ordem e recebe os mesmos blocos */
+static struct { void *p; u64 phys; usize n; } dcache[12];
+static int dci;
+static void *hda_dma(usize n, u64 *phys) {
+    if (dci < 12 && dcache[dci].p && dcache[dci].n == n) { memset(dcache[dci].p, 0, n); *phys = dcache[dci].phys; return dcache[dci++].p; }
+    void *p = dma_alloc(n, phys);
+    if (p && dci < 12) { dcache[dci].p = p; dcache[dci].phys = *phys; dcache[dci].n = n; dci++; }
+    return p;
+}
+
 /* ---------------------------------------------------------------- MMIO / tempo */
 static inline u8  r8(u32 o)  { return mmio_r8(H.mm, o); }
 static inline u16 r16(u32 o) { return mmio_r16(H.mm, o); }
@@ -286,7 +296,7 @@ static bool controller_reset(void) {
 
 static bool corb_setup(void) {
     u64 phys;
-    u8 *mem = dma_alloc(4096, &phys);                     /* CORB 1 KiB + RIRB 2 KiB na mesma página */
+    u8 *mem = hda_dma(4096, &phys);                     /* CORB 1 KiB + RIRB 2 KiB na mesma página */
     if (!mem) return false;
     if (phys >> 32 && !(H.gcap & 1)) { kprintf("HDA: controlador sem 64 bits e DMA acima de 4 GiB\n"); return false; }
     H.corb = (u32 *)mem;
@@ -776,8 +786,8 @@ static bool capture_setup(void) {
 
     u32 bpf = mono ? 2u : 4u;
     u64 rphys, bphys;
-    i16 *ring = dma_alloc(RING_FRAMES * bpf, &rphys);
-    u32 *bdl = dma_alloc(4096, &bphys);
+    i16 *ring = hda_dma(RING_FRAMES * bpf, &rphys);
+    u32 *bdl = hda_dma(4096, &bphys);
     if (!ring || !bdl) return false;
     if (((rphys | bphys) >> 32) && !(H.gcap & 1)) return false;
 
@@ -829,9 +839,9 @@ static bool stream_setup(void) {
     else { kprintf("HDA: controlador sem streams de saída\n"); return false; }
 
     u64 rphys, bphys, pphys;
-    H.ring = dma_alloc(RING_BYTES, &rphys);
-    H.bdl = dma_alloc(4096, &bphys);
-    H.posbuf = dma_alloc(4096, &pphys);
+    H.ring = hda_dma(RING_BYTES, &rphys);
+    H.bdl = hda_dma(4096, &bphys);
+    H.posbuf = hda_dma(4096, &pphys);
     if (!H.ring || !H.bdl || !H.posbuf) return false;
     if (((rphys | bphys | pphys) >> 32) && !(H.gcap & 1)) return false;
 
@@ -891,6 +901,7 @@ static void ring_zero(u32 at, u32 n) {
 }
 
 static bool g_hdmi_primary;
+void hda_pm_register(void);
 void hda_service(void) {
     if (g_hdmi_primary) { hdmi_audio_service(); return; }
     if (!H.running) return;
@@ -950,7 +961,9 @@ void hda_service(void) {
     hdmi_audio_mirror(H.ring, RING_FRAMES, fin);
 }
 
+static bool g_muted;
 void hda_set_mute(bool mute) {
+    g_muted = mute;
     hdmi_audio_set_mute(mute);
     if (!H.running) return;
     H.dead = false;
@@ -984,6 +997,7 @@ static const char *ctrl_vendor(u16 v) {
 
 static bool probe_controller(pci_dev_t *d) {
     memset(&H, 0, sizeof H);
+    dci = 0;
     H.pci = d;
     u64 bar = pci_bar_addr(d, 0);
     if (!bar || (d->bar[0] & 1)) { kprintf("HDA: BAR0 inválido\n"); return false; }
@@ -1033,6 +1047,7 @@ bool hda_probe(char *name, usize n) {
         if (d->vendor == 0x1002) continue;               /* HDMI/DP da GPU AMD: dev/hda_hdmi.c */
         if (probe_controller(d)) {
             hdmi_audio_probe(false);
+            hda_pm_register();
             const char *v = ctrl_vendor(d->vendor);
             snprintf(name, n, "Áudio HD%s%s (codec %04x:%04x)", *v ? " " : "", v, H.codec_id >> 16, H.codec_id & 0xFFFF);
             return true;
@@ -1044,8 +1059,35 @@ bool hda_probe(char *name, usize n) {
     if (hdmi_audio_probe(true)) {                         /* só HDMI/DP: ele é a saída */
         extern const char *hdmi_audio_name(void);
         g_hdmi_primary = true;
+        hda_pm_register();
         snprintf(name, n, "HDMI/DisplayPort AMD (%s)", hdmi_audio_name());
         return true;
     }
     return false;
 }
+
+/* ---------------------------------------------------------------- repouso (dev/pm.c) */
+#include "pm.h"
+static pci_dev_t *g_pm_pci;
+static int hda_pm_suspend(int state) {
+    if (g_hdmi_primary) { hdmi_audio_set_mute(true); return 0; }
+    if (!H.running) return 0;
+    if (state == 0) { bool m = g_muted; hda_set_mute(true); g_muted = m; return 0; }
+    g_pm_pci = H.pci;
+    w8(H.sd + SD_CTL, 0);                                 /* para o DMA de saída e de entrada */
+    if (H.in_running) w8(H.in_sd + SD_CTL, 0);
+    corb_stop();
+    w32(DPLBASE, 0);
+    H.running = false;
+    return 0;
+}
+static void hda_pm_resume(int state) {
+    if (state == 0 || g_hdmi_primary) { hda_set_mute(g_muted); return; }
+    if (!g_pm_pci) return;
+    bool m = g_muted;
+    if (probe_controller(g_pm_pci)) hdmi_audio_probe(false);
+    else kprintf("HDA: controlador não voltou do S3\n");
+    hda_set_mute(m);
+}
+static const pm_ops_t hda_pm = { "áudio HD", 0, hda_pm_suspend, hda_pm_resume, NULL };
+void hda_pm_register(void) { pm_register(&hda_pm); }
