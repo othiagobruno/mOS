@@ -35,7 +35,8 @@ Medido no fonte (`grep` de `DEF(`/`M(` por classe). "Raso" = a classe existe mas
 | NSDocument / NSDocumentController | Raso (2 e 3 métodos) |
 | NSToolbar | Raso (1 método) e itens do Postico |
 | NSPopUpButton, NSSegmentedControl, NSCell e família | Classes vazias |
-| NSComboBox, NSDatePicker, NSStepper, NSLevelIndicator, NSPathControl, NSBrowser, NSMatrix, NSRuleEditor/NSPredicateEditor, NSFontPanel, NSPrintOperation, NSTextContainer, NSTextLayoutManager (TextKit 2) | **Não existem** |
+| NSStepper, NSComboBox, NSLevelIndicator, NSPathControl | Desenho, mouse e target/action (`appkit_public.c`, com teste de host) — o inventário de 15 nov. errou ao listá-las como ausentes |
+| NSDatePicker, NSBrowser, NSMatrix, NSRuleEditor/NSPredicateEditor, NSFontPanel, NSPrintOperation, NSTextContainer, NSTextLayoutManager (TextKit 2) | **Não existem** |
 | Acessibilidade | AX do próprio processo (`appkit_ax.c`) e transporte entre processos (`axremote.c`, de outra frente) |
 | Drag & drop | `NSDraggingSession`/`NSDraggingItem` sem métodos |
 | Impressão | `NSPrintInfo`/`NSPrintPanel` rasos; sem `NSPrintOperation` |
@@ -52,7 +53,7 @@ Ordem pelo impacto em apps reais (todo app de documento usa painel, documento, m
 | # | Fase | Entrega | Estado |
 |---|---|---|---|
 | 1 | Painéis de arquivo | NSOpenPanel/NSSavePanel reais: navegação, barra lateral, filtros por extensão e UTType, pacotes, ocultos, seleção múltipla, digitar para achar, ir para pasta, nova pasta, nome e extensão no salvar, confirmar substituição, delegate (`panel:shouldEnableURL:`, `panel:validateURL:error:`, `panel:didChangeToDirectoryURL:`, `panelSelectionDidChange:`), `runModal`, `beginWithCompletionHandler:`, folha | **Feito neste PR**, núcleo com teste de host (`panel_host.c`) |
-| 2 | Constantes e símbolos que o corpus pede | `NSModalPanelRunLoopMode`, papéis AX que faltam, `NSBitsPerPixelFromDepth` e vizinhos | A fazer |
+| 2 | Constantes e símbolos que o corpus pede | `userland/libsystem/appkit_consts.c`: 579 NSString públicas que não existiam em nenhum arquivo (`NSModalPanelRunLoopMode`, `NSEventTrackingRunLoopMode`, papéis/subpapéis/atributos/ações/notificações AX, tipos e nomes de pasteboard, notificações de app/janela/view/menu/texto/tabela/outline/toolbar/workspace, chaves de impressão, de fonte, de documento, de binding, nomes de imagem, aparência). `NSBitsPerPixelFromDepth` já existia (`appkit_apps_ui.c`) | **Feito**: compila em x86_64 e arm64; checado contra duplicatas em todo o libSystem. Valores das chaves de metadado de documento (Title, Author…) e de Touch Bar usam o próprio nome, sem conferência contra um Mac |
 | 3 | Família NSCell + controles que faltam | NSCell/NSActionCell/NSButtonCell/NSTextFieldCell com desenho; NSPopUpButton, NSSegmentedControl, NSComboBox, NSStepper, NSDatePicker, NSLevelIndicator, NSPathControl, NSColorWell, NSSearchField, NSTokenField, NSSecureTextField, NSMatrix, NSBrowser | A fazer |
 | 4 | NSDocument / NSDocumentController | Abrir, salvar, salvar como, reverter, autosave, documentos recentes persistidos, `isDocumentEdited`, título, menu Arquivo padrão, NSUndoManager ligado | A fazer |
 | 5 | Menus e toolbar completos | Validação (`validateMenuItem:`/`NSUserInterfaceValidations`), teclas equivalentes pela cadeia de responders, menus de contexto, NSToolbar completo (itens padrão, flexível, personalização, `NSToolbarItemGroup`) | A fazer |
