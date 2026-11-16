@@ -69,7 +69,8 @@ de host passando (o build do projeto fica para o fim, pela fila `build-final.sh`
 | 4 getattrlist e operações | ✅ `attrlist.c` + `vfsops.c`; testes 147 + 50. Hard links ficam com a fase 10. |
 | 9 Bookmarks, alias e quarentena | ✅ `bookmark.c`, `quarantine.c`, `/usr/bin/xattr` (`docs/bookmarks-quarentena.md`); teste 71. |
 | 8 Instalador .pkg | ✅ `/usr/sbin/installer`, `/usr/sbin/pkgutil`, motor `userland/pkg/pkgengine.c` (`docs/pkg-instalador.md`); teste 30 + pacote real. |
-| 5, 6, 7, 10, 11 | a fazer (desenho abaixo) |
+| 7 .dmg e hdiutil | 🟡 `/usr/bin/hdiutil` Mach-O + `userland/pkg/udif.c` (leitor e escritor UDIF) + `volfmt.c` (HFS+/HFSX/FAT32); teste 52 (`tools/hdiutil_test.sh`). Falta UDRW gravável no kernel (`create -srcfolder`), UDSP/sparsebundle, AES, compact. |
+| 5, 6, 10, 11 | a fazer (desenho abaixo) |
 
 ## O que falta, em detalhe
 
@@ -79,12 +80,13 @@ de host passando (o build do projeto fica para o fim, pela fila `build-final.sh`
   depois do commit, `docs/volumes-graveis.md`); falta o do APFS (fase 6).
 - **6 APFS**: leitura completa (snapshots, clones, xattrs, links, compressão, volume selado) e escrita (B-tree COW,
   spaceman, checkpoints) com verificador próprio em `tools/volimg.c`.
-- **7 .dmg e hdiutil**: UDRW gravável no kernel (blkdev com `write` sobre o vnode da imagem, gravado pelo persist;
+- **7 .dmg e hdiutil** — feito: `hdiutil attach [-plist]/detach/info [-plist]/imageinfo [-plist|-format]/verify/
+  create -size -fs HFS+|JHFS+|HFSX|JHFSX|MS-DOS -volname -format UDRW|UDRO|UDZO|ULFO|ULMO|UDTO -layout GPTSPUD|NONE
+  -ov/convert`, escritor UDIF (koly, plist `blkx`, `mish`, CRC32, blocos de zero como `ZERO`), GPT com partição
+  única no LBA 40, formatador `volfmt.c` conferido pelo `volimg check`. Os scripts `brew-shims/hdiutil`, `xattr` e
+  `pkgutil` saíram (o `stage-brew.ps1` copiava por cima dos Mach-O). Falta: UDRW gravável no kernel (blkdev com `write` sobre o vnode da imagem, gravado pelo persist;
   o HFS+ do volume monta com `hfsplus_wr`, sem o consentimento de disco físico, porque é um arquivo do usuário);
-  sparseimage (UDSP) e sparsebundle; formatador HFS+/FAT32 limpo em `userland/pkg/volfmt.c` (conferido pelo
-  `volimg check`); escritor UDIF (koly, plist, mish, CRC32) com UDRO/UDZO/ULFO/ULMO por `compression_encode_buffer`;
-  `/usr/bin/hdiutil` Mach-O (attach/detach/info/imageinfo/verify/create -srcfolder/convert/compact) no lugar do
-  script `tools/brew-shims/hdiutil`; criptografia AES (senha) por último.
+  e com ele `create -srcfolder` e `compact`; sparseimage (UDSP) e sparsebundle; criptografia AES (senha) por último.
 - **10 fd -> vnode** (repassado pelo Henrique): o fd guardar o vnode com contagem de referência (o `SYS_READ` sem
   `vfs_lookup` por chamada, fileport do `machipc` acompanhando o rename), separar nome e inode no VFS (hard links
   reais com `nlink`), e `tools/fatcat.c` voltando a compilar no host.

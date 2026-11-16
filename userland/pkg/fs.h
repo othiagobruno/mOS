@@ -29,3 +29,6 @@ static inline u64 be64(const void *p) { return (u64)be32(p) << 32 | be32((const 
 i64 zlib_decompress(const u8 *src, u64 slen, u8 *dst, u64 dlen);
 i64 bzip2_decompress(const u8 *src, u64 slen, u8 *dst, u64 dlen);
 i64 xz_decompress(const u8 *src, u64 slen, u8 *dst, u64 dlen);
+i64 lzfse_decompress(const u8 *src, u64 slen, u8 *dst, u64 dlen);
+i64 lzvn_decompress(const u8 *src, u64 slen, u8 *dst, u64 dlen);
+i64 adc_decompress(const u8 *src, u64 slen, u8 *dst, u64 dlen);

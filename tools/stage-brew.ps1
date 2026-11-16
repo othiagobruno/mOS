@@ -40,11 +40,10 @@ New-Item -ItemType Directory -Force "$mos\System\Library\CoreServices", "$mos\us
 Copy-Item -Force "$PSScriptRoot\brew-shims\SystemVersion.plist" "$mos\System\Library\CoreServices\"
 Copy-Item -Force "$PSScriptRoot\brew-shims\sw_vers" "$mos\usr\bin\sw_vers"
 Copy-Item -Force "$PSScriptRoot\brew-shims\sysctl" "$mos\usr\sbin\sysctl"
-Copy-Item -Force "$PSScriptRoot\brew-shims\pkgutil" "$mos\usr\sbin\pkgutil"
 Copy-Item -Force "$PSScriptRoot\brew-shims\xcode-select" "$mos\usr\bin\xcode-select"
-# casks: hdiutil/diskutil sobre o leitor de .dmg do kernel (imgtool), ditto/mkbom para copiar do volume,
-# xattr e codesign que aceitam e não fazem nada (o VFS não guarda atributos; o kernel não confere assinaturas)
-foreach ($t in 'hdiutil', 'ditto', 'mkbom', 'xattr', 'codesign', 'sudo') { Copy-Item -Force "$PSScriptRoot\brew-shims\$t" "$mos\usr\bin\$t" }
+# casks: hdiutil, xattr e pkgutil são os Mach-O de verdade (userland/cli-macos); aqui só diskutil sobre o
+# leitor de .dmg do kernel (imgtool), ditto/mkbom para copiar do volume e codesign (o kernel não confere assinaturas)
+foreach ($t in 'ditto', 'mkbom', 'codesign', 'sudo') { Copy-Item -Force "$PSScriptRoot\brew-shims\$t" "$mos\usr\bin\$t" }
 Copy-Item -Force "$PSScriptRoot\brew-shims\diskutil" "$mos\usr\sbin\diskutil"
 New-Item -ItemType Directory -Force "$mos\Applications" | Out-Null
 # chown/chgrp ficam em /usr/sbin no macOS (o brew roda "sudo chown" nos .app dos casks)
