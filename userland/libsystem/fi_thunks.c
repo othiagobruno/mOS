@@ -15,27 +15,27 @@ __asm__(
 );
 const fi_md fi_md_0 = { &fi_vwt_cow, 0 };
 
-const fi_md fi_md_1 = { &fi_vwt_pod8, 0 };
+const fi_md fi_md_1 = { &fi_vwt_cow, 0 };
 
-const fi_md fi_md_2 = { &fi_vwt_cow, 0 };
+const fi_md fi_md_2 = { &fi_vwt_pod16, 0 };
 
 const fi_md fi_md_3 = { &fi_vwt_pod8, 0 };
 
-const fi_md fi_md_4 = { &fi_vwt_cow, 0 };
+const fi_md fi_md_4 = { &fi_vwt_pod8, 0 };
 
-const fi_md fi_md_5 = { &fi_vwt_cow, 0 };
+const fi_md fi_md_5 = { &fi_vwt_pod8, 0 };
 
-const fi_md fi_md_6 = { &fi_vwt_cow, 0 };
+const fi_md fi_md_6 = { &fi_vwt_pod8, 0 };
 
-const fi_md fi_md_7 = { &fi_vwt_cow, 0 };
+const fi_md fi_md_7 = { &fi_vwt_pod8, 0 };
 
-const fi_md fi_md_8 = { &fi_vwt_pod16, 0 };
+const fi_md fi_md_8 = { &fi_vwt_cow, 0 };
 
 const fi_md fi_md_9 = { &fi_vwt_cow, 0 };
 
 const fi_md fi_md_10 = { &fi_vwt_cow, 0 };
 
-const fi_md fi_md_11 = { &fi_vwt_cow, 0 };
+const fi_md fi_md_11 = { &fi_vwt_pod8, 0 };
 
 const fi_md fi_md_12 = { &fi_vwt_pod8, 0 };
 
@@ -43,45 +43,19 @@ const fi_md fi_md_13 = { &fi_vwt_pod8, 0 };
 
 const fi_md fi_md_14 = { &fi_vwt_pod8, 0 };
 
-const fi_md fi_md_15 = { &fi_vwt_pod8, 0 };
+const fi_md fi_md_15 = { &fi_vwt_cow, 0 };
 
 const fi_md fi_md_16 = { &fi_vwt_pod8, 0 };
 
-const fi_md fi_md_17 = { &fi_vwt_cow, 0 };
+const fi_md fi_md_17 = { &fi_vwt_pod8, 0 };
 
-const fi_md fi_md_18 = { &fi_vwt_cow, 0 };
+const fi_md fi_md_18 = { &fi_vwt_pod8, 0 };
 
 const fi_md fi_md_19 = { &fi_vwt_pod8, 0 };
 
-const fi_md fi_md_20 = { &fi_vwt_cow, 0 };
+const fi_md fi_md_20 = { &fi_vwt_pod8, 0 };
 
 const fi_md fi_md_21 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_22 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_23 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_24 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_25 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_26 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_27 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_28 = { &fi_vwt_cow, 0 };
-
-const fi_md fi_md_29 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_30 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_31 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_32 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_33 = { &fi_vwt_pod8, 0 };
-
-const fi_md fi_md_34 = { &fi_vwt_pod8, 0 };
 
 __asm__(
 ".section .data\n"
@@ -137,21 +111,6 @@ __asm__(
 ".section .text\n"
 );
 __asm__(
-".section .rodata\n"
-".balign 8\n"
-".globl \"$s10Foundation16AttributedStringVMn\"\n"
-"\"$s10Foundation16AttributedStringVMn\":\n"
-"  .long 17\n"
-"  .long 0\n"
-"  .long 20\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .asciz \"0Foundation16AttributedStringVMn\"\n"
-".section .text\n"
-);
-__asm__(
 ".section .data\n"
 ".balign 8\n"
 ".globl \"$sSo9NSDecimalas23CustomStringConvertible10FoundationMc\"\n"
@@ -168,200 +127,6 @@ __asm__(
 "  .quad fi_witness_zero\n"
 "  .quad fi_witness_zero\n"
 "  .quad fi_witness_zero\n"
-".section .text\n"
-);
-__asm__(
-".section .data\n"
-".balign 8\n"
-".globl \"$s10Foundation16AttributedStringVAA0bC8ProtocolAAMc\"\n"
-"\"$s10Foundation16AttributedStringVAA0bC8ProtocolAAMc\":\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 8\n"
-"  .long 0\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-".section .text\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringVMa\"\n"
-"\"$s10Foundation16AttributedStringVMa\":\n"
-"  leaq fi_md_0(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".section .data\n"
-".balign 8\n"
-".globl \"$s10Foundation16AttributedStringV5IndexVSLAAMc\"\n"
-"\"$s10Foundation16AttributedStringV5IndexVSLAAMc\":\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 8\n"
-"  .long 0\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-".section .text\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV5IndexVMa\"\n"
-"\"$s10Foundation16AttributedStringV5IndexVMa\":\n"
-"  leaq fi_md_1(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".section .data\n"
-".balign 8\n"
-".globl \"$s10Foundation16AttributedStringV5IndexVSQAAMc\"\n"
-"\"$s10Foundation16AttributedStringV5IndexVSQAAMc\":\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 8\n"
-"  .long 0\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-".section .text\n"
-);
-__asm__(
-".section .data\n"
-".balign 8\n"
-".globl \"$s10Foundation16AttributedStringV13CharacterViewVSlAAMc\"\n"
-"\"$s10Foundation16AttributedStringV13CharacterViewVSlAAMc\":\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 8\n"
-"  .long 0\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-".section .text\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV13CharacterViewVMa\"\n"
-"\"$s10Foundation16AttributedStringV13CharacterViewVMa\":\n"
-"  leaq fi_md_2(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".section .data\n"
-".balign 8\n"
-".globl \"$s10Foundation16AttributedStringV4RunsV5IndexVSQAAMc\"\n"
-"\"$s10Foundation16AttributedStringV4RunsV5IndexVSQAAMc\":\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 8\n"
-"  .long 0\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-".section .text\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV4RunsV5IndexVMa\"\n"
-"\"$s10Foundation16AttributedStringV4RunsV5IndexVMa\":\n"
-"  leaq fi_md_3(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV4RunsVMa\"\n"
-"\"$s10Foundation16AttributedStringV4RunsVMa\":\n"
-"  leaq fi_md_4(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".section .data\n"
-".balign 8\n"
-".globl \"$s10Foundation16AttributedStringV4RunsVSlAAMc\"\n"
-"\"$s10Foundation16AttributedStringV4RunsVSlAAMc\":\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 8\n"
-"  .long 0\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-".section .text\n"
-);
-__asm__(
-".section .rodata\n"
-".balign 8\n"
-".globl \"$s10Foundation16AttributedStringV4RunsVMn\"\n"
-"\"$s10Foundation16AttributedStringV4RunsVMn\":\n"
-"  .long 17\n"
-"  .long 0\n"
-"  .long 20\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .asciz \"ation16AttributedStringV4RunsVMn\"\n"
-".section .text\n"
-);
-__asm__(
-".section .rodata\n"
-".balign 8\n"
-".globl \"$s10Foundation16AttributedStringV5IndexVMn\"\n"
-"\"$s10Foundation16AttributedStringV5IndexVMn\":\n"
-"  .long 17\n"
-"  .long 0\n"
-"  .long 20\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .asciz \"tion16AttributedStringV5IndexVMn\"\n"
-".section .text\n"
-);
-__asm__(
-".section .rodata\n"
-".balign 8\n"
-".globl \"$s10Foundation16AttributedStringV13CharacterViewVMn\"\n"
-"\"$s10Foundation16AttributedStringV13CharacterViewVMn\":\n"
-"  .long 17\n"
-"  .long 0\n"
-"  .long 20\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .asciz \"ributedStringV13CharacterViewVMn\"\n"
 ".section .text\n"
 );
 __asm__(
@@ -403,7 +168,7 @@ __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV11FormatStyleVMa\"\n"
 "\"$s10Foundation4DateV11FormatStyleVMa\":\n"
-"  leaq fi_md_5(%rip), %rax\n"
+"  leaq fi_md_0(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -422,40 +187,6 @@ __asm__(
 ".section .text\n"
 );
 __asm__(
-".section .data\n"
-".balign 8\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleVAA0dE0AAMc\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleVAA0dE0AAMc\":\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 8\n"
-"  .long 0\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-".section .text\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleVMa\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleVMa\":\n"
-"  leaq fi_md_6(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV0B9SeparatorO4dashyA2GmFWC\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV0B9SeparatorO4dashyA2GmFWC\":\n"
-"  movl $0, %eax\n"
-"  xor %edx, %edx\n"
-"  ret\n"
-);
-__asm__(
 ".text\n"
 ".globl \"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV13FailurePolicyO10throwErroryA2GmFWC\"\n"
 "\"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV13FailurePolicyO10throwErroryA2GmFWC\":\n"
@@ -468,30 +199,6 @@ __asm__(
 ".globl \"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV17InterpretedSyntaxO30inlineOnlyPreservingWhitespaceyA2GmFWC\"\n"
 "\"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV17InterpretedSyntaxO30inlineOnlyPreservingWhitespaceyA2GmFWC\":\n"
 "  movl $2, %eax\n"
-"  xor %edx, %edx\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV17TimeZoneSeparatorO7omittedyA2GmFWC\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV17TimeZoneSeparatorO7omittedyA2GmFWC\":\n"
-"  movl $1, %eax\n"
-"  xor %edx, %edx\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV13TimeSeparatorO5colonyA2GmFWC\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV13TimeSeparatorO5colonyA2GmFWC\":\n"
-"  movl $0, %eax\n"
-"  xor %edx, %edx\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV0B13TimeSeparatorO8standardyA2GmFWC\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV0B13TimeSeparatorO8standardyA2GmFWC\":\n"
-"  movl $0, %eax\n"
 "  xor %edx, %edx\n"
 "  ret\n"
 );
@@ -518,7 +225,7 @@ __asm__(
 ".text\n"
 ".globl \"$sSo9NSDecimala10FoundationE11FormatStyleVMa\"\n"
 "\"$sSo9NSDecimala10FoundationE11FormatStyleVMa\":\n"
-"  leaq fi_md_7(%rip), %rax\n"
+"  leaq fi_md_1(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -602,133 +309,6 @@ __asm__(
 ".section .text\n"
 );
 __asm__(
-".section .rodata\n"
-".balign 8\n"
-".globl \"$s10Foundation15AttributeScopesO0A10AttributesV04LinkB0ON\"\n"
-"\"$s10Foundation15AttributeScopesO0A10AttributesV04LinkB0ON\":\n"
-"  .long 18\n"
-"  .long 0\n"
-"  .long 20\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .asciz \"ScopesO0A10AttributesV04LinkB0ON\"\n"
-".section .text\n"
-);
-__asm__(
-".section .data\n"
-".balign 8\n"
-".globl \"$s10Foundation15AttributeScopesO0A10AttributesV04LinkB0OAA19AttributedStringKeyAAMc\"\n"
-"\"$s10Foundation15AttributeScopesO0A10AttributesV04LinkB0OAA19AttributedStringKeyAAMc\":\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 8\n"
-"  .long 0\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-".section .text\n"
-);
-__asm__(
-".section .rodata\n"
-".balign 8\n"
-".globl \"$s10Foundation15AttributeScopesO0A10AttributesVMn\"\n"
-"\"$s10Foundation15AttributeScopesO0A10AttributesVMn\":\n"
-"  .long 17\n"
-"  .long 0\n"
-"  .long 20\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .asciz \"ttributeScopesO0A10AttributesVMn\"\n"
-".section .text\n"
-);
-__asm__(
-".section .rodata\n"
-".balign 8\n"
-".globl \"$s10Foundation15AttributeScopesO0A10AttributesV04LinkB0OMn\"\n"
-"\"$s10Foundation15AttributeScopesO0A10AttributesV04LinkB0OMn\":\n"
-"  .long 18\n"
-"  .long 0\n"
-"  .long 20\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .asciz \"copesO0A10AttributesV04LinkB0OMn\"\n"
-".section .text\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation15AttributeScopesO0A10AttributesV4linkAE04LinkB0Ovg\"\n"
-"\"$s10Foundation15AttributeScopesO0A10AttributesV4linkAE04LinkB0Ovg\":\n"
-"leaq fi_link_key(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation15AttributeScopesO0A10AttributesV4linkAE04LinkB0OvpMV\"\n"
-"\"$s10Foundation15AttributeScopesO0A10AttributesV4linkAE04LinkB0OvpMV\":\n"
-"leaq fi_link_key(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation22AttributeDynamicLookupO13dynamicMemberxs7KeyPathCyAA0B6ScopesO0A10AttributesVxG_tcAA016AttributedStringG0Rzluig\"\n"
-"\"$s10Foundation22AttributeDynamicLookupO13dynamicMemberxs7KeyPathCyAA0B6ScopesO0A10AttributesVxG_tcAA016AttributedStringG0Rzluig\":\n"
-"  movq %rdi, %rsi\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_attr_member\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation22AttributeDynamicLookupO13dynamicMemberxs7KeyPathCyAA0B6ScopesO0A10AttributesVxG_tcAA016AttributedStringG0RzluipMV\"\n"
-"\"$s10Foundation22AttributeDynamicLookupO13dynamicMemberxs7KeyPathCyAA0B6ScopesO0A10AttributesVxG_tcAA016AttributedStringG0RzluipMV\":\n"
-"leaq fi_member_slot(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".section .data\n"
-".balign 8\n"
-".globl \"$s10Foundation18IntegerFormatStyleVyxGAA0cD0AAMc\"\n"
-"\"$s10Foundation18IntegerFormatStyleVyxGAA0cD0AAMc\":\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 8\n"
-"  .long 0\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-"  .quad fi_witness_zero\n"
-".section .text\n"
-);
-__asm__(
-".section .rodata\n"
-".balign 8\n"
-".globl \"$s10Foundation18IntegerFormatStyleVMn\"\n"
-"\"$s10Foundation18IntegerFormatStyleVMn\":\n"
-"  .long 17\n"
-"  .long 0\n"
-"  .long 20\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .long 0\n"
-"  .asciz \"oundation18IntegerFormatStyleVMn\"\n"
-".section .text\n"
-);
-__asm__(
 ".text\n"
 ".globl \"$sSo22NSMeasurementFormatterC10FoundationE6string4fromSSAC11MeasurementVyxG_tSo6NSUnitCRbzlF\"\n"
 "\"$sSo22NSMeasurementFormatterC10FoundationE6string4fromSSAC11MeasurementVyxG_tSo6NSUnitCRbzlF\":\n"
@@ -738,92 +318,7 @@ __asm__(
 ".text\n"
 ".globl \"$s10Foundation11MeasurementVMa\"\n"
 "\"$s10Foundation11MeasurementVMa\":\n"
-"  leaq fi_md_8(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV13dynamicMember5ValueQzSgs7KeyPathCyAA22AttributeDynamicLookupOxG_tcAA0bcG0Rzluis\"\n"
-"\"$s10Foundation16AttributedStringV13dynamicMember5ValueQzSgs7KeyPathCyAA22AttributeDynamicLookupOxG_tcAA0bcG0Rzluis\":\n"
-"  movq %rdi, %rsi\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_attr_member\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV_10attributesACSS_AA18AttributeContainerVtcfC\"\n"
-"\"$s10Foundation16AttributedStringV_10attributesACSS_AA18AttributeContainerVtcfC\":\n"
-"  jmp fi_attr_from_sw\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation18AttributeContainerVACycfC\"\n"
-"\"$s10Foundation18AttributeContainerVACycfC\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  call fi_attr_empty\n"
-"  popq %rbp\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation18AttributeContainerVMa\"\n"
-"\"$s10Foundation18AttributeContainerVMa\":\n"
-"  leaq fi_md_9(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$sSS10FoundationE25localizedStringWithFormatyS2S_s7CVarArg_pdtFZ\"\n"
-"\"$sSS10FoundationE25localizedStringWithFormatyS2S_s7CVarArg_pdtFZ\":\n"
-"  jmp fi_str_format\n"
-);
-__asm__(
-".text\n"
-".globl \"$sSy10FoundationE15appendingFormatySSqd___s7CVarArg_pdtSyRd__lF\"\n"
-"\"$sSy10FoundationE15appendingFormatySSqd___s7CVarArg_pdtSyRd__lF\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  movq %rdx, %r10\n"
-"  movq %rcx, %r11\n"
-"  movq %rdi, %rdx\n"
-"  movq %rsi, %rcx\n"
-"  movq %r13, %rdi\n"
-"  movq %r14, %rsi\n"
-"  movq %r10, %r8\n"
-"  movq %r11, %r9\n"
-"  call fi_str_append_format\n"
-"  popq %rbp\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$sSy10FoundationE24localizedStandardCompareySo18NSComparisonResultVqd__SyRd__lF\"\n"
-"\"$sSy10FoundationE24localizedStandardCompareySo18NSComparisonResultVqd__SyRd__lF\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  movq %rdi, %rdx\n"
-"  movq %rsi, %rcx\n"
-"  movq %r13, %rdi\n"
-"  movq %r14, %rsi\n"
-"  movl $2, %r8d\n"
-"  call fi_str_cmp_sw\n"
-"  popq %rbp\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$sSy10FoundationE31localizedCaseInsensitiveCompareySo18NSComparisonResultVqd__SyRd__lF\"\n"
-"\"$sSy10FoundationE31localizedCaseInsensitiveCompareySo18NSComparisonResultVqd__SyRd__lF\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  movq %rdi, %rdx\n"
-"  movq %rsi, %rcx\n"
-"  movq %r13, %rdi\n"
-"  movq %r14, %rsi\n"
-"  movl $1, %r8d\n"
-"  call fi_str_cmp_sw\n"
-"  popq %rbp\n"
+"  leaq fi_md_2(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -899,82 +394,9 @@ __asm__(
 );
 __asm__(
 ".text\n"
-".globl \"$s10Foundation16AttributedStringV4RunsV3RunV13dynamicMember5ValueQzSgs7KeyPathCyAA22AttributeDynamicLookupOxG_tcAA0bcI0Rzluig\"\n"
-"\"$s10Foundation16AttributedStringV4RunsV3RunV13dynamicMember5ValueQzSgs7KeyPathCyAA22AttributeDynamicLookupOxG_tcAA0bcI0Rzluig\":\n"
-"  movq %rdi, %rsi\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_run_member\n"
-);
-__asm__(
-".text\n"
 ".globl \"$sSo8_NSRangeV10FoundationE_2inABx_q_tcSXRzAC24AttributedStringProtocolR_AC0dE0V5IndexV5BoundRtzr0_lufC\"\n"
 "\"$sSo8_NSRangeV10FoundationE_2inABx_q_tcSXRzAC24AttributedStringProtocolR_AC0dE0V5IndexV5BoundRtzr0_lufC\":\n"
 "  jmp fi_nsrange_make\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV4RunsV3RunV5rangeSnyAC5IndexVGvg\"\n"
-"\"$s10Foundation16AttributedStringV4RunsV3RunV5rangeSnyAC5IndexVGvg\":\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_run_bounds\n"
-);
-__asm__(
-".text\n"
-".globl \"$sSS10FoundationEySSs5SliceVyAA16AttributedStringV13CharacterViewVGcfC\"\n"
-"\"$sSS10FoundationEySSs5SliceVyAA16AttributedStringV13CharacterViewVGcfC\":\n"
-"  jmp fi_attr_as_string\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation19AttributedSubstringV10charactersAA0B6StringV13CharacterViewVvg\"\n"
-"\"$s10Foundation19AttributedSubstringV10charactersAA0B6StringV13CharacterViewVvg\":\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_attr_characters\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringVyAA0B9SubstringVxcSXRzAC5IndexV5BoundRtzluig\"\n"
-"\"$s10Foundation16AttributedStringVyAA0B9SubstringVxcSXRzAC5IndexV5BoundRtzluig\":\n"
-"  movq %rsi, %rdx\n"
-"  movq %rdi, %rsi\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_attr_slice\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation19AttributedSubstringVMa\"\n"
-"\"$s10Foundation19AttributedSubstringVMa\":\n"
-"  leaq fi_md_10(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV4RunsV3RunVMa\"\n"
-"\"$s10Foundation16AttributedStringV4RunsV3RunVMa\":\n"
-"  leaq fi_md_11(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV4runsAC4RunsVvg\"\n"
-"\"$s10Foundation16AttributedStringV4runsAC4RunsVvg\":\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_attr_runs\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV10charactersAC13CharacterViewVvg\"\n"
-"\"$s10Foundation16AttributedStringV10charactersAC13CharacterViewVvg\":\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_attr_characters\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation18AttributeContainerV13dynamicMember5ValueQzSgs7KeyPathCyAA0B13DynamicLookupOxG_tcAA016AttributedStringG0Rzluis\"\n"
-"\"$s10Foundation18AttributeContainerV13dynamicMember5ValueQzSgs7KeyPathCyAA0B13DynamicLookupOxG_tcAA016AttributedStringG0Rzluis\":\n"
-"  movq %rdi, %rsi\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_attr_member\n"
 );
 __asm__(
 ".text\n"
@@ -1012,23 +434,15 @@ __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV11FormatStyleV0bD0VMa\"\n"
 "\"$s10Foundation4DateV11FormatStyleV0bD0VMa\":\n"
-"  leaq fi_md_12(%rip), %rax\n"
+"  leaq fi_md_3(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV11FormatStyleV04TimeD0VMa\"\n"
 "\"$s10Foundation4DateV11FormatStyleV04TimeD0VMa\":\n"
-"  leaq fi_md_13(%rip), %rax\n"
+"  leaq fi_md_4(%rip), %rax\n"
 "  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV9formattedy12FormatOutputQzxAA0D5StyleRzAC0D5InputRtzlF\"\n"
-"\"$s10Foundation4DateV9formattedy12FormatOutputQzxAA0D5StyleRzAC0D5InputRtzlF\":\n"
-"  movq %rdi, %rsi\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_date_format_obj\n"
 );
 __asm__(
 ".text\n"
@@ -1107,21 +521,21 @@ __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV11FormatStyleV6SymbolV5MonthVMa\"\n"
 "\"$s10Foundation4DateV11FormatStyleV6SymbolV5MonthVMa\":\n"
-"  leaq fi_md_14(%rip), %rax\n"
+"  leaq fi_md_5(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV11FormatStyleV6SymbolV3DayVMa\"\n"
 "\"$s10Foundation4DateV11FormatStyleV6SymbolV3DayVMa\":\n"
-"  leaq fi_md_15(%rip), %rax\n"
+"  leaq fi_md_6(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV11FormatStyleV6SymbolV4YearVMa\"\n"
 "\"$s10Foundation4DateV11FormatStyleV6SymbolV4YearVMa\":\n"
-"  leaq fi_md_16(%rip), %rax\n"
+"  leaq fi_md_7(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -1135,7 +549,7 @@ __asm__(
 ".text\n"
 ".globl \"$sSo9NSDecimala10FoundationE11FormatStyleV8CurrencyVMa\"\n"
 "\"$sSo9NSDecimala10FoundationE11FormatStyleV8CurrencyVMa\":\n"
-"  leaq fi_md_17(%rip), %rax\n"
+"  leaq fi_md_8(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -1162,42 +576,6 @@ __asm__(
 "  popq %rax\n"
 "  popq %rbp\n"
 "  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringVACycfC\"\n"
-"\"$s10Foundation16AttributedStringVACycfC\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  call fi_attr_empty\n"
-"  popq %rbp\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV2peoiyyACz_ACtFZ\"\n"
-"\"$s10Foundation16AttributedStringV2peoiyyACz_ACtFZ\":\n"
-"  movq %rdi, %rsi\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_attr_append\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV13stringLiteralACSS_tcfC\"\n"
-"\"$s10Foundation16AttributedStringV13stringLiteralACSS_tcfC\":\n"
-"  jmp fi_attr_from_sw\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV1poiyA2C_ACtFZ\"\n"
-"\"$s10Foundation16AttributedStringV1poiyA2C_ACtFZ\":\n"
-"  jmp fi_attr_concat\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation16AttributedStringV_10attributesACSs_AA18AttributeContainerVtcfC\"\n"
-"\"$s10Foundation16AttributedStringV_10attributesACSs_AA18AttributeContainerVtcfC\":\n"
-"  jmp fi_attr_from_sw\n"
 );
 __asm__(
 ".text\n"
@@ -1235,7 +613,7 @@ __asm__(
 ".text\n"
 ".globl \"$s10Foundation20PersonNameComponentsVMa\"\n"
 "\"$s10Foundation20PersonNameComponentsVMa\":\n"
-"  leaq fi_md_18(%rip), %rax\n"
+"  leaq fi_md_9(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -1252,68 +630,6 @@ __asm__(
 "  movq %rdi, %rsi\n"
 "  movq %r13, %rdi\n"
 "  jmp fi_plist_set_format\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV13dateSeparatoryA2E0bG0OF\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV13dateSeparatoryA2E0bG0OF\":\n"
-"  movq %rdi, %rdx\n"
-"  movq %r13, %rdi\n"
-"  xor %esi, %esi\n"
-"  jmp fi_style_iso_sep\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV3dayAEyF\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV3dayAEyF\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  movq %r13, %rdi\n"
-"  movl $2, %esi\n"
-"  call fi_style_iso_part\n"
-"  popq %rbp\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV5monthAEyF\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV5monthAEyF\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  movq %r13, %rdi\n"
-"  movl $1, %esi\n"
-"  call fi_style_iso_part\n"
-"  popq %rbp\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV4yearAEyF\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV4yearAEyF\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  movq %r13, %rdi\n"
-"  movl $0, %esi\n"
-"  call fi_style_iso_part\n"
-"  popq %rbp\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation11FormatStylePA2A4DateV07ISO8601bC0VRszrlE7iso8601AGvgZ\"\n"
-"\"$s10Foundation11FormatStylePA2A4DateV07ISO8601bC0VRszrlE7iso8601AGvgZ\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  call fi_style_iso_default\n"
-"  popq %rbp\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV0B9SeparatorOMa\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV0B9SeparatorOMa\":\n"
-"  leaq fi_md_19(%rip), %rax\n"
-"  ret\n"
 );
 __asm__(
 ".text\n"
@@ -1348,21 +664,21 @@ __asm__(
 ".text\n"
 ".globl \"$s10Foundation16AttributedStringV22MarkdownParsingOptionsVMa\"\n"
 "\"$s10Foundation16AttributedStringV22MarkdownParsingOptionsVMa\":\n"
-"  leaq fi_md_20(%rip), %rax\n"
+"  leaq fi_md_10(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
 ".text\n"
 ".globl \"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV17InterpretedSyntaxOMa\"\n"
 "\"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV17InterpretedSyntaxOMa\":\n"
-"  leaq fi_md_21(%rip), %rax\n"
+"  leaq fi_md_11(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
 ".text\n"
 ".globl \"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV13FailurePolicyOMa\"\n"
 "\"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV13FailurePolicyOMa\":\n"
-"  leaq fi_md_22(%rip), %rax\n"
+"  leaq fi_md_12(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -1371,52 +687,6 @@ __asm__(
 "\"$s10Foundation20PersonNameComponentsV19_bridgeToObjectiveCSo08NSPersoncD0CyF\":\n"
 "  xor %eax, %eax\n"
 "  xor %edx, %edx\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV13dateSeparator0f4TimeG004timeG00i4ZoneG026includingFractionalSeconds0iJ0A2E0bG0O_AE0bhG0OAE0hG0OAE0hjG0OSbAA0hJ0VtcfC\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV13dateSeparator0f4TimeG004timeG00i4ZoneG026includingFractionalSeconds0iJ0A2E0bG0O_AE0bhG0OAE0hG0OAE0hjG0OSbAA0hJ0VtcfC\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  call fi_style_iso_full\n"
-"  popq %rbp\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV0B13TimeSeparatorOMa\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV0B13TimeSeparatorOMa\":\n"
-"  leaq fi_md_23(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV13TimeSeparatorOMa\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV13TimeSeparatorOMa\":\n"
-"  leaq fi_md_24(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$s10Foundation4DateV18ISO8601FormatStyleV17TimeZoneSeparatorOMa\"\n"
-"\"$s10Foundation4DateV18ISO8601FormatStyleV17TimeZoneSeparatorOMa\":\n"
-"  leaq fi_md_25(%rip), %rax\n"
-"  ret\n"
-);
-__asm__(
-".text\n"
-".globl \"$sSy10FoundationE16localizedCompareySo18NSComparisonResultVqd__SyRd__lF\"\n"
-"\"$sSy10FoundationE16localizedCompareySo18NSComparisonResultVqd__SyRd__lF\":\n"
-"  pushq %rbp\n"
-"  movq %rsp, %rbp\n"
-"  movq %rdi, %rdx\n"
-"  movq %rsi, %rcx\n"
-"  movq %r13, %rdi\n"
-"  movq %r14, %rsi\n"
-"  movl $0, %r8d\n"
-"  call fi_str_cmp_sw\n"
-"  popq %rbp\n"
 "  ret\n"
 );
 __asm__(
@@ -1459,7 +729,7 @@ __asm__(
 ".text\n"
 ".globl \"$s10Foundation30NumberFormatStyleConfigurationO8NotationVMa\"\n"
 "\"$s10Foundation30NumberFormatStyleConfigurationO8NotationVMa\":\n"
-"  leaq fi_md_26(%rip), %rax\n"
+"  leaq fi_md_13(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -1497,22 +767,6 @@ __asm__(
 );
 __asm__(
 ".text\n"
-".globl \"$s10Foundation16AttributedStringV6appendyyxAA0bC8ProtocolRzlF\"\n"
-"\"$s10Foundation16AttributedStringV6appendyyxAA0bC8ProtocolRzlF\":\n"
-"  movq %rdi, %rsi\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_attr_append\n"
-);
-__asm__(
-".text\n"
-".globl \"$sSz10FoundationE9formattedy12FormatOutputQyd__qd__0C5InputQyd__RszAA0C5StyleRd__lF\"\n"
-"\"$sSz10FoundationE9formattedy12FormatOutputQyd__qd__0C5InputQyd__RszAA0C5StyleRd__lF\":\n"
-"  movq %rdi, %rsi\n"
-"  movq %r13, %rdi\n"
-"  jmp fi_int_format_obj\n"
-);
-__asm__(
-".text\n"
 ".globl \"$s10Foundation18IntegerFormatStyleV4sign8strategyACyxGAA06NumbercD13ConfigurationO19SignDisplayStrategyV_tF\"\n"
 "\"$s10Foundation18IntegerFormatStyleV4sign8strategyACyxGAA06NumbercD13ConfigurationO19SignDisplayStrategyV_tF\":\n"
 "  movq %rdi, %rsi\n"
@@ -1527,15 +781,9 @@ __asm__(
 );
 __asm__(
 ".text\n"
-".globl \"$s10Foundation18IntegerFormatStyleV6localeACyxGAA6LocaleV_tcfC\"\n"
-"\"$s10Foundation18IntegerFormatStyleV6localeACyxGAA6LocaleV_tcfC\":\n"
-"  jmp fi_style_int_locale\n"
-);
-__asm__(
-".text\n"
 ".globl \"$s10Foundation30NumberFormatStyleConfigurationO19SignDisplayStrategyVMa\"\n"
 "\"$s10Foundation30NumberFormatStyleConfigurationO19SignDisplayStrategyVMa\":\n"
-"  leaq fi_md_27(%rip), %rax\n"
+"  leaq fi_md_14(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -1633,7 +881,7 @@ __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV19IntervalFormatStyleVMa\"\n"
 "\"$s10Foundation4DateV19IntervalFormatStyleVMa\":\n"
-"  leaq fi_md_28(%rip), %rax\n"
+"  leaq fi_md_15(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -1754,7 +1002,7 @@ __asm__(
 ".text\n"
 ".globl \"$s10Foundation30NumberFormatStyleConfigurationO9PrecisionVMa\"\n"
 "\"$s10Foundation30NumberFormatStyleConfigurationO9PrecisionVMa\":\n"
-"  leaq fi_md_29(%rip), %rax\n"
+"  leaq fi_md_16(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -1944,35 +1192,35 @@ __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV11FormatStyleV6SymbolV7WeekdayVMa\"\n"
 "\"$s10Foundation4DateV11FormatStyleV6SymbolV7WeekdayVMa\":\n"
-"  leaq fi_md_30(%rip), %rax\n"
+"  leaq fi_md_17(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV11FormatStyleV6SymbolV4HourVMa\"\n"
 "\"$s10Foundation4DateV11FormatStyleV6SymbolV4HourVMa\":\n"
-"  leaq fi_md_31(%rip), %rax\n"
+"  leaq fi_md_18(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV11FormatStyleV6SymbolV4HourV9AMPMStyleVMa\"\n"
 "\"$s10Foundation4DateV11FormatStyleV6SymbolV4HourV9AMPMStyleVMa\":\n"
-"  leaq fi_md_32(%rip), %rax\n"
+"  leaq fi_md_19(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
 ".text\n"
 ".globl \"$s10Foundation32FormatStyleCapitalizationContextVMa\"\n"
 "\"$s10Foundation32FormatStyleCapitalizationContextVMa\":\n"
-"  leaq fi_md_33(%rip), %rax\n"
+"  leaq fi_md_20(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
 ".text\n"
 ".globl \"$s10Foundation4DateV11FormatStyleV6SymbolV6MinuteVMa\"\n"
 "\"$s10Foundation4DateV11FormatStyleV6SymbolV6MinuteVMa\":\n"
-"  leaq fi_md_34(%rip), %rax\n"
+"  leaq fi_md_21(%rip), %rax\n"
 "  ret\n"
 );
 __asm__(
@@ -1988,35 +1236,14 @@ const fi_cat_row fi_catalog[] = {
   {"$s10Foundation11MeasurementVyxGSQAAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
   {"$s10Foundation11MeasurementVyxGSHAAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
   {"$s10Foundation11MeasurementVMn", 0, ""},
-  {"$s10Foundation16AttributedStringVMn", 0, ""},
   {"$sSo9NSDecimalas23CustomStringConvertible10FoundationMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
-  {"$s10Foundation16AttributedStringVAA0bC8ProtocolAAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
-  {"$s10Foundation16AttributedStringVMa", 0, ""},
-  {"$s10Foundation16AttributedStringV5IndexVSLAAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
-  {"$s10Foundation16AttributedStringV5IndexVMa", 0, ""},
-  {"$s10Foundation16AttributedStringV5IndexVSQAAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
-  {"$s10Foundation16AttributedStringV13CharacterViewVSlAAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
-  {"$s10Foundation16AttributedStringV13CharacterViewVMa", 0, ""},
-  {"$s10Foundation16AttributedStringV4RunsV5IndexVSQAAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
-  {"$s10Foundation16AttributedStringV4RunsV5IndexVMa", 0, ""},
-  {"$s10Foundation16AttributedStringV4RunsVMa", 0, ""},
-  {"$s10Foundation16AttributedStringV4RunsVSlAAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
-  {"$s10Foundation16AttributedStringV4RunsVMn", 0, ""},
-  {"$s10Foundation16AttributedStringV5IndexVMn", 0, ""},
-  {"$s10Foundation16AttributedStringV13CharacterViewVMn", 0, ""},
   {"$s10Foundation11JSONEncoderC20DateEncodingStrategyO9formattedyAESo15NSDateFormatterCcAEmFWC", 0, ""},
   {"$s10Foundation11JSONDecoderC20DateDecodingStrategyO9formattedyAESo15NSDateFormatterCcAEmFWC", 0, ""},
   {"$s10Foundation4DateV11FormatStyleVAadAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
   {"$s10Foundation4DateV11FormatStyleVMa", 0, ""},
   {"$s10Foundation20PersonNameComponentsVMn", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleVAA0dE0AAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
-  {"$s10Foundation4DateV18ISO8601FormatStyleVMa", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV0B9SeparatorO4dashyA2GmFWC", 0, ""},
   {"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV13FailurePolicyO10throwErroryA2GmFWC", 0, ""},
   {"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV17InterpretedSyntaxO30inlineOnlyPreservingWhitespaceyA2GmFWC", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV17TimeZoneSeparatorO7omittedyA2GmFWC", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV13TimeSeparatorO5colonyA2GmFWC", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV0B13TimeSeparatorO8standardyA2GmFWC", 0, ""},
   {"$sSo9NSDecimala10FoundationE11FormatStyleVAcdCMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
   {"$sSo9NSDecimala10FoundationE11FormatStyleVMa", 0, ""},
   {"$s10Foundation15ListFormatStyleVyxq_GAA0cD0AAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
@@ -2025,26 +1252,8 @@ const fi_cat_row fi_catalog[] = {
   {"$s10Foundation15ListFormatStyleV5WidthOMn", 0, ""},
   {"$s10Foundation15ListFormatStyleV0B4TypeOMn", 0, ""},
   {"$s10Foundation15ListFormatStyleVMn", 0, ""},
-  {"$s10Foundation15AttributeScopesO0A10AttributesV04LinkB0ON", 0, ""},
-  {"$s10Foundation15AttributeScopesO0A10AttributesV04LinkB0OAA19AttributedStringKeyAAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
-  {"$s10Foundation15AttributeScopesO0A10AttributesVMn", 0, ""},
-  {"$s10Foundation15AttributeScopesO0A10AttributesV04LinkB0OMn", 0, ""},
-  {"$s10Foundation15AttributeScopesO0A10AttributesV4linkAE04LinkB0Ovg", 0, ""},
-  {"$s10Foundation15AttributeScopesO0A10AttributesV4linkAE04LinkB0OvpMV", 0, ""},
-  {"$s10Foundation22AttributeDynamicLookupO13dynamicMemberxs7KeyPathCyAA0B6ScopesO0A10AttributesVxG_tcAA016AttributedStringG0Rzluig", 0, ""},
-  {"$s10Foundation22AttributeDynamicLookupO13dynamicMemberxs7KeyPathCyAA0B6ScopesO0A10AttributesVxG_tcAA016AttributedStringG0RzluipMV", 1, "KeyPath de escrita: o layout do compiler não está neste processo; o ponteiro devolvido é um slot estável e não é lido"},
-  {"$s10Foundation18IntegerFormatStyleVyxGAA0cD0AAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
-  {"$s10Foundation18IntegerFormatStyleVMn", 0, ""},
   {"$sSo22NSMeasurementFormatterC10FoundationE6string4fromSSAC11MeasurementVyxG_tSo6NSUnitCRbzlF", 0, ""},
   {"$s10Foundation11MeasurementVMa", 0, ""},
-  {"$s10Foundation16AttributedStringV13dynamicMember5ValueQzSgs7KeyPathCyAA22AttributeDynamicLookupOxG_tcAA0bcG0Rzluis", 0, ""},
-  {"$s10Foundation16AttributedStringV_10attributesACSS_AA18AttributeContainerVtcfC", 0, ""},
-  {"$s10Foundation18AttributeContainerVACycfC", 0, ""},
-  {"$s10Foundation18AttributeContainerVMa", 0, ""},
-  {"$sSS10FoundationE25localizedStringWithFormatyS2S_s7CVarArg_pdtFZ", 0, ""},
-  {"$sSy10FoundationE15appendingFormatySSqd___s7CVarArg_pdtSyRd__lF", 0, ""},
-  {"$sSy10FoundationE24localizedStandardCompareySo18NSComparisonResultVqd__SyRd__lF", 0, ""},
-  {"$sSy10FoundationE31localizedCaseInsensitiveCompareySo18NSComparisonResultVqd__SyRd__lF", 0, ""},
   {"$sSo9NSDecimala10FoundationE36_unconditionallyBridgeFromObjectiveCyABSo0A6NumberCSgFZ", 1, "NSDecimalNumber guarda double, não os 20 bytes do NSDecimal"},
   {"$sSo9NSDecimala10FoundationEyABSucfC", 0, ""},
   {"$sSo9NSDecimala10FoundationEyABs5Int64VcfC", 0, ""},
@@ -2053,24 +1262,13 @@ const fi_cat_row fi_catalog[] = {
   {"$sSo9NSDecimala10FoundationE8exponentSivg", 0, ""},
   {"$s10Foundation3powySo9NSDecimalaAD_SitF", 0, ""},
   {"$sSo9NSDecimala10FoundationE6negateyyF", 0, ""},
-  {"$s10Foundation16AttributedStringV4RunsV3RunV13dynamicMember5ValueQzSgs7KeyPathCyAA22AttributeDynamicLookupOxG_tcAA0bcI0Rzluig", 0, ""},
   {"$sSo8_NSRangeV10FoundationE_2inABx_q_tcSXRzAC24AttributedStringProtocolR_AC0dE0V5IndexV5BoundRtzr0_lufC", 0, ""},
-  {"$s10Foundation16AttributedStringV4RunsV3RunV5rangeSnyAC5IndexVGvg", 0, ""},
-  {"$sSS10FoundationEySSs5SliceVyAA16AttributedStringV13CharacterViewVGcfC", 0, ""},
-  {"$s10Foundation19AttributedSubstringV10charactersAA0B6StringV13CharacterViewVvg", 0, ""},
-  {"$s10Foundation16AttributedStringVyAA0B9SubstringVxcSXRzAC5IndexV5BoundRtzluig", 0, ""},
-  {"$s10Foundation19AttributedSubstringVMa", 0, ""},
-  {"$s10Foundation16AttributedStringV4RunsV3RunVMa", 0, ""},
-  {"$s10Foundation16AttributedStringV4runsAC4RunsVvg", 0, ""},
-  {"$s10Foundation16AttributedStringV10charactersAC13CharacterViewVvg", 0, ""},
-  {"$s10Foundation18AttributeContainerV13dynamicMember5ValueQzSgs7KeyPathCyAA0B13DynamicLookupOxG_tcAA016AttributedStringG0Rzluis", 0, ""},
   {"$s10Foundation4DateV11FormatStyleV04TimeD0V9shortenedAGvgZ", 0, ""},
   {"$s10Foundation4DateV11FormatStyleV0bD0V7omittedAGvgZ", 0, ""},
   {"$s10Foundation4DateV11FormatStyleV04TimeD0V7omittedAGvgZ", 0, ""},
   {"$s10Foundation4DateV11FormatStyleV0bD0V11abbreviatedAGvgZ", 0, ""},
   {"$s10Foundation4DateV11FormatStyleV0bD0VMa", 0, ""},
   {"$s10Foundation4DateV11FormatStyleV04TimeD0VMa", 0, ""},
-  {"$s10Foundation4DateV9formattedy12FormatOutputQzxAA0D5StyleRzAC0D5InputRtzlF", 0, ""},
   {"$s10Foundation4DateV11FormatStyleV4yearyA2E6SymbolV4YearVF", 0, ""},
   {"$s10Foundation4DateV11FormatStyleV6SymbolV4YearV13defaultDigitsAIvgZ", 0, ""},
   {"$s10Foundation4DateV11FormatStyleV3dayyA2E6SymbolV3DayVF", 0, ""},
@@ -2085,11 +1283,6 @@ const fi_cat_row fi_catalog[] = {
   {"$sSo9NSDecimala10FoundationE11FormatStyleV8CurrencyVMa", 0, ""},
   {"$sSo9NSDecimala10FoundationE11FormatStyleV8CurrencyV4code6localeAGSS_AC6LocaleVtcfC", 0, ""},
   {"$sSo9NSDecimala10FoundationE6string6localeABSgSSh_AC6LocaleVSghtcfC", 0, ""},
-  {"$s10Foundation16AttributedStringVACycfC", 0, ""},
-  {"$s10Foundation16AttributedStringV2peoiyyACz_ACtFZ", 0, ""},
-  {"$s10Foundation16AttributedStringV13stringLiteralACSS_tcfC", 0, ""},
-  {"$s10Foundation16AttributedStringV1poiyA2C_ACtFZ", 0, ""},
-  {"$s10Foundation16AttributedStringV_10attributesACSs_AA18AttributeContainerVtcfC", 0, ""},
   {"$s10Foundation20PersonNameComponentsV06familyC0SSSgvg", 0, ""},
   {"$s10Foundation20PersonNameComponentsV36_unconditionallyBridgeFromObjectiveCyACSo08NSPersoncD0CSgFZ", 1, "NSPersonNameComponents não é classe deste libSystem"},
   {"$s10Foundation20PersonNameComponentsV06middleC0SSSgvg", 0, ""},
@@ -2097,12 +1290,6 @@ const fi_cat_row fi_catalog[] = {
   {"$s10Foundation20PersonNameComponentsVMa", 0, ""},
   {"$sSo9NSDecimala10FoundationE11FormatStyleV8CurrencyV12currencyCodeSSvg", 0, ""},
   {"$s10Foundation19PropertyListEncoderC12outputFormatSo010NSPropertycF0VvsTj", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV13dateSeparatoryA2E0bG0OF", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV3dayAEyF", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV5monthAEyF", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV4yearAEyF", 0, ""},
-  {"$s10Foundation11FormatStylePA2A4DateV07ISO8601bC0VRszrlE7iso8601AGvgZ", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV0B9SeparatorOMa", 0, ""},
   {"$s10Foundation20PersonNameComponentsV9formattedSSyF", 0, ""},
   {"$sSo18NSAttributedStringC10FoundationEyAbC010AttributedB0VcfC", 0, ""},
   {"$sSo18NSAttributedStringC10FoundationE8markdown7options7baseURLABSS_AC010AttributedB0V22MarkdownParsingOptionsVAC0G0VSgtKcfC", 0, ""},
@@ -2111,11 +1298,6 @@ const fi_cat_row fi_catalog[] = {
   {"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV17InterpretedSyntaxOMa", 0, ""},
   {"$s10Foundation16AttributedStringV22MarkdownParsingOptionsV13FailurePolicyOMa", 0, ""},
   {"$s10Foundation20PersonNameComponentsV19_bridgeToObjectiveCSo08NSPersoncD0CyF", 1, "NSPersonNameComponents não é classe deste libSystem"},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV13dateSeparator0f4TimeG004timeG00i4ZoneG026includingFractionalSeconds0iJ0A2E0bG0O_AE0bhG0OAE0hG0OAE0hjG0OSbAA0hJ0VtcfC", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV0B13TimeSeparatorOMa", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV13TimeSeparatorOMa", 0, ""},
-  {"$s10Foundation4DateV18ISO8601FormatStyleV17TimeZoneSeparatorOMa", 0, ""},
-  {"$sSy10FoundationE16localizedCompareySo18NSComparisonResultVqd__SyRd__lF", 0, ""},
   {"$s10Foundation20ParseableFormatStylePA2A4DateV0cD0VRszrlE8dateTimeAGvgZ", 0, ""},
   {"$sSo9NSDecimala10FoundationE11FormatStyleV8notationyAeC06NumbercD13ConfigurationO8NotationVF", 0, ""},
   {"$s10Foundation30NumberFormatStyleConfigurationO8NotationV11compactNameAEvgZ", 0, ""},
@@ -2125,11 +1307,8 @@ const fi_cat_row fi_catalog[] = {
   {"$sST10FoundationE9formattedy12FormatOutputQyd__qd__0C5InputQyd__RszAA0C5StyleRd__lF", 0, ""},
   {"$s10Foundation15ListFormatStyleV6localeyACyxq_GAA6LocaleVF", 0, ""},
   {"$s10Foundation11FormatStylePAAE4list4type5widthAA04ListbC0VyAA06StringC0Vqd__GAH0G4TypeOyAJqd___G_AH5WidthOyAJqd___GtAKRszSTRd__SS7ElementRtd__lFZ", 0, ""},
-  {"$s10Foundation16AttributedStringV6appendyyxAA0bC8ProtocolRzlF", 0, ""},
-  {"$sSz10FoundationE9formattedy12FormatOutputQyd__qd__0C5InputQyd__RszAA0C5StyleRd__lF", 0, ""},
   {"$s10Foundation18IntegerFormatStyleV4sign8strategyACyxGAA06NumbercD13ConfigurationO19SignDisplayStrategyV_tF", 0, ""},
   {"$s10Foundation30NumberFormatStyleConfigurationO19SignDisplayStrategyV6always13includingZeroAESb_tFZ", 0, ""},
-  {"$s10Foundation18IntegerFormatStyleV6localeACyxGAA6LocaleV_tcfC", 0, ""},
   {"$s10Foundation30NumberFormatStyleConfigurationO19SignDisplayStrategyVMa", 0, ""},
   {"$s10Foundation24FloatingPointFormatStyleV7PercentVyx_GAA0dE0AAMc", 1, "descritor de conformidade: a testemunha devolve 0 porque o índice dos requisitos do protocolo não foi confirmado com o swift-frontend"},
   {"$s10Foundation24FloatingPointFormatStyleV7PercentVMn", 0, ""},

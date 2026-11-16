@@ -50,7 +50,7 @@ $fl.compls = $fl.comp + @('-DMOS_LIBSYSTEM')   # compression.c usa o cz_raw_* de
 # os .S x86 tem versao *_arm64.S. Os fontes com a convenção Swift do x86_64 escrita à mão (self em r13, String em
 # rax/rdx, xmm) ficam fora: no processo arm64 esses tipos vêm das bibliotecas Swift arm64 (build-swift-arm64.ps1).
 $x86only = @('objc_msg.S', 'objc_tramp.S', 'sigjmp.S', 'start.S', 'tlv.S',
-    'string_fdn.c', 'foundation_swift_data.c', 'combine_link.c', 'combine_meta.c', 'combine_meta.S')
+    'combine_link.c', 'combine_meta.c', 'combine_meta.S')
 $items = @()
 function Add-Src($g, $f) { $script:items += [pscustomobject]@{ g = $g; f = $f } }
 Get-ChildItem "$ls\*" -Include *.c, *.S | Where-Object { $x86only -notcontains $_.Name -and $_.Name -notlike 'swiftui_*.c' } | ForEach-Object {

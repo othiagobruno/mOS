@@ -360,12 +360,6 @@ bash "$ROOT/tools/darwin-swift-teste.sh" "$ZIG" "$OUT/darwin-swift"
 echo "==> dispatch_block e swift_task (teste de host)"
 bash "$ROOT/tools/runtime-block-task-teste.sh" "$ZIG" "$OUT/runtime-block-task"
 
-echo "==> String, Array e Dictionary (teste de host)"
-bash "$ROOT/tools/string-fdn-teste.sh" "$ZIG" "$OUT/string-fdn"
-
-echo "==> Date, UUID, erros e Notification do Foundation Swift (teste de host)"
-bash "$ROOT/tools/fdn-tipos-teste.sh" "$ZIG" "$OUT/fdn-tipos"
-
 echo "==> Foundation sobre a ICU: locale, fuso, calendário e formatters (teste de host)"
 bash "$ROOT/tools/fdn-i18n-teste.sh" "$OUT/fdn-i18n"
 

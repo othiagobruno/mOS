@@ -1631,10 +1631,8 @@ AR0(dt_date) AR1(dt_since_now, double) AR1(dt_since_1970, double) AR3(nn_with, i
 static id dt_distant_future(id cls, SEL c) { return dt_since_1970_ar(cls, c, 64092211200.0); }
 static id dt_distant_past(id cls, SEL c) { return dt_since_1970_ar(cls, c, -62135769600.0); }
 
-void fdn_swift_data_init(void);
 void cx_foundation_init(void) {
 #if defined(__x86_64__)
-    fdn_swift_data_init();              /* foundation_swift_data.c: convenção Swift do x86_64, fora do libSystem arm64 */
 #endif
     cx_define_class(&NSObject_c, &NSObject_m, "NSObject", 0, 0);
     CM(NSObject, "alloc", o_alloc); CM(NSObject, "allocWithZone:", o_alloc_zone); CM(NSObject, "new", o_new);
