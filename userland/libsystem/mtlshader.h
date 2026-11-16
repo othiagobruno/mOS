@@ -57,6 +57,16 @@ void msl_tex_store(const msl_tex_t *t, int x, int y, int z, int slice, int lvl, 
 int msl_fmt_isint(int fmt);
 void msl_tex_sample(const msl_tex_t *t, const msl_samp_t *s, const double *coord, int ncoord, int slice, double lod, double out[4]);
 
+/* derivadas por reexecução (OpenGL): o fragmento roda antes nos vizinhos x+1 e y+1 gravando, na ordem das
+ * chamadas, os argumentos de dfdx/dfdy/fwidth e as coordenadas das amostragens sem lod explícita; na execução
+ * real cada chamada usa a diferença */
+#define MSL_DERIV_MAX 64
+typedef struct msl_deriv {
+    int mode;                  /* 0 nada, 1 grava o vizinho x, 2 grava o vizinho y, 3 aplica */
+    int k;                     /* próxima chamada */
+    int n[2];
+    double v[2][MSL_DERIV_MAX][4];
+} msl_deriv_t;
 /* contexto de uma execução */
 typedef struct msl_ctx {
     void *buf[31];             /* [[buffer(n)]] já com o deslocamento */
@@ -72,6 +82,7 @@ typedef struct msl_ctx {
     float point_coord[2];
     u32 tpig[3], tpitg[3], tgpig[3], tptg[3], tpg[3], tgpg[3], tiitg;
     int discarded;
+    msl_deriv_t *deriv;        /* 0: dfdx = 0 e lod implícita 0 */
 } msl_ctx_t;
 
 typedef struct msl_lib msl_lib_t;
