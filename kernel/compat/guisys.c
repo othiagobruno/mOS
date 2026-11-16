@@ -973,6 +973,7 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         if (a == DEV_INPUT_TO_PID) return input_to_pid(b, c, d);
         if (a == DEV_FOCUS_PID) return focus_pid((int)b);
         if (a == DEV_FRONT_PID) return front_pid();
+        if (a >= DEV_CAMERA_INFO && a <= DEV_CAMERA_CLOSE) { extern i64 uvc_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d); return uvc_syscall(p, a, b, c, d); }   /* câmeras USB (kernel/dev/uvc.c) */
         /* 22 e 23 são a faixa de status e o ocultar do Dock; 21 continua sendo a captura de áudio */
         if (a == DEV_STATUS || a == DEV_DOCK) return gui_status_syscall(p, a, b, c, d);
         /* números acima dos do Bluetooth que mesmo assim são do gamepad.c: áudio e a lista de janelas */

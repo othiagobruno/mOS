@@ -188,7 +188,7 @@ pci_dev_t *xhci_pci_of(usb_dev_t *d);   /* controlador PCI ao qual o dispositivo
 const char *xhci_name(void *hc);
 
 /* ------------------------------------------------------------------ drivers */
-extern const usb_driver_t usb_hid_driver, usb_hub_driver, usb_msc_driver, usb_bt_driver, usb_xinput_driver;
+extern const usb_driver_t usb_hid_driver, usb_hub_driver, usb_msc_driver, usb_bt_driver, usb_xinput_driver, usb_uvc_driver;
 /* controles de jogo (dev/gamepad.c): registro para o GameController.framework */
 int  gamepad_attach(const char *name, u16 vid, u16 pid, u32 kind, u32 caps, void (*rumble)(void *ctx, u8 strong, u8 weak), void *ctx);
 void gamepad_detach(int id);

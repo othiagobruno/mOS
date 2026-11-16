@@ -94,6 +94,34 @@ typedef struct {
     char bundle[128];              /* caminho do .app, quando o processo veio de um bundle */
 } gui_cgwindow_t;
 int compat_gui_cgwindow(int index, gui_cgwindow_t *out);
+/* câmeras USB (UVC, kernel/dev/uvc.c), para o AVFoundation (AVCaptureDevice) e o CoreMediaIO:
+ *   DEV_CAMERA_INFO  (índice, gui_camera_info_t *)                      1 = preencheu, 0 = acabou a lista
+ *   DEV_CAMERA_OPEN  (índice, largura | altura << 32, fourcc | intervalo << 32)  0 ou -errno; 0 nos campos = o padrão
+ *                    da câmera; fourcc 'YUY2' 'NV12' 'MJPG' (bytes em ordem, como no GUID do UVC); intervalo em 100 ns
+ *   DEV_CAMERA_READ  (índice, buf, capacidade) -> bytes do quadro mais novo (YUY2/NV12 cru ou JPEG), 0 = nada novo
+ *   DEV_CAMERA_CLOSE (índice)                                            só quem abriu; também ao sair do processo */
+#define DEV_CAMERA_INFO 28
+#define DEV_CAMERA_OPEN 29
+#define DEV_CAMERA_READ 30
+#define DEV_CAMERA_CLOSE 31
+#define GUI_CAMERA_MODES 32
+typedef struct {
+    unsigned int fourcc;
+    unsigned short width, height;
+    unsigned int min_interval, max_interval, def_interval;   /* 100 ns */
+    unsigned int max_size;                                     /* bytes do maior quadro */
+} gui_camera_mode_t;
+typedef struct {
+    char name[64];
+    char path[16];                 /* porta USB ("2" ou "2.3"): identificador estável enquanto ligada */
+    unsigned short vid, pid;
+    int nmode;
+    gui_camera_mode_t mode[GUI_CAMERA_MODES];
+    int open_pid;                  /* 0 = livre */
+    gui_camera_mode_t cur;         /* o que foi negociado no OPEN */
+    unsigned int cur_interval;
+    unsigned long long frames, dropped;
+} gui_camera_info_t;
 #define DEV_AUDIO_READ 21     /* (amostras i16 estéreo 48 kHz, quadros) -> quadros copiados da captura; 0 = anel vazio ou sem entrada */
 typedef struct {
     unsigned int queued, capacity, rate, channels;

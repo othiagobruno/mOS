@@ -1246,6 +1246,7 @@ static void finish(process_t *p, int code) {
     { extern void net_user_exit(process_t *p); net_user_exit(p); }   /* conexões TCP do processo (kernel/net/usersock.c) */
     { extern void webview_user_exit(process_t *p); webview_user_exit(p); }   /* vistas do WKWebView (kernel/web/webview.c) */
     { extern void audio_stream_proc_exit(int pid); audio_stream_proc_exit(p->pid); }   /* streams de áudio (kernel/dev/sound.c) */
+    { extern void uvc_proc_exit(int pid); uvc_proc_exit(p->pid); }   /* câmeras USB abertas (kernel/dev/uvc.c) */
     { extern void gpu_proc_exit(process_t *p); gpu_proc_exit(p); }   /* BOs, VM de GPU, contextos e fences (kernel/dev/gpu_abi.c) */
     { extern void lazy_exit(process_t *p); lazy_exit(p); orphan_gc(); }           /* faixas de memória sob demanda (kernel/mm/lazy.c) */
     for (process_t *c = procs; c; c = c->next) if (c->ppid == p->pid) c->ppid = 0;   /* órfãos */
