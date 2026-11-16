@@ -2328,6 +2328,7 @@ void cx_avfaudio_init(void) {
     { extern void cx_cmio_init(void); cx_cmio_init(); }   /* CoreMediaIO: cmio.c */
     { extern void cx_auv3_init(void); cx_auv3_init(); }   /* AUAudioUnit (v3): auv3.c */
     { extern void cx_avcomposition_init(void); cx_avcomposition_init(); }   /* AVMutableComposition: avcomposition.c */
+    { extern void cx_videocomposition_init(void); cx_videocomposition_init(); }   /* AVVideoComposition: avvideocomp.c */
     { extern void cx_mediaplayer_init(void); cx_mediaplayer_init(); }   /* MediaPlayer: mediaplayer.c (antes da casca do vscode_fwclasses) */
     { extern void cx_avcapture_classes_init(void); cx_avcapture_classes_init(); }
     { extern void cx_sck_classes_init(void); cx_sck_classes_init(); }

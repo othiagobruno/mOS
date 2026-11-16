@@ -193,6 +193,94 @@ static int reencode(const char *in, const char *out, int container, int fast, do
     if (!r && ctl) ctl->progress = 1;
     return r;
 }
+#include "avvcomp_desc.h"
+void *malloc(size_t n);
+void free(void *p);
+#include "avcap_conv.h"
+int CVPixelBufferCreateWithPlanarBytes(void *a, u64 w, u64 h, u32 fmt, void *d, u64 ds, u64 np, void **pb, u64 *pw, u64 *ph, u64 *pr,
+                                       void *rel, void *ctx, id attrs, void **out);
+static void vc_free(void *ctx, const void *d, u64 sz, u64 np, const void **pl) { (void)d; (void)sz; (void)np; (void)pl; free(ctx); }
+/* AVVideoComposition: cada quadro de renderSize no ritmo de frameDuration, as camadas da instrução do momento (a de
+ * cima por último), do vídeo da origem; vídeo novo em H.264 + áudio copiado da origem */
+static int vcomp_render(const char *in, int vtrack, const char *out, int container, int fast, double start, double dur, const vcomp_desc *vd,
+                        int with_audio, avx_ctl *ctl, const char **why) {
+    int err = 0, tw = vd->w & ~1, th = vd->h & ~1;
+    avv_t *v = avv_open_path(in, &err);
+    if (!v) { *why = "O vídeo de origem não pôde ser decodificado."; return AVX_ERR_CODEC; }
+    double total = 0, fps = 30; int sw, sh; uint32_t ns;
+    avv_info(v, &sw, &sh, &total, &fps, &ns);
+    double end = dur >= 0 ? start + dur : total;
+    char tmp[1100];
+    snprintf(tmp, sizeof tmp, "%s.mos-video.mp4", out);
+    unlink(tmp);
+    id e = 0;
+    id turl = MSG(id, (id)cx_class_named("NSURL"), "fileURLWithPath:", cx_str(tmp));
+    id w = MSG(id, (id)cx_class_named("AVAssetWriter"), "assetWriterWithURL:fileType:error:", turl, cx_str("public.mpeg-4"), &e);
+    id vs = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
+    MSG(void, vs, "setObject:forKey:", cx_str("avc1"), cx_str("AVVideoCodecKey"));
+    MSG(void, vs, "setObject:forKey:", cx_num_i(tw), cx_str("Width"));
+    MSG(void, vs, "setObject:forKey:", cx_num_i(th), cx_str("Height"));
+    id vin = w ? MSG(id, (id)cx_class_named("AVAssetWriterInput"), "assetWriterInputWithMediaType:outputSettings:", cx_str("vide"), vs) : 0;
+    id ad = vin ? MSG(id, (id)cx_class_named("AVAssetWriterInputPixelBufferAdaptor"),
+                      "assetWriterInputPixelBufferAdaptorWithAssetWriterInput:sourcePixelBufferAttributes:", vin, (id)0) : 0;
+    if (!ad || !MSG(BOOL, w, "canAddInput:", vin)) { avv_close(v); *why = "O codificador H.264 não aceitou o renderSize."; return AVX_ERR_CODEC; }
+    MSG(void, w, "addInput:", vin);
+    if (!MSG0(BOOL, w, "startWriting")) { avv_close(v); *why = "Não foi possível gravar o arquivo temporário."; return AVX_ERR_WRITE; }
+    ((void (*)(id, SEL, rcmt_t))objc_msgSend)(w, sel_registerName("startSessionAtSourceTime:"), rsecs(0));
+    uint32_t *canvas = malloc((size_t)tw * th * 4);
+    int status = AVX_OK, frames = 0;
+    for (double t = start; canvas && t < end - 1e-9; t += vd->frame) {
+        if (ctl && ctl->cancel) { status = AVX_ERR_CANCEL; break; }
+        const vcd_inst *ins = 0;
+        for (int i = 0; i < vd->ninst; i++) if (t >= vd->inst[i].t0 - 1e-9 && t < vd->inst[i].t1 - 1e-9) { ins = &vd->inst[i]; break; }
+        uint32_t bg = ins ? ins->bg : 0xFF000000u;
+        for (long i = 0; i < (long)tw * th; i++) canvas[i] = bg;
+        avv_frame f;
+        uint8_t *px = 0; int fw = 0, fh = 0;
+        if (ins && !avv_frame_at(v, t, &f) && !avv_to_bgra(&f, 0, 0, 0, &px, &fw, &fh)) {
+            for (int li = ins->nlayers - 1; li >= 0; li--) {   /* a primeira da lista fica por cima */
+                const vc_layer *l = &ins->layers[li];
+                if (l->track && vtrack && l->track != vtrack) continue;   /* só a faixa de vídeo da origem */
+                vc_rect cr;
+                int hc = vc_layer_crop(l, t, &cr);
+                vc_composite(canvas, tw, th, (const uint32_t *)px, fw, fh, vc_layer_transform(l, t), vc_layer_opacity(l, t), hc ? &cr : 0);
+            }
+        }
+        free(px);
+        size_t bpr[3], rows[3];
+        avc_planes(AVC_FMT_420V, tw, th, bpr, rows);
+        size_t total_b = bpr[0] * rows[0] + bpr[1] * rows[1];
+        uint8_t *mem = malloc(total_b);
+        if (!mem) { status = AVX_ERR_WRITE; break; }
+        uint8_t *pl[2] = {mem, mem + bpr[0] * rows[0]};
+        avc_convert(AVC_SRC_BGRA, (const uint8_t *)canvas, (size_t)tw * th * 4, tw, th, AVC_FMT_420V, pl, bpr);
+        void *pbase[2] = {pl[0], pl[1]}, *pb = 0;
+        u64 pw[2] = {(u64)tw, (u64)tw / 2}, ph[2] = {rows[0], rows[1]}, pr[2] = {bpr[0], bpr[1]};
+        CVPixelBufferCreateWithPlanarBytes(0, (u64)tw, (u64)th, AVC_FMT_420V, mem, total_b, 2, pbase, pw, ph, pr, (void *)vc_free, mem, 0, &pb);
+        if (!pb) { free(mem); status = AVX_ERR_WRITE; break; }
+        BOOL ok = ((BOOL (*)(id, SEL, void *, rcmt_t))objc_msgSend)(ad, sel_registerName("appendPixelBuffer:withPresentationTime:"), pb, rsecs(t - start));
+        objc_release((id)pb);
+        if (!ok) { status = AVX_ERR_WRITE; *why = "O codificador H.264 recusou um quadro."; break; }
+        frames++;
+        if (ctl && end > start) ctl->progress = (float)(0.9 * (t - start) / (end - start));
+    }
+    free(canvas);
+    avv_close(v);
+    MSG0(void, vin, "markAsFinished");
+    if (status != AVX_OK || !frames) { MSG0(void, w, "cancelWriting"); unlink(tmp); if (status == AVX_OK) { *why = "Nenhum quadro no intervalo."; status = AVX_ERR_EMPTY; } return status; }
+    ((void (*)(id, SEL, rcmt_t))objc_msgSend)(w, sel_registerName("endSessionAtSourceTime:"), rsecs(end - start));
+    if (!MSG0(BOOL, w, "finishWriting")) { unlink(tmp); *why = "O arquivo temporário não fechou."; return AVX_ERR_WRITE; }
+    avx_segment vseg = {tmp, 0, 0, end - start, 0}, aseg = {in, 0, start, end - start, 0};
+    avx_ctrack tr[2];
+    int n = 0;
+    tr[n++] = (avx_ctrack){AVX_VIDEO, &vseg, 1};
+    int ai = with_audio ? avx_track_index(in, AVX_AUDIO) : -1;
+    if (ai >= 0) { aseg.src_track = ai; tr[n++] = (avx_ctrack){AVX_AUDIO, &aseg, 1}; }
+    int r = avx_compose(out, container, fast, tr, n, ctl, why);
+    unlink(tmp);
+    if (!r && ctl) ctl->progress = 1;
+    return r;
+}
 int cx_avcomposition_is(id a);
 int cx_avcomposition_info(id a, int *has_video, int *has_audio, double *dur);
 int cx_avcomposition_export(id a, const char *out, int container, int fast, double start, double dur, int want, avx_ctl *ctl, const char **why);
@@ -325,9 +413,11 @@ static void *export_thread(void *arg) {
     plan_t p = {0};
     int k = x->ftype ? container_of(cx_cstr(x->ftype)) : -1;
     int is_comp = cx_avcomposition_is(x->asset);
+    static vcomp_desc vdesc;   /* grande demais para a pilha da thread */
     if ((!in && !is_comp) || probe_asset(x->asset, &inf)) fail(s, -11800, "O asset não pôde ser lido.");
     else if (!(p = plan_for(cx_cstr(x->preset), &inf)).ok) fail(s, -11820, p.why);
-    else if (x->vcomp) fail(s, -11820, "videoComposition ainda não é aplicado pelo mOS ao exportar.");
+    else if (x->vcomp && is_comp) fail(s, -11820, "videoComposition sobre AVMutableComposition ainda não é aplicado pelo mOS.");
+    else if (x->vcomp && (!inf.has_video || cx_vcomp_describe(x->vcomp, &vdesc))) fail(s, -11820, "A videoComposition não é válida (renderSize, frameDuration ou compositor próprio).");
     else if (x->audiomix) fail(s, -11820, "audioMix ainda não é aplicado pelo mOS ao exportar.");
     else if (!out) fail(s, -11800, "outputURL tem de ser um arquivo local.");
     else if (k < 0) fail(s, -11820, "outputFileType ausente ou não suportado para este preset.");
@@ -340,7 +430,14 @@ static void *export_thread(void *arg) {
         double start = secs(x->range.start), dur = -1;
         cmtime_t d = x->range.duration;
         if ((d.flags & 1) && !(d.flags & 0x1c) && d.timescale > 0) dur = secs(d);   /* sem +inf/-inf/indefinido */
-        int rc = is_comp ? cx_avcomposition_export(x->asset, out, k, x->fast, start, dur, p.want, &x->ctl, &why)
+        int vtrack = 0;
+        if (x->vcomp) {
+            id tracks = MSG(id, x->asset, "tracksWithMediaType:", cx_str("vide"));
+            id t0 = tracks && MSG0(u64, tracks, "count") ? MSG(id, tracks, "objectAtIndex:", (u64)0) : 0;
+            vtrack = t0 ? MSG0(int, t0, "trackID") : 0;
+        }
+        int rc = x->vcomp ? vcomp_render(in, vtrack, out, k, x->fast, start, dur, &vdesc, (p.want & AVX_AUDIO) && inf.has_audio, &x->ctl, &why)
+               : is_comp ? cx_avcomposition_export(x->asset, out, k, x->fast, start, dur, p.want, &x->ctl, &why)
                  : p.reencode ? reencode(in, out, k, x->fast, start, dur, p.tw, p.th, (p.want & AVX_AUDIO) && inf.has_audio, &x->ctl, &why)
                               : avx_passthrough(in, out, k, x->fast, start, dur, p.want, &x->ctl, &why);
         if (rc == AVX_ERR_CANCEL) x->status = X_CANCELLED;
