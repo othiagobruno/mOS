@@ -379,6 +379,32 @@ static int s_across(T *t, a64_u32 w) {
         s_wsc_rax(t, d);
         return 1;
     }
+    if (u && (op == 0x0C || op == 0x0F) && !(size & 1) && q) {   /* FMAXNMV FMINNMV FMAXV FMINV de 4S */
+        int mn = size >> 1;
+        fl_clobber(t);
+        x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
+        slow_if(t, CC_NE);
+        s_ld(t, 0, n);
+        x_movdqa_ld(B, 1, XR(0));
+        xop2(B, 0, 0xC2, 1, XR(0)); xe8(B, 3);      /* NaN em alguma lane */
+        xop2(B, XF_66, 0xD7, XAX, XR(1));
+        x_test_rr(B, 0, XAX, XAX);
+        slow_if(t, CC_NE);
+        for (int k = 0; k < 2; k++) {               /* (a0 op a1) op (a2 op a3), zeros na ordem do ARM */
+            xop2(B, XF_66, 0x70, 1, XR(0)); xe8(B, k ? 0xB1 : 0x4E);
+            x_movdqa_ld(B, 2, XR(0)); xop2(B, 0, 0xC2, 2, XR(1)); xe8(B, 0);
+            x_movdqa_ld(B, 3, XR(0)); xop2(B, 0, mn ? 0x56 : 0x54, 3, XR(1));
+            xop2(B, 0, mn ? 0x5D : 0x5F, 0, XR(1));
+            s_op(t, 0xDB, 3, 2);
+            xop2(B, XF_66, 0xDF, 2, XR(0));
+            s_op(t, 0xEB, 2, 3);
+            x_movdqa_ld(B, 0, XR(2));
+        }
+        t->mxclean = 0;
+        x_movd_st(B, XR(XAX), 0);
+        s_wsc_rax(t, d);
+        return 1;
+    }
     if (op == 0x03) {                               /* SADDLV / UADDLV: alarga e soma (sem estouro) */
         if (!jit_g.sse41) return 0;
         static const unsigned wid[2][3] = { { 0x20, 0x23, 0x25 }, { 0x30, 0x33, 0x35 } };   /* pmovsx / pmovzx */
