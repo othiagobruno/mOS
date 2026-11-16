@@ -49,6 +49,8 @@ static void s_qaddsub_core(T *t, int u, int size, int sub);
 static int s_qdmulh_s(T *t, int q, int rnd, int n, int m, int lane, int d);
 static int s_sqdmull(T *t, int q, int size, int acc, int n, int m, int lane, int d);
 static void s_replicate(T *t, int size);
+static int s_qaddsub_sc(T *t, int u, int size, int sub, int n, int m, int d);
+static int s_sqabsneg(T *t, int q, int size, int neg, int n, int d, int sc);
 static int s_scalar_simd(T *t, a64_u32 w);
 
 static void s_ld(T *t, int x, int v) { x_movdqu_ld(B, x, VO(v)); }
@@ -297,6 +299,8 @@ static int s_misc_x(T *t, a64_u32 w, int sc) {
     case 0x12:                                      /* XTN / XTN2, SQXTUN */
         if (u) return s_qxtn(t, q, u, 0x12, size, n, d);
         return s_xtn(t, q, size, n, d);
+    case 0x07:                                      /* SQABS / SQNEG */
+        return s_sqabsneg(t, q, size, u, n, d, sc);
     case 0x0B:                                      /* NEG (ABS vai ao interpretador) */
         if (!u) return 0;
         s_ld(t, 1, n); s_zero(t, 0);
@@ -2442,6 +2446,46 @@ static int s_cnt(T *t, int q, int n, int d) {
 }
 
 /* ABS inteiro com wrap: 0x80 e INT64_MIN permanecem. pabsb/w/d no SSSE3; 64 bits na máscara de sinal. */
+/* máscara do elemento escalar de 'size' em xmm4 (via s_const2: usa xmm5 e rax) e aplica em x */
+static void s_scmask(T *t, int x, int size) {
+    if (size == 3) return;
+    s_const2(t, 4, (1ull << (8 << size)) - 1, 0);
+    s_op(t, 0xDB, x, 4);
+}
+/* SQADD UQADD SQSUB UQSUB escalares de B/H/S/D: as outras lanes zeradas não saturam */
+static int s_qaddsub_sc(T *t, int u, int size, int sub, int n, int m, int d) {
+    if (size == 3 && u && !jit_g.sse42) return 0;
+    x_movq_ld(B, 0, VO(n)); x_movq_ld(B, 1, VO(m));
+    s_scmask(t, 0, size); s_scmask(t, 1, size);
+    if (size >= 2) s_qaddsub_core(t, u, size, sub);
+    else {
+        static const unsigned sat[2][2][2] = { { { 0xEC, 0xDC }, { 0xE8, 0xD8 } }, { { 0xED, 0xDD }, { 0xE9, 0xD9 } } };
+        static const unsigned wrap[2][2] = { { 0xFC, 0xF8 }, { 0xFD, 0xF9 } };
+        x_movdqa_ld(B, 3, XR(1));
+        x_movdqa_ld(B, 1, XR(0));
+        s_op(t, sat[size][sub][u], 0, 3);
+        s_op(t, wrap[size][sub], 1, 3);
+        s_qc(t);
+    }
+    s_st(t, d, 0, 0);
+    return 1;
+}
+/* SQABS / SQNEG: abs/neg com volta; só MIN satura (→ MAX: MIN ^ tudo-1), QC pelas lanes MIN */
+static int s_sqabsneg(T *t, int q, int size, int neg, int n, int d, int sc) {
+    if ((size == 3 && !jit_g.sse41) || (!neg && size < 3 && !jit_g.ssse3)) return 0;
+    if (sc || !q) x_movq_ld(B, 0, VO(n)); else s_ld(t, 0, n);
+    if (sc) s_scmask(t, 0, size);
+    s_const(t, 4, s_signbits[size]);
+    x_movdqa_ld(B, 2, XR(0)); s_cmp(t, 1, size, 2, 4);   /* xmm2 = lane MIN */
+    if (neg) { x_movdqa_ld(B, 1, XR(0)); s_zero(t, 0); s_op(t, size == 3 ? 0xFB : 0xF8 + (unsigned)size, 0, 1); }
+    else if (size < 3) s_op38(t, 0x1C + (unsigned)size, 0, 0);
+    else { x_movdqa_ld(B, 1, XR(0)); s_signmask(t, 1, 64); s_op(t, 0xEF, 0, 1); s_op(t, 0xFB, 0, 1); }
+    x_movdqa_ld(B, 1, XR(0));                       /* com volta (para o QC) */
+    s_op(t, 0xEF, 0, 2);
+    s_qc(t);
+    s_st(t, d, 0, q && !sc);
+    return 1;
+}
 static int s_iabs(T *t, int q, int size, int n, int d, int scalar) {
     if (scalar) { if (size != 3) return 0; q = 0; }
     else if (size == 3 && !q) return 0;
@@ -2694,6 +2738,8 @@ static int s_scalar_simd(T *t, a64_u32 w) {
         /* ADD SUB CMTST CMEQ CMGT CMHI CMGE CMHS de D: a forma vetorial com q = 0 */
         if (size == 3 && (op == 0x10 || op == 0x11 || op == 0x06 || op == 0x07))
             return s_three_same_x(t, w & ~((1u << 28) | (1u << 30)), 1);
+        if (op == 0x01 || op == 0x05)               /* SQADD UQADD SQSUB UQSUB escalares */
+            return s_qaddsub_sc(t, (int)BIT(w, 29), size, op == 0x05, (int)BITS(w, 9, 5), (int)BITS(w, 20, 16), (int)(w & 31));
         {   /* FCMEQ FCMGE FCMGT FACGE FACGT escalares de S/D */
             int u = (int)BIT(w, 29), a = size >> 1, n = (int)BITS(w, 9, 5), m = (int)BITS(w, 20, 16), d = (int)(w & 31);
             if (op == 0x1C && !(!u && a)) return s_fcmpv(t, 0, size & 1, !u ? 0 : a ? 2 : 1, 0, n, m, d, 1);
@@ -2708,6 +2754,7 @@ static int s_scalar_simd(T *t, a64_u32 w) {
         if (op == 0x0B && !u) return s_iabs(t, 0, size, n, d, 1);
         if (op == 0x1D && !(size & 2)) return s_scvtf(t, 0, u, size, n, d, 1);
         if ((size & 2) && op == 0x1B) return s_fcvtz_vec(t, 0, size & 1, u, n, d, 1);   /* FCVTZS FCVTZU escalares */
+        if (op == 0x07) return s_sqabsneg(t, 0, size, u, n, d, 1);                      /* SQABS SQNEG escalares */
         if ((size & 2) && (op == 0x0C || op == 0x0D || (op == 0x0E && !u)))   /* FCMxx #0 escalares */
             return s_misc_x(t, w & ~((1u << 28) | (1u << 30)), 1);
         /* CMGT CMGE CMEQ CMLE CMLT #0 e NEG de D: a forma vetorial com q = 0 */
