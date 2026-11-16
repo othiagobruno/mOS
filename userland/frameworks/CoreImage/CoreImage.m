@@ -8,7 +8,7 @@
  * Lanczos, nitidez e pixellate), com attributes, inputKeys e as categorias.
  * CIContext createCGImage:fromRect: e render:toBitmap:... escrevem esses pixels.
  *
- * O que esta versão não faz: CIKernel, Metal, CIDetector, formatos half/float,
+ * O que esta versão não faz: CIKernel, Metal, CIDetector de rosto/retângulo/texto, formatos half/float,
  * GIF/HEIF/WebP (o ImageIO do mOS só decodifica PNG e JPEG) e o espaço de cor
  * além de 8 bits reto. kCIImageColorSpace com valor não nulo recusa a imagem:
  * não há conversão de espaço. kCIContextCacheIntermediates = NO recalcula o raster.
@@ -25,6 +25,7 @@
 #import <Foundation/Foundation.h>
 #include "coreimage_cpu.h"
 #include "qrgen.h"
+#include "qrread.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -742,9 +743,9 @@ static void free_bytes(void *info, const void *data, size_t size) {
 }
 @end
 
-/* ---------------------------------------------------------------- CIFeature e QR
- * Não há detector de rosto nem leitor de QR no mOS: o CIDetector não acha nada. As classes de resultado
- * existem e guardam o que recebem (o app também cria CIQRCodeDescriptor para gerar código). */
+/* ---------------------------------------------------------------- CIFeature, QR e CIDetector
+ * CIDetectorTypeQRCode lê QR Code de verdade (qrread.c). Rosto, retângulo e texto não têm detector no mOS:
+ * detectorOfType: devolve nil para eles, como a Apple faz com um tipo que não conhece. */
 @interface CIFeature : NSObject {
    @public
     CGRect bounds;
@@ -813,6 +814,70 @@ static void free_bytes(void *info, const void *data, size_t size) {
 - (CGPoint)topRight { return corners[1]; }
 - (CGPoint)bottomLeft { return corners[2]; }
 - (CGPoint)bottomRight { return corners[3]; }
+@end
+
+@interface NSString (MOSBytes)
+- (id)initWithBytes:(const void *)bytes length:(NSUInteger)len encoding:(NSUInteger)enc;
+@end
+@interface CIDetector : NSObject {
+    CIContext *context;
+}
+@end
+@implementation CIDetector
++ (CIDetector *)detectorOfType:(NSString *)type context:(CIContext *)ctx options:(NSDictionary *)options {
+    (void)options;
+    if (![type isEqualToString:@"CIDetectorTypeQRCode"]) return nil;
+    CIDetector *d = [[[CIDetector alloc] init] autorelease];
+    d->context = ctx ? [ctx retain] : [[CIContext contextWithOptions:nil] retain];
+    return d;
+}
+- (void)dealloc { [context release]; [super dealloc]; }
+- (NSArray *)featuresInImage:(CIImage *)image { return [self featuresInImage:image options:nil]; }
+- (NSArray *)featuresInImage:(CIImage *)image options:(NSDictionary *)options {
+    (void)options;
+    NSMutableArray *out = [NSMutableArray array];
+    if (!image || !image->img) return out;
+    CGRect e = [image extent];
+    if (mos_ci_is_infinite(image->img) || e.size.width < 21 || e.size.height < 21) return out;
+    int w = (int)llround(e.size.width), h = (int)llround(e.size.height);
+    if ((long)w * h > 6000L * 6000L) return out;
+    uint32_t *px = malloc((size_t)w * h * 4);
+    uint8_t *g = malloc((size_t)w * h);
+    mos_qr_result *r = calloc(1, sizeof *r);
+    if (!px || !g || !r || mos_ci_render(image->img, e.origin.x, e.origin.y, w, h, px) != 0) { free(px); free(g); free(r); return out; }
+    for (long i = 0; i < (long)w * h; i++) {   /* luminância; o transparente conta como branco */
+        uint32_t c = px[i], a = c >> 24;
+        uint32_t lum = (((c >> 16) & 255) * 77 + ((c >> 8) & 255) * 150 + (c & 255) * 29) >> 8;
+        g[i] = (uint8_t)((lum * a + 255 * (255 - a)) / 255);
+    }
+    free(px);
+    if (mos_qr_read(g, w, h, r)) {
+        CIQRCodeFeature *f = [[CIQRCodeFeature alloc] init];
+        double minx = 1e18, miny = 1e18, maxx = -1e18, maxy = -1e18;
+        for (int i = 0; i < 4; i++) {   /* pixels (y para baixo) -> coordenadas da imagem (y para cima) */
+            CGPoint p = CGPointMake(e.origin.x + r->corners[i][0], e.origin.y + (h - r->corners[i][1]));
+            f->corners[i] = p;
+            if (p.x < minx) minx = p.x;
+            if (p.y < miny) miny = p.y;
+            if (p.x > maxx) maxx = p.x;
+            if (p.y > maxy) maxy = p.y;
+        }
+        f->bounds = CGRectMake(minx, miny, maxx - minx, maxy - miny);
+        f->type = [@"QRCode" retain];
+        NSString *msg = nil;
+        if (r->kanji) msg = [[NSString alloc] initWithBytes:r->text length:(NSUInteger)r->len encoding:8 /* NSShiftJISStringEncoding */];
+        if (!msg) msg = [[NSString alloc] initWithBytes:r->text length:(NSUInteger)r->len encoding:NSUTF8StringEncoding];
+        if (!msg) msg = [[NSString alloc] initWithBytes:r->text length:(NSUInteger)r->len encoding:5 /* NSISOLatin1StringEncoding */];
+        f->message = msg;
+        static const long lv[4] = {'L', 'M', 'Q', 'H'};
+        f->descriptor = [[CIQRCodeDescriptor alloc] initWithPayload:[NSData dataWithBytes:r->data length:(NSUInteger)r->ndata]
+                                                      symbolVersion:r->version maskPattern:(unsigned char)r->mask errorCorrectionLevel:lv[r->level]];
+        [out addObject:f];
+        [f release];
+    }
+    free(g); free(r);
+    return out;
+}
 @end
 
 /* ---------------------------------------------------------------- CIKernel
