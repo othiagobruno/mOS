@@ -72,6 +72,16 @@ static struct {
     u32 underruns;
 } M;
 
+/* buffers de DMA reaproveitados: a retomada do S3 refaz a sonda na mesma ordem e recebe os mesmos blocos */
+static struct { void *p; u64 phys; usize n; } dcache[12];
+static int dci;
+static void *hdmi_dma(usize n, u64 *phys) {
+    if (dci < 12 && dcache[dci].p && dcache[dci].n == n) { memset(dcache[dci].p, 0, n); *phys = dcache[dci].phys; return dcache[dci++].p; }
+    void *p = dma_alloc(n, phys);
+    if (p && dci < 12) { dcache[dci].p = p; dcache[dci].phys = *phys; dcache[dci].n = n; dci++; }
+    return p;
+}
+
 static inline u8 r8(u32 o) { return mmio_r8(M.mm, o); }
 static inline u16 r16(u32 o) { return mmio_r16(M.mm, o); }
 static inline u32 r32(u32 o) { return mmio_r32(M.mm, o); }
@@ -138,7 +148,7 @@ static bool ctl_reset(void) {
 
 static bool corb_setup(void) {
     u64 phys;
-    u8 *mem = dma_alloc(4096, &phys);
+    u8 *mem = hdmi_dma(4096, &phys);
     if (!mem || (phys >> 32 && !(M.gcap & 1))) return false;
     M.corb = (u32 *)mem; M.rirb = (u32 *)(mem + 1024);
     flush(mem, 4096);
@@ -230,8 +240,8 @@ static bool stream_setup(void) {
     if (!oss) return false;
     M.sd = SD_BASE + (u32)iss * 0x20;
     u64 rp, bp;
-    M.ring = dma_alloc(RING * 4, &rp);
-    M.bdl = dma_alloc(4096, &bp);
+    M.ring = hdmi_dma(RING * 4, &rp);
+    M.bdl = hdmi_dma(4096, &bp);
     if (!M.ring || !M.bdl || (((rp | bp) >> 32) && !(M.gcap & 1))) return false;
     u32 sd = M.sd;
     w8(sd + SD_CTL, 0); wait_reg(sd + SD_CTL, 8, 2, 0, 10);
@@ -266,6 +276,7 @@ bool hdmi_audio_probe(bool primary) {
     }
     if (!d) return false;
     memset(&M, 0, sizeof M);
+    dci = 0;
     M.pci = d;
     M.primary = primary;
     u64 bar = pci_bar_addr(d, 0);

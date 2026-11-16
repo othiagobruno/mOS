@@ -15,6 +15,7 @@
 #include "storage.h"
 #include "ahci_ncq.h"
 #include "nvme_xfer.h"
+#include "pm.h"
 
 /* ---- registradores do HBA */
 #define HBA_CAP   0x00
@@ -67,6 +68,7 @@
 #define ATA_WRITE_DMA_EXT 0x35
 #define ATA_FLUSH_EXT     0xEA
 #define ATA_DSM           0x06   /* DATA SET MANAGEMENT; feature 1 = TRIM */
+#define ATA_STANDBY_IMM   0xE0
 
 #define CMD_TIMEOUT_MS 5000
 #define BOUNCE_BYTES   (128u << 10)
@@ -659,6 +661,7 @@ static void take_ownership(void) {
     if (hr(HBA_BOHC) & BOHC_BB) sleep_ms(2000);   /* firmware pediu mais tempo */
 }
 
+void ahci_pm_register(void);
 void ahci_init(void) {
     for (int nth = 0;; nth++) {
         pci_dev_t *pd = pci_find_class(1, 6, nth);
@@ -687,6 +690,7 @@ void ahci_init(void) {
         break; /* um controlador por enquanto (abar é global) */
     }
     if (abar) snprintf(status, sizeof status, ndisks == 1 ? "%d disco SATA" : "%d discos SATA", ndisks);
+    ahci_pm_register();
 }
 
 static bool pci_cap(pci_dev_t *d, u8 want, u8 *at) {
@@ -743,6 +747,47 @@ int ahci_disk_count(void) { return ndisks; }
 const char *ahci_disk_desc(int i) { return i >= 0 && i < ndisks ? disks[i]->desc : ""; }
 blkdev_t *ahci_disk(int i) { return i >= 0 && i < ndisks ? &disks[i]->dev : NULL; }
 const char *ahci_status(void) { return status; }
+
+/* ---- repouso (dev/pm.c): S3 desliga o SATA; s2idle só esvazia o cache */
+static u32 pm_ghc;
+static int ahci_pm_suspend(int state) {
+    if (!abar) return 0;
+    for (int i = 0; i < ndisks; i++) {
+        ahci_disk_t *d = disks[i];
+        if (!issue(d, ATA_FLUSH_EXT, 0, 0, 0, false)) kprintf("ahci: porta %d: FLUSH antes do repouso falhou\n", d->port);
+        if (state == 3 && !issue(d, ATA_STANDBY_IMM, 0, 0, 0, false)) kprintf("ahci: porta %d: STANDBY falhou\n", d->port);
+    }
+    if (state == 3) { pm_ghc = hr(HBA_GHC); for (int i = 0; i < ndisks; i++) stop_engine(disks[i]->port); }
+    return 0;
+}
+static void ahci_pm_resume(int state) {
+    if (!abar || state != 3) return;
+    take_ownership();
+    hw(HBA_GHC, hr(HBA_GHC) | GHC_AE);
+    for (int i = 0; i < ndisks; i++) {
+        ahci_disk_t *d = disks[i];
+        int p = d->port;
+        u32 cmd = pr(p, P_CMD);
+        if (hba_cap & CAP_SSS) cmd |= CMD_SUD;
+        if (cmd & CMD_CPD) cmd |= CMD_POD;
+        pw(p, P_CMD, cmd);
+        stop_engine(p);
+        pw(p, P_CLB, (u32)(d->ctl_phys + OFF_CLB)); pw(p, P_CLBU, (u32)((d->ctl_phys + OFF_CLB) >> 32));
+        pw(p, P_FB, (u32)(d->ctl_phys + OFF_FIS)); pw(p, P_FBU, (u32)((d->ctl_phys + OFF_FIS) >> 32));
+        pw(p, P_IS, 0xFFFFFFFFu); pw(p, P_SERR, 0xFFFFFFFFu);
+        start_engine(p);
+        if (!reset_port(p)) { kprintf("ahci: porta %d: link não voltou do S3\n", p); continue; }
+        wait_clear(p, P_TFD, TFD_BSY | TFD_DRQ, 5000);   /* spin-up / SSD saindo do standby */
+        pw(p, P_IS, 0xFFFFFFFFu);
+        pw(p, P_IE, d->intr ? 0x4000000Fu : 0);
+        ahci_tags_init(&d->tags, d->tags.ntags ? d->tags.ntags : 1);
+        ahci_batch_init(&d->batch, d->tags.ntags ? d->tags.ntags : 1);
+    }
+    hw(HBA_GHC, (hr(HBA_GHC) & ~GHC_IE) | (pm_ghc & GHC_IE));
+    kprintf("ahci: %d disco(s) de volta do S3\n", ndisks);
+}
+static const pm_ops_t ahci_pm = { "ahci", 0, ahci_pm_suspend, ahci_pm_resume, NULL };
+void ahci_pm_register(void) { if (abar) pm_register(&ahci_pm); }
 
 /* Não há autoteste de escrita neste driver: o antigo, por "assinatura" no setor 0, gravava em qualquer disco que a
  * tivesse e foi removido. A escrita só acontece dentro de faixas liberadas por storage_grant_write(). */

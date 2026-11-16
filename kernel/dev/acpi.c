@@ -15,6 +15,7 @@
 #include "aml.h"
 #include "ui.h"
 #include "iommu.h"
+#include "pm.h"
 
 typedef struct PACKED { char sig[8]; u8 csum; char oem[6]; u8 rev; u32 rsdt; u32 len; u64 xsdt; u8 xcsum, r[3]; } rsdp_t;
 typedef struct PACKED { char sig[4]; u32 len; u8 rev, csum; char oem[6], oemtab[8]; u32 oemrev, creator, crev; } sdt_t;
@@ -53,6 +54,8 @@ static u16 g_ec_data = 0x62, g_ec_cmd = 0x66;
 static bool g_ec_ok;
 static aml_node_t *g_ec_node;
 static aml_node_t *g_pwrb, *g_tz[8];
+static aml_node_t *g_wakedev[48];            /* dispositivos com _PRW (podem acordar a máquina) */
+static int g_nwake;
 static int g_ntz;
 static bool g_aml_ok;
 static u64 g_btn_last;
@@ -460,7 +463,7 @@ void acpi_poll(void) {
     u32 pm = __atomic_exchange_n(&g_pending_pm1, 0, __ATOMIC_ACQ_REL);
     if (pm & (PM1_PWRBTN)) {
         u64 now = timer_ticks();
-        if (now - g_btn_last > 800) { kprintf("ACPI: botão de energia\n"); desktop_shutdown_dialog(0); }
+        if (now - g_btn_last > 800) { kprintf("ACPI: botão de energia\n"); pm_wake_request(); desktop_shutdown_dialog(0); }
         g_btn_last = now;
     }
     for (int i = 0; i < gpe_bytes(); i++) {
@@ -556,6 +559,7 @@ static int scan_cb(aml_node_t *n, int depth, void *c) {
     /* _PRW: o GPE (Package[0] inteiro, ou Package(dispositivo, índice)) é de despertar */
     aml_val_t v;
     if (aml_find(n, "_PRW") && aml_eval_path(n, "_PRW", NULL, 0, &v) == AML_OK) {
+        if (g_nwake < 48) g_wakedev[g_nwake++] = n;
         if (v.type == AML_PKG && v.b->len >= 1 && v.b->el[0].type == AML_INT) {
             int bit, by = gpe_num_to_byte((int)v.b->el[0].i, &bit);
             if (by >= 0 && by < 32) g_gpe_wake[by] |= (u8)(1u << bit);
@@ -672,6 +676,60 @@ void acpi_init(void) {
             F.ntables, aml_node_count(), aml_errors(), F.sci, F.pm1a_cnt.addr, F.gpe0.addr, F.gpe0_len,
             F.slp_ok[3] ? "ok" : "não", F.slp_ok[5] ? "ok" : "não",
             F.reset_ok ? "ok" : "não", F.reset.addr, g_ntz, cpu_temp_dC() / 10);
+}
+
+/* ------------------------------------------------------------------ preparação do sono (dev/pm.c) */
+static void device_wake(bool on, int state) {
+    for (int i = 0; i < g_nwake; i++) {
+        aml_node_t *d = g_wakedev[i];
+        aml_val_t r;
+        if (aml_find(d, "_DSW")) {
+            aml_val_t a[3] = { aml_int(on), aml_int((u64)state), aml_int(0) };
+            aml_eval_path(d, "_DSW", a, 3, &r); aml_val_free(&r);
+        } else if (aml_find(d, "_PSW")) {
+            aml_val_t a = aml_int(on);
+            aml_eval_path(d, "_PSW", &a, 1, &r); aml_val_free(&r);
+        }
+    }
+}
+
+void acpi_prepare_sleep(int state) {
+    if (!F.ok) return;
+    if (state == 3) {
+        eval_arg("\\_TTS", 3);
+        eval_arg("\\_PTS", 3);
+        eval_arg("\\_SI._SST", 3);
+        device_wake(true, 3);
+        u64 fl = irq_save();
+        for (int i = 0; i < gpe_bytes(); i++) { gpe_wr(i, true, 0); gpe_wr(i, false, 0xFF); gpe_wr(i, true, g_gpe_wake[i]); }
+        pm1_sts_clear(0xFFFF);
+        pm1_en_set(PM1_PWRBTN | PM1_RTC);
+        irq_restore(fl);
+    } else {
+        eval_arg("\\_SI._SST", 3);                    /* luz de repouso, se houver */
+    }
+}
+
+void acpi_finish_wake(int state) {
+    if (!F.ok) return;
+    if (state == 3) {
+        u64 fl = irq_save();
+        u16 st = pm1_sts();
+        pm1_sts_clear(0xFFFF);
+        for (int i = 0; i < gpe_bytes(); i++) { gpe_wr(i, true, 0); gpe_wr(i, false, 0xFF); }
+        irq_restore(fl);
+        if (st & PM1_PWRBTN) g_btn_last = timer_ticks();  /* o botão que acordou não abre o diálogo */
+        acpi_enable_mode();
+        aml_val_t a = aml_int(3), r;
+        if (g_aml_ok && aml_find(NULL, "\\_WAK")) { aml_eval_path(NULL, "\\_WAK", &a, 1, &r); aml_val_free(&r); }
+        device_wake(false, 3);
+        eval_arg("\\_TTS", 0);
+        fl = irq_save();
+        for (int i = 0; i < gpe_bytes(); i++) gpe_wr(i, true, g_gpe_enabled[i]);
+        pm1_en_set(F.cm_pwrbtn ? 0 : PM1_PWRBTN);
+        irq_restore(fl);
+    }
+    eval_arg("\\_SI._SST", 1);                         /* trabalhando */
 }
 
 /* INTx de um dispositivo PCI pelo _PRT (modo PIC); pin 0 = INTA. -1 = sem rota */

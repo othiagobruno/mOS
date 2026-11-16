@@ -282,9 +282,16 @@ const char *usb_status(void) {
     return buf;
 }
 
+bool usb_has_kind(int kind) {
+    for (int i = 0; i < USB_MAX_DEVS; i++) if (devs[i].used && devs[i].kind == kind) return true;
+    return false;
+}
+
 void usb_init(void) {
     u64 t0 = timer_ticks();
     xhci_init_all();
+    extern void xhci_pm_register(void);
+    xhci_pm_register();
     kprintf("USB: %s (%llu ms)\n", usb_status(), timer_ticks() - t0);
 }
 

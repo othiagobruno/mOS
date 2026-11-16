@@ -33,6 +33,7 @@ static volatile int g_applied[MAX_CPUS];
 static volatile u32 g_load[MAX_CPUS];          /* carga em ‰ do último intervalo */
 static u64 g_mperf0[MAX_CPUS], g_tsc0[MAX_CPUS], g_t0[MAX_CPUS];
 static u32 g_switches;
+static bool g_forced;                          /* repouso: P-state mais baixo até acordar */
 
 static inline u64 rdmsr(u32 m) { u32 lo, hi; __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(m)); return (u64)hi << 32 | lo; }
 static inline void wrmsr(u32 m, u64 v) { __asm__ volatile("wrmsr" :: "c"(m), "a"((u32)v), "d"((u32)(v >> 32))); }
@@ -188,7 +189,9 @@ void cpufreq_poll(void) {
         int n = smp_cpu_count();
         for (int i = 0; i < n && i < MAX_CPUS; i++) if (g_load[i] > mx) mx = g_load[i];
         if (!g_aperf) mx = 1000;                       /* sem medida: desempenho máximo */
-        if (mx >= 700) set_target(0);
+        if (g_forced) mx = 0;
+        if (g_forced) set_target(P.n - 1);
+        else if (mx >= 700) set_target(0);
         else if (mx <= 300) set_target(g_target + 1);
         if (g_applied[0] != g_target) { apply_here(g_target); g_applied[0] = g_target; }
     }
@@ -208,6 +211,14 @@ void cpufreq_poll(void) {
             set_target(g_target);
         }
     }
+}
+
+void cpufreq_force_lowest(bool on) {
+    if (!P.ok) return;
+    g_forced = on;
+    int t = on ? P.n - 1 : lim();
+    g_target = t;
+    apply_here(t); g_applied[0] = t;
 }
 
 int cpufreq_current_mhz(void) { return P.ok ? (int)P.mhz[g_target] : 0; }

@@ -890,3 +890,90 @@ int xhci_total_ports(void) {
     return n;
 }
 const char *xhci_name(void *hc) { return hc ? ((xhci_t *)hc)->name : "?"; }
+
+/* ------------------------------------------------------------------ repouso (dev/pm.c)
+ * S3: para o controlador e pede Save State (CSS); na volta regrava os registradores operacionais e do
+ * interruptor 0 e pede Restore State (CRS). Se o controlador acusar SRE (estado perdido), faz o caminho do
+ * "reset on resume": reset completo com os mesmos anéis, solta os dispositivos e reenumera as portas.
+ * s2idle: nada (o polling segue e o teclado USB acorda a máquina). */
+#include "pm.h"
+static struct { u32 cmd, dnctrl, config, iman, imod, erstsz; u64 dcbaap, erstba, erdp; } hsave[MAX_HC];
+
+static int xhci_pm_suspend(int state) {
+    if (state != 3) return 0;
+    for (int i = 0; i < nhc; i++) {
+        xhci_t *h = hcs[i];
+        volatile u8 *ir = h->rt + 0x20;
+        wr(h->op, OP_USBCMD, rd(h->op, OP_USBCMD) & ~CMD_RS);
+        if (!wait_bits(h->op, OP_USBSTS, STS_HCH, STS_HCH, 100)) kprintf("%s: não parou para o S3\n", h->name);
+        hsave[i].cmd = rd(h->op, OP_USBCMD); hsave[i].dnctrl = rd(h->op, 0x14); hsave[i].config = rd(h->op, OP_CONFIG);
+        hsave[i].dcbaap = (u64)rd(h->op, OP_DCBAAP) | (u64)rd(h->op, OP_DCBAAP + 4) << 32;
+        hsave[i].iman = rd(ir, 0x00); hsave[i].imod = rd(ir, 0x04); hsave[i].erstsz = rd(ir, 0x08);
+        hsave[i].erstba = (u64)rd(ir, 0x10) | (u64)rd(ir, 0x14) << 32;
+        hsave[i].erdp = (u64)rd(ir, 0x18) | (u64)rd(ir, 0x1C) << 32;
+        wr(h->op, OP_USBCMD, rd(h->op, OP_USBCMD) | (1u << 8));          /* CSS */
+        if (!wait_bits(h->op, OP_USBSTS, 1u << 8, 0, 100)) kprintf("%s: Save State não terminou\n", h->name);
+    }
+    return 0;
+}
+
+static void reset_resume(xhci_t *h, int i) {
+    kprintf("%s: estado perdido no S3; reiniciando e reenumerando\n", h->name);
+    h->dead = true;                                                   /* solta os dispositivos sem mandar comandos */
+    for (int p = 1; p <= (int)h->max_ports && p < 256; p++)
+        if (h->port_dev[p]) { usb_dev_t *d = h->port_dev[p]; h->port_dev[p] = NULL; usb_detach(d); }
+    h->dead = false;
+    wr(h->op, OP_USBCMD, CMD_HCRST);
+    sleep_ms(10);
+    if (!wait_bits(h->op, OP_USBCMD, CMD_HCRST, 0, 1000) || !wait_bits(h->op, OP_USBSTS, STS_CNR, 0, 1000)) { h->dead = true; return; }
+    for (u32 s = 1; s <= MAX_SLOTS; s++) h->slots[s] = NULL;
+    for (u32 s = 1; s <= MAX_SLOTS; s++) h->dcbaa[s] = 0;
+    wr(h->op, OP_CONFIG, hsave[i].config);
+    wr64(h->op, OP_DCBAAP, h->dcbaa_phys);
+    memset(h->cmd.t, 0, (RING_TRBS - 1) * sizeof(trb_t));
+    trb_t *l = &h->cmd.t[RING_TRBS - 1];
+    l->d[0] = (u32)h->cmd.phys; l->d[1] = (u32)(h->cmd.phys >> 32); l->d[2] = 0; l->d[3] = TRB_TYPE(TRB_LINK) | TRB_TC;
+    h->cmd.enq = 0; h->cmd.cycle = 1;
+    wr64(h->op, OP_CRCR, h->cmd.phys | 1);
+    memset(h->evt, 0, EVT_TRBS * sizeof(trb_t));
+    h->evt_deq = 0; h->evt_cycle = 1;
+    volatile u8 *ir = h->rt + 0x20;
+    wr(ir, 0x08, 1); wr64(ir, 0x18, h->evt_phys); wr64(ir, 0x10, hsave[i].erstba); wr(ir, 0x04, 0); wr(ir, 0x00, 1);
+    wr(h->op, OP_USBCMD, CMD_RS);
+    wait_bits(h->op, OP_USBSTS, STS_HCH, 0, 500);
+    for (u32 p = 1; p <= h->max_ports && p < 256; p++) {
+        volatile u32 *ps = portsc_reg(h, p);
+        u32 v = *ps;
+        if (!(v & PS_PP)) *ps = (v & PS_KEEP) | PS_PP;
+        h->port_changed[p] = 1; h->port_fail[p] = 0;
+    }
+}
+
+static void xhci_pm_resume(int state) {
+    if (state != 3) return;
+    for (int i = 0; i < nhc; i++) {
+        xhci_t *h = hcs[i];
+        if (!wait_bits(h->op, OP_USBSTS, STS_CNR, 0, 1000)) { kprintf("%s: não ficou pronto depois do S3\n", h->name); continue; }
+        volatile u8 *ir = h->rt + 0x20;
+        wr(h->op, 0x14, hsave[i].dnctrl); wr(h->op, OP_CONFIG, hsave[i].config);
+        wr64(h->op, OP_DCBAAP, hsave[i].dcbaap);
+        wr(ir, 0x08, hsave[i].erstsz); wr64(ir, 0x10, hsave[i].erstba); wr64(ir, 0x18, hsave[i].erdp);
+        wr(ir, 0x04, hsave[i].imod); wr(ir, 0x00, hsave[i].iman);
+        wr64(h->op, OP_CRCR, ring_deq_ptr(&h->cmd));
+        wr(h->op, OP_USBCMD, rd(h->op, OP_USBCMD) | (1u << 9));          /* CRS */
+        bool ok = wait_bits(h->op, OP_USBSTS, 1u << 9, 0, 100) && !(rd(h->op, OP_USBSTS) & (1u << 10));
+        if (!ok) { reset_resume(h, i); continue; }
+        wr(h->op, OP_USBCMD, (rd(h->op, OP_USBCMD) & ~(3u << 8)) | CMD_RS);
+        if (!wait_bits(h->op, OP_USBSTS, STS_HCH, 0, 500)) { reset_resume(h, i); continue; }
+        for (u32 p = 1; p <= h->max_ports && p < 256; p++) h->port_changed[p] = 1;   /* confere o que sobrou ligado */
+        kprintf("%s: estado restaurado do S3\n", h->name);
+    }
+}
+
+/* um pendrive montado some na reenumeração: S3 só sem armazenamento USB ligado */
+static const char *xhci_pm_can_s3(void) {
+    extern bool usb_has_kind(int kind);
+    return usb_has_kind(USB_KIND_STORAGE) ? "há armazenamento USB ligado" : NULL;
+}
+static const pm_ops_t xhci_pm = { "xHCI", 0, xhci_pm_suspend, xhci_pm_resume, xhci_pm_can_s3 };
+void xhci_pm_register(void) { if (nhc) pm_register(&xhci_pm); }

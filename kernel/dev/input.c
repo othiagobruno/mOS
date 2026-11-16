@@ -159,6 +159,7 @@ void input_media_poll(void) {
             else { g_vol_before_mute = v; audio_set_volume(0); }
             break;
         case KEY_POWER: { extern void desktop_shutdown_dialog(int kind); desktop_shutdown_dialog(0); break; }
+        case KEY_SLEEP: acpi_sleep(); break;
         }
     }
 }
