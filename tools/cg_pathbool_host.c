@@ -29,6 +29,19 @@ int CGPathIntersectsPath(const void *a, const void *b, int eo);
 int CGPathIsEmpty(const void *p);
 void *CGPathCreateSeparateComponents(const void *p, int eo);
 int CGPathContainsPoint(const void *p, const void *m, CGPoint pt, int eo);
+int CGPathIsPrimitive(const void *p);
+int CGPathIsRectWithTransform(const void *p, CGRect *r, CGAffineTransform *t);
+int CGPathIsEllipseWithTransform(const void *p, CGRect *r, CGAffineTransform *t);
+int CGPathIsRoundedRectWithTransform(const void *p, CGRect *r, double *cw, double *ch, CGAffineTransform *t);
+void *CGPathCreateWithRect(CGRect r, const CGAffineTransform *m);
+void *CGPathCreateWithEllipseInRect(CGRect r, const CGAffineTransform *m);
+void *CGPathCreateWithRoundedRect(CGRect r, double cw, double ch, const CGAffineTransform *m);
+void *CGPathCreateMutableCopy(const void *p);
+void *CGPathCreateCopyByTransformingPath(const void *p, const CGAffineTransform *m);
+static int req(CGRect a, double x, double y, double w, double h) { return a.origin.x == x && a.origin.y == y && a.size.width == w && a.size.height == h; }
+static int teq(CGAffineTransform t, double a, double b, double c, double d, double tx, double ty) {
+    return fabs(t.a - a) < 1e-9 && fabs(t.b - b) < 1e-9 && fabs(t.c - c) < 1e-9 && fabs(t.d - d) < 1e-9 && fabs(t.tx - tx) < 1e-9 && fabs(t.ty - ty) < 1e-9;
+}
 #define W 200
 static uint8_t *mask(const void *p, int eo) {
     void *c = CGBitmapContextCreate(0, W, W, 8, W * 4, 0, 1);
@@ -120,6 +133,32 @@ int main(void) {
     void *u = CGPathCreateCopyByUnioningPath(sq1, sq2, 0), *in = CGPathCreateCopyByIntersectingPath(sq1, sq2, 1);
     CGRect bu = CGPathGetBoundingBox(u), bi = CGPathGetBoundingBox(in);
     CHECK(bu.origin.x == 0 && bu.size.width == 150 && bi.origin.x == 50 && bi.origin.y == 50 && bi.size.width == 50 && bi.size.height == 50, "quadrados: caixa da união 0..150 e da interseção 50..100 exatas");
+    /* SPI de forma primitiva (OpenRenderBox) */
+    {
+        CGAffineTransform rot = {0, 1, -1, 0, 5, 7}, tr = {1, 0, 0, 1, 10, 20}, t;
+        CGRect r; double cw = -1, ch = -1;
+        void *pr = CGPathCreateWithRect((CGRect){{30, 40}, {-20, 10}}, &rot);
+        CHECK(CGPathIsPrimitive(pr) && CGPathIsRectWithTransform(pr, &r, &t) && req(r, 10, 40, 20, 10) && teq(t, 0, 1, -1, 0, 5, 7)
+              && !CGPathIsEllipseWithTransform(pr, &r, &t) && CGPathIsRoundedRectWithTransform(pr, &r, &cw, &ch, &t) && cw == 0 && ch == 0,
+              "retângulo com rotação: primitivo, retângulo padronizado + transformação; vale como arredondado de raio 0");
+        void *pe = CGPathCreateWithEllipseInRect((CGRect){{0, 0}, {40, 20}}, 0);
+        CHECK(CGPathIsPrimitive(pe) && CGPathIsEllipseWithTransform(pe, &r, &t) && req(r, 0, 0, 40, 20) && teq(t, 1, 0, 0, 1, 0, 0)
+              && !CGPathIsRectWithTransform(pe, &r, &t) && !CGPathIsRoundedRectWithTransform(pe, &r, &cw, &ch, &t), "elipse: só elipse, transformação identidade");
+        void *pq = CGPathCreateWithRoundedRect((CGRect){{0, 0}, {100, 30}}, 8, 40, &tr);
+        CHECK(CGPathIsRoundedRectWithTransform(pq, &r, &cw, &ch, &t) && req(r, 0, 0, 100, 30) && cw == 8 && ch == 15 && teq(t, 1, 0, 0, 1, 10, 20)
+              && !CGPathIsRectWithTransform(pq, &r, &t), "retângulo arredondado: raios (altura limitada à metade) e transformação");
+        void *p0 = CGPathCreateWithRoundedRect((CGRect){{0, 0}, {50, 50}}, 0, 0, 0);
+        CHECK(CGPathIsRectWithTransform(p0, &r, &t) && req(r, 0, 0, 50, 50), "arredondado de raio 0 vira retângulo");
+        void *cp = CGPathCreateCopyByTransformingPath(pq, &tr);
+        CHECK(CGPathIsRoundedRectWithTransform(cp, &r, &cw, &ch, &t) && cw == 8 && teq(t, 1, 0, 0, 1, 20, 40), "cópia transformada continua primitiva, com as transformações compostas");
+        void *mu = CGPathCreateMutableCopy(pe);
+        CGPathAddLineToPoint(mu, 0, 1, 1);
+        void *man = CGPathCreateMutable();
+        CGPathAddRect(man, NULL, (CGRect){{1, 2}, {3, 4}});
+        CHECK(!CGPathIsPrimitive(mu) && !CGPathIsEllipseWithTransform(mu, &r, &t) && !CGPathIsPrimitive(man)
+              && CGPathIsRectWithTransform(man, &r, &t) && req(r, 1, 2, 3, 4) && teq(t, 1, 0, 0, 1, 0, 0),
+              "caminho alterado perde a marca; retângulo montado à mão não é primitivo, mas IsRectWithTransform reconhece");
+    }
     void *empty = CGPathCreateMutable();
     void *nrm = CGPathCreateCopyByNormalizing(star, 1);
     CHECK(mismatch(star, empty, 1, nrm, 0) < 0.003 && !CGPathContainsPoint(nrm, 0, (CGPoint){100, 100}, 0), "normalizar a estrela par-ímpar: o centro fica de fora mesmo na regra não nula");
