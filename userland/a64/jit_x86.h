@@ -133,11 +133,12 @@ static inline void x_nop(xb *b, int n) {
     while (n >= 3) { xe8(b, 0x0F); xe8(b, 0x1F); xe8(b, 0x00); n -= 3; }  /* nop dword [rax] */
     while (n-- > 0) xe8(b, 0x90);
 }
-/* saltos com rel32: devolvem o endereço do campo rel32 para remendar */
-static inline a64_u8 *x_jcc32(xb *b, int cc) { xe8(b, 0x0F); xe8(b, 0x80 + cc); a64_u8 *r = b->p; xe32(b, 0); return r; }
-static inline a64_u8 *x_jmp32(xb *b) { xe8(b, 0xE9); a64_u8 *r = b->p; xe32(b, 0); return r; }
-static inline a64_u8 *x_jcc8(xb *b, int cc) { xe8(b, 0x70 + cc); a64_u8 *r = b->p; xe8(b, 0); return r; }
-static inline a64_u8 *x_jmp8(xb *b) { xe8(b, 0xEB); a64_u8 *r = b->p; xe8(b, 0); return r; }
+/* saltos: devolvem o endereço do campo rel para remendar, ou NULL se o buffer estourou (o
+ * x_patch* ignora NULL; sem isso o remendo escrevia em b->lim, fora do cache de código) */
+static inline a64_u8 *x_jcc32(xb *b, int cc) { xe8(b, 0x0F); xe8(b, 0x80 + cc); a64_u8 *r = b->p; xe32(b, 0); return b->ovf ? 0 : r; }
+static inline a64_u8 *x_jmp32(xb *b) { xe8(b, 0xE9); a64_u8 *r = b->p; xe32(b, 0); return b->ovf ? 0 : r; }
+static inline a64_u8 *x_jcc8(xb *b, int cc) { xe8(b, 0x70 + cc); a64_u8 *r = b->p; xe8(b, 0); return b->ovf ? 0 : r; }
+static inline a64_u8 *x_jmp8(xb *b) { xe8(b, 0xEB); a64_u8 *r = b->p; xe8(b, 0); return b->ovf ? 0 : r; }
 static inline void x_patch32(a64_u8 *at, const a64_u8 *target) {
     if (!at) return;
     int32_t rel = (int32_t)(target - (at + 4));

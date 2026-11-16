@@ -45,6 +45,10 @@ static int s_fcmpv(T *t, int q, int dbl, int kind, int abs, int n, int m, int d,
 static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc);
 static void s_widen(T *t, int x, int v, int hi, int sz, int sgn);
 static int s_dot(T *t, int q, int sa, int sb, int n, int m, int lane, int d);
+static void s_qaddsub_core(T *t, int u, int size, int sub);
+static int s_qdmulh_s(T *t, int q, int rnd, int n, int m, int lane, int d);
+static int s_sqdmull(T *t, int q, int size, int acc, int n, int m, int lane, int d);
+static void s_replicate(T *t, int size);
 static int s_scalar_simd(T *t, a64_u32 w);
 
 static void s_ld(T *t, int x, int v) { x_movdqu_ld(B, x, VO(v)); }
@@ -223,7 +227,7 @@ static int s_three_same_x(T *t, a64_u32 w, int sc) {
         return 1;
     }
     case 0x16:                                      /* SQDMULH / SQRDMULH */
-        return size == 1 ? s_qdmulh_h(t, q, u, n, m, d) : 0;
+        return size == 1 ? s_qdmulh_h(t, q, u, n, m, d) : size == 2 ? s_qdmulh_s(t, q, u, n, m, -1, d) : 0;
     case 0x01: case 0x05:                           /* SQADD UQADD / SQSUB UQSUB */
         return s_qaddsub(t, q, u, size, op == 0x05, n, m, d);
     case 0x17:                                      /* ADDP */
@@ -553,13 +557,10 @@ static void s_signmask(T *t, int x, int eb) {
     xop2(B, XF_66, 0x72, 4, XR(x)); xe8(B, 31);     /* psrad 31 */
     if (eb == 64) { xop2(B, XF_66, 0x70, x, XR(x)); xe8(B, 0xF5); }   /* pshufd: copia o dword de cima */
 }
-/* SQADD UQADD SQSUB UQSUB em lanes de 32/64 bits: estouro pelos bits de sinal; QC se algum */
-static int s_qaddsub_sd(T *t, int q, int u, int size, int sub, int n, int m, int d) {
+/* núcleo de SQADD/UQADD/SQSUB/UQSUB de 32/64 bits: xmm0 = a, xmm1 = b → xmm0 saturado, QC */
+static void s_qaddsub_core(T *t, int u, int size, int sub) {
     int eb = size == 2 ? 32 : 64;
-    if (eb == 64 && !q) return 0;
-    if (u && eb == 64 && !jit_g.sse42) return 0;    /* comparação sem sinal de 64 bits */
     unsigned add = eb == 32 ? 0xFE : 0xD4, subo = eb == 32 ? 0xFA : 0xFB;
-    if (q) { s_ld(t, 0, n); s_ld(t, 1, m); } else { x_movq_ld(B, 0, VO(n)); x_movq_ld(B, 1, VO(m)); }
     x_movdqa_ld(B, 2, XR(0));                       /* xmm2 = a, xmm1 = b */
     s_op(t, sub ? subo : add, 0, 1);                /* xmm0 = r (com volta) */
     if (u) {                                        /* estouro: r <u a (soma) / a <u b (subtração) */
@@ -585,13 +586,86 @@ static int s_qaddsub_sd(T *t, int q, int u, int size, int sub, int n, int m, int
         x_movdqa_ld(B, 0, XR(3));
     }
     s_qc(t);
+}
+/* SQADD UQADD SQSUB UQSUB em lanes de 32/64 bits: estouro pelos bits de sinal; QC se algum */
+static int s_qaddsub_sd(T *t, int q, int u, int size, int sub, int n, int m, int d) {
+    int eb = size == 2 ? 32 : 64;
+    if (eb == 64 && !q) return 0;
+    if (u && eb == 64 && !jit_g.sse42) return 0;    /* comparação sem sinal de 64 bits */
+    if (q) { s_ld(t, 0, n); s_ld(t, 1, m); } else { x_movq_ld(B, 0, VO(n)); x_movq_ld(B, 1, VO(m)); }
+    s_qaddsub_core(t, u, size, sub);
     s_st(t, d, 0, q);
     return 1;
 }
+/* operando m de uma instrução por elemento (lane >= 0) ou vetorial em xmm1; size 1 = H, 2 = S */
+static void s_ld_m(T *t, int q, int size, int m, int lane) {
+    if (lane < 0) { if (q) s_ld(t, 1, m); else x_movq_ld(B, 1, VO(m)); return; }
+    if (size == 2) { xop2(B, XF_66, 0x70, 1, VO(m)); xe8(B, (a64_u8)(lane * 0x55)); return; }
+    x_movzx16(B, XAX, VOE(m, 2 * lane));
+    s_replicate(t, 1);
+    xop2(B, XF_66 | XF_W, 0x6E, 1, XR(XAX));
+    s_op(t, 0x6C, 1, 1);
+}
+/* SQDMULH / SQRDMULH de S: (a*b [+ 2^30]) >> 31 com pmuldq nas lanes pares e ímpares; só
+ * MIN × MIN satura (→ MAX, QC). */
+static int s_qdmulh_s(T *t, int q, int rnd, int n, int m, int lane, int d) {
+    if (!jit_g.sse41) return 0;
+    if (q) s_ld(t, 0, n); else x_movq_ld(B, 0, VO(n));
+    s_ld_m(t, q, 2, m, lane);
+    s_const(t, 4, 0x8000000080000000ull);
+    x_movdqa_ld(B, 2, XR(0)); s_op(t, 0x76, 2, 4);
+    x_movdqa_ld(B, 3, XR(1)); s_op(t, 0x76, 3, 4);
+    s_op(t, 0xDB, 2, 3);                            /* xmm2 = lanes que saturam */
+    xop2(B, XF_66, 0x70, 4, XR(0)); xe8(B, 0xF5);   /* ímpares nas posições pares */
+    xop2(B, XF_66, 0x70, 5, XR(1)); xe8(B, 0xF5);
+    x_movdqa_ld(B, 3, XR(0));
+    s_op38(t, 0x28, 3, 1);                          /* pmuldq: produtos das pares */
+    s_op38(t, 0x28, 4, 5);                          /* das ímpares */
+    if (rnd) { s_const(t, 0, 0x40000000ull); s_op(t, 0xD4, 3, 0); s_op(t, 0xD4, 4, 0); }
+    xop2(B, XF_66, 0x73, 2, XR(3)); xe8(B, 31);     /* psrlq 31: bits 62:31 no dword baixo */
+    xop2(B, XF_66, 0x73, 2, XR(4)); xe8(B, 31);
+    xop2(B, XF_66, 0x73, 6, XR(4)); xe8(B, 32);     /* ímpares no dword alto */
+    s_const(t, 0, 0x00000000FFFFFFFFull);
+    s_op(t, 0xDB, 0, 3);
+    s_op(t, 0xEB, 0, 4);
+    s_op(t, 0xEF, 0, 2);                            /* 0x80000000 → 0x7FFFFFFF nas saturadas */
+    x_movdqa_ld(B, 1, XR(0)); s_op(t, 0xEF, 1, 2);
+    s_qc(t);
+    s_st(t, d, 0, q);
+    return 1;
+}
+/* SQDMULL / SQDMLAL / SQDMLSL (acc 0/1/2) de H→S e S→D, vetor ("2" = metade de cima) ou por
+ * elemento. 2ab só estoura em MIN × MIN (→ MAX, QC); o acúmulo é o SQADD/SQSUB largo. */
+static int s_sqdmull(T *t, int q, int size, int acc, int n, int m, int lane, int d) {
+    if (!jit_g.sse41 || (size != 1 && size != 2)) return 0;
+    x_movq_ld(B, 0, q ? VOE(n, 8) : VO(n));
+    if (lane < 0) x_movq_ld(B, 1, q ? VOE(m, 8) : VO(m)); else s_ld_m(t, 1, size, m, lane);
+    s_const(t, 4, size == 1 ? 0x8000800080008000ull : 0x8000000080000000ull);
+    unsigned eq = size == 1 ? 0x75 : 0x76, wid = size == 1 ? 0x23 : 0x25;   /* pmovsxwd / pmovsxdq */
+    x_movdqa_ld(B, 2, XR(0)); s_op(t, eq, 2, 4);
+    x_movdqa_ld(B, 3, XR(1)); s_op(t, eq, 3, 4);
+    s_op(t, 0xDB, 2, 3);
+    s_op38(t, wid, 0, 0); s_op38(t, wid, 1, 1); s_op38(t, wid, 2, 2);
+    if (size == 1) { s_op38(t, 0x40, 0, 1); s_op(t, 0xFE, 0, 0); }   /* pmulld; dobro */
+    else { s_op38(t, 0x28, 0, 1); s_op(t, 0xD4, 0, 0); }               /* pmuldq; dobro */
+    s_op(t, 0xEF, 0, 2);
+    x_movdqa_ld(B, 1, XR(0)); s_op(t, 0xEF, 1, 2);
+    s_qc(t);
+    if (acc) {
+        x_movdqa_ld(B, 1, XR(0));
+        s_ld(t, 0, d);
+        s_qaddsub_core(t, 0, size + 1, acc == 2);
+    }
+    s_st(t, d, 0, 1);
+    return 1;
+}
 /* SQDMULH / SQRDMULH em H: (2ab) >> 16 [arredondado]; só 0x8000 × 0x8000 satura (→ 0x7FFF, QC) */
-static int s_qdmulh_h(T *t, int q, int rnd, int n, int m, int d) {
+static int s_qdmulh_hl(T *t, int q, int rnd, int n, int m, int lane, int d);
+static int s_qdmulh_h(T *t, int q, int rnd, int n, int m, int d) { return s_qdmulh_hl(t, q, rnd, n, m, -1, d); }
+static int s_qdmulh_hl(T *t, int q, int rnd, int n, int m, int lane, int d) {
     if (rnd && !jit_g.ssse3) return 0;
-    if (q) { s_ld(t, 0, n); s_ld(t, 1, m); } else { x_movq_ld(B, 0, VO(n)); x_movq_ld(B, 1, VO(m)); }
+    if (q) s_ld(t, 0, n); else x_movq_ld(B, 0, VO(n));
+    s_ld_m(t, q, 1, m, lane);
     s_const(t, 4, 0x8000800080008000ull);
     x_movdqa_ld(B, 2, XR(0)); s_op(t, 0x75, 2, 4);  /* a == 0x8000 */
     x_movdqa_ld(B, 3, XR(1)); s_op(t, 0x75, 3, 4);
@@ -1603,6 +1677,14 @@ static int s_indexed(T *t, a64_u32 w) {
         return fpv_core(t, op == 5 ? 0xBC : 0xB8, 1, dbl, q, d, n, m, lane);
     }
     int key = (u << 4) | op;
+    if (!u && (op == 0x3 || op == 0x7 || op == 0xB || op == 0xC || op == 0xD) && (size == 1 || size == 2)) {
+        int lane = size == 1 ? (H << 2) | (L << 1) | M : (H << 1) | L, m = size == 1 ? rm : (M << 4) | rm;
+        if (op == 0xC || op == 0xD) {               /* SQDMULH SQRDMULH por elemento */
+            if (size == 2) return s_qdmulh_s(t, q, op == 0xD, n, m, lane, d);
+            return s_qdmulh_hl(t, q, op == 0xD, n, m, lane, d);
+        }
+        return s_sqdmull(t, q, size, op == 0x3 ? 1 : op == 0x7 ? 2 : 0, n, m, lane, d);   /* SQDMLAL SQDMLSL SQDMULL */
+    }
     if ((op == 0xE && size == 2) || (op == 0xF && !u && (size == 2 || size == 0))) {   /* (S|U)DOT USDOT SUDOT por elemento */
         int lane = (H << 1) | L, m = (M << 4) | rm;
         if (op == 0xE) return s_dot(t, q, !u, !u, n, m, lane, d);
@@ -1677,6 +1759,9 @@ static int s_3diff(T *t, a64_u32 w) {
         return 1;
     case 4: case 6:                                 /* ADDHN RADDHN / SUBHN RSUBHN */
         return s_addhn(t, q, u, size, op == 6, n, m, d);
+    case 9: case 11: case 13:                       /* SQDMLAL SQDMLSL SQDMULL */
+        if (u) return 0;
+        return s_sqdmull(t, q, size, op == 9 ? 1 : op == 11 ? 2 : 0, n, m, -1, d);
     case 5: case 7:                                 /* ABAL / ABDL: |a - b| nas lanes largas */
         if (size < 2 && !jit_g.ssse3) return 0;
         s_widen(t, 0, n, q, size, sgn);
