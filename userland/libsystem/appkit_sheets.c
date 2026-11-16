@@ -7,6 +7,7 @@
  *     attachedSheet, sheetParent, isSheet, sheets.
  *   NSApplication (legado): beginSheet:modalForWindow:modalDelegate:didEndSelector:contextInfo:, endSheet:,
  *     endSheet:returnCode:.
+ * Também: limites de tamanho da janela (min/max da moldura e do conteúdo, proporção) passados ao window server.
  * Registro: cx_appkit_sheets_init(), chamado do cx_appkit_input_init (depois do appkit_apps_ui.c).
  */
 #include "foundation.h"
@@ -21,7 +22,6 @@ id objc_getAssociatedObject(id obj, const void *key);
 void *_Block_copy(const void *b);
 void _Block_release(const void *b);
 void NSBeep(void);
-IMP class_getMethodImplementation(cx_class_t *c, SEL s);
 extern id NSApp;
 
 typedef struct { double x, y, w, h; } R;
@@ -153,35 +153,37 @@ static void ap_begin_sheet(id self, SEL c, id sheet, id win, id delegate, SEL di
 static void ap_end_sheet_code(id self, SEL c, id sheet, i64 code) { (void)self; (void)c; finish(parent_of(sheet), sheet, code); }
 static void ap_end_sheet(id self, SEL c, id sheet) { (void)self; (void)c; finish(parent_of(sheet), sheet, NSModalResponseStop); }
 
-/* ---- limites de tamanho e nível: guardados por janela; o setFrame: respeita os limites. Mover ou redimensionar uma
- * janela já na tela depende do window server (pedido à frente da Camila). */
+/* ---- limites de tamanho: guardados por janela e passados ao window server (redimensionamento pelo usuário, zoom e
+ * encaixe). Como no Cocoa, o setFrame: do app não é limitado. */
 typedef struct { double w, h; } S;
-static char k_min, k_max, k_cmin, k_cmax, k_level, k_aspect;
+static char k_min, k_max, k_cmin, k_cmax, k_aspect;
 static id size_val(S z) { return MSG(id, (id)cx_class_named("NSValue"), "valueWithSize:", z); }
 static S val_size(id v, S def) { return v ? ((S (*)(id, SEL))objc_msgSend)(v, sl("sizeValue")) : def; }
-static void set_size(id w, char *k, S z) { objc_setAssociatedObject(w, k, size_val(z), 1); }
 static S get_size(id w, char *k, S def) { return val_size(objc_getAssociatedObject(w, k), def); }
+void cx_window_push_limits(id self, double min_w, double min_h, double max_w, double max_h);
+#define BIG 3.40282347e38
+/* o mínimo/máximo da moldura vale para o conteúdo menos a barra de título; o do conteúdo vale direto */
+static void push_limits(id self, SEL c) {
+    (void)c;
+    S mn = get_size(self, &k_min, (S){0, 0}), mx = get_size(self, &k_max, (S){BIG, BIG});
+    S cmn = get_size(self, &k_cmin, (S){0, 0}), cmx = get_size(self, &k_cmax, (S){BIG, BIG});
+    R fr = frame_of(self), cr = ((R (*)(id, SEL, R))objc_msgSend_stret)(self, sl("contentRectForFrameRect:"), fr);
+    double title = fr.h - cr.h;
+    double min_w = mn.w > cmn.w ? mn.w : cmn.w, min_h = (mn.h - title) > cmn.h ? mn.h - title : cmn.h;
+    double max_w = mx.w < cmx.w ? mx.w : cmx.w, max_h = (mx.h < BIG ? mx.h - title : BIG) < cmx.h ? (mx.h < BIG ? mx.h - title : BIG) : cmx.h;
+    cx_window_push_limits(self, min_w, min_h < 0 ? 0 : min_h, max_w, max_h);
+}
+static void set_size(id w, char *k, S z) { objc_setAssociatedObject(w, k, size_val(z), 1); push_limits(w, 0); }
 static void w_set_min(id self, SEL c, S z) { (void)c; set_size(self, &k_min, z); }
 static void w_set_max(id self, SEL c, S z) { (void)c; set_size(self, &k_max, z); }
 static void w_set_cmin(id self, SEL c, S z) { (void)c; set_size(self, &k_cmin, z); }
 static void w_set_cmax(id self, SEL c, S z) { (void)c; set_size(self, &k_cmax, z); }
 static S w_min(id self, SEL c) { (void)c; return get_size(self, &k_min, (S){0, 0}); }
-static S w_max(id self, SEL c) { (void)c; return get_size(self, &k_max, (S){3.40282347e38, 3.40282347e38}); }
+static S w_max(id self, SEL c) { (void)c; return get_size(self, &k_max, (S){BIG, BIG}); }
 static S w_cmin(id self, SEL c) { (void)c; return get_size(self, &k_cmin, (S){0, 0}); }
-static S w_cmax(id self, SEL c) { (void)c; return get_size(self, &k_cmax, (S){3.40282347e38, 3.40282347e38}); }
-static void w_set_aspect(id self, SEL c, S z) { (void)c; set_size(self, &k_aspect, z); }
+static S w_cmax(id self, SEL c) { (void)c; return get_size(self, &k_cmax, (S){BIG, BIG}); }
+static void w_set_aspect(id self, SEL c, S z) { (void)c; objc_setAssociatedObject(self, &k_aspect, size_val(z), 1); }
 static S w_aspect(id self, SEL c) { (void)c; return get_size(self, &k_aspect, (S){0, 0}); }
-static void w_set_level(id self, SEL c, i64 l) { (void)c; objc_setAssociatedObject(self, &k_level, cx_num_i(l), 1); }
-static i64 w_level(id self, SEL c) { (void)c; id v = objc_getAssociatedObject(self, &k_level); return v ? MSG0(i64, v, "longLongValue") : 0; }
-static double clampd(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
-static IMP old_set_frame;
-static void w_set_frame_clamped(id self, SEL c, R r, BOOL disp) {
-    S mn = w_min(self, 0), mx = w_max(self, 0);
-    double nw = clampd(r.w, mn.w, mx.w), nh = clampd(r.h, mn.h, mx.h);
-    r.y += r.h - nh;                 /* mantém o alto da janela no lugar */
-    r.w = nw; r.h = nh;
-    ((void (*)(id, SEL, R, BOOL))old_set_frame)(self, c, r, disp);
-}
 
 void cx_appkit_sheets_init(void) {
     cx_class_t *w = cx_class_named("NSWindow"), *app = cx_class_named("NSApplication");
@@ -200,9 +202,7 @@ void cx_appkit_sheets_init(void) {
         cx_add_method(w, "setContentMaxSize:", (void *)w_set_cmax); cx_add_method(w, "contentMaxSize", (void *)w_cmax);
         cx_add_method(w, "setAspectRatio:", (void *)w_set_aspect); cx_add_method(w, "aspectRatio", (void *)w_aspect);
         cx_add_method(w, "setContentAspectRatio:", (void *)w_set_aspect); cx_add_method(w, "contentAspectRatio", (void *)w_aspect);
-        cx_add_method(w, "setLevel:", (void *)w_set_level); cx_add_method(w, "level", (void *)w_level);
-        old_set_frame = class_getMethodImplementation(w, sl("setFrame:display:"));
-        cx_add_method(w, "setFrame:display:", (void *)w_set_frame_clamped);
+        cx_add_method(w, "_cxPushLimits", (void *)push_limits);
     }
     if (app) {
         cx_add_method(app, "beginSheet:modalForWindow:modalDelegate:didEndSelector:contextInfo:", (void *)ap_begin_sheet);
