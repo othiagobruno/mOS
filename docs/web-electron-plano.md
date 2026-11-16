@@ -30,9 +30,16 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    ImageIO. Animação: só o 1º quadro (o motor não anima GIF nem WebP).
 2b. ✅ **Imagens responsivas** — `<picture><source type media srcset>`, `srcset` com descritores `x` e `w`,
    `data-srcset`; `type` sem decodificador (AVIF, JPEG XL) cai para o próximo candidato (`img_pick_src`, `layout.c`).
-3. **SVG**: `<svg>` inline e `.svg` em `<img>`/CSS — parser, caminhos (`path d`, formas básicas, `transform`,
-   `viewBox`), preenchimento com regra não-zero/par-ímpar, traço com junções e tampas, gradientes linear/radial,
-   opacidade, `<use>`, `<text>` simples; rasterizador com antisserrilhado próprio.
+3. ✅ **SVG** — `kernel/web/svg.c` (parser XML próprio, rasterizador de cobertura com 8 subamostras): `path` com
+   todos os comandos, formas básicas, `transform`, `viewBox`/`preserveAspectRatio`, `<svg>` aninhado, não-zero e
+   par-ímpar, traço (junções, tampas, `miterlimit`, tracejado), gradientes linear/radial (foco, units, transform,
+   spread, `href`), `<style>` com seletores simples, `currentColor` (herda a cor CSS da página no inline),
+   `<use>`/`<symbol>` (inclusive sprites definidos em outro `<svg>` da página), `clipPath`, opacidade de grupo em
+   camada, `<text>`/`<tspan>`, `<image>` com `data:`. Ligado a `<svg>` inline (elemento substituído), `<img src=.svg>`,
+   `<picture type=image/svg+xml>` e `data:`; o vetor é redesenhado no tamanho exibido. Teste: `tools/web_host_svg.c`
+   (10 casos; ASan/UBSan limpos com `XCFLAGS`).
+   **Falta no SVG:** `<mask>`, `<pattern>`, `<marker>`, filtros, `<textPath>`, texto girado (só translação/escala),
+   SMIL/animação e os filhos do `<svg>` inline no DOM do JavaScript (o motor guarda o SVG como fonte).
 4. **Iframes**: `<iframe src/srcdoc>` como caixa substituída com documento, rolagem e reino JS próprios;
    `contentWindow`, `contentDocument` (mesma origem), `postMessage` entre janelas, eventos `load`.
 5. **Diálogos JS bloqueantes**: o script para em `alert/confirm/prompt` até o `completionHandler` do app
@@ -62,4 +69,6 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 ## Diário
 
 - 15 nov.: harness de host do motor (`tools/web_host.sh`, 5/5).
+- 15 nov.: SVG (`svg_formas`, `svg_path_comandos`, `svg_regras_e_traco`, `svg_viewbox_transform`, `svg_gradientes`,
+  `svg_estilo_use_clip`, `svg_texto_imagem`, `svg_na_pagina`, `svg_sprite_da_pagina`, `svg_lixo`): 166/166.
 - 15 nov.: WebP e imagens responsivas (`tools/web_host.sh`: casos `webp_formatos`, `webp_lixo`, `img_srcset_picture`, `img_webp_na_pagina`).

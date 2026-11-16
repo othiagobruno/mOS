@@ -130,6 +130,9 @@ struct img {
     http_req_t *req;
     surface_t *surf;
     surface_t *scaled;     /* cache redimensionado */
+    char *svg;             /* fonte SVG (kmalloc): redesenhada no tamanho exibido */
+    int svglen;
+    u32 svgcolor;          /* SVG inline: cor CSS do elemento (currentColor); 0 = preto */
     struct img *next;
 };
 surface_t *image_decode(const u8 *d, usize n);
@@ -138,6 +141,13 @@ surface_t *image_scale(const surface_t *src, int w, int h); /* filtro de área /
 /* WebP (kernel/web/webp.c): VP8, VP8L, ALPH, VP8X; animação devolve o 1º quadro */
 surface_t *webp_decode(const u8 *d, usize n);
 u32 *webp_decode_argb(const u8 *d, usize n, int *w, int *h);   /* ARGB não pré-multiplicado, kfree no resultado */
+/* SVG (kernel/web/svg.c) */
+bool svg_is(const u8 *d, usize n);                                   /* tem um elemento <svg> no começo */
+bool svg_intrinsic(const char *src, int len, float *w, float *h);
+surface_t *svg_render(const char *src, int len, int w, int h);       /* w/h 0 = tamanho intrínseco */
+surface_t *svg_render_ex(const char *src, int len, int w, int h, u32 color);   /* color: currentColor herdado */
+/* põe os bytes baixados numa imagem do documento: decodifica, e guarda a fonte se for SVG */
+void img_set_data(img_t *im, const u8 *d, usize n);
 
 /* ============================================================ controles de formulário */
 enum { C_TEXT, C_PASSWORD, C_SUBMIT, C_RESET, C_BUTTON, C_CHECK, C_RADIO, C_SELECT, C_TEXTAREA, C_IMAGE, C_HIDDEN };
