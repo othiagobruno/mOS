@@ -84,7 +84,8 @@ flowchart TD
 | 4a. Motor do cliente | pronto (`mnet_client.c`, `mnet_decode.c`, `mnet_url.c`); ainda não ligado ao NSURLSession | `tools/mnet_client_test.c`: 22/22 contra `tools/mnet_http_servidor.py` (keep-alive, 5 redirects, laço, 303, 307 com corpo, delegate recusando redirect, gzip, chunked, cookies no redirect, tempo esgotado, erros); com `rede`: 35/35, HTTP/2 real por ALPN sobre o TLS do mOS em google, cloudflare, github e example.com, reuso de conexão, certificado vencido recusado |
 | 4b. NSURLSession novo | escrito e compilado (`nsurlsession.c`, `urlsession_io.c`, `mnet_cache.c`); o antigo saiu de `foundation_more.c` (combinado com o Eduardo, que acrescentou a API de `NSURLRequest`/`NSHTTPURLResponse` no PR #316) | regras de cache: `mnet_host_test` 736/736; motor por baixo: `mnet_client_test` 35/35. As classes ObjC **não** rodaram: não há harness de host com o runtime ObjC; o primeiro teste delas é o build final |
 | 5. WebSocket | núcleo (`mnet_ws.c`) e cliente sobre o transporte (`mnet_ws_open`) testados; `NSURLSessionWebSocketTask`/`NSURLSessionWebSocketMessage` escritos e compilados (não executados) | `mnet_host_test` 761/761: SHA-1, Sec-WebSocket-Accept e quadros da RFC 6455 §5.7, exemplos da RFC 7692 §7.2.3, erros 1002/1007, ida e volta com deflate e 3 × 1 MiB, close; servidor do mnet contra o cliente WebSocket do Node. `mnet_client_test rede` 38/38: `wss://echo.websocket.org` sobre o TLS do mOS |
-| 6–10 | não iniciado | — |
+| 6. Proxy | regras e constantes prontas (`mnet_proxy.c`, `cfproxy.c`); NSURLSession usa o proxy do sistema quando a configuração não tem um. **PAC não é avaliado**: falta o motor JavaScript no userland (combinando com o Fabio) | `mnet_host_test` 778/778: exceções (curinga, domínio, CIDR, prefixo, nomes simples, loopback), ordem PAC → HTTP/HTTPS → SOCKS → direto, leitura de resultado PAC |
+| 7–10 | não iniciado | — |
 
 ### Etapa 1 — o que está no código
 
@@ -176,3 +177,12 @@ Ainda não ligado a nenhuma API pública: isso entra nas etapas 2–4.
   `closeCode`/`closeReason`, `maximumMessageSize` (1 MiB), delegate `didOpenWithProtocol:` e `didCloseWithCode:reason:`,
   erro POSIX 57 para leituras pendentes depois do fechamento. WebSocket sobre HTTP/2 (RFC 8441) não é oferecido.
 - Falta: os símbolos Swift de `URLSessionWebSocketTask.Message` (`sys_zerados.c`), com a ponte Swift.
+
+### Etapa 6 — proxy
+
+- `cfproxy.c`: todas as chaves `kCFProxy*`, `kCFNetworkProxies*` (antes ponteiros nulos em `sys_zerados.c`) e
+  `kCFStreamNetworkServiceType*` como CFString; `CFNetworkCopyProxiesForURL` real; `cx_proxy_for` para NSURLSession e
+  libcurl. As definições soltas em `cli.c` e `chrome.c` vieram para cá.
+- Fonte do sistema: `CFNetworkCopySystemProxySettings` (`sysconfig.c`, `State:/Network/Global/Proxies` do configd).
+- Falta: avaliar PAC (`CFNetworkCopyProxiesForAutoConfigurationScript`, `CFNetworkExecuteProxyAutoConfigurationURL`/
+  `Script` e WPAD), que precisa de JavaScript no userland.

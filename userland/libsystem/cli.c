@@ -285,26 +285,15 @@ typedef struct { void *isa; u64 flags; const char *s; u64 n; } cfconst_t;
 #define K(var, text) \
     static cfconst_t var##_cs = {cx_cfconst_isa, 0x7c8, text, sizeof(text) - 1}; \
     const void *var = &var##_cs;
-K(kCFProxyTypeKey, "kCFProxyTypeKey") K(kCFProxyTypeNone, "kCFProxyTypeNone") K(kCFProxyTypeHTTP, "kCFProxyTypeHTTP")
-K(kCFProxyTypeHTTPS, "kCFProxyTypeHTTPS") K(kCFProxyTypeSOCKS, "kCFProxyTypeSOCKS") K(kCFProxyHostNameKey, "kCFProxyHostNameKey")
-K(kCFProxyPortNumberKey, "kCFProxyPortNumberKey") K(kCFProxyAutoConfigurationURLKey, "kCFProxyAutoConfigurationURLKey")
-K(kCFProxyAutoConfigurationJavaScriptKey, "kCFProxyAutoConfigurationJavaScriptKey")
+
 K(kSCPropNetProxiesHTTPEnable, "HTTPEnable") K(kSCPropNetProxiesHTTPProxy, "HTTPProxy") K(kSCPropNetProxiesHTTPPort, "HTTPPort")
 K(kSCPropNetProxiesHTTPSEnable, "HTTPSEnable") K(kSCPropNetProxiesHTTPSProxy, "HTTPSProxy") K(kSCPropNetProxiesHTTPSPort, "HTTPSPort")
-K(kCFNetworkProxiesSOCKSEnable, "SOCKSEnable") K(kCFNetworkProxiesProxyAutoDiscoveryEnable, "ProxyAutoDiscoveryEnable")
+
 K(kSCDynamicStoreUseSessionKeys, "UseSessionKeys")
 K(NSPasteboardTypeHTML, "public.html") K(NSPasteboardTypeTIFF, "public.tiff")
 K(NSPasteboardURLReadingFileURLsOnlyKey, "NSPasteboardURLReadingFileURLsOnlyKey")
 
-/* proxies: o mOS não tem configuração de proxy; a resposta é a lista com um "sem proxy", como num Mac sem proxy */
-id_ CFNetworkCopyProxiesForURL(id_ url, id_ settings) {
-    (void)url; (void)settings;
-    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
-    CFDictionarySetValue(d, (id_)kCFProxyTypeKey, (id_)kCFProxyTypeNone);
-    id_ a = CFArrayCreateMutable(0, 0, 0);
-    CFArrayAppendValue(a, d);
-    return a;
-}
+/* proxies: CFNetworkCopyProxiesForURL e as chaves kCFProxy* estão em cfproxy.c */
 id_ CFNetworkExecuteProxyAutoConfigurationScript(id_ script, id_ url, void *cb, void *ctx) { (void)script; (void)url; (void)cb; (void)ctx; return 0; }
 id_ CFNetworkExecuteProxyAutoConfigurationURL(id_ pac, id_ url, void *cb, void *ctx) { (void)pac; (void)url; (void)cb; (void)ctx; return 0; }
 

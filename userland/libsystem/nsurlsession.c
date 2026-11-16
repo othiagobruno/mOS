@@ -1059,26 +1059,9 @@ CFG_V(cfg_cell, cfg_set_cell, cellular, BOOL) CFG_V(cfg_exp, cfg_set_exp, expens
 CFG_V(cfg_waits, cfg_set_waits, waits, BOOL) CFG_V(cfg_disc, cfg_set_disc, discretionary, BOOL) CFG_V(cfg_pipe, cfg_set_pipe, pipelining, BOOL)
 CFG_V(cfg_launch, cfg_set_launch, launch_events, BOOL)
 
-/* proxy da configuração (chaves de kCFNetworkProxies*) -> "http://h:p" / "socks5://h:p" */
-static char *cfg_proxy_for(id cfg, const char *scheme) {
-    id d = cfg ? CF(cfg)->proxy : 0;
-    if (!d) return 0;
-    const char *on, *host, *port, *pfx;
-    int https = scheme && !strcmp(scheme, "https");
-    struct { const char *on, *host, *port, *pfx; } tab[3] = {
-        {https ? "HTTPSEnable" : "HTTPEnable", https ? "HTTPSProxy" : "HTTPProxy", https ? "HTTPSPort" : "HTTPPort", "http"},
-        {"SOCKSEnable", "SOCKSProxy", "SOCKSPort", "socks5"},
-        {0, 0, 0, 0}};
-    for (int i = 0; tab[i].on; i++) {
-        on = tab[i].on; host = tab[i].host; port = tab[i].port; pfx = tab[i].pfx;
-        id e = dget(d, on), h = dget(d, host), p = dget(d, port);
-        if (!h || (e && !MSG0(BOOL, e, "boolValue"))) continue;
-        char b[320];
-        snprintf(b, sizeof b, "%s://%s:%ld", pfx, cs(h), p ? (long)MSG0(long, p, "longValue") : (long)(i ? 1080 : 8080));
-        return dupc(b);
-    }
-    return 0;
-}
+/* proxy para a URL: o dicionário da configuração ou, sem ele, o do sistema (exceções, HTTP/HTTPS, SOCKS: cfproxy.c) */
+char *cx_proxy_for(id settings, const char *url);
+static char *cfg_proxy_for(id cfg, const char *url) { return cx_proxy_for(cfg ? CF(cfg)->proxy : 0, url); }
 
 /* ================================================================ sessão e tarefas */
 typedef struct task task_t;
@@ -1852,7 +1835,7 @@ static void *task_main(void *arg) {
         id store = CF(cfg)->cookies;
         q.no_cookies = !CF(cfg)->set_cookies || !j->rq.handle_cookies || !store || object_getClass(store) != &NSHTTPCookieStorage_c;
         if (!q.no_cookies) { q.jar = CS(store)->jar; q.no_store_cookies = CS(store)->policy == 1; }
-        char *px = cfg_proxy_for(cfg, strncmp(j->rq.url, "https", 5) ? "http" : "https");
+        char *px = cfg_proxy_for(cfg, j->rq.url);
         q.proxy = px;
         j->auth_retry = 0;
         mnet_resp_free(&j->r);
@@ -2437,7 +2420,7 @@ static void *ws_main(void *arg) {
     id store = CF(SS(t->session)->cfg)->cookies;
     q.no_cookies = !CF(SS(t->session)->cfg)->set_cookies || !store || object_getClass(store) != &NSHTTPCookieStorage_c;
     if (!q.no_cookies) q.jar = CS(store)->jar;
-    char *px = cfg_proxy_for(SS(t->session)->cfg, strncmp(url, "wss", 3) ? "http" : "https");
+    char *px = cfg_proxy_for(SS(t->session)->cfg, url);
     q.proxy = px;
     char msg[200];
     int r = mnet_ws_open(cx_mnet_client(), &q, x->protocols, &w, msg, sizeof msg);
