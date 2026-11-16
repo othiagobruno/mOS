@@ -40,6 +40,7 @@ static int s_fminmax(T *t, int dbl, int which, int n, int m, int d);
 static int s_frint_sc(T *t, int dbl, int opc, int n, int d);
 static int s_fcvt_gpr(T *t, int dbl, int sf, int rmode, int opc, int n, int d);
 static int s_shift_scalar(T *t, a64_u32 w);
+static int s_shimm(T *t, int x, int eb, int kind, int sh);
 static int s_scalar_simd(T *t, a64_u32 w);
 
 static void s_ld(T *t, int x, int v) { x_movdqu_ld(B, x, VO(v)); }
@@ -91,7 +92,50 @@ static int s_cmp(T *t, int eq, int size, int x, int y) {
 }
 static const a64_u64 s_signbits[4] = { 0x8080808080808080ull, 0x8000800080008000ull, 0x8000000080000000ull, 0x8000000000000000ull };
 
-static int s_three_same(T *t, a64_u32 w) {
+/* x = max/min(x, y) por lane de 8/16/32 bits (u = sem sinal). 0 se o host não tem a instrução. */
+static int s_maxmin(T *t, int x, int y, int u, int mn, int size) {
+    static const unsigned sse2op[3][4] = { { 0, 0xDE, 0, 0xDA }, { 0xEE, 0, 0xEA, 0 }, { 0, 0, 0, 0 } };
+    static const unsigned sse4op[3][4] = { { 0x3C, 0, 0x38, 0 }, { 0, 0x3E, 0, 0x3A }, { 0x3D, 0x3F, 0x39, 0x3B } };
+    int k = mn * 2 + u;
+    if (size > 2) return 0;
+    if (sse2op[size][k]) s_op(t, sse2op[size][k], x, y);
+    else { if (!jit_g.sse41) return 0; s_op38(t, sse4op[size][k], x, y); }
+    return 1;
+}
+/* xmm0 = op(xmm0, xmm1) das metades: kind 0 HADD, 1 RHADD, 2 HSUB, sem sinal; com sinal, as
+ * entradas viram sem sinal com o bit de cima invertido (o viés some no HSUB e volta no resto).
+ * Identidades: hadd = (a & b) + ((a ^ b) >> 1), rhadd = (a | b) - ((a ^ b) >> 1),
+ * hsub = ((a ^ b) >> 1) - (~a & b). Usa xmm2..xmm4. */
+static void s_halving(T *t, int kind, int u, int size) {
+    int eb = 8 << size;
+    if (!u) { s_const(t, 2, s_signbits[size]); s_op(t, 0xEF, 0, 2); s_op(t, 0xEF, 1, 2); }
+    x_movdqa_ld(B, 3, XR(0));
+    s_op(t, 0xEF, 3, 1);                            /* a ^ b */
+    s_shimm(t, 3, eb, 1, 1);                        /* (a ^ b) >> 1 */
+    static const unsigned add[3] = { 0xFC, 0xFD, 0xFE }, sub[3] = { 0xF8, 0xF9, 0xFA };
+    if (kind == 0) { s_op(t, 0xDB, 0, 1); s_op(t, add[size], 0, 3); }
+    else if (kind == 1) { s_op(t, 0xEB, 0, 1); s_op(t, sub[size], 0, 3); }
+    else { xop2(B, XF_66, 0xDF, 0, XR(1)); s_op(t, sub[size], 3, 0); x_movdqa_ld(B, 0, XR(3)); }
+    if (!u && kind != 2) s_op(t, 0xEF, 0, 2);
+}
+/* MUL de bytes: pares e ímpares com pmullw. xmm0 = xmm0 * xmm1. Usa xmm2..xmm4. */
+static void s_mul8(T *t) {
+    x_movdqa_ld(B, 2, XR(0));
+    x_movdqa_ld(B, 3, XR(1));
+    s_op(t, 0xD5, 0, 1);                            /* pares: byte baixo de cada palavra */
+    s_const(t, 4, 0x00FF00FF00FF00FFull);
+    s_op(t, 0xDB, 0, 4);
+    xop2(B, XF_66, 0x71, 2, XR(2)); xe8(B, 8);      /* psrlw 8 */
+    xop2(B, XF_66, 0x71, 2, XR(3)); xe8(B, 8);
+    s_op(t, 0xD5, 2, 3);
+    xop2(B, XF_66, 0x71, 6, XR(2)); xe8(B, 8);      /* psllw 8 */
+    s_op(t, 0xEB, 0, 2);
+}
+
+static int s_three_same_x(T *t, a64_u32 w, int sc);
+static int s_three_same(T *t, a64_u32 w) { return s_three_same_x(t, w, 0); }
+/* sc: forma escalar D (q = 0, size = 3 aceito) */
+static int s_three_same_x(T *t, a64_u32 w, int sc) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), size = (int)BITS(w, 23, 22), op = (int)BITS(w, 15, 11);
     if (op >= 0x18) return s_fpvec(t, w);           /* FP vetorial */
     int m = (int)BITS(w, 20, 16), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
@@ -112,8 +156,32 @@ static int s_three_same(T *t, a64_u32 w) {
         s_st(t, d, r, q);
         return 1;
     }
-    if (size == 3 && !q) return 0;
+    if (size == 3 && !q && !sc) return 0;
     switch (op) {
+    case 0x00: case 0x02: case 0x04:                /* SHADD UHADD / SRHADD URHADD / SHSUB UHSUB */
+        if (size == 3) return 0;
+        s_ld(t, 0, n); s_ld(t, 1, m);
+        s_halving(t, op >> 1, u, size);
+        s_st(t, d, 0, q);
+        return 1;
+    case 0x0E: case 0x0F:                           /* SABD UABD / SABA UABA: max - min */
+        if (size == 3 || (size != 0 && !jit_g.sse41) || (size == 0 && !u && !jit_g.sse41)) return 0;
+        s_ld(t, 0, n); s_ld(t, 1, m);
+        x_movdqa_ld(B, 2, XR(0));
+        s_maxmin(t, 0, 1, u, 0, size);
+        s_maxmin(t, 1, 2, u, 1, size);
+        s_op(t, 0xF8 + (unsigned)size, 0, 1);
+        if (op == 0x0F) { s_ld(t, 1, d); s_op(t, 0xFC + (unsigned)size, 0, 1); }
+        s_st(t, d, 0, q);
+        return 1;
+    case 0x12:                                      /* MLA / MLS */
+        if (size == 3 || (size == 2 && !jit_g.sse41)) return 0;
+        s_ld(t, 0, n); s_ld(t, 1, m);
+        if (size == 0) s_mul8(t); else if (size == 1) s_op(t, 0xD5, 0, 1); else s_op38(t, 0x40, 0, 1);
+        s_ld(t, 1, d);
+        if (u) { s_op(t, 0xF8 + (unsigned)size, 1, 0); s_st(t, d, 1, q); }
+        else { s_op(t, 0xFC + (unsigned)size, 0, 1); s_st(t, d, 0, q); }
+        return 1;
     case 0x10:                                      /* ADD / SUB */
         s_ld(t, 0, n); s_ld(t, 1, m);
         if (size == 3) s_op(t, u ? 0xFB : 0xD4, 0, 1);
@@ -157,10 +225,10 @@ static int s_three_same(T *t, a64_u32 w) {
     case 0x17:                                      /* ADDP */
         if (u) return 0;
         return s_addp(t, q, size, n, m, d);
-    case 0x13:                                      /* MUL */
-        if (u || (size != 1 && size != 2) || (size == 2 && !jit_g.sse41)) return 0;
+    case 0x13:                                      /* MUL (PMUL fica com o interpretador) */
+        if (u || size == 3 || (size == 2 && !jit_g.sse41)) return 0;
         s_ld(t, 0, n); s_ld(t, 1, m);
-        if (size == 1) s_op(t, 0xD5, 0, 1); else s_op38(t, 0x40, 0, 1);
+        if (size == 0) s_mul8(t); else if (size == 1) s_op(t, 0xD5, 0, 1); else s_op38(t, 0x40, 0, 1);
         s_st(t, d, 0, q);
         return 1;
     case 0x08:                                      /* SSHL / USHL */
@@ -172,7 +240,9 @@ static int s_three_same(T *t, a64_u32 w) {
     return 0;
 }
 
-static int s_misc(T *t, a64_u32 w) {
+static int s_misc_x(T *t, a64_u32 w, int sc);
+static int s_misc(T *t, a64_u32 w) { return s_misc_x(t, w, 0); }
+static int s_misc_x(T *t, a64_u32 w, int sc) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), size = (int)BITS(w, 23, 22), op = (int)BITS(w, 16, 12);
     int n = (int)BITS(w, 9, 5), d = (int)(w & 31);
     if (op == 0x00 || (op == 0x01 && !u)) return s_rev(t, q, u, op, size, n, d);
@@ -190,7 +260,7 @@ static int s_misc(T *t, a64_u32 w) {
         s_ld(t, 0, n); s_ones(t, 1); s_op(t, 0xEF, 0, 1); s_st(t, d, 0, q);
         return 1;
     }
-    if (size == 3 && !q) return 0;
+    if (size == 3 && !q && !sc) return 0;
     switch (op) {
     case 0x08: case 0x09: case 0x0A: {              /* CMGT/CMGE/CMEQ/CMLE/CMLT #0 */
         if (op == 0x0A && u) return 0;
@@ -2380,13 +2450,20 @@ static int s_scalar_simd(T *t, a64_u32 w) {
         int size = (int)BITS(w, 23, 22), op = (int)BITS(w, 15, 11);
         if (op == 0x08 && size == 3)
             return s_shlreg(t, 0, (int)BIT(w, 29), 3, (int)BITS(w, 9, 5), (int)BITS(w, 20, 16), (int)(w & 31), 1);
+        /* ADD SUB CMTST CMEQ CMGT CMHI CMGE CMHS de D: a forma vetorial com q = 0 */
+        if (size == 3 && (op == 0x10 || op == 0x11 || op == 0x06 || op == 0x07))
+            return s_three_same_x(t, w & ~((1u << 28) | (1u << 30)), 1);
         return 0;
     }
+
     if (BIT(w, 21) && !BIT(w, 10) && BIT(w, 11) && BITS(w, 20, 17) == 0) {
         int size = (int)BITS(w, 23, 22), op = (int)BITS(w, 16, 12);
         int n = (int)BITS(w, 9, 5), d = (int)(w & 31), u = (int)BIT(w, 29);
         if (op == 0x0B && !u) return s_iabs(t, 0, size, n, d, 1);
         if (op == 0x1D && !(size & 2)) return s_scvtf(t, 0, u, size, n, d, 1);
+        /* CMGT CMGE CMEQ CMLE CMLT #0 e NEG de D: a forma vetorial com q = 0 */
+        if (size == 3 && (op == 0x08 || op == 0x09 || (op == 0x0A && !u) || (op == 0x0B && u)))
+            return s_misc_x(t, w & ~((1u << 28) | (1u << 30)), 1);
         return 0;
     }
     return 0;
