@@ -800,6 +800,21 @@ fi
 MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-frameworks-objc.sh" "$A64FW" || echo "aviso: algum framework arm64 não compilou" >&2
 bash "$ROOT/tools/build-coreimage.sh" "$ZIG" "$A64FW" arm64
 "${LIPO[@]}" --arvore "$ESP/mOS" "$A64FW" || echo "aviso: fatia arm64 sem par x86_64 na ESP (verificar-imagem-arm64.py lista)" >&2
+# libswift* sem nenhum símbolo exportado (AppKit, UIKit, WebKit, CoreData, Network...): só existem para o LC_LOAD_DYLIB
+# do app achar o arquivo. A fatia arm64 é a mesma dylib vazia, com o mesmo install_name, feita pelo zig.
+A64VAZ="$OUT/libswift-vazias-arm64"
+rm -rf "$A64VAZ"; mkdir -p "$A64VAZ/usr/lib/swift"
+: > "$OUT/libswift-vazia.c"
+for nome in $(awk '/^libswift.*\.dylib$/{if(d!=""&&n==0)print d; d=$0; n=0; next} /^[_$]/{n++} END{if(d!=""&&n==0)print d}' \
+        "$ROOT/tools/libswift-stub-exports.txt"); do
+    dst="$ESP/mOS/usr/lib/swift/$nome"
+    [ -f "$dst" ] || continue
+    python3 -I -c 'import sys; sys.path.insert(0, sys.argv[2]); import importlib; L = importlib.import_module("lipo-mos")
+sys.exit(0 if any(c == L.CPU_ARM64 for c, _, _, _ in L.slices(open(sys.argv[1], "rb").read())) else 1)' "$dst" "$ROOT/tools" && continue
+    "$ZIG" cc -target aarch64-macos -O2 -shared "$OUT/libswift-vazia.c" -o "$A64VAZ/usr/lib/swift/$nome" \
+        -Wl,-install_name,/usr/lib/swift/$nome || echo "aviso: $nome arm64 não ligou" >&2
+done
+"${LIPO[@]}" --arvore "$ESP/mOS" "$A64VAZ" || echo "aviso: libswift vazias arm64 não entraram" >&2
 
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)
