@@ -58,11 +58,12 @@ Cada passo tem teste de host em `tools/` e entra por PR na `main`. Build complet
 | #456 | Anisotropia (GL e Metal) | `gl_host` 132/132 |
 | #492 | MSAA no GL: renderbuffers/texturas/framebuffer padrão (CGL) multisample, cobertura, profundidade e estêncil por amostra, `GL_SAMPLE_COVERAGE`/`GL_SAMPLE_MASK`, alfa para cobertura, sombreamento por amostra, centroid, `gl_SampleMask`, blit com resolve | `gl_host` 170/170, `nsopengl_host` 0 falhas |
 | #496 | MSAA no Metal: texturas `sampleCount` 2/4/8, raster por amostra, `[[sample_id]]`, `[[sample_mask]]`, `alphaToCoverage`/`alphaToOne`, `centroid_*`/`sample_*`, resolve de cor e de profundidade/estêncil com filtro, cópia multisample, `getDefaultSamplePositions` | `metal_msaa_host` 18/18 |
-| (este) | Tesselação (GL 4.0): TCS com `barrier()` (invocações em fibras), gerador de triângulos/quads/isolinhas com equal/fractional_even/fractional_odd, cw/ccw e `point_mode`, TES, `patch in/out`, níveis padrão, GS depois da tesselação, uniforms em todos os estágios; correção do `mix(vec, vec, float)` no GLSL | `gl_host` 193/193 |
+| #515 | Tesselação (GL 4.0): TCS com `barrier()` (invocações em fibras), gerador de triângulos/quads/isolinhas com equal/fractional_even/fractional_odd, cw/ccw e `point_mode`, TES, `patch in/out`, níveis padrão, GS depois da tesselação, uniforms em todos os estágios; correção do `mix(vec, vec, float)` no GLSL | `gl_host` 193/193 |
+| (este) | GS: render em camadas com `gl_Layer` (FBO de array/3D/cube, `glClear` em todas as camadas, `INCOMPLETE_LAYER_TARGETS`), `gl_ClipDistance` do GS, transform feedback das saídas do GS (também com `GL_RASTERIZER_DISCARD`) | `gl_host` 203/203 |
 
 Formato de multiamostra (GL e Metal): `msl_tex_t.samples = N` e a amostra `s` da camada `l` na fatia `l*N + s`;
 posições padrão D3D/Metal em `mtltex.c` (`mx_sample_pos`) e resolve em `mx_resolve_texel`.
 
 ## Próximo (OpenGL)
 
-GS com `gl_Layer` (render em camadas) e transform feedback das saídas do GS; teste com app real na VM.
+Teste com app real na VM.

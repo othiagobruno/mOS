@@ -128,7 +128,13 @@ typedef struct {
     int srgb[GLX_DRAW], isint[GLX_DRAW];
     int ybottom;               /* 1: a linha 0 do msl_tex_t é a de baixo (framebuffer padrão e texturas GL) */
     int samples;               /* amostras por pixel de todos os anexos (1 = sem multiamostra) */
+    /* FBO em camadas (glFramebufferTexture de array, 3D ou cube): camada 0 por padrão, gl_Layer escolhe outra */
+    int layered, nlayers;
+    msl_tex_t *lt[GLX_DRAW + 2];   /* anexos em camadas (cor..., profundidade, estêncil) */
+    u8 *lbase[GLX_DRAW + 2];
+    u64 lstride[GLX_DRAW + 2];
 } gl_target_t;
+void gl_target_layer(gl_target_t *T, int layer);   /* aponta os anexos em camadas para a camada */
 
 /* ---- VAO */
 typedef struct {
@@ -226,6 +232,7 @@ typedef struct {
     int edge;
     float xfb[64];             /* saídas capturadas pelo transform feedback, na ordem do programa */
     int nxfb;
+    int layer;                 /* gl_Layer do GS: camada do FBO em camadas */
 } gl_vtx_t;
 typedef struct {
     float coord[4];            /* gl_FragCoord */
@@ -260,6 +267,7 @@ typedef struct {
     void *self;
     void (*gs)(struct gl_ctx *C, gl_vtx_t **in, int n, u32 prim);   /* geometry shader (0 = não há) */
     GLenum gs_in;              /* primitivo de entrada do GS */
+    GLenum gs_out;             /* primitivo de saída do GS (GL_POINTS, GL_LINE_STRIP, GL_TRIANGLE_STRIP) */
     int per_sample;            /* o fragment shader lê gl_SampleID/gl_SamplePosition: roda uma vez por amostra */
     int writes_mask;           /* o fragment shader escreve gl_SampleMask */
     u32 centroid;              /* slots com interpolação centroid */
