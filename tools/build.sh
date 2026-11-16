@@ -65,6 +65,14 @@ gcc -O1 -Wall tools/sysctl_host.c /tmp/sysctl_ls.o -o /tmp/sysctl_host
 gcc -O1 -Wall -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/procinfo.c -o /tmp/procinfo_ls.o
 gcc -O1 -Wall tools/procinfo_host.c /tmp/procinfo_ls.o -o /tmp/procinfo_host
 /tmp/procinfo_host | tail -1
+# IPC System V do libSystem (F7): semáforos, shm e filas entre processos (fork) sobre MAP_SHARED + futex
+gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -Dopen=h_open -I userland/libsystem -c userland/libsystem/sysv_ipc.c -o /tmp/sysv_ls.o
+gcc -O1 -Wall tools/sysv_ipc_host.c /tmp/sysv_ls.o -o /tmp/sysv_ipc_host
+timeout 60 /tmp/sysv_ipc_host | tail -1
+# os_unfair_lock (futex), recursivo e os_sync_wait_on_address (F7), com 4 threads disputando
+gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/oslock.c -o /tmp/oslock_ls.o
+gcc -O1 -Wall -pthread tools/oslock_host.c /tmp/oslock_ls.o -o /tmp/oslock_host
+timeout 120 /tmp/oslock_host | tail -1
 # GPU AMD: estado do display, vsync, troca no vblank, buffer duplo e VRAM contra um Picasso simulado
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/amdgpu.c \
     kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw_host
