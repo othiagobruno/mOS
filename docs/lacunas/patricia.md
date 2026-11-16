@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Patricia (rede para apps) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**62** símbolos distintos.
+**63** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -27,6 +27,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Network.framework | `_nw_release` | 2 | musescore, qbittorrent |
 | SystemConfiguration.framework | `_kSCDynamicStoreDomainSetup` | 2 | firefox, thunderbird |
 | SystemConfiguration.framework | `_kSCEntNetDNS` | 2 | firefox, thunderbird |
+| IOKit.framework | `_SCPreferencesCreate` | 1 | stats |
 | Kerberos.framework | `_gss_wrap_size_limit` | 1 | libreoffice |
 | SystemConfiguration.framework | `_SCNetworkInterfaceCopyMediaOptions` | 1 | stats |
 | SystemConfiguration.framework | `_SCNetworkInterfaceGetInterfaceType` | 1 | stats |

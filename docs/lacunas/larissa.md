@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Larissa (plataforma: IOKit, USB, áudio HW) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**36** símbolos distintos.
+**33** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -25,8 +25,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | IOKit.framework | `_IONotificationPortGetMachPort` | 2 | krita, shotcut |
 | IOKit.framework | `_IOObjectIsEqualTo` | 2 | krita, shotcut |
 | IOKit.framework | `_IORegistryEntryGetParentIterator` | 2 | stats, vlc |
-| CoreWLAN.framework | `_OBJC_CLASS_$_CWChannel` | 1 | stats |
-| CoreWLAN.framework | `_OBJC_CLASS_$_CWInterface` | 1 | stats |
 | IOKit.framework | `_IOConnectMapMemory` | 1 | obs |
 | IOKit.framework | `_IODestroyPlugInInterface` | 1 | stats |
 | IOKit.framework | `_IOFBCopyI2CInterfaceForBus` | 1 | monitorcontrol |
@@ -39,7 +37,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | IOKit.framework | `_IOPSCreateLimitedPowerNotification` | 1 | iterm2 |
 | IOKit.framework | `_IOPSGetProvidingPowerSourceType` | 1 | iterm2 |
 | IOKit.framework | `_IORegistryEntryGetChildIterator` | 1 | stats |
-| IOKit.framework | `_SCPreferencesCreate` | 1 | stats |
 | libswiftIOKit.dylib | `_$s5IOKit14kIOReturnErrors5Int32Vvg` | 1 | stats |
 | libswiftIOKit.dylib | `_$s5IOKit17kIOReturnNotFounds5Int32Vvg` | 1 | stats |
 | libswiftIOKit.dylib | `_$s5IOKit20kIOReturnBadArguments5Int32Vvg` | 1 | stats |

@@ -528,6 +528,7 @@ DONOS = {
     "natalia": "Natalia (serviços e segurança)", "patricia": "Patricia (rede para apps)", "renata": "Renata (BSD/Mach/XPC)",
     "vinicius": "Vinicius (arquivos e volumes)", "larissa": "Larissa (plataforma: IOKit, USB, áudio HW)",
     "sergio": "Sergio (runtime arm64)", "thais": "Thais (GPU e telas)", "camila": "Camila (desktop e window server)",
+    "felipe": "Felipe (Wi-Fi, Bluetooth, Ethernet)",
     "igor": "Igor (sem dono claro: triagem)",
     "plugin": "Plugins (flat lookup: o símbolo vem do app que carrega o plugin, não do mOS)",
 }
@@ -555,7 +556,7 @@ FW_DONO = {
     "libswiftNetwork.dylib": "patricia", "NetworkExtension": "patricia", "GSS": "patricia", "Kerberos": "patricia",
     "libresolv.9.dylib": "patricia", "MultipeerConnectivity": "patricia",
     "DiskArbitration": "vinicius", "libcompression.dylib": "vinicius", "libarchive.2.dylib": "vinicius",
-    "IOKit": "larissa", "IOBluetooth": "larissa", "CoreBluetooth": "larissa", "CoreWLAN": "larissa", "Hypervisor": "larissa",
+    "IOKit": "larissa", "IOBluetooth": "felipe", "CoreBluetooth": "felipe", "CoreWLAN": "felipe", "Hypervisor": "larissa",
     "libswiftCore.dylib": "fernanda", "libswift_Concurrency.dylib": "fernanda", "libswiftDispatch.dylib": "fernanda",
     "libswiftDarwin.dylib": "fernanda", "libswiftos.dylib": "fernanda", "libswiftObjectiveC.dylib": "fernanda",
     "libobjc.A.dylib": "fernanda",
@@ -590,7 +591,14 @@ SIM_DONO = (
 )
 
 
+# símbolo que vale mais que a biblioteca de onde o app o importa (ex.: SCPreferences pedido via IOKit em SDK antigo)
+SIM_ANTES = (("patricia", ("_SCPreferences", "_SCDynamicStore", "_SCNetwork", "_kSCProp", "_kSCDynamicStore", "_kSCEnt")),)
+
+
 def dono_de(lib: str, sym: str, origem: str) -> str:
+    for dono, pre in SIM_ANTES:
+        if sym.startswith(pre):
+            return dono
     fw = framework_de(lib)
     if fw.endswith(".framework"):
         fw = fw[: -len(".framework")]          # o relatório do machocheck grava "AppKit.framework"
@@ -798,6 +806,9 @@ def cmd_hosttest(args: argparse.Namespace) -> None:
         ("/System/Library/PrivateFrameworks/Algo.framework/Algo", "_Algo", "sistema", "igor"),
         ("AppKit.framework", "_NSBeep", "sistema", "beatriz"),
         ("OpenCL.framework", "_clGetPlatformIDs", "sistema", "otavio"),
+        ("CoreWLAN.framework", "_OBJC_CLASS_$_CWInterface", "sistema", "felipe"),
+        ("IOKit.framework", "_SCPreferencesCreate", "sistema", "patricia"),
+        ("IOKit.framework", "_IOServiceGetMatchingService", "sistema", "larissa"),
         ("(flat/self)", "_PyBool_FromLong", "sistema", "plugin"),
         ("(flat/self)", "_CFBundleGetBundleWithIdentifier", "sistema", "eduardo"),
         ("libncurses.5.4.dylib", "_initscr", "sistema", "leonardo"),
