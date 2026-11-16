@@ -86,6 +86,13 @@ typedef struct {
     volatile u32 *ring_cpu, *wb_cpu;      /* wb[0] = rptr (bytes), wb[4] = última fence, wb[8] = teste */
     u32           ring_dw, ring_wptr, sdma_seq;
     u64           sdma_timeouts, gmc_timeouts;
+    /* interrupções (irq.c) */
+    bool          ih_ok, msi_on;
+    u64           ih_phys, ih_wb_phys;
+    volatile u32 *ih_cpu, *ih_wb;
+    u32           ih_dw, ih_rptr;          /* rptr em bytes */
+    u64           irqs, ih_entries, ih_overflows, sdma_traps, hpd_events, ih_unknown;
+    volatile u32  hpd_changed;             /* bit i = HPD i mudou desde a última leitura (amdgpu_hpd_take) */
     /* VRAM livre: blocos de 64 KiB a partir do começo do BAR0 */
     u32           vram_lo, vram_hi;      /* faixa alocável, em blocos */
     u8            vram_used[AMD_VRAM_CHUNKS / 8];
@@ -141,6 +148,15 @@ u32        amdgpu_sdma_copy_rect(amdgpu_t *a, u64 dst_mc, u32 dst_pitch, u64 src
 u32        amdgpu_sdma_fill(amdgpu_t *a, u64 dst_mc, u32 value, u64 bytes);
 bool       amdgpu_sdma_wait(amdgpu_t *a, u32 seq);
 u32        amdgpu_sdma_done(amdgpu_t *a);
+
+/* ------------------------------------------------------------ interrupções (irq.c) */
+/* Anel do IH na RAM (endereço de barramento, com snoop), MSI no vetor compartilhado, trap do SDMA e hot-plug.
+ * Chamado por amdgpu_engines_init antes do SDMA. */
+bool       amdgpu_ih_init(amdgpu_t *a);
+/* esvazia o anel; devolve quantas entradas tratou (IRQ ou polling) */
+u32        amdgpu_irq_process(amdgpu_t *a);
+/* HPDs que mudaram desde a última chamada (e zera) */
+u32        amdgpu_hpd_take(amdgpu_t *a);
 
 /* MOS_GPU_FMT_* (mos_gpu.h) */
 #ifndef MOS_GPU_FMT_BGRA8

@@ -233,6 +233,8 @@ static u32 emit_fence(amdgpu_t *a) {
     ring_put(a, (u32)addr);
     ring_put(a, (u32)(addr >> 32));
     ring_put(a, seq);
+    ring_put(a, SDMA_HDR(SDMA_OP_TRAP, 0));          /* interrupção: o IH recebe o trap (fonte 224) */
+    ring_put(a, 0);
     return seq;
 }
 
@@ -242,6 +244,7 @@ bool amdgpu_sdma_wait(amdgpu_t *a, u32 seq) {
     if (!a || !a->sdma_ok) return false;
     for (u32 n = 0; n < SPIN_MAX * 4; n++) {
         if ((i32)(a->wb_cpu[4] - seq) >= 0) return true;
+        if (!a->msi_on && !(n & 1023)) amdgpu_irq_process(a);   /* sem MSI o anel do IH anda por aqui */
         CPU_RELAX();
     }
     a->sdma_timeouts++;
@@ -252,7 +255,7 @@ u32 amdgpu_sdma_copy(amdgpu_t *a, u64 dst_mc, u64 src_mc, u64 bytes) {
     if (!a || !a->sdma_ok || !bytes) return 0;
     while (bytes) {
         u32 n = bytes > SDMA_COPY_MAX ? SDMA_COPY_MAX : (u32)bytes;
-        if (!ring_room(a, 7 + 4)) return 0;
+        if (!ring_room(a, 7 + 6)) return 0;
         ring_put(a, SDMA_HDR(SDMA_OP_COPY, 0));               /* COPY_LINEAR */
         ring_put(a, n - 1);
         ring_put(a, 0);                                        /* sem troca de endianness */
@@ -270,7 +273,7 @@ u32 amdgpu_sdma_copy_rect(amdgpu_t *a, u64 dst_mc, u32 dst_pitch, u64 src_mc, u3
     if (!a || !a->sdma_ok || !row_bytes || !rows || row_bytes > SDMA_COPY_MAX) return 0;
     if (dst_pitch == row_bytes && src_pitch == row_bytes) return amdgpu_sdma_copy(a, dst_mc, src_mc, (u64)row_bytes * rows);
     for (u32 r = 0; r < rows; r++) {
-        if (!ring_room(a, 7 + 4)) return 0;
+        if (!ring_room(a, 7 + 6)) return 0;
         u64 s = src_mc + (u64)r * src_pitch, d = dst_mc + (u64)r * dst_pitch;
         ring_put(a, SDMA_HDR(SDMA_OP_COPY, 0));
         ring_put(a, row_bytes - 1);
@@ -288,7 +291,7 @@ u32 amdgpu_sdma_fill(amdgpu_t *a, u64 dst_mc, u32 value, u64 bytes) {
     if (!a || !a->sdma_ok || !bytes || (bytes & 3) || (dst_mc & 3)) return 0;
     while (bytes) {
         u32 n = bytes > SDMA_COPY_MAX ? SDMA_COPY_MAX : (u32)bytes;
-        if (!ring_room(a, 5 + 4)) return 0;
+        if (!ring_room(a, 5 + 6)) return 0;
         ring_put(a, SDMA_HDR(SDMA_OP_CONST_FILL, 0));
         ring_put(a, (u32)dst_mc); ring_put(a, (u32)(dst_mc >> 32));
         ring_put(a, value);
@@ -399,5 +402,6 @@ bool amdgpu_engines_init(amdgpu_t *a) {
     if (!a->smu_ok) { kprintf("amdgpu: sem SMU; motores da GPU ficam desligados\n"); return false; }
     a->gmc_ok = gmc_init(a);
     if (!a->gmc_ok) return false;
+    if (!amdgpu_ih_init(a)) kprintf("amdgpu: sem IH; fences seguem por polling\n");
     return sdma_init(a);
 }
