@@ -13,7 +13,7 @@ static int pass, total;
 static u8 regs[4096] __attribute__((aligned(4096)));
 static u8 msix[4096] __attribute__((aligned(4096)));
 static u32 eri[0x400];
-static u16 macocp[0x10000], phy[0x10000];
+static u16 macocp[0x10000], phy[0x10000], ephy[32];
 static int reset_reads, resets, txpolls, foreign, locked_cfg_writes, unlocked_seen;
 static u8 last_txpoll;
 
@@ -49,13 +49,22 @@ static void on_write(u32 off, u32 v, int n, u32 old) {
         break;
     }
     case 0xB0: {
-        u32 reg = (v >> 15) & 0xFFFF;
+        u32 reg = ((v >> 16) & 0x7FFF) << 1;          /* endereço par: o bit 15 é do dado */
         if (v & 0x80000000u) macocp[reg] = (u16)v; else s32(0xB0, (v & 0xFFFF0000u) | macocp[reg]);
         break;
     }
+    case 0x80: {
+        u32 reg = (v >> 16) & 0x1F;
+        if (v & 0x80000000u) { ephy[reg] = (u16)v; s32(0x80, v & ~0x80000000u); }
+        else s32(0x80, 0x80000000u | (v & 0x7FFF0000u) | ephy[reg]);
+        break;
+    }
     case 0xB8: {
-        u32 reg = (v >> 15) & 0xFFFF;
-        if (v & 0x80000000u) { phy[reg] = (u16)v; s32(0xB8, v & ~0x80000000u); }
+        u32 reg = ((v >> 16) & 0x7FFF) << 1;
+        if (v & 0x80000000u) {
+            phy[reg] = (u16)v; s32(0xB8, v & ~0x80000000u);
+            if (reg == 0xB820) { if (v & 0x10) phy[0xB800] |= 0x40; else phy[0xB800] &= (u16)~0x40; }   /* pedido de patch -> pronto */
+        }
         else s32(0xB8, 0x80000000u | (v & 0x7FFF0000u) | phy[reg]);
         break;
     }
@@ -112,6 +121,20 @@ void kprintf(const char *fmt, ...) {
     if (n > 0) loglen = loglen + (usize)n < sizeof logbuf ? loglen + (usize)n : sizeof logbuf - 1;
     if (getenv("R8169_VERBOSE")) fputs(logbuf + loglen - (n > 0 ? (usize)n : 0), stdout);
 }
+
+static u8 fwbuf[4096];
+static u32 fwlen;
+const u8 *r8169_firmware(const char *name, u32 *len) {
+    char path[128];
+    snprintf(path, sizeof path, "firmware/%s", name);
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fwlen = (u32)fread(fwbuf, 1, sizeof fwbuf, f);
+    fclose(f);
+    *len = fwlen;
+    return fwbuf;
+}
+int r8169_phy_fw(const u8 *d, u32 size, char *ver, int verlen);
 
 static netdev_t *registered;
 void net_register_device(netdev_t *d) { registered = d; }
@@ -206,6 +229,18 @@ int main(void) {
     CHECK(eri[0xC8 / 4] == 0x00080002 && eri[0xE8 / 4] == 0x00100006 && (eri[0xDC / 4] & 1), "ERI FIFO %x %x %x",
           eri[0xC8 / 4], eri[0xE8 / 4], eri[0xDC / 4]);
     CHECK(phy[0xA400] == 0x1200, "BMCR 0x%x (PHY não foi ligado)", phy[0xA400]);
+    /* 8168H: firmware do PHY, afinação e rtl_hw_start_8168h_1 */
+    CHECK(strstr(logbuf, "firmware do PHY rtl8168h-2_0.0.2") && strstr(logbuf, "(211 ações)"), "firmware do PHY não aplicado: %s", logbuf);
+    CHECK(macocp[0xF800] == 0xE008 && macocp[0xF802] == 0xE00F, "MCU do MAC sem o patch do firmware (0x%x 0x%x)", macocp[0xF800], macocp[0xF802]);
+    CHECK(!(phy[0xB820] & 0x10), "pedido de patch do PHY não foi desfeito (0x%x)", phy[0xB820]);
+    CHECK(phy[0xA436 + 0] == 0x0811 || phy[0xA438] != 0, "parâmetros do PHY (0xA436/0xA438) não escritos");
+    CHECK(ephy[0x05] == 0x2089 && ephy[0x06] == 0x5881 && ephy[0x04] == 0x854A && ephy[0x01] == 0x068B && (ephy[0x1E] & 1) && (ephy[0x1D] & 0x800),
+          "tabela EPHY do 8168H");
+    CHECK(eri[0x5F0 / 4] == 0x4F87 && eri[0xCC / 4] == 0x38 && eri[0xD0 / 4] == 0x48 && (eri[0xDC / 4] & 0x1D) == 0x1D, "ERI do 8168H");
+    CHECK(macocp[0xE0D6] == 0x017F && macocp[0xD420] == 0x047F && macocp[0xE052] == 0x8008, "MAC OCP do 8168H");
+    char ver[40];
+    u8 badfw[64] = {0}; badfw[36] = 44; badfw[40] = 1; badfw[44] = 0x12;
+    CHECK(r8169_phy_fw(badfw, 48, ver, sizeof ver) == -2, "firmware com soma errada aceito");
 
     desc_t *tx = ring_at(0x20, 0x24), *rx = ring_at(0xE4, 0xE8);
     CHECK(tx && rx && !((uptr)tx & 0xFF) && !((uptr)rx & 0xFF), "anéis desalinhados ou ausentes");
@@ -283,6 +318,12 @@ int main(void) {
     CHECK(!registered->link_up(), "link sem PHYstatus");
     regs[0x6C] = 0x02;
     CHECK(registered->link_up(), "link com PHYstatus bit 1");
+    regs[0x6C] = 0x02 | 0x10 | 0x01;
+    registered->recv(got, sizeof got);
+    CHECK(strstr(logbuf, "link ativo, 1000 Mb/s, full duplex") != NULL, "troca de link não registrada");
+    regs[0x6C] = 0;
+    registered->recv(got, sizeof got);
+    CHECK(strstr(logbuf, "cabo desconectado") != NULL, "queda de link não registrada");
     CHECK(foreign == 0, "%d acessos fora do BAR2 no fim", foreign);
 
     printf("r8169_host: %d/%d ok\n", pass, total);
