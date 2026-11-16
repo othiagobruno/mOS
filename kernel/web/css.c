@@ -982,7 +982,7 @@ static void four(const char *v, lctx_t *c, len_t out[4], bool allow_neg) {
 typedef struct {
     int position;   /* 0 static, 1 relative, 2 absolute, 3 fixed */
     float left, top;
-    bool has_left, has_top, overflow_hidden, opacity0, flt, column, flex;
+    bool has_left, has_top, overflow_hidden, overflow_any, opacity0, flt, column, flex;
     bool set_align, set_color;
 } extra_t;
 
@@ -1164,7 +1164,10 @@ static void apply_decl(style_t *st, const style_t *ps, int prop, const char *v, 
         break;
     case P_LEFT: if (parse_len(v, c, &l, true) && l.u == U_PX) { x->left = l.v / c->zoom; x->has_left = true; } break;
     case P_TOP: if (parse_len(v, c, &l, true) && l.u == U_PX) { x->top = l.v / c->zoom; x->has_top = true; } break;
-    case P_OVERFLOW: x->overflow_hidden = !strcasecmp(v, "hidden") || !strcasecmp(v, "clip"); break;
+    case P_OVERFLOW:
+        x->overflow_hidden = !strcasecmp(v, "hidden") || !strcasecmp(v, "clip");
+        x->overflow_any = x->overflow_hidden || !strcasecmp(v, "scroll") || !strcasecmp(v, "auto");
+        break;
     case P_OPACITY: { const char *p = v; bool ok; float o = parse_num(&p, &ok); x->opacity0 = ok && o < 0.05f; break; }
     case P_FLOAT: x->flt = !strcasecmp(v, "left") || !strcasecmp(v, "right"); break;
     case P_FLEX_DIRECTION: x->column = !strncasecmp(v, "column", 6); break;
@@ -1490,6 +1493,7 @@ static void style_node(sctx_t *S, node_t *n, const style_t *ps) {
     for (int i = 0; i < 4; i++) if (st->bc[i] == BC_CURRENT) st->bc[i] = st->color;
     if (n->tag == T_HTML) st->display = D_BLOCK;
     if ((x.position >= 2 && ((x.has_left && x.left < -400) || (x.has_top && x.top < -400))) || x.opacity0) st->display = D_NONE;
+    st->clip_overflow = x.overflow_any;
     if (x.overflow_hidden && st->width.u == U_PX && st->height.u == U_PX && st->width.v <= 2 && st->height.v <= 2) st->display = D_NONE;
     if (x.position == 3 && st->display != D_NONE) {
         /* barras fixas (cookies, avisos) ficam no fluxo normal */

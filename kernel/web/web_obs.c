@@ -28,7 +28,7 @@ static jsobj *registry(const char *key) {
 
 /* ============================================================ MutationObserver */
 /* extra: [callback, registros, alvos: [nó, opções]..., agendado] */
-enum { M_CB, M_RECORDS, M_TARGETS, M_NSLOTS };
+enum { M_CB, M_RECORDS, M_TARGETS, M_TRANSIENT, M_NSLOTS };   /* transitórios: [nó, opções]... até a próxima entrega */
 enum { O_CHILD = 1, O_ATTR = 2, O_DATA = 4, O_SUBTREE = 8, O_ATTROLD = 16, O_DATAOLD = 32 };
 
 static int mo_live;               /* alvos observados em todas as páginas: 0 = ganchos sem custo */
@@ -54,6 +54,7 @@ NATIVE(mo_deliver) {
     for (u32 i = 0; i < list->alen; i++) {
         jsobj *x = mo_x(list->arr[i]);
         if (!x) continue;
+        js_arr_setlen(jv_o(js_arr_get(x, M_TRANSIENT)), 0);   /* registros transitórios valem até a entrega */
         jsobj *recs = jv_o(js_arr_get(x, M_RECORDS));
         if (!recs->alen) continue;
         js_arr_set(x, M_RECORDS, jv_obj(js_newarr(0)));
@@ -91,9 +92,10 @@ static void mo_each(node_t *n, int need, const char *attr, mo_fn f, void *ctx) {
     for (u32 i = 0; i < reg->alen; i++) {
         jsobj *x = mo_x(reg->arr[i]);
         if (!x) continue;
-        jsobj *t = jv_o(js_arr_get(x, M_TARGETS));
         int best = 0;
         jsv filter = JS_UNDEF;
+        for (int list = 0; list < 2; list++) {
+        jsobj *t = jv_o(js_arr_get(x, list ? M_TRANSIENT : M_TARGETS));
         for (u32 k = 0; k + 1 < t->alen; k += 2) {
             node_t *tn = node_of(t->arr[k]);
             int opts = js_toint32(js_getn(t->arr[k + 1], "\x01" "o"));
@@ -109,6 +111,7 @@ static void mo_each(node_t *n, int need, const char *attr, mo_fn f, void *ctx) {
             }
             best |= opts;
             filter = flt;
+        }
         }
         if (best) f(x, best, filter, ctx);
     }
@@ -141,10 +144,33 @@ static void child_cb(jsobj *x, int opts, jsv filter, void *c0) {
     mo_schedule();
 }
 
+/* nó tirado de uma subárvore observada com subtree: ganha um registro transitório (mutações nele ainda chegam até a
+ * próxima entrega) */
+static void add_transient(node_t *par, node_t *removed) {
+    js_page_t *p = js_cur_page();
+    jsobj *reg = registry("\x01" "mutacoes");
+    for (u32 i = 0; i < reg->alen; i++) {
+        jsobj *x = mo_x(reg->arr[i]);
+        if (!x) continue;
+        jsobj *t = jv_o(js_arr_get(x, M_TARGETS)), *tr = jv_o(js_arr_get(x, M_TRANSIENT));
+        for (u32 k = 0; k + 1 < t->alen; k += 2) {
+            node_t *tn = node_of(t->arr[k]);
+            int opts = js_toint32(js_getn(t->arr[k + 1], "\x01" "o"));
+            if (!(opts & O_SUBTREE)) continue;
+            bool on_path = false;
+            for (node_t *a = par; a && !on_path; a = a->parent) on_path = a == tn;
+            if (!on_path) continue;
+            js_arr_push(tr, js_dom_wrapv(p, removed));
+            js_arr_push(tr, t->arr[k + 1]);
+        }
+    }
+}
+
 void js_mo_child(node_t *par, node_t *added, node_t *removed, node_t *prev, node_t *next) {
     if (!mo_live || !par || !js_cur_page()) return;
     child_ctx c = { par, added, removed, prev, next };
     mo_each(par, O_CHILD, NULL, child_cb, &c);
+    if (removed) add_transient(par, removed);
 }
 
 typedef struct { node_t *n; const char *name; const char *old; bool data; } attr_ctx;
@@ -178,7 +204,7 @@ NATIVE(mo_ctor) {
     if (!js_iscallable(ARG(0))) return js_throw_err(E_TYPE, "MutationObserver: callback esperado");
     jsobj *o = js_newobj_cls(CL_HOST, J.realm->p_mutobs);
     o->u.host.page = js_cur_page();
-    jsv s[M_NSLOTS] = { ARG(0), jv_obj(js_newarr(0)), jv_obj(js_newarr(0)) };
+    jsv s[M_NSLOTS] = { ARG(0), jv_obj(js_newarr(0)), jv_obj(js_newarr(0)), jv_obj(js_newarr(0)) };
     o->u.host.extra = jv_obj(js_arr_from(s, M_NSLOTS));
     return jv_obj(o);
 }
@@ -458,8 +484,21 @@ void web_obs_tick(js_page_t *p) {
             bool laid = js_node_geom(p, n, g);
             if (rn && rn->type == N_ELEM) { bool inside = false; for (node_t *a = n->parent; a; a = a->parent) if (a == rn) inside = true; if (!inside) laid = false; }
             float tx = g[0], ty = g[1], tw = laid ? g[2] : 0, th2 = laid ? g[3] : 0;
-            float ix0 = MAX(tx, R0x), iy0 = MAX(ty, R0y), ix1 = MIN(tx + tw, R1x), iy1 = MIN(ty + th2, R1y);
-            bool isect = laid && ix1 >= ix0 && iy1 >= iy0;
+            float ix0 = tx, iy0 = ty, ix1 = tx + tw, iy1 = ty + th2;
+            /* ancestrais com overflow diferente de visible recortam na caixa de padding, até a raiz */
+            bool clipped_out = false;
+            for (node_t *a = n->parent; laid && a && a != rn && a->type == N_ELEM; a = a->parent) {
+                if (!a->st || !a->st->clip_overflow) continue;
+                float cg[10];
+                if (!js_node_geom(p, a, cg)) continue;
+                /* a caixa de conteúdo tem o tamanho declarado (o layout cresce com o que transborda) */
+                float cw = a->st->width.u == U_PX ? a->st->width.v : cg[6], ch = a->st->height.u == U_PX ? a->st->height.v : cg[7];
+                float cx0 = cg[4] - cg[8], cy0 = cg[5] - cg[9], cx1 = cg[4] + cw + cg[8], cy1 = cg[5] + ch + cg[9];
+                ix0 = MAX(ix0, cx0); iy0 = MAX(iy0, cy0); ix1 = MIN(ix1, cx1); iy1 = MIN(iy1, cy1);
+                if (ix1 < ix0 || iy1 < iy0) { clipped_out = true; break; }
+            }
+            ix0 = MAX(ix0, R0x); iy0 = MAX(iy0, R0y); ix1 = MIN(ix1, R1x); iy1 = MIN(iy1, R1y);
+            bool isect = laid && !clipped_out && ix1 >= ix0 && iy1 >= iy0;
             float area = tw * th2, iarea = isect ? (ix1 - ix0) * (iy1 - iy0) : 0;
             float ratio = isect ? (area > 0 ? iarea / area : 1) : 0;
             /* índice do limiar: o maior limiar ≤ razão (−1 = fora) */
