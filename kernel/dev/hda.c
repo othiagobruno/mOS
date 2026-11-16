@@ -1041,6 +1041,8 @@ bool hda_input_available(void) { return H.in_running; }
 const char *hda_input_name(void) { return H.in_name ? H.in_name : "Nenhuma entrada"; }
 
 bool hda_probe(char *name, usize n) {
+    extern void acp_init(void);
+    acp_init();                                           /* ACP 15e2: confere se há I2S/PDM; sem nada, D3hot */
     for (int i = 0;; i++) {
         pci_dev_t *d = pci_find_class(0x04, 0x03, i);
         if (!d) break;

@@ -327,6 +327,15 @@ int main(int argc, char **argv) {
         printf("S3: %d dispositivos de despertar (_PRW), %u erros na sequência\n", nd, aml_errors() - e1);
         check(aml_errors() == e1, "S3: sequência sem erro de AML");
     }
+    {   /* ACP do Raven: nenhum codec I2S/PDM descrito (todo o áudio é HDA) */
+        aml_node_t *acp = aml_find(NULL, "\\_SB.PCI0.GP17.ACP");
+        int kids = 0;
+        for (aml_node_t *c = acp ? acp->child : NULL; c; c = c->next) if (c->type == AML_DEVICE) kids++;
+        u64 adr = 0;
+        if (acp) aml_eval_int(acp, "_ADR", &adr);
+        printf("ACP: %s, _ADR 0x%llx, %d dispositivos filhos\n", acp ? "\\_SB.PCI0.GP17.ACP" : "ausente", (unsigned long long)adr, kids);
+        if (acp) check(adr == 5 && kids == 0, "ACP sem codec no firmware");
+    }
     aml_node_t *pwrb = aml_find(NULL, "\\_SB.PWRB");
     if (pwrb) check(aml_device_match(pwrb, "PNP0C0C"), "PWRB é PNP0C0C");
     /* GPEs */
