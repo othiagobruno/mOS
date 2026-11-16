@@ -20,7 +20,7 @@ git -C "$ROOT" show "$REF:tools/mkimg.c" > "$TMP/ref/tools/mkimg.c"
 ln -s "$ROOT/kernel" "$TMP/ref/kernel"
 cc -O2 -o "$TMP/mkimg-ram" "$TMP/ref/tools/mkimg.c"
 cc -O2 -Wall -Wextra -o "$TMP/mkimg" "$ROOT/tools/mkimg.c"
-cc -O2 -Wno-incompatible-library-redeclaration -I"$ROOT/kernel/include" -o "$TMP/ls_lista_host" \
+cc -O2 -std=gnu11 -I"$ROOT/kernel/include" -o "$TMP/ls_lista_host" \
     "$ROOT/tools/ls_lista_host.c" "$ROOT/kernel/compat/plist.c"
 
 cat > "$TMP/libtime.c" <<'EOF'

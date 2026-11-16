@@ -106,7 +106,7 @@ static void lfn_put(char *name, int *nn, u16 ch) {
 }
 
 static int find_child(const u8 *dir, usize n, const char *want, int *is_dir, u32 *cl, u32 *sz) {
-    char lfn[256];
+    char lfn[256] = "";
     int have_lfn = 0;
     static const int off[13] = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
     for (usize i = 0; i + 32 <= n; i += 32) {
@@ -115,7 +115,7 @@ static int find_child(const u8 *dir, usize n, const char *want, int *is_dir, u32
         if (e[0] == 0xE5) { have_lfn = 0; continue; }
         if ((e[11] & 0x0F) == 0x0F) {
             int ord = e[0] & 0x1F;
-            if (e[0] & 0x40) have_lfn = 1;
+            if (e[0] & 0x40) { have_lfn = 1; lfn[0] = 0; }   /* nome novo: nada do anterior (nem lixo da pilha) */
             char piece[40];
             int pn = 0;
             for (int k = 0; k < 13; k++) {
@@ -130,7 +130,7 @@ static int find_child(const u8 *dir, usize n, const char *want, int *is_dir, u32
             }
             continue;
         }
-        if (e[11] & 0x08) { have_lfn = 0; continue; }
+        if (e[11] & 0x08) { have_lfn = 0; lfn[0] = 0; continue; }
         char sfn[13], name[256];
         int k = 0;
         for (int j = 0; j < 8 && e[j] != ' '; j++) sfn[k++] = e[j];
@@ -199,7 +199,7 @@ static int ends_app(const char *s) {
 }
 
 static void each_dir(const u8 *dir, usize n, void (*fn)(const char *name, void *ctx), void *ctx) {
-    char lfn[256];
+    char lfn[256] = "";
     int have_lfn = 0;
     static const int off[13] = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
     for (usize i = 0; i + 32 <= n; i += 32) {
