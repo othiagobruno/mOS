@@ -60,6 +60,8 @@ bool classic_event(const u8 *ev, int len) { return false; }
 bool classic_acl(const u8 *a, int len) { return false; }
 void classic_poll(void) {}
 void classic_init(void) {}
+/* DEV_WIFI_INFO do ble.c chama o Wi-Fi; no host não há placa Wi-Fi. */
+i64 wifi_user_info(process_t *p, u64 uptr) { return -1; }
 
 static int mouse_events, last_dx, last_dy;
 void input_push(input_event_t *e) { if (e->type == EV_MOUSE) { mouse_events++; last_dx = e->dx; last_dy = e->dy; } }
