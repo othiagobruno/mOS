@@ -23,9 +23,11 @@ Este documento separa o que está pronto e testado do que falta. "Teste de host"
    esses `*_l` para `std::locale("pt_BR.UTF-8")`, `num_put`, `money_put`, `time_put`, `collate`. Plano: tabelas
    LC_NUMERIC/LC_MONETARY/LC_TIME/LC_COLLATE/LC_MESSAGES por locale (dados do CLDR, licença Unicode), `setlocale`/
    `newlocale`/`uselocale` por thread, `querylocale`, `localeconv` com os dados certos, `nl_langinfo`.
-2. **Caracteres largos e multibyte.** `getwc`/`ungetwc`/`fputwc` só ASCII (`vscode_libc.c`); revisar `mbrtowc`,
-   `wcrtomb`, `mbsnrtowcs`, `wcsnrtombs`, `wcwidth`, `towupper`/`iswalpha` com tabela Unicode, `swprintf`/`vfwprintf`,
-   `wcstod`/`wcstold`.
+2. **Caracteres largos e multibyte.** Núcleo UTF-8 **feito** (`userland/libsystem/multibyte.c`,
+   `tools/multibyte_hosttest.sh` 2074/2074): `mbrtowc`/`mbtowc`/`mblen`/`mbrlen`/`wctomb`/`wcrtomb`/`mbsinit`
+   restartáveis e estritos (rejeitam codificação longa demais, substitutos e > U+10FFFF; guardam a sequência pela
+   metade no `mbstate_t`). Falta: `getwc`/`ungetwc`/`fputwc` ainda só ASCII (`vscode_libc.c`), `towupper`/`iswalpha`
+   e `wcwidth` com tabela Unicode de verdade (hoje por faixas aproximadas), `swprintf`/`vfwprintf`, `wcstod`/`wcstold`.
 3. **long double no stdio.** `strtold`/`strtold_l`/`wcstold` reduzem a double e o `printf("%Lf")` converte para double
    (`stdio.c`). Plano: `floatscan` e conversão de 80 bits exatas (algoritmo do musl, MIT).
 4. **Stubs C de `sys_zerados.c` desta frente.** **Feito** (`userland/libsystem/libc_bsd.c` + `swiftsupport.c`,
@@ -41,7 +43,8 @@ Este documento separa o que está pronto e testado do que falta. "Teste de host"
 6. **Unwind `-O1`/`-O2`.** Bateria de casos (frame pointer omitido, `-fomit-frame-pointer`, funções folha, tail call,
    `alloca`, sinais, `__builtin_unwind_init`, catch através de C, `std::rethrow_exception`, `std::nested_exception`,
    exceção estrangeira ObjC↔C++) em x86_64 e arm64, no host e com Mach-O real.
-7. **`qsort_r` O(n²)** e outras pendências de `docs/libsys-pendencias.md` §3 que são libc.
+7. ~~`qsort_r` O(n²)~~ — já resolvido: `qsort`/`qsort_r`/`heapsort`/`mergesort`/`psort` são O(n log n) (`libc.c`,
+   `sortb.c`). A nota de `docs/libsys-pendencias.md` §3 está desatualizada.
 8. **libc++ de ponta a ponta**: `iostream`, `filesystem`, `regex`, `thread`, `atomic` (`__ulock_wait/wake`), `locale`
    rodando num Mach-O de teste pelo `machotest`, além do teste de host.
 
