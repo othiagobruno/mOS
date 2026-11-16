@@ -106,6 +106,11 @@ bool amdgpu_ih_init(amdgpu_t *a) {
         if (!on) h |= DC_HPD_INT_POLARITY;
         WR(a, R_DC_HPD_INT_CONTROL(i), h | DC_HPD_INT_EN | DC_HPD_INT_ACK);
     }
+    /* vblank (VSTARTUP do OTG) e fim de troca de quadro (HUBP) da tela */
+    if (a->pipe >= 0) {
+        WR(a, R_OTG_GLOBAL_SYNC_STATUS(a->pipe), RR(a, R_OTG_GLOBAL_SYNC_STATUS(a->pipe)) | OTG_VSTARTUP_CLEAR | OTG_VSTARTUP_INT_EN);
+        WR(a, R_DCSURF_FLIP_INTERRUPT(a->pipe), RR(a, R_DCSURF_FLIP_INTERRUPT(a->pipe)) | FLIP_INT_CLEAR | FLIP_INT_ENABLE);
+    }
     kprintf("amdgpu: IH com %u KiB na RAM, %s\n", AMD_IH_RING_BYTES / 1024, a->msi_on ? "MSI no vetor 0xE0" : "sem MSI (polling)");
     return true;
 }
@@ -143,6 +148,16 @@ u32 amdgpu_irq_process(amdgpu_t *a) {
         u32 client = e[0] & 0xFF, src = (e[0] >> 8) & 0xFF;
         if (client == IH_CLIENT_SDMA0 && src == IH_SRC_SDMA_TRAP) a->sdma_traps++;
         else if (client == IH_CLIENT_DCE && src == IH_SRC_DC_HPD) hpd_irq(a, e[4]);
+        else if (client == IH_CLIENT_DCE && src >= IH_SRC_DC_VSTARTUP0 && src < IH_SRC_DC_VSTARTUP0 + AMD_NUM_OTG) {
+            u32 otg = src - IH_SRC_DC_VSTARTUP0;
+            WR(a, R_OTG_GLOBAL_SYNC_STATUS(otg), RR(a, R_OTG_GLOBAL_SYNC_STATUS(otg)) | OTG_VSTARTUP_CLEAR);
+            if ((int)otg == a->pipe) { a->vblank_irqs++; __atomic_add_fetch(&a->vblank_seq, 1, __ATOMIC_RELEASE); }
+        }
+        else if (client == IH_CLIENT_DCE && src >= IH_SRC_DC_FLIP0 && src < IH_SRC_DC_FLIP0 + AMD_NUM_OTG) {
+            u32 p = src - IH_SRC_DC_FLIP0;
+            WR(a, R_DCSURF_FLIP_INTERRUPT(p), RR(a, R_DCSURF_FLIP_INTERRUPT(p)) | FLIP_INT_CLEAR);
+            if ((int)p == a->pipe) { a->flip_irqs++; __atomic_add_fetch(&a->flip_seq, 1, __ATOMIC_RELEASE); }
+        }
         else if ((client == IH_CLIENT_VMC || client == IH_CLIENT_UTCL2) && src == IH_SRC_VM_FAULT) {
             u32 vmid = (e[0] >> 24) & 0xF;
             a->vm_faults++;

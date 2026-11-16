@@ -24,6 +24,7 @@ static u32 pending_lo, pending_hi;
 static bool verbose;
 static int sim_otg = 0;
 
+static void ih_push(u32 client, u32 src, u32 ctx);
 static u32 vtotal_of(void) { return (regs[R_OTG_V_TOTAL(sim_otg) / 4] & OTG_TIMING_MASK) + 1; }
 static u32 vbs_of(void) { return regs[R_OTG_V_BLANK_START_END(sim_otg) / 4] & OTG_TIMING_MASK; }
 
@@ -36,6 +37,11 @@ static void scan(u32 lines) {
             regs[R_DCSURF_EARLIEST_INUSE_HI(sim_otg) / 4] = pending_hi;
             regs[R_DCSURF_FLIP_CONTROL(sim_otg) / 4] &= ~FLIP_PENDING;
             armed = false;
+            if (regs[R_DCSURF_FLIP_INTERRUPT(sim_otg) / 4] & FLIP_INT_ENABLE) ih_push(IH_CLIENT_DCE, IH_SRC_DC_FLIP0 + sim_otg, 0);
+        }
+        if (vline == vbs_of() && (regs[R_OTG_GLOBAL_SYNC_STATUS(sim_otg) / 4] & OTG_VSTARTUP_INT_EN)) {
+            regs[R_OTG_GLOBAL_SYNC_STATUS(sim_otg) / 4] |= OTG_VSTARTUP_OCCURRED;
+            ih_push(IH_CLIENT_DCE, IH_SRC_DC_VSTARTUP0 + sim_otg, 0);
         }
         if (vline >= vt) { vline = 0; frames = (frames + 1) & OTG_FRAME_COUNT_MASK; }
     }
@@ -334,6 +340,7 @@ static bool gc_wreg(u32 off, u32 v) {
 }
 
 /* ---------- motor de I2C do DCN simulado: um monitor (EDID com 3 blocos, DDC/CI) numa linha ---------- */
+static u64 vst_acks;
 static u8 i2c_buf[256]; static u32 i2c_wlen, i2c_rp;
 static int mon_ddc = 1;                 /* DDC2: a linha do HDMI no VBIOS do Thiago (I2C 0x91, HPD2) */
 static u8 mon_edid[384]; static u8 mon_seg, mon_off;
@@ -386,6 +393,13 @@ static void i2c_go(u32 ctl) {
     mon_seg = 0;                           /* o ponteiro de segmento do E-DDC volta a 0 depois do STOP */
     regs[R_DC_I2C_SW_STATUS / 4] = st;
     i2c_gos++;
+}
+static bool otg_irq_wreg(u32 off, u32 v) {
+    for (int i = 0; i < AMD_NUM_OTG; i++) {
+        if (off == R_OTG_GLOBAL_SYNC_STATUS(i)) { regs[off / 4] = (v & ~OTG_VSTARTUP_CLEAR) & ~((v & OTG_VSTARTUP_CLEAR) ? OTG_VSTARTUP_OCCURRED : 0); vst_acks++; return true; }
+        if (off == R_DCSURF_FLIP_INTERRUPT(i)) { regs[off / 4] = v & ~FLIP_INT_CLEAR; return true; }
+    }
+    return false;
 }
 static bool i2c_wreg(u32 off, u32 v) {
     if (off == R_DC_I2C_ARBITRATION) {
@@ -469,7 +483,9 @@ static bool aux_wreg(u32 off, u32 v) {
     return false;
 }
 
+static bool otg_irq_wreg(u32 off, u32 v);
 static bool engine_wreg(u32 off, u32 v) {
+    if (otg_irq_wreg(off, v)) return true;
     if (aux_wreg(off, v)) return true;
     if (i2c_wreg(off, v)) return true;
     if (gc_wreg(off, v)) return true;
@@ -575,6 +591,7 @@ const u8 *amd_host_fw(const char *name, u64 *len) {
 u64 amd_host_ram_page(void) { return (u64)(uintptr_t)aligned_alloc(4096, 4096); }
 u64 amd_host_ram_alloc(u64 bytes) { return (u64)(uintptr_t)aligned_alloc(4096, (bytes + 4095) & ~4095ull); }
 void vmm_map_wc(u64 phys, u64 size) { wc_lo = phys; wc_len = size; }
+void amd_host_idle(void) { scan(200); now_ms++; }
 u64 timer_ticks(void) { return now_ms++; }
 void sleep_ms(u64 ms) {
     /* 60 Hz em 5120x1440 (vtotal 1485): 89100 linhas por segundo */
@@ -1262,6 +1279,26 @@ static void test_aux(void) {
     CHECK(amdgpu_aux_xfer(&ax, 0, AUX_CMD_NATIVE_READ, 0, cap, 17) == -MOS_EINVAL && amdgpu_aux_xfer(&ax, 6, AUX_CMD_NATIVE_READ, 0, cap, 1) == -MOS_EINVAL, "limites");
 }
 
+/* vblank e flip pela interrupção do display */
+static void test_vblank_irq(void) {
+    cp_dead = mec_dead = false;
+    CHECK(engines_up(), "motores para o vblank por interrupção");
+    amdgpu_t *a = &eng;
+    CHECK((regs[R_OTG_GLOBAL_SYNC_STATUS(0) / 4] & OTG_VSTARTUP_INT_EN) && (regs[R_DCSURF_FLIP_INTERRUPT(0) / 4] & FLIP_INT_ENABLE), "VSTARTUP e FLIP ligados");
+    u64 v0 = a->vblank_irqs;
+    scan(1485 * 3);
+    CHECK(a->vblank_irqs == v0 + 3 && vst_acks >= 3 && !(regs[R_OTG_GLOBAL_SYNC_STATUS(0) / 4] & OTG_VSTARTUP_OCCURRED), "um vblank por quadro, reconhecido (%llu)", a->vblank_irqs - v0);
+    u32 s0 = a->vblank_seq;
+    a->last_vblank_ms = 0;
+    amdgpu_vblank_wait(a);
+    CHECK(a->vblank_seq == s0 + 1, "a espera acorda na interrupção do vblank");
+    u64 f0 = a->flip_irqs;
+    u64 b = amdgpu_vram_alloc(a, 5120u * 1440 * 4);
+    CHECK(b && !amdgpu_flip(a, b, 5120, 1440, 5120 * 4, MOS_GPU_FMT_BGRA8, true) && a->flip_irqs == f0 + 1 && amdgpu_flip_done(a), "flip avisa pela interrupção");
+    amdgpu_flip(a, 0, 5120, 1440, 5120 * 4, MOS_GPU_FMT_BGRA8, true);
+    amdgpu_vram_free(a, b, 5120u * 1440 * 4);
+}
+
 static int pm_regs_count;
 void amdgpu_pm_register(amdgpu_t *a) { (void)a; pm_regs_count++; }
 
@@ -1400,6 +1437,7 @@ int main(int argc, char **argv) {
     test_pm();
     test_ddc();
     test_aux();
+    test_vblank_irq();
     printf("amdgpu-hw-host: %d/%d ok\n", pass, total);
     return pass == total ? 0 : 1;
 }
