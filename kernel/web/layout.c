@@ -220,7 +220,7 @@ static ctrl_t *make_ctrl(lay_t *L, node_t *n) {
         d->ctrls = na;
         d->cctrls = nc;
     }
-    c->id = 100000 + d->nctrls;
+    c->id = (d->ctrl_base ? d->ctrl_base : 100000) + d->nctrls;
     d->ctrls[d->nctrls++] = c;
     n->ctrl = c;
     return c;

@@ -248,6 +248,7 @@ typedef struct doc {
     struct js_page *frames_js;  /* página JS deste documento, dona dos iframes */
     int frame_depth;            /* 0 = documento principal */
     bool transparent;           /* iframe: sem fundo declarado, a tela fica transparente */
+    int ctrl_base;              /* ids dos controles no ui_t (0 = 100000); cada iframe tem a sua faixa */
 } doc_t;
 
 doc_t *doc_parse(const char *html, usize len, const char *url);
@@ -262,19 +263,26 @@ int    doc_anchor_y(doc_t *d, const char *name);
 
 /* ============================================================ iframes (kernel/web/frame.c) */
 enum { FRAME_CLICK, FRAME_WHEEL };
+enum { FRAME_HANDLED = 1, FRAME_PREVENTED = 2 };   /* frame_input: 0 = não tratou */
 bool    frames_pump(doc_t *d);                  /* carrega, roda o JS e faz o layout dos iframes; true se mudou */
 bool    frames_busy(doc_t *d);
 int     frames_next_ms(doc_t *d);
 void    frames_free(doc_t *d);                  /* doc_free chama */
 void    frames_set_owner_js(doc_t *d, struct js_page *js);
 frame_t *frame_at(doc_t *d, int x, int y, int *ox, int *oy);   /* coords do documento; ox/oy: canto do conteúdo */
-bool    frame_input(frame_t *f, int kind, int x, int y, int wheel, char *out_url, int cap);
+int     frame_input(frame_t *f, int kind, int x, int y, int wheel, char *out_url, int cap);
 void    frame_paint(frame_t *f, ui_t *u, rect_t r);
 void    frame_navigate(node_t *iframe, const char *url);
 struct js_page *frame_page(node_t *iframe);
 doc_t  *frame_document(frame_t *f);
 const char *frame_url(frame_t *f);
 bool    doc_pump_images(doc_t *d);              /* imagens http/data:/file: de um documento */
+frame_t *frames_frame_of(doc_t *root, doc_t *d);           /* iframe (em qualquer nível) cujo documento é d */
+struct js_page *frames_page_of(doc_t *root, doc_t *d);     /* página JS de d (a principal se d == root: NULL) */
+ctrl_t *frames_ctrl_by_id(doc_t *root, u32 id, doc_t **owner);  /* controle com esse id nos iframes */
+void    frame_load(frame_t *f, const char *url, const char *post, int post_len, const char *ctype);
+/* envio de formulário: URL (com a query no GET) e corpo (POST); devolve true se é POST */
+bool    form_build(doc_t *d, node_t *form, ctrl_t *submitter, char *url, int cap, sbuf_t *body);
 u8     *frame_data_url(const char *url, usize *len, char *mime, int mcap);
 
 /* chamado pela pintura para controles de formulário (implementado em horizonte.c) */

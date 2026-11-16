@@ -20,6 +20,9 @@ struct frame {
     http_req_t *req;
     char url[1024];             /* documento atual */
     char pending[1024];         /* navegação pedida */
+    char *pend_post;            /* corpo do POST pendente (kmalloc) */
+    int pend_post_len;
+    char pend_ctype[64];
     int w, h, scroll;
     float zoom;
     int depth;
@@ -260,12 +263,20 @@ static void set_doc(frame_t *f, doc_t *d, const char *url) {
     f->dirty = true;
     if (!d) return;
     snprintf(f->url, sizeof f->url, "%s", url);
+    static int seq;
     d->transparent = true;
     d->frame_depth = f->depth;
+    d->ctrl_base = 1000000 + (seq++ % 3000) * 1000;
     css_find(f, d->root);
     f->css_t0 = timer_ticks();
     if (f->ncss == 0) d->need_style = true;
     f->js = js_page_new2(d, url, f->w > 0 ? f->w : 300, f->h > 0 ? f->h : 150, link_init, f);
+}
+
+static void start_load_post(frame_t *f, const char *url, const char *post, int plen, const char *ctype) {
+    if (f->req) { http_free(f->req); f->req = NULL; }
+    f->req = http_post(url, ctype && *ctype ? ctype : "application/x-www-form-urlencoded", post, (u32)plen);
+    snprintf(f->url, sizeof f->url, "%s", url);
 }
 
 static void start_load(frame_t *f, const char *url) {
@@ -374,7 +385,9 @@ bool frames_pump(doc_t *d) {
             char u[1024];
             snprintf(u, sizeof u, "%s", f->pending);
             f->pending[0] = 0;
-            start_load(f, u);
+            if (f->pend_post && !strncmp(u, "http", 4)) start_load_post(f, u, f->pend_post, f->pend_post_len, f->pend_ctype);
+            else start_load(f, u);
+            if (f->pend_post) { kfree(f->pend_post); f->pend_post = NULL; }
             changed = true;
         }
         if (f->req) {
@@ -415,6 +428,14 @@ bool frames_pump(doc_t *d) {
             } else if (rl) snprintf(f->pending, sizeof f->pending, "%s", f->url);
             int sc = js_page_take_scroll(f->js);
             if (sc >= 0) { f->scroll = sc; changed = true; }
+            node_t *sf = js_page_take_submit(f->js);   /* form.submit() no filho */
+            if (sf) {
+                char u[1024];
+                sbuf_t body = { 0 };
+                bool post = form_build(f->doc, sf, NULL, u, sizeof u, &body);
+                frame_load(f, u, post ? (body.p ? body.p : "") : NULL, body.len, NULL);
+                sb_free(&body);
+            }
         }
         if (f->doc->need_layout || f->doc->need_style) {
             if (!f->ncss) { doc_layout(f->doc, f->w, f->h, f->zoom); f->doc->need_layout = false; changed = true; }
@@ -464,7 +485,7 @@ void frame_paint(frame_t *f, ui_t *u, rect_t r) {
 
 /* entrada dentro do iframe (x, y relativos ao canto do iframe). Devolve true se tratou.
  * Clique em link navega o próprio iframe; target=_top/_parent/_blank devolve a URL em out_url (o hospedeiro navega). */
-bool frame_input(frame_t *f, int kind, int x, int y, int wheel, char *out_url, int cap) {
+int frame_input(frame_t *f, int kind, int x, int y, int wheel, char *out_url, int cap) {
     if (out_url && cap) out_url[0] = 0;
     if (!f || !f->doc) return false;
     int dy = y + f->scroll;
@@ -487,7 +508,7 @@ bool frame_input(frame_t *f, int kind, int x, int y, int wheel, char *out_url, i
     bool prevented = false;
     if (f->js && tg) prevented = js_page_event(f->js, tg, JSE_CLICK, 0, 0);
     f->dirty = true;
-    if (prevented) return true;
+    if (prevented) return FRAME_PREVENTED;
     frag_t *fr = doc_hit(f->doc, x, dy, NULL);
     node_t *link = fr && fr->node ? fr->node->link : NULL;
     if (!link && tg) for (node_t *q = tg; q; q = q->parent) if (q->tag == T_A && node_attr(q, "href")) { link = q; break; }
@@ -539,6 +560,7 @@ void frame_navigate(node_t *el, const char *url) {
 
 static void frame_free(frame_t *f) {
     if (f->el && f->el->frame == f) f->el->frame = NULL;
+    if (f->pend_post) kfree(f->pend_post);
     if (f->req) http_free(f->req);
     for (int i = 0; i < f->ncss; i++) if (f->css[i].req) http_free(f->css[i].req);
     for (int i = f->ngrave - 1; i >= 0; i--) {
@@ -558,4 +580,91 @@ void frames_free(doc_t *d) {
     frame_t *f = d->frames;
     d->frames = NULL;
     while (f) { frame_t *n = f->next; frame_free(f); f = n; }
+}
+
+/* ---------------------------------------------------------------- formulários e controles dos iframes */
+void frame_load(frame_t *f, const char *url, const char *post, int post_len, const char *ctype) {
+    if (!f) return;
+    char u[1024];
+    url_resolve(f->doc ? f->doc->base : f->owner->base, url, u, sizeof u);
+    snprintf(f->pending, sizeof f->pending, "%s", u);
+    if (f->pend_post) { kfree(f->pend_post); f->pend_post = NULL; }
+    if (post) {
+        f->pend_post = kmalloc((usize)post_len + 1);
+        if (f->pend_post) { memcpy(f->pend_post, post, (usize)post_len); f->pend_post[post_len] = 0; f->pend_post_len = post_len; }
+        snprintf(f->pend_ctype, sizeof f->pend_ctype, "%s", ctype && *ctype ? ctype : "application/x-www-form-urlencoded");
+    }
+    f->started = true;
+}
+
+frame_t *frames_frame_of(doc_t *root, doc_t *d) {
+    for (frame_t *f = root ? root->frames : NULL; f; f = f->next) {
+        if (f->doc == d) return f;
+        frame_t *r = f->doc ? frames_frame_of(f->doc, d) : NULL;
+        if (r) return r;
+    }
+    return NULL;
+}
+
+js_page_t *frames_page_of(doc_t *root, doc_t *d) {
+    frame_t *f = frames_frame_of(root, d);
+    return f ? f->js : NULL;
+}
+
+ctrl_t *frames_ctrl_by_id(doc_t *root, u32 id, doc_t **owner) {
+    for (frame_t *f = root ? root->frames : NULL; f; f = f->next) {
+        doc_t *d = f->doc;
+        if (!d) continue;
+        for (int i = 0; i < d->nctrls; i++) if ((u32)d->ctrls[i]->id == id) { if (owner) *owner = d; return d->ctrls[i]; }
+        ctrl_t *c = frames_ctrl_by_id(d, id, owner);
+        if (c) return c;
+    }
+    return NULL;
+}
+
+bool form_build(doc_t *d, node_t *form, ctrl_t *submitter, char *out, int cap, sbuf_t *body) {
+    const char *action = node_attr(form, "action");
+    const char *method = node_attr(form, "method");
+    bool post = method && !strcasecmp(method, "post");
+    char url[1024];
+    url_resolve(d->base, action && *action ? action : d->url, url, sizeof url);
+    sbuf_t q = { 0 };
+    for (int i = 0; i < d->nctrls; i++) {
+        ctrl_t *c = d->ctrls[i];
+        if (c->form != form) continue;
+        const char *name = node_attr(c->node, "name");
+        if (!name || !*name || node_attr(c->node, "disabled")) continue;
+        const char *val = NULL;
+        switch (c->kind) {
+        case C_TEXT: case C_PASSWORD: case C_HIDDEN: case C_TEXTAREA: val = c->buf; break;
+        case C_CHECK: case C_RADIO: if (c->checked) val = c->buf && c->buf[0] ? c->buf : "on"; break;
+        case C_SELECT: if (c->nopts) val = c->vals[CLAMP(c->sel, 0, c->nopts - 1)]; break;
+        case C_SUBMIT: if (c == submitter) { const char *v = node_attr(c->node, "value"); val = v ? v : c->label; } break;
+        case C_IMAGE:
+            if (c == submitter) {
+                if (q.len) sb_putc(&q, '&');
+                sb_urlenc(&q, name); sb_puts(&q, ".x=1&"); sb_urlenc(&q, name); sb_puts(&q, ".y=1");
+            }
+            break;
+        default: break;
+        }
+        if (!val) continue;
+        if (q.len) sb_putc(&q, '&');
+        sb_urlenc(&q, name);
+        sb_putc(&q, '=');
+        sb_urlenc(&q, val);
+    }
+    if (post && !strncmp(url, "http", 4)) {
+        snprintf(out, cap, "%s", url);
+        if (q.len) sb_putn(body, q.p, q.len);
+        sb_free(&q);
+        return true;
+    }
+    char *qm = strchr(url, '?');
+    if (qm) *qm = 0;
+    char *hm = strchr(url, '#');
+    if (hm) *hm = 0;
+    snprintf(out, cap, "%s?%s", url, q.p ? q.p : "");
+    sb_free(&q);
+    return false;
 }
