@@ -149,6 +149,12 @@ enum {
     MOS_FSM_EVENTS,        /* sem alvo: pos = desde o id (exclusivo), buf = mos_fsevent_t[], size = bytes -> nº copiado.
                             * Lacuna (id de outro boot ou que saiu do anel): 1º evento KernelDropped|MustScanSubDirs */
     MOS_FSM_EVENTID,       /* sem alvo -> id do último evento do journal (FSEventsGetCurrentEventId) */
+    MOS_FSM_STATFS,        /* buf = mos_statfs_t*: o volume onde o alvo está (tipo, ponto de montagem, nome, espaço) */
+    MOS_FSM_RENAMEX,       /* path -> name (caminho de destino), a = RENAME_SWAP 2 | RENAME_EXCL 4 -> 0 */
+    MOS_FSM_CLONE,         /* path -> name (destino que não pode existir): cópia com dados, xattrs, modo, flags e
+                            * datas (clonefile; pasta: recursivo). a = CLONE_NOOWNERCOPY 2 -> 0 */
+    MOS_FSM_EXCHANGE,      /* path <-> name: troca o conteúdo dos dois arquivos (exchangedata) -> 0 */
+    MOS_FSM_FSGETPATH,     /* sem alvo: a = inode, buf, size -> tamanho do caminho (fsgetpath, /.vol, /.file/id=) */
 };
 /* flags do journal (= kFSEventStreamEventFlag* da Apple) */
 #define FSEV_MUST_SCAN      0x00000001u
@@ -196,7 +202,21 @@ typedef struct {
     unsigned mode;          /* 12 bits de permissão; 0x10000 = gravado por chmod/creat (senão é o padrão) */
     unsigned uid, gid, flags, nlink, gen, nxattr;
     long long atime_ns, mtime_ns, ctime_ns, btime_ns;
+    unsigned link;          /* 1 = link simbólico do mOS ("#mOS-link:") */
+    unsigned parent_ino;    /* inode da pasta-mãe (truncado em 32 bits; 2 na raiz) */
+    unsigned long long parent;
 } mos_statx_t;
+typedef struct {
+    char fstype[16];        /* "msdos", "hfs", "apfs", "tmpfs"... */
+    char mnton[256];        /* ponto de montagem: "/", "/Volumes/X" */
+    char mntfrom[128];      /* "/dev/disk0s1", caminho do .dmg */
+    char volname[256];
+    unsigned long long total, avail;   /* bytes */
+    unsigned long long files, ffree;
+    unsigned flags;         /* MNT_RDONLY 1 | MNT_LOCAL 0x1000 | MNT_ROOTFS 0x4000 | MNT_DONTBROWSE 0x100000 */
+    unsigned fsid;          /* = st_dev */
+    unsigned bsize, case_sensitive;
+} mos_statfs_t;
 typedef struct {
     unsigned long long ino;
     unsigned type;          /* DT_* do BSD: 4 pasta, 8 arquivo, 10 link */

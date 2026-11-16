@@ -277,6 +277,9 @@ void vfs_statx(vnode_t *v, void *stv) {
     st->mtime_ns = vfs_time_ns(v, VT_MTIME);
     st->ctime_ns = vfs_time_ns(v, VT_CTIME);
     st->btime_ns = vfs_time_ns(v, VT_BTIME);
+    st->link = is_link(v);
+    st->parent = v->parent ? (v->parent->ino ? v->parent->ino : 2) : 2;
+    st->parent_ino = (unsigned)st->parent;
 }
 
 static bool hidden_name(const char *n) { return n && !strcmp(n, VFS_XATTR_SECURITY); }

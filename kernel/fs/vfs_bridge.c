@@ -9,6 +9,7 @@
  * antigos voltam a ser "não carregados" (data = NULL) e são relidos no próximo vfs_lookup.
  */
 #include "vfs.h"
+#include "syscall.h"
 #include "fs.h"
 #include "storage.h"
 #include "origin.h"
@@ -479,3 +480,19 @@ void vol_tick(void) {
 /* O autoteste de gravação que existia aqui (vol_selftest, disparado pela existência de um arquivo no VFS) foi REMOVIDO
  * do kernel: ele gravava em todo volume gravável de /Volumes. A verificação de gravação em volumes agora é feita
  * por tools/voltest.c e por imagens virtuais descartáveis, fora do kernel (docs/volumes-graveis.md). */
+
+/* statfs de um volume de /Volumes (kernel/lib/vfsops.c) */
+bool vfs_volume_info(vnode_t *vol, mos_statfs_t *o) {
+    if (!vfs_is_volume(vol)) return false;
+    dmount_t *m = mount_of(vol);
+    const char *t = m->ops && m->ops->name ? m->ops->name : "";
+    const char *ty = !strcmp(t, "HFS+") ? "hfs" : !strcmp(t, "APFS") ? "apfs" : !strcmp(t, "FAT") ? "msdos" : "hfs";
+    strncpy(o->fstype, ty, sizeof o->fstype - 1);
+    if (m->source[0]) strncpy(o->mntfrom, m->source, sizeof o->mntfrom - 1);
+    else snprintf(o->mntfrom, sizeof o->mntfrom, "/dev/disk%d", 2);
+    if (m->volname[0]) strncpy(o->volname, m->volname, sizeof o->volname - 1);
+    o->total = m->dev ? m->dev->size : 0;
+    o->avail = 0;                                   /* os drivers não contam o livre; só leitura mostra 0 */
+    if (!m->writable) o->flags |= 1;
+    return true;
+}

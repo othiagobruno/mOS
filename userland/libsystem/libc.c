@@ -1657,13 +1657,15 @@ mac_dirent_t *readdir(cx_dir_t *d) {
     strlcpy(full, d->path, sizeof full);
     if (full[strlen(full) - 1] != '/') strlcat(full, "/", sizeof full);
     strlcat(full, d->ent.d_name, sizeof full);
-    SYS2(SYS_STAT, full, &st);
+    mos_statx_t x;                                       /* inode e tipo reais: os mesmos do stat (find, fts, du) */
+    int have = cx_statx(full, -1, &x) == 0;
+    if (!have) SYS2(SYS_STAT, full, &st);
     d->index++;
-    d->ent.d_ino = (u64)d->index;
+    d->ent.d_ino = have ? x.ino : (u64)d->index;
     d->ent.d_seekoff = (u64)d->index;
     d->ent.d_namlen = (u16)strlen(d->ent.d_name);
     d->ent.d_reclen = sizeof d->ent;
-    d->ent.d_type = st.is_dir ? 4 : 8;
+    d->ent.d_type = have ? (x.link ? 10 : x.kind == 1 ? 4 : 8) : st.is_dir ? 4 : 8;
     return &d->ent;
 }
 int closedir(cx_dir_t *d) { if (d->fd1) SYS1(SYS_CLOSE, d->fd1 - 1); ds_free(&d->snap); free(d); return 0; }

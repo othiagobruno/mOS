@@ -226,9 +226,6 @@ __attribute__((noreturn)) void abort_with_reason(u32 ns, u64 code, const char *r
 }
 
 /* ---- operações de volume que o FAT/APFS só-leitura do mOS não têm */
-int getattrlistbulk(int dirfd, void *al, void *buf, size_t n, u64 opt) { (void)dirfd; (void)al; (void)buf; (void)n; (void)opt; return fail(E_NOTSUP); }
-int exchangedata(const char *a, const char *b, unsigned opt) { (void)a; (void)b; (void)opt; return fail(E_NOTSUP); }
-ssize_t fsgetpath(char *buf, size_t n, void *fsid, u64 objid) { (void)buf; (void)n; (void)fsid; (void)objid; return fail(E_NOTSUP); }
 int getdirentriesattr(int fd, void *al, void *buf, size_t n, unsigned *count, unsigned *base, unsigned *newstate, unsigned opt) {
     (void)fd; (void)al; (void)buf; (void)n; (void)count; (void)base; (void)newstate; (void)opt;
     return fail(E_NOTSUP);

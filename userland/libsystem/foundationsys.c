@@ -134,8 +134,7 @@ int renameat(int fa, const char *a, int fb, const char *b) {
     const char *qa = cx_at_path(fa, a, ta, sizeof ta), *qb = qa ? cx_at_path(fb, b, tb, sizeof tb) : 0;
     return qb ? rename(qa, qb) : -1;
 }
-int renamex_np(const char *a, const char *b, unsigned flags) { (void)flags; return rename(a, b); }
-int renameatx_np(int fa, const char *a, int fb, const char *b, unsigned flags) { (void)flags; return renameat(fa, a, fb, b); }
+/* renamex_np, renameatx_np: attrlist.c (RENAME_SWAP/RENAME_EXCL no kernel) */
 
 /* ======================================================================== cópia de arquivos */
 static long copy_fd(int in, int out) {
@@ -484,20 +483,6 @@ typedef struct {
     u32 f_type, f_flags, f_fssubtype; char f_fstypename[16], f_mntonname[1024], f_mntfromname[1024]; u32 f_flags_ext, f_reserved[7];
 } mac_statfs_t;
 _Static_assert(sizeof(mac_statfs_t) == 2168, "statfs do macOS");
-int statfs(const char *path, mac_statfs_t *s) {
-    char st[STAT_SIZE];
-    if (stat(path, st) < 0) return -1;
-    memset(s, 0, sizeof *s);
-    s->f_bsize = 4096; s->f_iosize = 65536;
-    s->f_blocks = 131072; s->f_bfree = s->f_bavail = 65536;
-    s->f_files = s->f_ffree = 65536;
-    s->f_owner = 0; s->f_type = 0x1c; s->f_flags = 0x00001000 | 0x00004000;   /* MNT_LOCAL | MNT_ROOTFS */
-    strlcpy(s->f_fstypename, "msdos", sizeof s->f_fstypename);
-    strlcpy(s->f_mntonname, "/", sizeof s->f_mntonname);
-    strlcpy(s->f_mntfromname, "/dev/disk0s1", sizeof s->f_mntfromname);
-    return 0;
-}
-int fstatfs(int fd, mac_statfs_t *s) { (void)fd; return statfs("/", s); }
 
 /* ======================================================================== Mach VM */
 int vm_copy(u32 task, u64 src, u64 size, u64 dst) { (void)task; memmove((void *)dst, (const void *)src, (size_t)size); return 0; }

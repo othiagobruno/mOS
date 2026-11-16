@@ -4,7 +4,7 @@
  * volta do \mOS\.vfsmeta (persistência no disco do sistema).
  *
  *   gcc -O1 -g -DMOS_HOST_TEST -Itools/vfsmeta_host -Ikernel/include -Itools tools/vfsmeta_test.c \
- *       kernel/lib/vfs.c kernel/lib/vfsmeta.c kernel/lib/vfsperm.c kernel/lib/vfsevents.c kernel/proc/cred.c -o /tmp/vfsmeta_test && /tmp/vfsmeta_test
+ *       kernel/lib/vfs.c kernel/lib/vfsmeta.c kernel/lib/vfsperm.c kernel/lib/vfsevents.c kernel/lib/vfsops.c kernel/proc/cred.c -o /tmp/vfsmeta_test && /tmp/vfsmeta_test
  */
 #include "vfs_host_kernel.h"
 #include "vfs.h"
@@ -233,6 +233,44 @@ static void test_events(void) {
     CHECK(nid == last + 1001);
 }
 
+static void test_ops(void) {
+    mos_statfs_t sf;
+    vnode_t *h = vfs_lookup("/Users/Visitante");
+    CHECK(vfs_statfs(h, &sf) == 0 && !strcmp(sf.mnton, "/") && sf.fsid == 0x1000002u && (sf.flags & 0x4000u));
+    CHECK(!strcmp(sf.fstype, "tmpfs") && sf.total > sf.avail && sf.files > sf.ffree);
+    /* clonefile: dados, xattrs, modo, flags de usuário, datas; pasta recursiva */
+    vnode_t *a = vfs_write_file("/Users/Visitante/cl/a.txt", "dados", 5);
+    a->mode = 0x10000u | 0640; a->flags = VFS_UF_HIDDEN | VFS_SF_ARCHIVED; a->btime_ns = 123;
+    vfs_xattr_set(a, "com.apple.quarantine", "q", 1, 0, 0);
+    i64 mt = a->mtime_ns;
+    CHECK(vfs_clone(a, "/Users/Visitante/cl/b.txt", 0, 501, 20) == 0);
+    vnode_t *b = vfs_lookup("/Users/Visitante/cl/b.txt");
+    CHECK(b && b != a && b->size == 5 && !memcmp(b->data, "dados", 5) && b->ino != a->ino);
+    CHECK(b && b->mode == a->mode && b->flags == a->flags && b->btime_ns == 123 && b->mtime_ns == mt);
+    CHECK(b && vfs_xattr_get(b, "com.apple.quarantine", NULL, 0, 0) == 1);
+    CHECK(vfs_clone(a, "/Users/Visitante/cl/b.txt", 0, 501, 20) == -17);     /* EEXIST */
+    a->uid = 502;
+    CHECK(vfs_clone(a, "/Users/Visitante/cl/c.txt", 0, 501, 20) == 0 && vfs_lookup("/Users/Visitante/cl/c.txt")->uid == 501);
+    a->uid = 501;
+    CHECK(vfs_clone(vfs_lookup("/Users/Visitante/cl"), "/Users/Visitante/cl2", 0, 501, 20) == 0);
+    CHECK(vfs_lookup("/Users/Visitante/cl2/a.txt") && vfs_lookup("/Users/Visitante/cl2/b.txt"));
+    /* exchangedata */
+    vnode_t *x = vfs_write_file("/Users/Visitante/x1", "AAA", 3), *y = vfs_write_file("/Users/Visitante/x2", "BBBBB", 5);
+    u64 ix = x->ino, iy = y->ino;
+    CHECK(vfs_exchange(x, y) == 0 && x->size == 5 && !memcmp(x->data, "BBBBB", 5) && y->size == 3 && x->ino == ix && y->ino == iy);
+    CHECK(vfs_exchange(x, vfs_lookup("/Users/Visitante")) == -22);
+    /* renamex_np RENAME_SWAP */
+    CHECK(vfs_swap(x, y) == 0);
+    CHECK(vfs_lookup("/Users/Visitante/x1") == y && vfs_lookup("/Users/Visitante/x2") == x);
+    vnode_t *cl = vfs_lookup("/Users/Visitante/cl");
+    CHECK(vfs_swap(cl, vfs_lookup("/Users/Visitante/cl/a.txt")) == -22);     /* um dentro do outro */
+    vnode_t *docs = vfs_lookup("/Users/Visitante/Documentos");
+    vnode_t *sub = vfs_lookup("/Users/Visitante/Documentos/sub2");
+    CHECK(vfs_swap(x, sub) == 0 && vfs_lookup("/Users/Visitante/x2") == sub && x->parent == docs);
+    /* fsgetpath */
+    CHECK(vfs_by_ino(a->ino) == a && vfs_by_ino(2) == vfs_root() && vfs_by_ino(999999) == NULL);
+}
+
 int main(void) {
     vfs_init();
     CHECK(vfs_meta_live);
@@ -413,6 +451,7 @@ int main(void) {
 
     test_perms();
     test_events();
+    test_ops();
     printf("vfsmeta: %d verificações, %d falha(s)\n", checks, fails);
     return fails != 0;
 }

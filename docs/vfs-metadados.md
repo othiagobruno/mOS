@@ -92,3 +92,26 @@ nenhum bit x), sticky (`/tmp` é 1777 de root: só o dono do arquivo, o dono da 
 
 Testes: `tools/vfsmeta_test.c` (agora 115 verificações, com permissões, ACL, sticky e herança) e
 `sh tools/acl_test.sh` (26: texto ida e volta, entradas, formato externo, membership).
+
+# getattrlist, statfs e operações do macOS (fase 4)
+
+- **`userland/libsystem/attrlist.c`**: `getattrlist`/`fgetattrlist`/`getattrlistat` com todos os `ATTR_CMN_*`
+  (inclusive `RETURNED_ATTRS`, `NAME`/`FULLPATH` por `attrreference_t`, `FNDRINFO` do xattr real, `USERACCESS` pelo
+  kernel, `EXTENDED_SECURITY` = a ACL, `UUID`/`GRPUUID`, `FILEID`/`PARENTID`), `ATTR_VOL_*` (capacidades reais do
+  volume, nome, ponto de montagem, espaço, `ATTRIBUTES`), `ATTR_DIR_*`, `ATTR_FILE_*` (resource fork pelo xattr) e
+  `ATTR_CMNEXT_*` (`FSOPT_ATTR_CMN_EXTENDED`). Empacotamento, truncamento, `FSOPT_REPORT_FULLSIZE` e
+  `FSOPT_PACK_INVAL_ATTRS` como o xnu. `setattrlist`/`fsetattrlist`/`setattrlistat`: criação, modificação, acesso,
+  FinderInfo, dono, grupo, modo, flags, ACL e UUIDs. `getattrlistbulk` com o offset do fd (rewind por `lseek`).
+- **`statfs`/`fstatfs`/`getfsstat`/`getmntinfo`** por volume (`MOS_FSM_STATFS`, `kernel/lib/vfsops.c`): o sistema
+  (FAT32 com o espaço real do disco, `fat_space`, ou `tmpfs` no live sem disco) e cada `/Volumes/<nome>` (hfs, apfs,
+  msdos, origem do `.dmg`, só leitura).
+- **`renamex_np`/`renameatx_np`**: `RENAME_SWAP` (troca atômica dos dois nomes, fds seguem o arquivo) e `RENAME_EXCL`.
+- **`clonefile`/`clonefileat`/`fclonefileat`**: cópia no kernel com dados, xattrs, modo, flags de usuário e datas
+  (pasta: recursivo); dono mantido só para o dono/root, `CLONE_NOOWNERCOPY`. Sem COW (o espaço é gasto de verdade).
+- **`exchangedata`** troca o conteúdo mantendo inode e nome; **`fsgetpath`** acha o caminho pelo inode.
+- **`readdir`**: `d_ino` e `d_type` (inclusive `DT_LNK`) reais, os mesmos do `stat`.
+- Ainda não: hard links (o VFS é uma árvore de nomes; separar nome e inode entra com a fase 10, fd -> vnode),
+  `searchfs` e `getdirentriesattr` (ENOTSUP, como no APFS sem `VOL_CAP_INT_SEARCHFS`; o volume não anuncia).
+
+Teste: `sh tools/attrlist_test.sh` (50 verificações: o `attrlist.c` e o `fsmeta.c` do libSystem sobre o VFS real do
+kernel); `tools/vfsmeta_test.c` agora 147.

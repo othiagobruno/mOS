@@ -99,12 +99,6 @@ int DNSServiceRegister(void **sd, u32 flags, u32 iface, const char *name, const 
 
 /* ================================================================ arquivos */
 int statfs64(const char *path, void *s) { return statfs(path, s); }   /* no x86_64 o statfs já é o de 64 bits */
-/* clonefileat: o VFS do mOS não tem cópia por referência; ENOTSUP leva o Bun ao copyfile/leitura e escrita */
-int clonefileat(int sfd, const char *src, int dfd, const char *dst, u32 flags) {
-    (void)sfd; (void)src; (void)dfd; (void)dst; (void)flags;
-    set_errno(E_NOTSUP);
-    return -1;
-}
 /* strtofflags(3): "uchg,hidden,..." para os bits de chflags; o mOS não guarda flags, mas os nomes conhecidos passam */
 int strtofflags(char **stringp, u32 *setp, u32 *clrp) {
     static const struct { const char *name; u32 bit; } fl[] = {

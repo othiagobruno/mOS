@@ -219,6 +219,7 @@ bool     fat_remove(fatfs_t *fs, const char *path);  /* arquivo ou pasta (recurs
 bool     fat_rename(fatfs_t *fs, const char *from, const char *to);
 bool     fat_sync(fatfs_t *fs);
 bool     fat_replace(fatfs_t *fs, const char *from, const char *to); /* troca atômica de "to" por "from" (retomável); sem "to" = rename */
+bool     fat_space(fatfs_t *fs, u64 *total, u64 *freeb);   /* bytes do volume e livres */
 bool     fat_flush(fatfs_t *fs);                     /* fat_sync + flush do dispositivo */
 void     fat_enable_rw(fatfs_t *fs);                 /* reavalia a política de escrita (depois de storage_grant_write) */
 void     fat_set_system(fatfs_t *fs);                /* este volume não é exposto em /Volumes */
