@@ -478,6 +478,7 @@ typedef struct { double x, y; } hst_pt_t;
 __attribute__((weak)) void *cx_font_glyph_path(int face, int gid, double size, const void *m) { (void)face; (void)gid; (void)size; (void)m; return 0; }
 __attribute__((weak)) int cx_font_glyph_post_name(int face, int gid, char *out, int cap) { (void)face; (void)gid; (void)out; (void)cap; return 0; }
 __attribute__((weak)) unsigned cx_font_glyph_unicode(int face, int gid) { (void)face; (void)gid; return 0; }
+__attribute__((weak)) int cx_font_metrics(int face, double *m) { (void)face; (void)m; return 0; }
 __attribute__((weak)) int cx_pdfw_glyphs(void *ctx, int face, double size, const void *g, const void *p, size_t n) { (void)ctx; (void)face; (void)size; (void)g; (void)p; (void)n; return 0; }
 __attribute__((weak)) hst_pt_t CGContextGetTextPosition(void *c) { (void)c; hst_pt_t z = {0, 0}; return z; }
 /* caminho de retângulo: {retângulo} em memória própria (o harness só usa caminho de frame retangular) */

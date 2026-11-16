@@ -249,14 +249,18 @@ static double em_metric(id f, int which) {
     return m.upem;
 }
 double CTFontGetSize(id f) { return fsize(f); }
-double CTFontGetAscent(id f) { return em_metric(f, 0); }
-double CTFontGetDescent(id f) { return em_metric(f, 1); }
-double CTFontGetLeading(id f) { (void)f; return 0; }
-double CTFontGetCapHeight(id f) { return fsize(f) * 0.705; }
-double CTFontGetXHeight(id f) { return fsize(f) * 0.517; }
-double CTFontGetSlantAngle(id f) { return (ftraits(f) & TRAIT_ITALIC) ? -12 : 0; }
-double CTFontGetUnderlinePosition(id f) { return -fsize(f) * 0.1; }
-double CTFontGetUnderlineThickness(id f) { return fsize(f) * 0.05; }
+/* métricas pelas tabelas da face (ct_outline.c); sem a fonte, as proporções da Inter */
+int cx_font_metrics(int face, double *m);
+static int fm(id f, double *m) { return font_live() && cx_font_metrics(fweight(f), m); }
+static double fm_or(id f, int i, double fallback) { double m[13]; return fm(f, m) ? m[i] * fsize(f) : fallback * fsize(f); }
+double CTFontGetAscent(id f) { double m[13]; return fm(f, m) ? m[1] * fsize(f) : em_metric(f, 0); }
+double CTFontGetDescent(id f) { double m[13]; return fm(f, m) ? m[2] * fsize(f) : em_metric(f, 1); }
+double CTFontGetLeading(id f) { return fm_or(f, 3, 0); }
+double CTFontGetCapHeight(id f) { return fm_or(f, 4, 0.727); }
+double CTFontGetXHeight(id f) { return fm_or(f, 5, 0.546); }
+double CTFontGetSlantAngle(id f) { double m[13]; return fm(f, m) && m[6] ? m[6] : (ftraits(f) & TRAIT_ITALIC) ? -12 : 0; }
+double CTFontGetUnderlinePosition(id f) { return fm_or(f, 7, -0.1); }
+double CTFontGetUnderlineThickness(id f) { return fm_or(f, 8, 0.05); }
 unsigned CTFontGetUnitsPerEm(id f) { return (unsigned)em_metric(f, 2); }
 long CTFontGetGlyphCount(id f) {
     gui_font_metrics_t m;
@@ -264,7 +268,12 @@ long CTFontGetGlyphCount(id f) {
     return 0xFFFF;
 }
 u32 CTFontGetSymbolicTraits(id f) { return ftraits(f); }
-ct_rect_t CTFontGetBoundingBox(id f) { double s = fsize(f); ct_rect_t r = {-0.1 * s, -0.3 * s, 1.3 * s, 1.3 * s}; return r; }
+ct_rect_t CTFontGetBoundingBox(id f) {
+    double s = fsize(f), m[13];
+    if (fm(f, m)) { ct_rect_t r = {m[9] * s, m[10] * s, (m[11] - m[9]) * s, (m[12] - m[10]) * s}; return r; }
+    ct_rect_t r = {-0.1 * s, -0.3 * s, 1.3 * s, 1.3 * s};
+    return r;
+}
 
 /* glifos: com o kernel, o índice é o da cmap da Inter e o avanço é o do hmtx. Sem ele, o glifo é o
  * código do caractere e o avanço é 0,55 em (0,6 em nas monoespaçadas). */
