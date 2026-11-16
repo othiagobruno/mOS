@@ -506,6 +506,20 @@ static void v_right_down(id self, SEL sc, id e) {
     if (g_right_super) ((void (*)(id, SEL, id))g_right_super)(self, sc, e);
 }
 
+/* ⌃clique (botão esquerdo com Control): o AppKit pede -menuForEvent: como no clique direito, da view clicada para cima;
+ * havendo menu, abre o menu de contexto e a view não recebe o mouseDown:. Devolve 1 se abriu (appkit.c, dispatch). */
+int cx_ctrl_click_menu(id view, id e) {
+    for (id v = view; v; v = responds(v, "superview") ? MSG0(id, v, "superview") : 0) {
+        id m = responds(v, "menuForEvent:") ? MSG(id, v, "menuForEvent:", e) : 0;
+        if (!m) continue;
+        if (responds(v, "willOpenMenu:withEvent:")) MSG(void, v, "willOpenMenu:withEvent:", m, e);
+        mn_context(0, 0, m, e, v);
+        if (responds(v, "didCloseMenu:withEvent:")) MSG(void, v, "didCloseMenu:withEvent:", m, e);
+        return 1;
+    }
+    return 0;
+}
+
 void cx_appkit_menupop_init(void) {
     cx_class_t *view = kls("NSView"), *obj = kls("NSObject"), *menu = kls("NSMenu");
     if (!view || !menu) return;

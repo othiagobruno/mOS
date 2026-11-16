@@ -1820,6 +1820,8 @@ static void maybe_dump_tree(id w) {
  * são views de verdade dentro da view hospedeira da toolbar (appkit_postico.c, -_mosHostViewWithWidth:):
  * desenho, clique e digitação seguem o caminho de qualquer view, com raiz nela. */
 #define TB_H 28
+double cx_toolbar_bar_height(id tb);   /* appkit_toolbar.c: 28 pt, ou 52 com ícone e rótulo */
+static double host_h(wstate_t *s) { return s->tb_host ? vs(s->tb_host)->frame.s.h : TB_H; }
 static id hit(id v, absr_t *a, double x, double y);
 static void win_tb_update(id w) {
     wstate_t *s = ws(w);
@@ -1828,17 +1830,18 @@ static void win_tb_update(id w) {
     if (tb && cx_responds(tb->isa, sel_registerName("_mosHostViewWithWidth:")))
         host = MSG(id, tb, "_mosHostViewWithWidth:", s->frame.s.w);
     s->tb_host = host && cx_is_subclass(host->isa, &NSView_c) ? host : 0;
-    s->tb_top = s->tb_host && !(s->style & (1ull << 15)) ? TB_H : 0;
+    double th = tb ? cx_toolbar_bar_height(tb) : TB_H;
+    s->tb_top = s->tb_host && !(s->style & (1ull << 15)) ? th : 0;
     if (s->tb_host) {
-        vs(s->tb_host)->frame = r_make(0, 0, s->frame.s.w, TB_H);
+        vs(s->tb_host)->frame = r_make(0, 0, s->frame.s.w, th);
         if (vs(s->tb_host)->window != w) set_window_rec(s->tb_host, w);
     }
 }
 /* view sob (x, y) da janela (origem em cima à esquerda): a faixa da toolbar tem a raiz própria */
 static id win_hit_root(id w, double x, double y) {
     wstate_t *s = ws(w);
-    if (s->tb_host && y >= 0 && y < TB_H) {
-        absr_t ta = {0, 0, s->frame.s.w, TB_H, is_flipped(s->tb_host)};
+    if (s->tb_host && y >= 0 && y < host_h(s)) {
+        absr_t ta = {0, 0, s->frame.s.w, host_h(s), is_flipped(s->tb_host)};
         id v = hit(s->tb_host, &ta, x, y);
         return v ? v : s->tb_host;
     }
@@ -1868,7 +1871,7 @@ static void render_window(id w) {
     cx_gui_cur_gid = s->gid;                     /* gancho QuartzCore */
     draw_view_tree(s->content, &a);
     if (s->tb_host) {                            /* a barra por cima, com os itens que são views */
-        absr_t ta = {0, 0, s->frame.s.w, TB_H, is_flipped(s->tb_host)};
+        absr_t ta = {0, 0, s->frame.s.w, host_h(s), is_flipped(s->tb_host)};
         clip_x0 = clip_y0 = -1e9; clip_x1 = clip_y1 = 1e9;
         draw_view_tree(s->tb_host, &ta);
     } else if (cx_responds(w->isa, sel_registerName("toolbar"))) {
@@ -1877,7 +1880,7 @@ static void render_window(id w) {
             && cx_responds(tb->isa, sel_registerName("drawInRect:"))) {
             ctx_t save = ctx;
             ctx.tlx = 0; ctx.tly = 0; ctx.w = s->frame.s.w; ctx.h = s->frame.s.h; ctx.flipped = 0; ctx.fill = 0xFF000000;
-            ((void (*)(id, SEL, NSRect))objc_msgSend)(tb, sel_registerName("drawInRect:"), r_make(0, s->frame.s.h - 28, s->frame.s.w, 28));
+            ((void (*)(id, SEL, NSRect))objc_msgSend)(tb, sel_registerName("drawInRect:"), r_make(0, s->frame.s.h - cx_toolbar_bar_height(tb), s->frame.s.w, cx_toolbar_bar_height(tb)));
             ctx = save;
         }
     }
@@ -3280,7 +3283,7 @@ static void dispatch(gui_event_t *g) {
         break;
     }
     case GEV_MOUSE_DOWN: case GEV_RIGHT_DOWN: case GEV_SCROLL: {
-        if (!s->tb_host && g->type == GEV_MOUSE_DOWN && g->y >= 0 && g->y < 28 && cx_responds(w->isa, sel_registerName("toolbar"))) {
+        if (!s->tb_host && g->type == GEV_MOUSE_DOWN && g->y >= 0 && cx_responds(w->isa, sel_registerName("toolbar")) && g->y < cx_toolbar_bar_height(MSG0(id, w, "toolbar"))) {
             id tb = MSG0(id, w, "toolbar");
             if (tb && cx_responds(tb->isa, sel_registerName("isVisible")) && MSG0(BOOL, tb, "isVisible")
                 && cx_responds(tb->isa, sel_registerName("mouseDown:"))) {
@@ -3314,6 +3317,8 @@ static void dispatch(gui_event_t *g) {
             }
             {   /* reconhecedores de gesto da view e dos ancestrais veem o clique antes (appkit_more.c) */
                 id ev = make_event(1, w, g->x, g->y, g);
+                extern int cx_ctrl_click_menu(id view, id e);   /* ⌃clique = menu de contexto (appkit_menupop.c) */
+                if ((g->mods & 2) && cx_ctrl_click_menu(v, ev)) break;
                 if (!cx_gr_mouse(v, ev, 0)) MSG(void, v, "mouseDown:", ev);
             }
         } else if (g->type == GEV_RIGHT_DOWN) {
