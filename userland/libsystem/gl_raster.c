@@ -738,9 +738,77 @@ static void prim_poly(asm_t *A, const u32 *e, int n, int pvi) {
     for (int i = 0; i < m; i++) pv[i] = &out[i];
     tri_post(A->R, pv, m, &pk);
 }
+/* ---- geometry shader */
+static rs_t *g_rs;   /* draw em andamento (o raster é síncrono) */
+void gl_raster_gs_emit(gl_ctx_t *C, GLenum outprim, gl_vtx_t *v, const u8 *cut, int n) {
+    rs_t *R = g_rs;
+    (void)C;
+    if (!R || R->sel < 0) return;
+    int start = 0;
+    for (int i = 0; i <= n; i++) {
+        if (i < n && !(cut[i] && i > start)) continue;
+        /* segmento [start, i) */
+        int len = i - start;
+        gl_vtx_t *s = v + start;
+        if (outprim == GL_POINTS) for (int k = 0; k < len; k++) emit_point(R, &s[k]);
+        else if (outprim == GL_LINE_STRIP) for (int k = 0; k + 1 < len; k++) { gl_vtx_t a = s[k], b = s[k + 1]; emit_line(R, &a, &b, &b, 0); }
+        else for (int k = 2; k < len; k++) {
+            gl_vtx_t a = s[k - 2], b = s[k - 1], c = s[k];
+            if (k & 1) emit_tri(R, &b, &a, &c, &c); else emit_tri(R, &a, &b, &c, &c);
+        }
+        start = i;
+    }
+}
+static void gs_prim(asm_t *A, const u32 *e, int k) {
+    gl_vtx_t vs[6];
+    gl_vtx_t *pv[6];
+    for (int i = 0; i < k; i++) { vs[i] = *vtx(A, e[i]); pv[i] = &vs[i]; }
+    A->R->C->prims_generated++;
+    A->R->S->gs(A->R->C, pv, k, A->R->prim++);
+}
+static void gs_assemble(asm_t *A, const u32 *e, i64 n) {
+    u32 q[6];
+    switch (A->mode) {
+    case GL_POINTS: for (i64 i = 0; i < n; i++) gs_prim(A, &e[i], 1); break;
+    case GL_LINES: for (i64 i = 0; i + 1 < n; i += 2) gs_prim(A, &e[i], 2); break;
+    case GL_LINE_STRIP: for (i64 i = 0; i + 1 < n; i++) gs_prim(A, &e[i], 2); break;
+    case GL_LINE_LOOP:
+        for (i64 i = 0; i + 1 < n; i++) gs_prim(A, &e[i], 2);
+        if (n >= 2) { q[0] = e[n - 1]; q[1] = e[0]; gs_prim(A, q, 2); }
+        break;
+    case GL_TRIANGLES: for (i64 i = 0; i + 2 < n; i += 3) gs_prim(A, &e[i], 3); break;
+    case GL_TRIANGLE_STRIP:
+        for (i64 i = 0; i + 2 < n; i++) {
+            if (i & 1) { q[0] = e[i + 1]; q[1] = e[i]; q[2] = e[i + 2]; } else { q[0] = e[i]; q[1] = e[i + 1]; q[2] = e[i + 2]; }
+            gs_prim(A, q, 3);
+        }
+        break;
+    case GL_TRIANGLE_FAN: for (i64 i = 1; i + 1 < n; i++) { q[0] = e[0]; q[1] = e[i]; q[2] = e[i + 1]; gs_prim(A, q, 3); } break;
+    case GL_LINES_ADJACENCY: for (i64 i = 0; i + 3 < n; i += 4) gs_prim(A, &e[i], 4); break;
+    case GL_LINE_STRIP_ADJACENCY: for (i64 i = 0; i + 3 < n; i++) gs_prim(A, &e[i], 4); break;
+    case GL_TRIANGLES_ADJACENCY: for (i64 i = 0; i + 5 < n; i += 6) gs_prim(A, &e[i], 6); break;
+    case GL_TRIANGLE_STRIP_ADJACENCY: {
+        /* tabela da especificação (seção 10.1.13): vértices primários 2i, 2i+2, 2i+4 e as adjacências */
+        i64 nt = (n - 4) / 2;
+        for (i64 i = 0; i < nt; i++) {
+            u32 v0, v1, v2, a0, a1, a2;
+            if (i & 1) { v0 = e[2 * i + 2]; v1 = e[2 * i]; v2 = e[2 * i + 4]; }
+            else { v0 = e[2 * i]; v1 = e[2 * i + 2]; v2 = e[2 * i + 4]; }
+            if (nt == 1) { a0 = e[1]; a1 = e[5]; a2 = e[3]; }
+            else if (i == 0) { a0 = e[1]; a1 = e[6]; a2 = e[3]; }
+            else if (i == nt - 1) { a0 = (i & 1) ? e[2 * i + 3] : e[2 * i - 2]; a1 = e[2 * i + 5]; a2 = (i & 1) ? e[2 * i - 2] : e[2 * i + 3]; }
+            else { a0 = (i & 1) ? e[2 * i + 6] : e[2 * i - 2]; a1 = (i & 1) ? e[2 * i - 2] : e[2 * i + 6]; a2 = e[2 * i + 3]; }
+            q[0] = v0; q[1] = a0; q[2] = v1; q[3] = a1; q[4] = v2; q[5] = a2;
+            gs_prim(A, q, 6);
+        }
+        break;
+    }
+    }
+}
 /* percorre a sequência de elementos (já sem os índices de reinício) */
 static void assemble(asm_t *A, const u32 *e, i64 n) {
     rs_t *R = A->R;
+    if (R->S->gs) { gs_assemble(A, e, n); return; }
     int last = R->flat_last;
     switch (A->mode) {
     case GL_POINTS: for (i64 i = 0; i < n; i++) prim1(A, e[i]); break;
@@ -802,6 +870,14 @@ void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const
     { extern int gl_cond_skip(void); if (gl_cond_skip()) return; }
     if (!gl_resolve_target(C, 1, &C->tgt)) { gl_err(C, GL_INVALID_FRAMEBUFFER_OPERATION); return; }
     if (!gl_stage_setup(C)) return;
+    if (C->st.gs) {
+        /* o modo do draw tem de ser da família do primitivo de entrada do GS */
+        GLenum fam = mode == GL_POINTS ? GL_POINTS : mode == GL_LINES || mode == GL_LINE_STRIP || mode == GL_LINE_LOOP ? GL_LINES :
+                     mode == GL_LINES_ADJACENCY || mode == GL_LINE_STRIP_ADJACENCY ? GL_LINES_ADJACENCY :
+                     mode == GL_TRIANGLES_ADJACENCY || mode == GL_TRIANGLE_STRIP_ADJACENCY ? GL_TRIANGLES_ADJACENCY :
+                     mode == GL_TRIANGLES || mode == GL_TRIANGLE_STRIP || mode == GL_TRIANGLE_FAN ? GL_TRIANGLES : 0;
+        if (fam != C->st.gs_in) { gl_err(C, GL_INVALID_OPERATION); return; }
+    }
     const u8 *ip = 0;
     if (itype) {
         int isz = itype == GL_UNSIGNED_BYTE ? 1 : itype == GL_UNSIGNED_SHORT ? 2 : itype == GL_UNSIGNED_INT ? 4 : 0;
@@ -846,7 +922,9 @@ void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const
     vc_t *cache = calloc(VCACHE, sizeof *cache);
     u32 *seq = malloc(sizeof(u32) * (size_t)(count > 4096 ? 4096 : count) + 64);
     if (!cache || !seq) { free(cache); free(seq); gl_err(C, GL_OUT_OF_MEMORY); return; }
-    asm_t A = {&R, cache, 0, mode, xfb_base(mode), C->xfb->active && !C->xfb->paused};
+    asm_t A = {&R, cache, 0, mode, xfb_base(mode), C->xfb->active && !C->xfb->paused && !C->st.gs};
+    rs_t *prev_rs = g_rs;
+    g_rs = &R;
     int restart = itype && gl_is_on(C, GL_PRIMITIVE_RESTART);
     u32 ridx = C->restart_idx;
     for (i64 k = 0; k < inst; k++) {
@@ -885,6 +963,7 @@ void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const
     }
     free(seq);
     free(cache);
+    g_rs = prev_rs;
 }
 
 /* ================================================================ chamadas de desenho */

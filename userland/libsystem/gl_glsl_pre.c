@@ -348,6 +348,13 @@ static void builtins(sb_t *b, int stage, int compat) {
                             "float4 gl_MultiTexCoord4; float4 gl_MultiTexCoord5; float4 gl_MultiTexCoord6; float4 gl_MultiTexCoord7;\n"
                             "float4 gl_FrontColor; float4 gl_BackColor; float4 gl_FrontSecondaryColor; float4 gl_BackSecondaryColor;\n"
                             "float4 gl_TexCoord[8]; float gl_FogFragCoord; float4 gl_ClipVertex;\n");
+    } else if (stage == 2) {
+        /* geometry shader: EmitVertex/EndPrimitive são definidos no fim do texto, com as cópias das saídas */
+        sb_s(b, "struct gl_PerVertexIn { float4 gl_Position; float gl_PointSize; float gl_ClipDistance[8]; };\n"
+                "gl_PerVertexIn gl_in[6]; int gl_PrimitiveIDIn; int gl_InvocationID;\n"
+                "float4 gl_Position; float gl_PointSize; float gl_ClipDistance[8]; int gl_PrimitiveID; int gl_Layer; int gl_ViewportIndex;\n"
+                "void EmitVertex(); void EndPrimitive();\n"
+                "void EmitStreamVertex(int s) { EmitVertex(); }\nvoid EndStreamPrimitive(int s) { EndPrimitive(); }\n");
     } else {
         sb_s(b, "float4 gl_FragCoord; bool gl_FrontFacing; float2 gl_PointCoord; float gl_FragDepth; int gl_PrimitiveID;\n"
                 "float4 gl_FragColor; float4 gl_FragData[8]; int gl_SampleID; float2 gl_SamplePosition; float gl_ClipDistance[8];\n");
@@ -379,7 +386,7 @@ static void builtins(sb_t *b, int stage, int compat) {
 }
 /* prelúdio do estágio (0 vértice, 1 fragmento); o texto vive até o fim do processo */
 const char *gl_glsl_prelude(int stage, int compat, u64 *len) {
-    static sb_t cache[2][2];
+    static sb_t cache[3][2];
     sb_t *b = &cache[stage][compat];
     if (!b->p) {
         types(b);

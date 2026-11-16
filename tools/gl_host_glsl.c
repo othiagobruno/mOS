@@ -329,6 +329,84 @@ static void t_derivatives(void) {
     gl_ctx_destroy(C);
 }
 
+static GLuint prog3(const char *vs, const char *gs, const char *fs, char *log, int nlog) {
+    const char *src[3] = {vs, gs, fs};
+    GLenum ty[3] = {GL_VERTEX_SHADER, GL_GEOMETRY_SHADER, GL_FRAGMENT_SHADER};
+    GLuint p = glCreateProgram();
+    for (int i = 0; i < 3; i++) {
+        GLuint s = glCreateShader(ty[i]);
+        glShaderSource(s, 1, &src[i], 0);
+        glCompileShader(s);
+        GLint ok;
+        glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+        if (!ok) { glGetShaderInfoLog(s, nlog, 0, log); printf("shader %d: %s\n", i, log); return 0; }
+        glAttachShader(p, s);
+        glDeleteShader(s);
+    }
+    glLinkProgram(p);
+    GLint ok;
+    glGetProgramiv(p, GL_LINK_STATUS, &ok);
+    if (!ok) { glGetProgramInfoLog(p, nlog, 0, log); printf("link: %s\n", log); return 0; }
+    return p;
+}
+static void t_geometry(void) {
+    gl_ctx_t *C = gl_ctx_create(0, 1, 4, 1, 8, 8, 1, 1, 1, 1);
+    gl_ctx_make_current(C);
+    char log[1024];
+    const char *vs = "#version 330\nlayout(location=0) in vec2 pos;\nout vec3 vc;\nvoid main() { vc = vec3(1.0, 0.0, 0.0); gl_Position = vec4(pos, 0, 1); }\n";
+    const char *gs = "#version 330\nlayout(points) in;\nlayout(triangle_strip, max_vertices = 4) out;\n"
+                     "in vec3 vc[];\nout vec3 gc;\n"
+                     "void main() { vec4 c = gl_in[0].gl_Position; float h = 0.5;\n"
+                     "  gc = vc[0]; gl_Position = c + vec4(-h, -h, 0, 0); EmitVertex();\n"
+                     "  gc = vc[0]; gl_Position = c + vec4( h, -h, 0, 0); EmitVertex();\n"
+                     "  gc = vec3(0, 0, 1); gl_Position = c + vec4(-h,  h, 0, 0); EmitVertex();\n"
+                     "  gc = vec3(0, 0, 1); gl_Position = c + vec4( h,  h, 0, 0); EmitVertex(); EndPrimitive(); }\n";
+    const char *fs = "#version 330\nin vec3 gc;\nout vec4 o;\nvoid main() { o = vec4(gc, 1.0); }\n";
+    GLuint p = prog3(vs, gs, fs, log, sizeof log);
+    CHECK(p != 0, "programa com geometry shader liga");
+    if (!p) { gl_ctx_destroy(C); return; }
+    GLuint vao, vb;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    float pt[2] = {0, 0};
+    glGenBuffers(1, &vb);
+    glBindBuffer(GL_ARRAY_BUFFER, vb);
+    glBufferData(GL_ARRAY_BUFFER, sizeof pt, pt, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, 0, 0, 0);
+    glEnableVertexAttribArray(0);
+    glUseProgram(p);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDrawArrays(GL_POINTS, 0, 1);
+    u8 o[4];
+    px(4, 2, o);
+    CHECK(o[0] > 128 && o[2] < 128, "GS: ponto virou quadrado (baixo vermelho) %d %d %d", o[0], o[1], o[2]);
+    px(4, 5, o);
+    CHECK(o[2] > 128 && o[0] < 128, "GS: cor interpolada até o azul %d %d %d", o[0], o[1], o[2]);
+    px(0, 0, o);
+    CHECK(o[0] == 0 && o[2] == 0, "GS: fora do quadrado fica limpo %d %d %d", o[0], o[1], o[2]);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    CHECK(glGetError() == GL_INVALID_OPERATION, "modo do draw diferente da entrada do GS");
+    /* triângulos com bloco de interface e gl_PrimitiveIDIn */
+    const char *vs2 = "#version 330\nlayout(location=0) in vec2 pos;\nout V { vec2 p; } v;\nvoid main() { v.p = pos; gl_Position = vec4(pos, 0, 1); }\n";
+    const char *gs2 = "#version 330\nlayout(triangles) in;\nlayout(triangle_strip, max_vertices = 3) out;\n"
+                      "in V { vec2 p; } v[];\nflat out float k;\n"
+                      "void main() { for (int i = 0; i < gl_in.length(); i++) { k = float(gl_PrimitiveIDIn) + 0.5 + v[i].p.x * 0.0; gl_Position = gl_in[i].gl_Position; EmitVertex(); } EndPrimitive(); }\n";
+    const char *fs2 = "#version 330\nflat in float k;\nout vec4 o;\nvoid main() { o = vec4(0, k, 0, 1); }\n";
+    GLuint p2 = prog3(vs2, gs2, fs2, log, sizeof log);
+    CHECK(p2 != 0, "GS de triângulos com bloco liga");
+    if (p2) {
+        float tri[] = {-1, -1, 1, -1, -1, 1};
+        glBufferData(GL_ARRAY_BUFFER, sizeof tri, tri, GL_STATIC_DRAW);
+        glUseProgram(p2);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        px(1, 1, o);
+        CHECK(near(o[1], 128, 2) && o[0] == 0, "GS: triângulo passa com gl_PrimitiveIDIn %d %d %d", o[0], o[1], o[2]);
+    }
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks) {
     F = fails;
     K = checks;
@@ -338,4 +416,5 @@ void gl_glsl_host_tests(int *fails, int *checks) {
     t_xfb();
     t_bindable();
     t_derivatives();
+    t_geometry();
 }
