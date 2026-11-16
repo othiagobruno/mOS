@@ -125,3 +125,11 @@ Na associação o driver grava na FIFO do chip (páginas do driver, a partir da 
 um QoS Null e um Null, cada um com descritor de TX, e manda o H2C 0x00 com as posições (1, 3, 2): é com
 eles que o firmware avisa o AP ao entrar e sair do LPS. Falha na gravação desliga o LPS na sessão.
 Teste: `rtw88_chip_host` 39/39.
+
+## CoreWLAN para os apps (`userland/libsystem/corewlan.c`)
+
+`CWWiFiClient`, `CWInterface` e `CWChannel` com o estado real do Wi-Fi pelo `GUI_DEVICE`/`DEV_WIFI_INFO`
+(`kernel/wifi/wifi.c`): SSID, BSSID, RSSI, canal/banda/largura, segurança, modo PHY, MAC e a taxa de TX
+que o firmware reporta (relatório de RA: taxa, SGI e largura; tabela 1 fluxo CCK/OFDM/HT/VHT conferida no
+host). Ruído e potência de TX vêm 0: o RTL8821CE não os informa ao driver. Fecha a lacuna do Stats no
+`docs/lacunas/felipe.md` (`_OBJC_CLASS_$_CWInterface`, `_OBJC_CLASS_$_CWChannel`).

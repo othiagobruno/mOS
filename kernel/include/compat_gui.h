@@ -81,7 +81,8 @@ enum {
 #define DEV_INPUT_TO_PID 24   /* CGEventPostToPid: (tipo CG | botões << 8 | mods << 16 | roda << 32, tecla | pid << 32, x | y << 32).
                                * Entrega na fila do processo. Não muda o foco nem o cursor global. 21 é DEV_AUDIO_READ. */
 #define DEV_FOCUS_PID 25      /* (pid) foca a janela da frente desse processo. 0 ou -MOS_ESRCH */
-#define DEV_FRONT_PID 26      /* () pid da janela em foco, ou 0 */
+#define DEV_FRONT_PID 26
+#define DEV_WIFI_INFO 27     /* (gui_wifi_info_t *) -> 1 se há placa Wi-Fi (CoreWLAN: CWInterface/CWChannel) */      /* () pid da janela em foco, ou 0 */
 typedef struct {
     unsigned int number;           /* kCGWindowNumber */
     int pid;                       /* kCGWindowOwnerPID; 0 se a janela não é de um processo convidado */
@@ -149,6 +150,16 @@ typedef struct {
     int hid;                       /* anuncia HID (teclado/mouse/controle) */
     int connectable;
 } gui_bt_device_t;
+typedef struct {
+    int present, power;            /* há placa / rádio ligado */
+    int state;                     /* WIFI_* de kernel/include/wifi.h; 6 = conectado */
+    char ssid[33], bssid[18], mac[18], ifname[8], country[3];
+    int rssi, noise;               /* dBm; noise 0 = o rádio não mede */
+    int channel, band, width;      /* canal primário; banda 1 = 2,4 GHz, 2 = 5 GHz; largura 1/2/3 = 20/40/80 MHz */
+    int tx_kbps;                   /* taxa de TX atual (relatório do firmware), kb/s; 0 = desconhecida */
+    int security;                  /* WIFI_SEC_* */
+    int phy;                       /* 1 11a, 2 11b, 3 11g, 4 11n, 5 11ac (os números do CWPHYMode) */
+} gui_wifi_info_t;
 typedef struct {
     int state;                     /* 0 livre, 1 conectando, 2 pronto (ATT cru), 3 falhou */
     int mtu;
