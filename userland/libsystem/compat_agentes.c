@@ -149,7 +149,6 @@ const double kCFCoreFoundationVersionNumber = 2048.0;   /* da ordem do macOS 14,
 u64 CGEventSourceFlagsState(int state) { (void)state; return 0; }      /* nenhuma tecla modificadora pressionada */
 unsigned char CGPreflightListenEventAccess(void) { return 0; }        /* sem monitoração de entrada global */
 unsigned char CGRequestListenEventAccess(void) { return 0; }
-void CGContextSetInterpolationQuality(void *ctx, int q) { (void)ctx; (void)q; }   /* o rasterizador do mOS é um só */
 void IOHIDDeviceRegisterRemovalCallback(void *d, void *cb, void *ctx) { (void)d; (void)cb; (void)ctx; }
 id_ IOHIDManagerCopyDevices(void *m) { (void)m; return 0; }            /* NULL: nenhum dispositivo, como a Apple */
 u32 IORegistryEntryFromPath(u32 master, const char *path) { (void)master; (void)path; return 0; }   /* MACH_PORT_NULL */
@@ -194,21 +193,7 @@ typedef struct { double x, y, w, h; } cg_rect_t;
 void CGContextDrawImage(void *c, cg_rect_t r, void *img);
 size_t CGBitmapContextGetWidth(void *c);
 size_t CGBitmapContextGetHeight(void *c);
-void CGContextDrawTiledImage(void *c, cg_rect_t r, void *img) {
-    if (!c || !img || r.w <= 0 || r.h <= 0) return;
-    double W = (double)CGBitmapContextGetWidth(c), H = (double)CGBitmapContextGetHeight(c);
-    if (W <= 0 || H <= 0) { CGContextDrawImage(c, r, img); return; }
-    long kx = (long)(r.x / r.w), ky = (long)(r.y / r.h);
-    double x0 = r.x - (double)kx * r.w, y0 = r.y - (double)ky * r.h;
-    while (x0 > 0) x0 -= r.w;
-    while (y0 > 0) y0 -= r.h;
-    int n = 0;
-    for (double y = y0; y < H && n < 16384; y += r.h)
-        for (double x = x0; x < W && n < 16384; x += r.w, n++) {
-            cg_rect_t t = {x, y, r.w, r.h};
-            CGContextDrawImage(c, t, img);
-        }
-}
+/* CGContextDrawTiledImage está em cg_more.inc / coregraphics.c */
 
 /* ---- o que o Sparkle (atualizador do Codex desktop e de outros apps) importa */
 id_ objc_getClass(const char *n);
@@ -459,7 +444,6 @@ int VTCreateCGImageFromCVPixelBuffer(void *pb, void *opts, void **out) { (void)p
 /* par-ímpar: o rasterizador de caminhos do AppKit do mOS só preenche com a regra do enrolamento (diferente só em
  * caminhos que se cruzam) */
 void CGContextFillPath(void *c);
-void CGContextEOFillPath(void *c) { CGContextFillPath(c); }
 
 /* ---- AppKit (extensão Swift do NSScreen, macOS 12): as áreas ao lado do entalhe da câmera. O mOS não tem entalhe:
  * nil. Getters swiftcc: self em r13, Optional<CGRect> (33 bytes) pelo resultado indireto em rax: carga zero e o byte de

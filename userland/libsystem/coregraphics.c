@@ -533,7 +533,12 @@ CSNAME(kCGColorSpaceExtendedLinearGray, "kCGColorSpaceExtendedLinearGray")
 CSNAME(kCGColorSpaceITUR_2100_PQ, "kCGColorSpaceITUR_2100_PQ")
 CSNAME(kCGColorSpaceITUR_2100_HLG, "kCGColorSpaceITUR_2100_HLG")
 
-typedef struct { cx_class_t *isa; u64 cfinfo; const void *name; i32 model; u32 ncomp; u32 extended; } cgspace_t;
+typedef struct {
+    cx_class_t *isa; u64 cfinfo; const void *name; i32 model; u32 ncomp; u32 extended;
+    void *base; u8 *table; int ntable;        /* indexado: espaço base e tabela (ntable entradas × ncomp do base) */
+    u8 *icc; long nicc;                      /* perfil ICC (CGColorSpaceCreateWithICCData / ICCBased) */
+    double white[3], black[3], gamma[3], matrix[9], range[8];   /* calibrado, Lab */
+} cgspace_t;
 static cx_class_t *space_cls;
 #define MAX_SPACES 24
 static cgspace_t *spaces[MAX_SPACES];
@@ -621,6 +626,7 @@ typedef struct {
     u32 stroke; double lw, miter, phase, dash[16]; int ndash, cap, join; double galpha; int aa;
     double sdx, sdy, sblur; u32 scolor; int pattern;
     u8 *mask;
+    u8 interp; double flat, charsp; void *font; double fsize; int tmode;
 } cg_bmx_gs;
 typedef struct {
     cgr_poly path;               /* no espaço do dispositivo */
@@ -634,6 +640,12 @@ typedef struct {
     void *fill_space;
     u8 *layer_data[4]; double layer_alpha[4]; int layer_owns[4]; int nlayer;
     cg_bmx_gs gs[8]; int gsp;
+    u8 lfmt[4]; u32 linfo[4], lbpr[4], lbpp[4]; double lshadow[4][3]; u32 lscolor[4]; u8 lblend[4];
+    u32 *sbuf; int sx0, sy0, sx1, sy1;     /* sombra: o desenho vai para cá e depois é composto com a sombra */
+    u8 interp; double flat, charsp;
+    void *font; double fsize; int tmode;    /* CGContextSetFont / SetFontSize / SetTextDrawingMode */
+    void *stroke_space; u32 *stile; int stw, sth, spattern_on;   /* padrão de traço */
+    void *ctfont, *ctfont_src; double ctfont_size;                 /* CTFont em cache para o texto do CGContext */
 } cg_bmx_t;
 typedef struct {
     cx_class_t *isa;
@@ -656,7 +668,15 @@ typedef struct {
     void (*rel_cb)(void *, const void *, size_t);
     u64 cb_size;
     cg_bmx_t *gx;                            /* só bitmap: path, traço, máscara, padrão, camadas */
+    u8 fmt;                                  /* bitmap: PF_* de cg_pixel.inc */
+    u8 ismask;                               /* imagem: máscara de imagem (CGImageMaskCreate), só alfa */
+    u8 shint;                                /* imagem: shouldInterpolate */
+    u16 sbpc, sbpp;                          /* imagem: bits por componente / pixel declarados na criação */
+    void *space;                             /* espaço de cor (retido) */
+    const void *uti;                         /* imagem: tipo de origem (ImageIO) */
+    double decode[10]; int ndecode;
 } cgobj_t;
+#include "cg_pixel.inc"
 static void bmx_free(cgobj_t *o);
 static void bmx_save(cgobj_t *o);
 static void bmx_restore(cgobj_t *o);
@@ -675,6 +695,7 @@ static void cg_dealloc(id self, SEL c) {
         if (o->rel_cb) ((void (*)(void *, void *))(void *)o->rel_cb)(o->cb_info, o->data);   /* CGBitmapContextCreateWithData */
     }
     if (o->owns) free(o->data);
+    if (o->space) objc_release((id)o->space);
     o->data = 0;
     o->kind = 0;
     cx_object_free(self);
@@ -746,44 +767,59 @@ void *CGDataProviderCreateWithURL(id url) {
 }
 void *CGDataProviderRetain(void *p) { if (as_kind(p, CGK_PR)) objc_retain((id)p); return p; }
 
-static u32 px_argb(const u8 *s, u32 info) {
-    u32 ainfo = info & 31;
-    int first = ainfo == 2 || ainfo == 4 || ainfo == 6;
-    u8 A, R, G, B;
-    if (first) { B = s[0]; G = s[1]; R = s[2]; A = s[3]; }
-    else { R = s[0]; G = s[1]; B = s[2]; A = s[3]; }
-    if (ainfo == 0 || ainfo == 5 || ainfo == 6) A = 255;
-    return (u32)A << 24 | (u32)R << 16 | (u32)G << 8 | B;
-}
-void *CGImageCreate(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, const void *space, u32 info,
-                    void *provider, const void *decode, bool shouldInterpolate, int intent) {
-    (void)space; (void)decode; (void)shouldInterpolate; (void)intent;
-    cgobj_t *p = as_kind(provider, CGK_PR);
-    if (!p || !w || !h || bpc != 8 || (bpp != 32 && bpp != 8)) return 0;
-    if ((u64)w * h * 4 > (1ull << 30)) return 0;          /* 1 GiB: foto de 48 Mpx cabe */
-    if (!bpr) bpr = w * (bpp / 8);
-    if (!h || bpr > p->cb_size / h) return 0;
+/* qualquer layout aceito pelo macOS vira ARGB 8 bits (cg_pixel.inc); pré-multiplicado fica marcado (cb_size) */
+static void *image_from(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, const void *space, u32 info,
+                        cgobj_t *p, const double *decode, int mask, int intent, int interp) {
+    const cgspace_t *cs = space;
+    if (!p || !w || !h || !bpp) return 0;
+    if (bpc != 1 && bpc != 2 && bpc != 4 && bpc != 5 && bpc != 8 && bpc != 16 && bpc != 32) return 0;
+    if ((u64)w * h * 4 > (1ull << 30)) return 0;
+    if (!bpr) bpr = (w * bpp + 7) / 8;
+    if ((u64)bpr * (h - 1) + (w * bpp + 7) / 8 > p->cb_size) return 0;
+    unpack_t u = {bpc, bpp, 0, 0, info, 1, decode, 0, 0, 0, 1};
+    u32 ai = info & 31;
+    if (mask) { u.model = -2; u.ncolor = 1; }
+    else if (ai == AI_ONLY) u.ncolor = 0;
+    else {
+        int model = cs ? cs->model : (bpp / (bpc ? bpc : 8) >= 3 ? 1 : 0);
+        u.model = model;
+        u.ncolor = model == 0 ? 1 : model == 2 ? 4 : model == 5 ? 1 : 3;
+        if (model == 5 && cs) {
+            const cgspace_t *bs = cs->base;
+            u.table = cs->table; u.ntable = cs->ntable;
+            u.tcomp = bs ? (int)bs->ncomp : 3; u.table_model = bs ? bs->model : 1;
+        }
+        if (model == 3) u.model = 1;                 /* Lab chega convertido pelo ColorSync (ver color.c) */
+    }
+    u.ncomp = u.ncolor + (ai_present(ai) && ai != AI_ONLY && !mask ? 1 : 0);
+    if (!mask && ai != AI_ONLY && bpc != 5 && bpp < u.ncomp * bpc) return 0;
     cgobj_t *o = cg_new(&IM_c, CGK_IM);
     if (!o) return 0;
     o->w = (u32)w; o->h = (u32)h; o->bpr = (u32)w * 4; o->bpp = 4; o->info = info; o->owns = 1;
+    o->sbpc = (u16)bpc; o->sbpp = (u16)bpp; o->ismask = (u8)mask; o->shint = (u8)interp;
     o->blend = (u8)(intent & 0xFF);          /* imagem não usa blend: guarda o rendering intent */
+    if (space) o->space = objc_retain((id)space);
+    if (decode) {
+        int nd = (int)(2 * (u.ncolor + (ai_has_alpha(ai) ? 1 : 0)));
+        if (mask) nd = 2;
+        if (nd > 10) nd = 10;
+        for (int i = 0; i < nd; i++) o->decode[i] = decode[i];
+        o->ndecode = nd;
+    }
     o->data = malloc((size_t)o->bpr * h);
     if (!o->data) { objc_release((id)o); return 0; }
-    u32 ainfo = info & 31;
-    o->owns = 1;
-    int prem = ainfo == 1 || ainfo == 2;
-    /* guarda AARRGGBB. Já pré-multiplicado fica marcado para o compositor não multiplicar de novo. */
-    o->cb_size = prem ? 1 : 0;
-    for (size_t y = 0; y < h; y++) {
-        u32 *row = (u32 *)(o->data + y * o->bpr);
-        const u8 *src = p->data + y * bpr;
-        if (bpp == 8) {
-            for (size_t x = 0; x < w; x++) { u8 v = src[x]; row[x] = 0xFF000000u | (u32)v << 16 | (u32)v << 8 | v; }
-        } else {
-            for (size_t x = 0; x < w; x++) row[x] = px_argb(src + x * 4, info);
-        }
-    }
+    int prem = 0;
+    for (size_t y = 0; y < h; y++) unpack_row(&u, p->data + y * bpr, w, (u32 *)(o->data + y * o->bpr), &prem);
+    o->cb_size = prem || mask || ai == AI_ONLY ? 1 : 0;   /* só alfa / máscara: RGB 0, já "pré-multiplicado" */
     return o;
+}
+void *CGImageCreate(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, const void *space, u32 info,
+                    void *provider, const void *decode, bool shouldInterpolate, int intent) {
+    return image_from(w, h, bpc, bpp, bpr, space, info, as_kind(provider, CGK_PR), decode, 0, intent, shouldInterpolate);
+}
+void *CGImageMaskCreate(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, void *provider, const double *decode, bool interp) {
+    if (bpc != 1 && bpc != 2 && bpc != 4 && bpc != 8) return 0;
+    return image_from(w, h, bpc, bpp, bpr, 0, 0, as_kind(provider, CGK_PR), decode, 1, 0, interp);
 }
 void CGImageRelease(void *img) { if (as_kind(img, CGK_IM)) objc_release((id)img); }
 void *CGImageRetain(void *img) { if (as_kind(img, CGK_IM)) objc_retain((id)img); return img; }
@@ -828,10 +864,13 @@ int cx_cgimage_src(const void *img, const u8 **px, long *bpr, int *w, int *h, in
 }
 
 void *CGBitmapContextCreate(void *data, size_t w, size_t h, size_t bpc, size_t bpr, void *space, u32 bitmapInfo) {
-    (void)space;
-    if (!w || !h || bpc != 8) return 0;
-    u32 ainfo = bitmapInfo & 31;
-    u32 bpp = ainfo == 7 ? 1 : 4;
+    const cgspace_t *cs = space;
+    if (!w || !h) return 0;
+    int model = cs ? cs->model : 1;
+    if ((bitmapInfo & 31) == AI_ONLY) model = -1;
+    size_t bpp = 0;
+    int fmt = ctx_format(bpc, bitmapInfo, model, &bpp);
+    if (fmt == PF_NONE) return 0;
     if (!bpr) bpr = w * bpp;
     if (bpr < w * bpp) return 0;
     if ((u64)bpr * h > (1ull << 30)) return 0;
@@ -844,7 +883,9 @@ void *CGBitmapContextCreate(void *data, size_t w, size_t h, size_t bpc, size_t b
     }
     cgobj_t *o = cg_new(&BM_c, CGK_BM);
     if (!o) { if (owns) free(data); return 0; }
-    o->data = data; o->w = (u32)w; o->h = (u32)h; o->bpr = (u32)bpr; o->bpp = bpp; o->info = bitmapInfo; o->owns = owns;
+    o->data = data; o->w = (u32)w; o->h = (u32)h; o->bpr = (u32)bpr; o->bpp = (u32)bpp; o->info = bitmapInfo; o->owns = owns;
+    o->fmt = (u8)fmt; o->sbpc = (u16)bpc; o->sbpp = (u16)(bpp * 8);
+    if (space) o->space = objc_retain((id)space);
     /* como no macOS: origem embaixo à esquerda, y para cima */
     o->ca = 1; o->cd = -1; o->cv = (double)h;
     o->cl = 0; o->ct = 0; o->cr = (i32)w; o->cbt = (i32)h;
@@ -858,7 +899,7 @@ size_t CGBitmapContextGetWidth(void *c) { cgobj_t *o = as_kind(c, CGK_BM); retur
 size_t CGBitmapContextGetHeight(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->h : 0; }
 size_t CGBitmapContextGetBytesPerRow(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->bpr : 0; }
 size_t CGBitmapContextGetBitsPerPixel(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->bpp * 8 : 0; }
-size_t CGBitmapContextGetBitsPerComponent(void *c) { return as_kind(c, CGK_BM) ? 8 : 0; }
+size_t CGBitmapContextGetBitsPerComponent(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->sbpc : 0; }
 u32 CGBitmapContextGetBitmapInfo(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? o->info : 0; }
 void CGContextSetShouldSmoothFonts(void *c, int v) { (void)c; (void)v; }
 void CGContextSetAllowsFontSmoothing(void *c, int v) { (void)c; (void)v; }
@@ -866,7 +907,6 @@ void CGContextSetShouldSubpixelPositionFonts(void *c, int v) { (void)c; (void)v;
 void CGContextSetAllowsFontSubpixelPositioning(void *c, int v) { (void)c; (void)v; }
 void CGContextSetShouldSubpixelQuantizeFonts(void *c, int v) { (void)c; (void)v; }
 void CGContextSetAllowsFontSubpixelQuantization(void *c, int v) { (void)c; (void)v; }
-void CGContextSetTextDrawingMode(void *c, int mode) { (void)c; (void)mode; }
 void CGContextSetTextMatrix(void *c, CGAffineTransform t) {
     cgobj_t *o = as_kind(c, CGK_BM);
     if (!o) return;
@@ -885,36 +925,29 @@ void CGContextSetBlendMode(void *c, int mode) {
     if (o) { o->blend = (u8)mode; return; }
     cx_cg_note_blend(mode);
 }
-static void store_px(u8 *dp, u32 info, u32 argb) {
-    u32 ainfo = info & 31;
-    int first = ainfo == 0 || ainfo == 2 || ainfo == 4 || ainfo == 6;
-    u32 A = argb >> 24, R = (argb >> 16) & 255, G = (argb >> 8) & 255, B = argb & 255;
-    if (first) { dp[0] = (u8)B; dp[1] = (u8)G; dp[2] = (u8)R; dp[3] = (u8)A; }
-    else { dp[0] = (u8)R; dp[1] = (u8)G; dp[2] = (u8)B; dp[3] = (u8)A; }
-}
+static void shadow_note(cg_bmx_t *g, int x, int y);
+static int shadow_begin(cgobj_t *o);
+static void shadow_end(cgobj_t *o, int on);
+static u32 scale_px(u32 p, u32 k);
+static u32 fill_src(cgobj_t *o, int x, int y);
 static void blend_at(cgobj_t *o, int x, int y, u32 src) {
     int mode = o->blend;
     if (x < o->cl || y < o->ct || x >= o->cr || y >= o->cbt) return;
-    if (o->gx && o->gx->mask) {                /* recorte por path: a fonte vale só na cobertura */
+    if (o->gx && o->gx->mask) {                /* recorte por path/máscara: a fonte vale só na cobertura */
         u32 k = o->gx->mask[(size_t)y * o->w + x];
         if (!k) return;
         if (k < 255) src = (((src >> 24) * k / 255) << 24) | ((((src >> 16) & 255) * k / 255) << 16) | ((((src >> 8) & 255) * k / 255) << 8) | ((src & 255) * k / 255);
     }
-    if (mode != 1 && mode != 16 && !(src >> 24)) return;
-    u8 *dp = o->data + (size_t)y * o->bpr + (size_t)x * o->bpp;
-    if (o->bpp == 1) {
-        if (mode == 16) dp[0] = 0;
-        else if (mode == 1) dp[0] = (u8)(src >> 24);
-        else if ((src >> 24) > dp[0]) dp[0] = (u8)(src >> 24);
+    if (o->gx && o->gx->sbuf) {                /* desenho com sombra: acumula "source over" no buffer da operação */
+        u32 *sp = &o->gx->sbuf[(size_t)y * o->w + x];
+        *sp = cx_cg_over(src, *sp);
+        shadow_note(o->gx, x, y);
         return;
     }
-    u32 dst = px_argb(dp, o->info);
-    u32 ainfo = o->info & 31;
-    if (mode != 1 && mode != 16 && ainfo != 1 && ainfo != 2) {
-        u32 a = dst >> 24;
-        if (a && a < 255) dst = a << 24 | (((dst >> 16) & 255) * a / 255) << 16 | (((dst >> 8) & 255) * a / 255) << 8 | ((dst & 255) * a / 255);
-    }
-    store_px(dp, o->info, cx_cg_blend_px(mode, src, dst));
+    if (!cx_cg_blend_zero_src_matters(mode) && !(src >> 24)) return;
+    u8 *dp = o->data + (size_t)y * o->bpr + (size_t)x * o->bpp;
+    u32 dst = ctx_get(o, dp);
+    ctx_put(o, dp, cx_cg_blend_px(mode, src, dst));
 }
 static void ctm_of(const cgobj_t *o, double x, double y, double *dx, double *dy) {
     *dx = o->ca * x + o->cc * y + o->cu;
@@ -940,6 +973,7 @@ int cx_bitmap_draw_glyph(void *ctx, double x, double y, const u8 *alpha, int gw,
      * da linha de base, com a cobertura dividida entre os dois pixels vizinhos. */
     double shear = (o->td > 1e-6 || o->td < -1e-6) ? o->tc / o->td : 0;
     if (shear > 1 || shear < -1) shear = 0;
+    int sh = shadow_begin(o);
     for (int gy = 0; gy < gh; gy++) {
         double dx = shear ? shear * (double)(-(top + gy)) : 0;
         int ix = (int)floor(dx);
@@ -956,6 +990,7 @@ int cx_bitmap_draw_glyph(void *ctx, double x, double y, const u8 *alpha, int gw,
             }
         }
     }
+    shadow_end(o, sh);
     return 1;
 }
 void cx_bm_set_fill(const void *c, u32 argb) { cgobj_t *o = as_kind(c, CGK_BM); if (o) o->fill = argb; }
@@ -1049,8 +1084,10 @@ int cx_bm_fill_rect(const void *c, double x, double y, double w, double h) {
     int x0, y0, x1, y1;
     dev_box(o, x, y, w, h, &x0, &y0, &x1, &y1);
     clamp_box(o, &x0, &y0, &x1, &y1);
+    int sh = shadow_begin(o);
     for (int py = y0; py < y1; py++)
         for (int px = x0; px < x1; px++) blend_at(o, px, py, fill_src(o, px, py));   /* pré-multiplicada, como o blend espera */
+    shadow_end(o, sh);
     return 1;
 }
 int cx_bm_clear_rect(const void *c, double x, double y, double w, double h) {
@@ -1061,10 +1098,7 @@ int cx_bm_clear_rect(const void *c, double x, double y, double w, double h) {
     clamp_box(o, &x0, &y0, &x1, &y1);
     for (int py = y0; py < y1; py++) {
         u8 *row = o->data + (size_t)py * o->bpr;
-        for (int px = x0; px < x1; px++) {
-            u8 *dp = row + (size_t)px * o->bpp;
-            for (u32 i = 0; i < o->bpp; i++) dp[i] = 0;
-        }
+        for (int px = x0; px < x1; px++) ctx_put(o, row + (size_t)px * o->bpp, 0);
     }
     return 1;
 }
@@ -1083,13 +1117,64 @@ void CGContextResetClip(void *c) {
     o->cl = 0; o->ct = 0; o->cr = (i32)o->w; o->cbt = (i32)o->h;
     if (o->gx) { free(o->gx->mask); o->gx->mask = 0; }
 }
+/* cópia do conteúdo como CGImage (ARGB pré-multiplicado por dentro); bitmapInfo, bpc e espaço do contexto */
 void *CGBitmapContextCreateImage(void *c) {
     cgobj_t *o = as_kind(c, CGK_BM);
     if (!o || !o->data) return 0;
-    void *p = CGDataProviderCreateWithData(0, o->data, (size_t)o->bpr * o->h, 0);
-    void *img = CGImageCreate(o->w, o->h, 8, o->bpp * 8, o->bpr, 0, o->info, p, 0, false, 0);
-    CGDataProviderRelease(p);
-    return img;
+    cgobj_t *im = cg_new(&IM_c, CGK_IM);
+    if (!im) return 0;
+    im->w = o->w; im->h = o->h; im->bpr = o->w * 4; im->bpp = 4; im->owns = 1; im->info = o->info;
+    im->sbpc = o->sbpc; im->sbpp = o->sbpp; im->cb_size = 1; im->shint = 1;
+    if (o->space) im->space = objc_retain((id)o->space);
+    im->data = malloc((size_t)im->bpr * o->h);
+    if (!im->data) { objc_release((id)im); return 0; }
+    for (u32 y = 0; y < o->h; y++) {
+        const u8 *row = o->data + (size_t)y * o->bpr;
+        u32 *out = (u32 *)(im->data + (size_t)y * im->bpr);
+        for (u32 x = 0; x < o->w; x++) out[x] = ctx_get(o, row + (size_t)x * o->bpp);
+    }
+    if (o->fmt == PF_A8) im->ismask = 0;
+    return im;
+}
+void *CGImageCreateCopy(void *img);
+/* pixel pré-multiplicado da imagem (x, y inteiros, já dentro) */
+static u32 img_pm(const cgobj_t *im, int x, int y) {
+    u32 p = ((const u32 *)(im->data + (size_t)y * im->bpr))[x];
+    if (!im->cb_size) {
+        u32 a = p >> 24;
+        if (a < 255) p = a << 24 | (((p >> 16) & 255) * a / 255) << 16 | (((p >> 8) & 255) * a / 255) << 8 | ((p & 255) * a / 255);
+    }
+    return p;
+}
+static u32 lerp_px(u32 a, u32 b, u32 t256) {
+    u32 o = 0;
+    for (int s = 0; s < 32; s += 8) {
+        u32 x = (a >> s) & 255, y = (b >> s) & 255;
+        o |= ((x * (256 - t256) + y * t256) >> 8) << s;
+    }
+    return o;
+}
+/* amostra em (u, v) ∈ [0,1]² da imagem (v = 0 embaixo): vizinho mais próximo ou bilinear */
+static u32 img_sample(const cgobj_t *im, double u, double v, int bilinear) {
+    double fx = u * im->w - 0.5, fy = (1 - v) * im->h - 0.5;
+    if (!bilinear) {
+        int sx = (int)floor(fx + 0.5), sy = (int)floor(fy + 0.5);
+        if (sx < 0) sx = 0;
+        if (sy < 0) sy = 0;
+        if (sx >= (int)im->w) sx = (int)im->w - 1;
+        if (sy >= (int)im->h) sy = (int)im->h - 1;
+        return img_pm(im, sx, sy);
+    }
+    int x0 = (int)floor(fx), y0 = (int)floor(fy);
+    u32 tx = (u32)((fx - x0) * 256), ty = (u32)((fy - y0) * 256);
+    int x1 = x0 + 1, y1 = y0 + 1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= (int)im->w) x1 = (int)im->w - 1;
+    if (y1 >= (int)im->h) y1 = (int)im->h - 1;
+    if (x0 >= (int)im->w) x0 = (int)im->w - 1;
+    if (y0 >= (int)im->h) y0 = (int)im->h - 1;
+    return lerp_px(lerp_px(img_pm(im, x0, y0), img_pm(im, x1, y0), tx), lerp_px(img_pm(im, x0, y1), img_pm(im, x1, y1), tx), ty);
 }
 void CGContextDrawImage(void *c, CGRect rect, void *image) {
     cgobj_t *o = as_kind(c, CGK_BM);
@@ -1105,10 +1190,25 @@ void CGContextDrawImage(void *c, CGRect rect, void *image) {
     int x0 = (int)floor(xs[0]), y0 = (int)floor(ys[0]), x1 = x0, y1 = y0;
     for (int i = 1; i < 4; i++) {
         int ix = (int)floor(xs[i]), iy = (int)floor(ys[i]);
-        if (ix < x0) x0 = ix; if (ix > x1) x1 = ix; if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
+        if (ix < x0) x0 = ix;
+        if (ix > x1) x1 = ix;
+        if (iy < y0) y0 = iy;
+        if (iy > y1) y1 = iy;
     }
-    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
-    if (x1 >= (int)o->w) x1 = (int)o->w - 1; if (y1 >= (int)o->h) y1 = (int)o->h - 1;
+    if (x0 < o->cl) x0 = o->cl;
+    if (y0 < o->ct) y0 = o->ct;
+    if (x1 >= o->cr) x1 = o->cr - 1;
+    if (y1 >= o->cbt) y1 = o->cbt - 1;
+    /* bilinear quando a imagem muda de tamanho ou gira, salvo kCGInterpolationNone ou shouldInterpolate = false */
+    double sx = fabs(rect.size.width) * sqrt(o->ca * o->ca + o->cb * o->cb) / im->w;
+    double sy = fabs(rect.size.height) * sqrt(o->cc * o->cc + o->cd * o->cd) / im->h;
+    int axis = (o->cb > -1e-9 && o->cb < 1e-9 && o->cc > -1e-9 && o->cc < 1e-9);
+    int same = axis && sx > 0.999 && sx < 1.001 && sy > 0.999 && sy < 1.001;
+    int interp = o->gx ? o->gx->interp : 0;
+    int bilinear = !same && interp != 1 && im->shint;
+    double ga = o->gx ? o->gx->galpha : 1;
+    u32 k = (u32)((ga < 0 ? 0 : ga > 1 ? 1 : ga) * 255 + 0.5);
+    int sh = shadow_begin(o);
     for (int y = y0; y <= y1; y++) {
         for (int x = x0; x <= x1; x++) {
             double dx = x + 0.5 - o->cu, dy = y + 0.5 - o->cv;
@@ -1116,27 +1216,153 @@ void CGContextDrawImage(void *c, CGRect rect, void *image) {
             double uy = (-o->cb * dx + o->ca * dy) / det;
             double u = (ux - rect.origin.x) / rect.size.width;
             double v = (uy - rect.origin.y) / rect.size.height;
-            if (u < 0 || u > 1 || v < 0 || v > 1) continue;
-            int sx = (int)(u * (im->w - 1) + 0.5), sy = (int)((1 - v) * (im->h - 1) + 0.5);
-            if (sx < 0) sx = 0; if (sy < 0) sy = 0;
-            if (sx >= (int)im->w) sx = (int)im->w - 1; if (sy >= (int)im->h) sy = (int)im->h - 1;
-            u32 p = ((u32 *)(im->data + (size_t)sy * im->bpr))[sx];
-            if (!im->cb_size) {
-                u32 a = p >> 24;
-                if (a < 255) p = a << 24 | (((p >> 16) & 255) * a / 255) << 16 | (((p >> 8) & 255) * a / 255) << 8 | ((p & 255) * a / 255);
-            }
+            if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+            u32 p = img_sample(im, u, v, bilinear);
+            if (im->ismask) {                        /* máscara de imagem: pinta a cor de preenchimento */
+                u32 m = p >> 24;
+                if (!m) continue;
+                p = scale_px(fill_src(o, x, y), m);
+            } else if (k < 255) p = scale_px(p, k);
             blend_at(o, x, y, p);
         }
     }
+    shadow_end(o, sh);
 }
-size_t CGImageGetBitsPerPixel(void *img) { return as_kind(img, CGK_IM) ? 32 : 0; }
-size_t CGImageGetBitsPerComponent(void *img) { return as_kind(img, CGK_IM) ? 8 : 0; }
+/* mosaico: a imagem no tamanho de rect, repetida a partir da origem de rect, cobrindo o recorte */
+void CGContextDrawTiledImage(void *c, CGRect r, void *image) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o || !as_kind(image, CGK_IM) || r.size.width <= 0 || r.size.height <= 0) return;
+    double ia = 0, ib = 0, ic = 0, id_ = 0, itx = 0, ity = 0, det = o->ca * o->cd - o->cb * o->cc;
+    if (det > -1e-12 && det < 1e-12) return;
+    ia = o->cd / det; ib = -o->cb / det; ic = -o->cc / det; id_ = o->ca / det;
+    itx = -(ia * o->cu + ic * o->cv); ity = -(ib * o->cu + id_ * o->cv);
+    double ux[4], uy[4];
+    double X[4] = {o->cl, o->cr, o->cl, o->cr}, Y[4] = {o->ct, o->ct, o->cbt, o->cbt};
+    for (int i = 0; i < 4; i++) { ux[i] = ia * X[i] + ic * Y[i] + itx; uy[i] = ib * X[i] + id_ * Y[i] + ity; }
+    double mnx = ux[0], mxx = ux[0], mny = uy[0], mxy = uy[0];
+    for (int i = 1; i < 4; i++) {
+        if (ux[i] < mnx) mnx = ux[i];
+        if (ux[i] > mxx) mxx = ux[i];
+        if (uy[i] < mny) mny = uy[i];
+        if (uy[i] > mxy) mxy = uy[i];
+    }
+    long i0 = (long)floor((mnx - r.origin.x) / r.size.width), i1 = (long)ceil((mxx - r.origin.x) / r.size.width);
+    long j0 = (long)floor((mny - r.origin.y) / r.size.height), j1 = (long)ceil((mxy - r.origin.y) / r.size.height);
+    if ((i1 - i0) * (j1 - j0) > 1000000) return;
+    for (long j = j0; j < j1; j++)
+        for (long i = i0; i < i1; i++) {
+            CGRect t = {{r.origin.x + i * r.size.width, r.origin.y + j * r.size.height}, r.size};
+            CGContextDrawImage(c, t, image);
+        }
+}
+u32 CGContextGetInterpolationQuality(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o && o->gx ? o->gx->interp : 0; }
+static cg_bmx_t *bmx(cgobj_t *o);
+void CGContextSetInterpolationQuality(void *c, int q) { cg_bmx_t *g = bmx(as_kind(c, CGK_BM)); if (g && q >= 0 && q <= 4) g->interp = (u8)q; }
+size_t CGImageGetBitsPerPixel(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? (o->sbpp ? o->sbpp : 32) : 0; }
+size_t CGImageGetBitsPerComponent(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? (o->sbpc ? o->sbpc : 8) : 0; }
 u32 CGImageGetBitmapInfo(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? o->info : 0; }
 u32 CGImageGetAlphaInfo(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? (o->info & 31) : 0; }
 void *CGImageGetColorSpace(void *img) {
-    if (!as_kind(img, CGK_IM)) return 0;
+    cgobj_t *o = as_kind(img, CGK_IM);
+    if (!o || o->ismask || (o->info & 31) == 7) return 0;      /* máscara e só-alfa não têm espaço de cor */
+    if (o->space) return o->space;
     return CGColorGetColorSpace(img);
 }
+u64 CGImageGetTypeID(void) { return 0x2A3; }
+u64 CGContextGetTypeID(void) { return 0x2A4; }
+bool CGImageIsMask(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o && o->ismask; }
+const double *CGImageGetDecode(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o && o->ndecode ? o->decode : 0; }
+bool CGImageGetShouldInterpolate(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o && o->shint; }
+u32 CGImageGetByteOrderInfo(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? (o->info & 0x7000) : 0; }
+u32 CGImageGetPixelFormatInfo(void *img) { cgobj_t *o = as_kind(img, CGK_IM); return o ? (o->info & 0xF0000) : 0; }
+bool CGImageContainsImageSpecificToneMappingMetadata(void *img) { (void)img; return 0; }   /* sem HDR com metadados */
+void *CGBitmapContextGetColorSpace(void *c) {
+    cgobj_t *o = as_kind(c, CGK_BM);
+    if (!o || o->fmt == PF_A8) return 0;
+    if (o->space) return o->space;
+    o->space = o->fmt == PF_G8 || o->fmt == PF_GA8 || o->fmt == PF_G16 ? CGColorSpaceCreateDeviceGray() : CGColorSpaceCreateDeviceRGB();
+    return o->space;
+}
+u32 CGBitmapContextGetAlphaInfo(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? (o->info & 31) : 0; }
+
+/* cópia com outro espaço de cor: mesmos pixels, o número de componentes do espaço tem de bater */
+void *CGImageCreateCopyWithColorSpace(void *img, void *space) {
+    cgobj_t *o = as_kind(img, CGK_IM);
+    const cgspace_t *s = space;
+    if (!o || o->ismask || !s) return 0;
+    const cgspace_t *cur = o->space;
+    if (cur && cur->ncomp != s->ncomp) return 0;
+    cgobj_t *n = CGImageCreateCopy(img);
+    if (!n) return 0;
+    if (n->space) objc_release((id)n->space);
+    n->space = objc_retain((id)space);
+    return n;
+}
+/* máscara: image mask (0 pinta) ou imagem cinza (amostra = alfa invertido: preto mostra a imagem) */
+void *CGImageCreateWithMask(void *img, void *mask) {
+    cgobj_t *o = as_kind(img, CGK_IM), *m = as_kind(mask, CGK_IM);
+    if (!o || !m || o->ismask) return 0;
+    cgobj_t *n = CGImageCreateCopy(img);
+    if (!n) return 0;
+    for (u32 y = 0; y < n->h; y++) {
+        u32 *row = (u32 *)(n->data + (size_t)y * n->bpr);
+        for (u32 x = 0; x < n->w; x++) {
+            /* a máscara se estica para o tamanho da imagem */
+            u32 mx = (u32)((u64)x * m->w / n->w), my = (u32)((u64)y * m->h / n->h);
+            u32 mp = ((const u32 *)(m->data + (size_t)my * m->bpr))[mx], keep;
+            if (m->ismask) keep = mp >> 24;
+            else { u32 r = (mp >> 16) & 255, g = (mp >> 8) & 255, b = mp & 255; keep = 255 - ((r * 77 + g * 150 + b * 29 + 128) >> 8); }
+            u32 p = row[x], a = p >> 24;
+            if (n->cb_size) row[x] = scale_px(p, keep);
+            else row[x] = (a * keep / 255) << 24 | (p & 0xFFFFFF);
+        }
+    }
+    if (n->info % 32 == 0 || (n->info & 31) >= 5) n->info = (n->info & ~31u) | (n->cb_size ? 1u : 3u);
+    return n;
+}
+/* cores mascaradas: pixel com todos os componentes dentro de [min, max] vira transparente (só imagens sem alfa) */
+void *CGImageCreateWithMaskingColors(void *img, const double *comps) {
+    cgobj_t *o = as_kind(img, CGK_IM);
+    if (!o || !comps || o->ismask || ai_has_alpha(o->info & 31)) return 0;
+    const cgspace_t *s = o->space;
+    int nc = s ? (int)s->ncomp : 3, maxv = o->sbpc && o->sbpc < 16 ? (1 << o->sbpc) - 1 : 255;
+    cgobj_t *n = CGImageCreateCopy(img);
+    if (!n) return 0;
+    for (u32 y = 0; y < n->h; y++) {
+        u32 *row = (u32 *)(n->data + (size_t)y * n->bpr);
+        for (u32 x = 0; x < n->w; x++) {
+            u32 p = row[x];
+            int v[3] = {(int)((p >> 16) & 255), (int)((p >> 8) & 255), (int)(p & 255)}, in = 1;
+            for (int k = 0; k < nc && k < 3; k++) {
+                double val = (double)v[nc == 1 ? 0 : k] * maxv / 255;
+                if (val < comps[2 * k] - 0.5 || val > comps[2 * k + 1] + 0.5) { in = 0; break; }
+            }
+            if (in) row[x] = 0;
+        }
+    }
+    n->cb_size = 1;
+    n->info = (n->info & ~31u) | 1u;
+    return n;
+}
+/* PNG e JPEG por provedor: o decodificador do ImageIO (imageio.c) */
+typedef struct { int w, h, has_alpha; u32 *px; } cg_moscodec_t;
+int mos_img_decode(const u8 *data, size_t n, cg_moscodec_t *out);
+static void cg_free_px(void *info, const void *data, size_t size) { (void)info; (void)size; free((void *)data); }
+static void *image_from_codec(void *provider, const double *decode, bool interp, int intent) {
+    cgobj_t *p = as_kind(provider, CGK_PR);
+    cg_moscodec_t m;
+    if (!p || mos_img_decode(p->data, (size_t)p->cb_size, &m)) return 0;
+    void *pr = CGDataProviderCreateWithData(0, m.px, (size_t)m.w * m.h * 4, cg_free_px);
+    void *img = pr ? image_from((size_t)m.w, (size_t)m.h, 8, 32, (size_t)m.w * 4, 0, (m.has_alpha ? AI_FIRST : AI_SKIPFIRST) | BO_32L,
+                                as_kind(pr, CGK_PR), decode, 0, intent, interp) : 0;
+    if (pr) CGDataProviderRelease(pr);
+    else free(m.px);
+    return img;
+}
+void *CGImageCreateWithPNGDataProvider(void *provider, const double *decode, bool interp, int intent) { return image_from_codec(provider, decode, interp, intent); }
+void *CGImageCreateWithJPEGDataProvider(void *provider, const double *decode, bool interp, int intent) { return image_from_codec(provider, decode, interp, intent); }
+/* tipo de origem, posto pelo ImageIO */
+void cx_cgimage_set_uti(void *img, const void *uti) { cgobj_t *o = as_kind(img, CGK_IM); if (o) o->uti = uti; }
 void *CGImageGetDataProvider(void *img) {
     cgobj_t *o = as_kind(img, CGK_IM);
     if (!o || !o->data) return 0;
@@ -1156,3 +1382,4 @@ void *CGDataProviderCopyData(void *p) {
 }
 
 #include "coregraphics_bm.inc"
+#include "cg_more.inc"

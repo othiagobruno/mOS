@@ -401,7 +401,7 @@ static void *mos_crossfade(UIImage *a, UIImage *b, double f) {
     }
     CFRelease(ra); CFRelease(rb);
     void *prov = CGDataProviderCreateWithData(0, buf, n * 4, 0);
-    void *img = CGImageCreate((size_t)wa, (size_t)ha, 8, 32, (size_t)wa * 4, 0, 2, prov, 0, 0, 0);
+    void *img = CGImageCreate((size_t)wa, (size_t)ha, 8, 32, (size_t)wa * 4, 0, 2 | 0x2000 /* PremultipliedFirst, 32 little: buf é u32 ARGB */, prov, 0, 0, 0);
     CGDataProviderRelease(prov);
     free(buf);
     return img;
