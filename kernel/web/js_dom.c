@@ -34,6 +34,8 @@ struct js_page {
     jsobj **wvals;
     u32 wcap, wn;
     jsobj *document, *location, *winlist, *storage, *session, *keep;
+    jsobj *imgdec;              /* img.decode() pendentes: [elemento, promessa, ...] */
+    bool img_scan;              /* <img> do documento já registrados para o load da janela */
     jtimer_t *timers;
     int ntimers, ctimers, next_timer;
     jnet_t *nets;
@@ -133,7 +135,8 @@ static jsobj *wrap(js_page_t *p, node_t *n) {
     }
     jsrealm *r = p->realm;
     jsobj *o = js_newobj_cls(CL_NODE, n->type == N_DOC ? r->p_doc : n->type == N_TEXT ? r->p_text :
-                                      n->tag == T_CANVAS && r->p_canvas ? r->p_canvas : r->p_elem);
+                                      n->tag == T_CANVAS && r->p_canvas ? r->p_canvas :
+                                      n->tag == T_IMG && r->p_img ? r->p_img : r->p_elem);
     o->u.host.page = p;
     o->u.host.node = n;
     o->u.host.extra = JS_UNDEF;
@@ -173,6 +176,7 @@ void js_mark_page(js_page_t *p) {
     gc_mark_ptr(p->storage);
     gc_mark_ptr(p->session);
     gc_mark_ptr(p->keep);
+    gc_mark_ptr(p->imgdec);
     for (int i = 0; i < p->ntimers; i++) { gc_mark_val(p->timers[i].fn); gc_mark_ptr(p->timers[i].args); }
     for (int i = 0; i < p->nnets; i++) gc_mark_ptr(p->nets[i].target);
     for (int i = 0; i < p->nscripts; i++) gc_mark_val(p->scripts[i].job);
@@ -304,6 +308,8 @@ static void set_attr(js_page_t *p, node_t *n, const char *name, const char *val,
     set_attr0(p, n, name, val, vlen);
     /* <canvas>: width/height recriam o bitmap (mesmo com o mesmo valor) */
     if (n->tag == T_CANVAS && (!strcmp(name, "width") || !strcmp(name, "height"))) js_canvas_attr_changed(p, n);
+    /* <img>: src/srcset trocados pedem a imagem já, mesmo fora do documento */
+    if (n->tag == T_IMG && (!strcmp(name, "src") || !strcmp(name, "srcset") || !strcmp(name, "sizes"))) img_update_node(p->doc, n, p->vw, 1.0f);
 }
 
 static void remove_attr(js_page_t *p, node_t *n, const char *name) {
@@ -313,6 +319,7 @@ static void remove_attr(js_page_t *p, node_t *n, const char *name) {
             n->nattrs--;
             page_dirty(p, n);
             if (n->tag == T_CANVAS && (!strcmp(name, "width") || !strcmp(name, "height"))) js_canvas_attr_changed(p, n);
+            if (n->tag == T_IMG && (!strcmp(name, "src") || !strcmp(name, "srcset"))) img_update_node(p->doc, n, p->vw, 1.0f);
             return;
         }
     }
@@ -1430,12 +1437,63 @@ void js_net_fetch_module(js_page_t *p, const char *url, jsobj *mod) {
 
 const char *js_page_base(js_page_t *p) { return p ? p->doc->base : ""; }
 
+/* <img> do documento: todos ganham img_t (o pedido começa) para o load da janela esperar por eles */
+static void scan_imgs(js_page_t *p, node_t *n) {
+    for (node_t *c = n->first; c; c = c->next) {
+        if (c->type != N_ELEM) continue;
+        if (c->tag == T_IMG && !c->img) img_update_node(p->doc, c, p->vw, 1.0f);
+        if (c->first) scan_imgs(p, c);
+    }
+}
+
+static bool imgs_pending(js_page_t *p) {
+    for (img_t *im = p->doc->images; im; im = im->next) {
+        if (im->state != IMG_PENDING && im->state != IMG_LOADING) continue;
+        for (int i = 0; i < im->nown; i++) if (im->own[i].n->img == im && is_connected(p, im->own[i].n)) return true;
+    }
+    return false;
+}
+
+/* eventos load/error de cada <img> (no documento ou não) e as promessas de img.decode() */
+static void img_events(js_page_t *p) {
+    for (img_t *im = p->doc->images; im; im = im->next) {
+        if (im->state != IMG_OK && im->state != IMG_ERROR) continue;
+        for (int i = 0; i < im->nown; i++) {
+            if (im->own[i].fired) continue;
+            im->own[i].fired = true;
+            node_t *n = im->own[i].n;
+            if (n->img == im) fire_simple(p, n, im->state == IMG_OK ? "load" : "error", false);
+        }
+    }
+    if (!p->imgdec || !p->imgdec->alen) return;
+    jsobj *keep = js_newarr(0);
+    for (u32 i = 0; i + 1 < p->imgdec->alen; i += 2) {
+        jsv el = js_arr_get(p->imgdec, i), pr = js_arr_get(p->imgdec, i + 1);
+        node_t *n = node_of(el);
+        img_t *im = n ? n->img : NULL;
+        if (im && (im->state == IMG_PENDING || im->state == IMG_LOADING)) { js_arr_push(keep, el); js_arr_push(keep, pr); continue; }
+        if (im && im->state == IMG_OK && im->surf) js_promise_resolve(jv_o(pr), JS_UNDEF);
+        else {
+            jsobj *e = js_newobj(p->realm->p_domexc ? p->realm->p_domexc : p->realm->p_err[E_ERROR]);
+            js_defn(e, "name", jv_str(js_strz("EncodingError")), PF_NOENUM);
+            js_defn(e, "message", jv_str(js_strz("a imagem não pôde ser decodificada")), PF_NOENUM);
+            js_defn(e, "code", jv_int(0), PF_NOENUM);
+            js_promise_reject(jv_o(pr), jv_obj(e));
+        }
+    }
+    p->imgdec = keep;
+    js_run_jobs();
+}
+
 static void maybe_load_events(js_page_t *p) {
     if (p->spos < p->nscripts || p->mpos < p->nscripts) return;
     if (!p->dcl) {
         p->dcl = true;
         fire_simple(p, p->doc->root, "DOMContentLoaded", true);
     }
+    if (!p->img_scan) { p->img_scan = true; scan_imgs(p, p->doc->root); }
+    img_events(p);
+    if (!p->loaded && imgs_pending(p)) return;   /* o load da janela espera as imagens */
     if (!p->loaded) {
         p->loaded = true;
         fire_simple(p, NULL, "load", false);
@@ -1568,6 +1626,26 @@ static jsv node_get(jsobj *o, jsstr *k, bool *found) {
     if (keyis(k, "childNodes")) return children_array(p, n, false);
     if (keyis(k, "ownerDocument")) return n->type == N_DOC ? JS_NULL : jv_obj(p->document);
     if (n->tag == T_IFRAME && keyis(k, "srcdoc")) return str_or_empty(node_attr(n, "srcdoc"));
+    if (n->tag == T_IMG) {
+        bool c_ = keyis(k, "complete"), nw = keyis(k, "naturalWidth"), nh = keyis(k, "naturalHeight"), cs = keyis(k, "currentSrc");
+        bool w_ = keyis(k, "width"), h_ = keyis(k, "height");
+        if (c_ || nw || nh || cs || w_ || h_) {
+            if (!n->img && (node_attr(n, "src") || node_attr(n, "srcset"))) img_update_node(d, n, p->vw, 1.0f);
+            img_t *im = n->img;
+            bool ok = im && im->state == IMG_OK && im->surf;
+            if (c_) return jv_bool(!im || im->state == IMG_OK || im->state == IMG_ERROR);
+            if (nw) return jv_int(ok ? im->surf->w : 0);
+            if (nh) return jv_int(ok ? im->surf->h : 0);
+            if (cs) return jv_str(js_strz(im && strncmp(im->url, "about:invalid", 13) ? im->url : ""));
+            /* largura/altura: tamanho exibido se estiver no layout; senão o atributo; senão o natural */
+            if (is_connected(p, n)) { rect_acc r = node_rect(p, n); if (r.any) return jv_int(w_ ? r.x1 - r.x0 : r.y1 - r.y0); }
+            const char *a = node_attr(n, w_ ? "width" : "height");
+            if (a && isdigit((u8)*a)) return jv_int(atoi(a));
+            return jv_int(ok ? (w_ ? im->surf->w : im->surf->h) : 0);
+        }
+        if (keyis(k, "srcset") || keyis(k, "sizes") || keyis(k, "decoding") || keyis(k, "loading")) return str_or_empty(node_attr(n, k->d));
+        if (keyis(k, "crossOrigin")) { const char *v = node_attr(n, "crossorigin"); return v ? jv_str(js_strz(v)) : JS_NULL; }
+    }
     if (n->tag == T_IFRAME && (keyis(k, "contentWindow") || keyis(k, "contentDocument"))) {
         js_page_t *c = frame_page(n);
         if (!c) return JS_NULL;
@@ -1782,6 +1860,22 @@ static int node_set(jsobj *o, jsstr *k, jsv v) {
         return 1;
     }
     if (n->tag == T_IFRAME && keyis(k, "srcdoc")) { jsstr *s = js_tostr(v); if (!s) return -1; set_attr(p, n, "srcdoc", s->d, (int)s->len); return 1; }
+    if (n->tag == T_IMG && (keyis(k, "width") || keyis(k, "height"))) {
+        double x = js_tonum(v);
+        if (js_pending()) return -1;
+        char b[16];
+        snprintf(b, sizeof b, "%u", x == x && x >= 0 && x < 2147483647.0 ? (u32)x : 0u);
+        set_attr(p, n, keyis(k, "width") ? "width" : "height", b, (int)strlen(b));
+        return 1;
+    }
+    if (n->tag == T_IMG && (keyis(k, "srcset") || keyis(k, "sizes") || keyis(k, "crossOrigin") || keyis(k, "decoding") || keyis(k, "loading"))) {
+        jsstr *s = js_tostr(v);
+        if (!s) return -1;
+        char an[16];
+        snprintf(an, sizeof an, "%s", keyis(k, "crossOrigin") ? "crossorigin" : k->d);
+        set_attr(p, n, an, s->d, (int)s->len);
+        return 1;
+    }
     if (keyis(k, "href") || keyis(k, "src") || keyis(k, "type") || keyis(k, "tabIndex")) {
         jsstr *s = js_tostr(v);
         if (!s) return -1;
@@ -2486,6 +2580,38 @@ NATIVE(doc_create) {
     return wrapv(p, n);
 }
 
+/* new Image(largura?, altura?): <img> fora do documento */
+NATIVE(img_ctor) {
+    UNUSED_ARGS;
+    js_page_t *p = cur_page();
+    if (!p) return js_throw_err(E_TYPE, "Image: sem documento");
+    node_t *n = new_elem(p->doc, "img", 3);
+    if (!n) return js_throw_err(E_RANGE, "sem memória");
+    const char *names[2] = { "width", "height" };
+    for (int i = 0; i < 2 && i < argc; i++) {
+        if (argv[i] == JS_UNDEF) continue;
+        double x = js_tonum(argv[i]);
+        if (js_pending()) return JS_EXC;
+        char b[16];
+        snprintf(b, sizeof b, "%u", x == x && x >= 0 && x < 2147483647.0 ? (u32)x : 0u);
+        set_attr(p, n, names[i], b, (int)strlen(b));
+    }
+    return wrapv(p, n);
+}
+
+NATIVE(img_decode) {
+    UNUSED_ARGS;
+    node_t *n = node_of(thisv);
+    js_page_t *p = page_of(thisv);
+    if (!n || !p || n->tag != T_IMG) return js_throw_err(E_TYPE, "decode: não é um HTMLImageElement");
+    jsobj *pr = js_promise_new();
+    if (!n->img && (node_attr(n, "src") || node_attr(n, "srcset"))) img_update_node(p->doc, n, p->vw, 1.0f);
+    if (!p->imgdec) p->imgdec = js_newarr(0);
+    js_arr_push(p->imgdec, thisv);
+    js_arr_push(p->imgdec, jv_obj(pr));
+    return jv_obj(pr);
+}
+
 NATIVE(doc_write) {
     UNUSED_ARGS;
     js_page_t *p = cur_page();
@@ -3104,6 +3230,14 @@ void js_dom_init(jsrealm *r) {
     elc->is_class = 0;
     js_defn(g, "Element", jv_obj(elc), PF_NOENUM);
     js_defn(g, "HTMLElement", jv_obj(elc), PF_NOENUM);
+    /* HTMLImageElement / Image */
+    r->p_img = js_newobj(ep);
+    js_defnative(r->p_img, "decode", img_decode, 0, 0);
+    jsobj *imgk = js_newctor(img_ctor, "Image", 0, r->p_img);
+    js_defn(g, "Image", jv_obj(imgk), PF_NOENUM);
+    jsobj *imgc = js_newctor(w_noop, "HTMLImageElement", 0, r->p_img);   /* por último: é o constructor do protótipo */
+    imgc->is_class = 0;
+    js_defn(g, "HTMLImageElement", jv_obj(imgc), PF_NOENUM);
     jsobj *etc = js_newctor(w_noop, "EventTarget", 0, et);
     etc->is_class = 0;
     js_defn(g, "EventTarget", jv_obj(etc), PF_NOENUM);
@@ -3295,6 +3429,7 @@ bool js_page_tick(js_page_t *p) {
     J.realm = p->realm;
     if (p->msgs) deliver_messages(p);
     if (p->spos < p->nscripts || p->mpos < p->nscripts) { if (pump_scripts(p)) maybe_load_events(p); }
+    if (p->spos >= p->nscripts && p->mpos >= p->nscripts) maybe_load_events(p);   /* imagens e load da janela */
     run_timers(p);
     if (p->nnets) pump_nets(p);
     js_run_jobs();

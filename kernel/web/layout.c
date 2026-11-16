@@ -104,20 +104,49 @@ static bool is_block_level(int d) {
 static bool is_ctrl_tag(int t) { return t == T_INPUT || t == T_BUTTON || t == T_SELECT || t == T_TEXTAREA; }
 
 /* ------------------------------------------------------------ imagens e controles */
-static img_t *get_img(lay_t *L, const char *src) {
-    doc_t *d = L->d;
+img_t *doc_image(doc_t *d, const char *src) {
     char url[512];
-    url_resolve(d->base, src, url, sizeof url);
+    if (*src) url_resolve(d->base, src, url, sizeof url);
+    else strcpy(url, "about:invalid#src-vazio");
     for (img_t *im = d->images; im; im = im->next) if (!strcmp(im->url, url)) return im;
     if (d->nimages >= 400) return NULL;
     img_t *im = kcalloc(1, sizeof(img_t));
     if (!im) return NULL;
     strncpy(im->url, url, sizeof im->url - 1);
-    im->state = IMG_PENDING;
+    /* src="" é uma imagem quebrada (evento error), sem pedido */
+    im->state = *src ? IMG_PENDING : IMG_ERROR;
     im->next = d->images;
     d->images = im;
     d->nimages++;
     return im;
+}
+
+static void img_attach(img_t *im, node_t *n) {
+    for (int i = 0; i < im->nown; i++) if (im->own[i].n == n) { im->own[i].fired = false; return; }
+    if (im->nown == im->cown) {
+        int nc = im->cown ? im->cown * 2 : 2;
+        void *no = krealloc(im->own, sizeof(*im->own) * nc);
+        if (!no) return;
+        im->own = no;
+        im->cown = nc;
+    }
+    im->own[im->nown].n = n;
+    im->own[im->nown].fired = false;
+    im->nown++;
+}
+
+void img_update_node(doc_t *d, node_t *n, int viewport_w, float dpr) {
+    char sb[512];
+    const char *src = img_pick_src(n, viewport_w > 0 ? viewport_w : 1024, dpr > 0 ? dpr : 1.0f, sb, sizeof sb);
+    if (!src) {
+        /* sem src nem srcset: nenhuma imagem; src="" vira imagem quebrada */
+        const char *raw = node_attr(n, "src");
+        if (!raw || *raw) { n->img = NULL; return; }
+        src = "";
+    }
+    img_t *im = doc_image(d, src);
+    n->img = im;
+    if (im) img_attach(im, n);
 }
 
 static void collapse_ws(const char *s, int n, char *out, int cap) {
@@ -709,9 +738,7 @@ static box_t *gen_atom(lay_t *L, node_t *n) {
     if (n->tag == T_IMG) {
         box_t *b = nbox(L, B_REPLACED, n, n->st);
         if (!b) return NULL;
-        char sb[512];
-        const char *src = img_pick_src(n, L->d->vw > 0 ? L->d->vw : L->d->layout_w, L->d->zoom > 0 ? L->d->zoom : 1.0f, sb, sizeof sb);
-        if (!n->img && src) n->img = get_img(L, src);
+        if (!n->img) img_update_node(L->d, n, L->d->vw > 0 ? L->d->vw : L->d->layout_w, L->d->zoom > 0 ? L->d->zoom : 1.0f);
         return b;
     }
     if (is_ctrl_tag(n->tag)) {
