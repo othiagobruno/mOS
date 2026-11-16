@@ -434,7 +434,7 @@ static void inline_node(lay_t *L, node_t *c, lst_t *ls) {
     int d = st->display;
     if (c->tag == T_BR) { item_t *it = push_item(L); if (it) { it->kind = IT_BREAK; it->st = st; it->node = c; } return; }
     if (c->tag == T_WBR) { item_t *it = push_item(L); if (it) { it->kind = IT_SPACE; it->w = 0; it->st = st; } return; }
-    if (c->tag == T_IMG || is_ctrl_tag(c->tag) || d == D_INLINE_BLOCK || d == D_INLINE_TABLE) {
+    if (c->tag == T_IMG || c->tag == T_SVG || is_ctrl_tag(c->tag) || d == D_INLINE_BLOCK || d == D_INLINE_TABLE) {
         box_t *a = gen_atom(L, c);
         if (!a) return;
         push_anchor(L, c);
@@ -484,13 +484,13 @@ static void gen_children(lay_t *L, box_t *cont, node_t *n, lst_t *ls) {
         }
         if (c->type != N_ELEM || !c->st || c->st->display == D_NONE) continue;
         int d = c->st->display;
-        if (c->tag != T_IMG && !is_ctrl_tag(c->tag) && is_block_level(d)) {
+        if (c->tag != T_IMG && c->tag != T_SVG && !is_ctrl_tag(c->tag) && is_block_level(d)) {
             lines_end(L, ls);
             box_t *b = gen_block(L, c);
             if (b) addc(cont, b);
             continue;
         }
-        if ((c->tag == T_IMG || is_ctrl_tag(c->tag)) && is_block_level(d)) {
+        if ((c->tag == T_IMG || c->tag == T_SVG || is_ctrl_tag(c->tag)) && is_block_level(d)) {
             lines_end(L, ls);
             box_t *b = gen_atom(L, c);
             if (b) addc(cont, b);
@@ -566,7 +566,7 @@ static box_t *gen_block(lay_t *L, node_t *n) {
 static bool img_type_ok(const char *t) {
     if (!t || !*t) return true;
     static const char *ok[] = { "image/png", "image/jpeg", "image/jpg", "image/pjpeg", "image/gif", "image/bmp", "image/webp",
-                                "image/x-portable-pixmap", "image/apng" };
+                                "image/x-portable-pixmap", "image/apng", "image/svg+xml" };
     for (unsigned i = 0; i < ARRAY_LEN(ok); i++) if (!strncasecmp(t, ok[i], strlen(ok[i])) && (!t[strlen(ok[i])] || t[strlen(ok[i])] == ';')) return true;
     return false;
 }
@@ -629,7 +629,57 @@ const char *img_pick_src(node_t *n, int vw, float dpr, char *buf, int cap) {
     return src && *src ? src : NULL;
 }
 
+/* sprites: o conteúdo dos outros <svg> da página que definem <symbol>/<defs>, para <use href="#..."> */
+static void svg_sprites(node_t *root, node_t *self, sbuf_t *out) {
+    for (node_t *c = root->first; c; c = c->next) {
+        if (c->type != N_ELEM) continue;
+        if (c->tag == T_SVG && c != self && c->text && (strstr(c->text, "<symbol") || strstr(c->text, "<defs"))) {
+            const char *in = strchr(c->text, '>'), *end = c->text + c->len;
+            const char *close = end;
+            for (const char *q = end - 1; q > c->text; q--) if (!strncasecmp(q, "</svg", 5)) { close = q; break; }
+            if (in && in + 1 < close && in[-1] != '/' && out->len + (close - in) < (4 << 20)) sb_putn(out, in + 1, (int)(close - in - 1));
+        } else if (c->first) svg_sprites(c, self, out);
+    }
+}
+
 static box_t *gen_atom(lay_t *L, node_t *n) {
+    if (n->tag == T_SVG) {
+        box_t *b = nbox(L, B_REPLACED, n, n->st);
+        if (!b) return NULL;
+        if (!n->img && n->text && L->d->nimages < 400) {
+            img_t *im = kcalloc(1, sizeof(img_t));
+            if (im) {
+                snprintf(im->url, sizeof im->url, "about:svg#%d", n->index);
+                sbuf_t sp = { 0 };
+                if (strstr(n->text, "<use")) svg_sprites(L->d->root, n, &sp);
+                if (sp.len) {
+                    /* fonte autossuficiente: as definições dos sprites entram num <defs> antes do </svg> final */
+                    const char *close = n->text + n->len;
+                    for (const char *q = n->text + n->len - 1; q > n->text; q--) if (!strncasecmp(q, "</svg", 5)) { close = q; break; }
+                    sbuf_t all = { 0 };
+                    sb_putn(&all, n->text, (int)(close - n->text));
+                    sb_puts(&all, "<defs>");
+                    sb_putn(&all, sp.p, sp.len);
+                    sb_puts(&all, "</defs>");
+                    sb_putn(&all, close, (int)(n->text + n->len - close));
+                    img_set_data(im, (const u8 *)all.p, (usize)all.len);
+                    sb_free(&all);
+                } else img_set_data(im, (const u8 *)n->text, (usize)n->len);
+                sb_free(&sp);
+                if (im->surf && n->st && (n->st->color & 0xFFFFFF)) {
+                    im->svgcolor = n->st->color;
+                    surface_free(im->surf);
+                    im->surf = svg_render_ex(im->svg, im->svglen, 0, 0, im->svgcolor);
+                }
+                im->state = im->surf ? IMG_OK : IMG_ERROR;
+                im->next = L->d->images;
+                L->d->images = im;
+                L->d->nimages++;
+                n->img = im;
+            }
+        }
+        return b;
+    }
     if (n->tag == T_IMG) {
         box_t *b = nbox(L, B_REPLACED, n, n->st);
         if (!b) return NULL;
@@ -1481,6 +1531,14 @@ static void paint_replaced(pctx_t *P, box_t *b) {
     img_t *im = n->img;
     if (im && im->state == IMG_OK && im->surf) {
         surface_t *src = im->surf;
+        if (im->svg && (src->w != w || src->h != h)) {
+            /* vetor: redesenha no tamanho exibido em vez de esticar o bitmap */
+            if (!im->scaled || im->scaled->w != w || im->scaled->h != h) {
+                surface_free(im->scaled);
+                im->scaled = svg_render_ex(im->svg, im->svglen, w, h, im->svgcolor ? im->svgcolor : 0xFF000000u);
+            }
+            if (im->scaled) { gfx_blit_scaled(P->s, im->scaled, x, y, w, h, 255); return; }
+        }
         if ((src->w > w * 2 || src->h > h * 2) && w > 0 && h > 0) {
             if (!im->scaled || im->scaled->w != w || im->scaled->h != h) {
                 surface_free(im->scaled);

@@ -504,6 +504,7 @@ static void parse(parser_t *P) {
             p = q < P->e ? q + 1 : q;
             continue;
         }
+        const char *tag_start = p;
         bool end = false;
         if (*q == '/') { end = true; q++; }
         if (q >= P->e || !isalpha(*q)) {
@@ -585,6 +586,33 @@ static void parse(parser_t *P) {
         case T_TITLE: case T_SVG: case T_MATH: case T_TEMPLATE: case T_PLAINTEXT:
             raw = name;
             break;
+        }
+        if (tag == T_SVG) {
+            /* SVG inline: a fonte inteira (com <svg> aninhados) fica no nó para o renderizador (svg.c) */
+            const char *after = p;
+            if (!selfclose) {
+                int dep = 1;
+                const char *z = p;
+                while (z < P->e && dep) {
+                    if (z[0] == '<' && z + 4 < P->e && !strncasecmp(z + 1, "svg", 3) && (isspace(z[4]) || z[4] == '>' || z[4] == '/')) {
+                        const char *g = z;
+                        while (g < P->e && *g != '>') g++;
+                        if (g > z && g[-1] != '/') dep++;
+                        z = g;
+                    } else if (z[0] == '<' && z + 5 < P->e && z[1] == '/' && !strncasecmp(z + 2, "svg", 3) && (z[5] == '>' || isspace(z[5]))) {
+                        dep--;
+                        while (z < P->e && *z != '>') z++;
+                    }
+                    if (z < P->e) z++;
+                }
+                after = z;
+            }
+            n->text = arena_strndup(&P->d->arena, tag_start, (int)(after - tag_start));
+            n->len = (int)(after - tag_start);
+            handle_start(P, n, false);
+            if (P->sp > 2 && top(P) == n) P->sp--;
+            p = after;
+            continue;
         }
         if (raw && !selfclose) {
             const char *ce;
@@ -699,6 +727,7 @@ void doc_free(doc_t *d) {
         if (im->req) http_free(im->req);
         surface_free(im->surf);
         surface_free(im->scaled);
+        if (im->svg) kfree(im->svg);
         kfree(im);
     }
     for (int i = 0; i < d->nctrls; i++) kfree(d->ctrls[i]->buf);

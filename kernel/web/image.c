@@ -965,7 +965,17 @@ surface_t *image_decode(const u8 *d, usize n) {
     if (d[0] == 'B' && d[1] == 'M') return decode_bmp(d, n);
     if (d[0] == 'P' && d[1] == '6') return decode_ppm(d, n);
     if (n >= 12 && !memcmp(d, "RIFF", 4) && !memcmp(d + 8, "WEBP", 4)) return webp_decode(d, n);
+    if (svg_is(d, n)) return svg_render((const char *)d, (int)n, 0, 0);
     return NULL;
+}
+
+void img_set_data(img_t *im, const u8 *d, usize n) {
+    if (im->svg) { kfree(im->svg); im->svg = NULL; im->svglen = 0; }
+    im->surf = d && n ? image_decode(d, n) : NULL;
+    if (im->surf && svg_is(d, n) && n < (64u << 20)) {
+        im->svg = kmalloc(n + 1);
+        if (im->svg) { memcpy(im->svg, d, n); im->svg[n] = 0; im->svglen = (int)n; }
+    }
 }
 
 /* redução por média de área (pixels pré-multiplicados) */

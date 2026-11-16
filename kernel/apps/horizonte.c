@@ -765,7 +765,7 @@ static bool pump_images(tab_t *t) {
         if (im->state != IMG_LOADING || !im->req) continue;
         int st = http_poll(im->req);
         if (st == 0) { active++; continue; }
-        if (st > 0 && im->req->body && im->req->body_len && im->req->status < 400) im->surf = image_decode(im->req->body, im->req->body_len);
+        if (st > 0 && im->req->body && im->req->body_len && im->req->status < 400) img_set_data(im, im->req->body, im->req->body_len);
         im->state = im->surf ? IMG_OK : IMG_ERROR;
         http_free(im->req);
         im->req = NULL;
@@ -779,20 +779,20 @@ static bool pump_images(tab_t *t) {
             char path[512];
             url_decode_path(p, path, sizeof path);
             vnode_t *n = vfs_lookup(path);
-            im->surf = n && !n->dir ? image_decode(n->data, n->size) : NULL;
+            if (n && !n->dir) img_set_data(im, n->data, n->size); else im->surf = NULL;
             im->state = im->surf ? IMG_OK : IMG_ERROR;
             changed = true;
         } else if (!strncmp(im->url, "data:", 5)) {
             char mime[64];
             usize len;
             u8 *data = data_url(im->url, &len, mime, sizeof mime);
-            im->surf = data ? image_decode(data, len) : NULL;
+            if (data) img_set_data(im, data, len); else im->surf = NULL;
             kfree(data);
             im->state = im->surf ? IMG_OK : IMG_ERROR;
             changed = true;
         } else if (!strncmp(im->url, "http", 4)) {
             const char *e = vfs_ext(im->url);
-            if (!strncasecmp(e, "svg", 3) || !strncasecmp(e, "avif", 4)) { im->state = IMG_ERROR; changed = true; continue; }
+            if (!strncasecmp(e, "avif", 4)) { im->state = IMG_ERROR; changed = true; continue; }
             im->req = http_get(im->url);
             if (im->req) { im->state = IMG_LOADING; active++; }
             else { im->state = IMG_ERROR; changed = true; }

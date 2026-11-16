@@ -1217,7 +1217,7 @@ static const char ua_css[] =
     "dir,hr,menu,pre,article,aside,footer,header,main,nav,section,figure,figcaption,details,summary,hgroup,legend,"
     "listing,xmp,plaintext,dialog,search,optgroup{display:block}"
     "li{display:list-item}"
-    "head,script,style,title,meta,link,base,template,noembed,noframes,iframe,svg,math,object,embed,video,audio,canvas,"
+    "head,script,style,title,meta,link,base,template,noembed,noframes,iframe,math,object,embed,video,audio,canvas,"
     "param,source,track,datalist,area,map,frameset,frame,option,col,colgroup,[hidden],input[type=hidden]{display:none}"
     "table{display:table;border-spacing:2px;border-collapse:separate;text-align:start}"
     "tr{display:table-row;vertical-align:inherit}thead,tbody,tfoot{display:table-row-group;vertical-align:middle}"
