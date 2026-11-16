@@ -12,10 +12,12 @@ typedef signed long long   i64;
 typedef u64                usize;
 typedef i64                isize;
 typedef u64                uptr;
+/* C23 (padrão do gcc 15 dos testes de host) já tem bool/true/false como palavras-chave; o kernel compila em gnu11 */
+#if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 202311L
 typedef _Bool              bool;
-
 #define true  1
 #define false 0
+#endif
 #define NULL  ((void *)0)
 
 #define PACKED      __attribute__((packed))
