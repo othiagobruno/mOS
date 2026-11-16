@@ -60,6 +60,18 @@ int main(void) {
     uac_rs_init(&r, 48000);
     n = uac_convert(&r, s24, sizeof s24, 2, 3, out, 10);
     CHECK(n == 2 && out[2] == 0x1234 && out[3] == (int16_t)0xABCD);
+    /* saída: estéreo -> 24 bits em 2 canais; mono = média */
+    int16_t st[4] = {0x1234, -2, 100, 300};
+    uint8_t pk[32];
+    CHECK(uac_pack(st, 2, 2, 3, pk) == 12 && pk[0] == 0 && pk[1] == 0x34 && pk[2] == 0x12 && pk[4] == 0xFE && pk[5] == 0xFF);
+    CHECK(uac_pack(st, 2, 1, 2, pk) == 4 && (int16_t)(pk[2] | pk[3] << 8) == 200);
+    CHECK(uac_pack(st, 1, 4, 2, pk) == 8 && pk[4] == 0 && pk[6] == 0);
+    /* 44,1 kHz a 1 ms: 44 ou 45 por intervalo, 44100 em 1000 */
+    uint64_t acc = 0; uint32_t sum = 0, mn = 99, mx = 0;
+    for (int i = 0; i < 1000; i++) { uint32_t f = uac_frames_for(44100, 1000, &acc); sum += f; if (f < mn) mn = f; if (f > mx) mx = f; }
+    CHECK(sum == 44100 && mn == 44 && mx == 45);
+    acc = 0;
+    CHECK(uac_frames_for(48000, 125, &acc) == 6 && acc == 0);
     printf(fails ? "uac_core: %d falhas\n" : "uac_core: ok\n", fails);
     return fails != 0;
 }

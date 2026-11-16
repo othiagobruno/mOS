@@ -89,6 +89,23 @@ int uac_score(const uac_alt_info *a, uint32_t rate) {
     return s;
 }
 
+uint32_t uac_pack(const int16_t *s, uint32_t frames, int ch, int ss, uint8_t *d) {
+    uint8_t *o = d;
+    for (uint32_t i = 0; i < frames; i++) {
+        for (int c = 0; c < ch; c++) {
+            int32_t v = ch == 1 ? ((int32_t)s[i * 2] + s[i * 2 + 1]) / 2 : c < 2 ? s[i * 2 + c] : 0;
+            for (int b = 0; b < ss - 2; b++) *o++ = 0;   /* bits de baixo em zero (24/32 bits) */
+            *o++ = (uint8_t)v; *o++ = (uint8_t)((uint32_t)v >> 8);
+        }
+    }
+    return (uint32_t)(o - d);
+}
+uint32_t uac_frames_for(uint32_t rate, uint32_t interval_us, uint64_t *acc) {
+    *acc += (uint64_t)rate * interval_us;
+    uint32_t n = (uint32_t)(*acc / 1000000u);
+    *acc -= (uint64_t)n * 1000000u;
+    return n;
+}
 void uac_rs_init(uac_rs *r, uint32_t rate) { r->in_rate = rate ? rate : 48000; r->pos = 0; r->last_l = r->last_r = 0; r->have_last = 0; }
 static int16_t sample(const uint8_t *p, int subslot) {
     if (subslot == 2) return (int16_t)(p[0] | p[1] << 8);
