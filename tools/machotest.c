@@ -1531,6 +1531,21 @@ static long long do_syscall_locked(u64 n, u64 a, u64 b, u64 c, u64 d) {
             return 0;
         }
         return -MOS_ENOTTY;
+    case SYS_FSMETA:
+        /* access/faccessat do libSystem: o host decide pelos bits do arquivo na pasta g_root */
+        if (a == MOS_FSM_ACCESS && b) {
+            const mos_fsmeta_t *q = (const mos_fsmeta_t *)b;
+            if (q->fd >= 0 || !q->path) return -MOS_EINVAL;
+            host_path(q->path, hp, sizeof hp);
+#ifdef _WIN32
+            int r = _access(hp, (int)(q->a & 6));        /* o Windows não tem o bit X */
+#else
+            int r = access(hp, (int)(q->a & 7));
+#endif
+            if (r == 0) return 0;
+            return errno == EACCES || errno == EPERM ? -MOS_EACCES : -MOS_ENOENT;
+        }
+        break;
     case SYS_FSTAT: case SYS_STAT: {
         if (n == SYS_FSTAT && a < MAXFD && hfd[a].kind == HFD_UNIX) {
             mos_stat_t *m = (mos_stat_t *)b;
