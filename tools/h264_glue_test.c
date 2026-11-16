@@ -3,14 +3,15 @@
  *  - ordem de exibição: o I420 inteiro igual à referência do ffmpeg e os carimbos formando uma permutação de 0..N-1;
  *  - ordem de decodificação: cada quadro sai na própria chamada, com o carimbo dela (0, 1, 2, ...);
  *  - depois do cx_h264_flush, o mesmo fluxo de novo dá o mesmo resultado (o decodificador continua utilizável).
- * uso: h264_glue_test fluxo.264 referencia.yuv  → "glue ok ..." */
+ * uso: h264_glue_test fluxo.264 referencia.yuv [faixa,matriz,primárias,transferência]  → "glue ok ..." */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "h264_glue.h"
-typedef struct { unsigned char *buf; long len, cap; int n; uint64_t tags[4096]; long cur_call; int bad_order; } sink_t;
-static void emit(void *ctx, const uint8_t *y, const uint8_t *u, const uint8_t *v, int sy, int suv, int w, int h, uint64_t tag) {
+typedef struct { unsigned char *buf; long len, cap; int n; uint64_t tags[4096]; long cur_call; int bad_order; cx_h264_color color; } sink_t;
+static void emit(void *ctx, const uint8_t *y, const uint8_t *u, const uint8_t *v, int sy, int suv, int w, int h, uint64_t tag, const cx_h264_color *col) {
     sink_t *s = ctx;
+    s->color = *col;
     long need = s->len + (long)w * h * 3 / 2;
     if (need > s->cap) { s->cap = need * 2; s->buf = realloc(s->buf, s->cap); }
     for (int r = 0; r < h; r++) { memcpy(s->buf + s->len, y + (long)r * sy, w); s->len += w; }
@@ -81,6 +82,14 @@ int main(int argc, char **argv) {
         printf("glue FALHA repetição em exibição: %ld bytes\n", rep.len); ok = 0;
     }
     if (run(b, n, st, na, 1, &rep2, 1) || rep2.n != 2 * na || rep2.bad_order) { printf("glue FALHA repetição em decodificação: %d quadros\n", rep2.n); ok = 0; }
+    if (argc > 3) {   /* cor esperada: faixa,matriz,primárias,transferência */
+        int e[4];
+        if (sscanf(argv[3], "%d,%d,%d,%d", &e[0], &e[1], &e[2], &e[3]) == 4 &&
+            (disp.color.full_range != e[0] || disp.color.matrix != e[1] || disp.color.primaries != e[2] || disp.color.transfer != e[3])) {
+            printf("glue FALHA cor %d,%d,%d,%d (esperado %s)\n", disp.color.full_range, disp.color.matrix, disp.color.primaries, disp.color.transfer, argv[3]);
+            ok = 0;
+        }
+    }
     if (ok) printf("glue ok %d amostras: exibição bit-exata, carimbos completos, ordem de decodificação 1 quadro por chamada, flush e repetição\n", na);
     return !ok;
 }

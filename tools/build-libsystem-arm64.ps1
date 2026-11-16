@@ -35,7 +35,7 @@ $base = @("--target=$triple", '-mcpu=apple-m1', '-O2', '-g0', '-ffreestanding', 
     '-Wno-unknown-warning-option', '-Wno-unused-function')
 $tp = "$root\userland\third_party"
 $fl = @{
-    ls = @("-I$ls\kshim", "-I$ls\fsinc", "-I$root\kernel\include", "-I$tp\h264bsd", '-isystem', $inc)
+    ls = @("-I$ls\kshim", "-I$ls\fsinc", "-I$root\kernel\include", '-isystem', $inc)
     shim = @('-U__APPLE__', '-U__MACH__', '-UTARGET_OS_MAC', '-UTARGET_OS_OSX', '-DTARGET_OS_MAC=0', '-DTARGET_OS_OSX=0',
         '-Wno-unused-variable', '-Wno-unreachable-code', "-I$root\userland\host-audio\shim", "-I$ls", '-isystem', $inc)
     comp = @('-Wno-unused-variable', '-DHAVE_CONFIG_H', '-DTUKLIB_SYMBOL_PREFIX=lzma_',
@@ -55,7 +55,6 @@ $items = @()
 function Add-Src($g, $f) { $script:items += [pscustomobject]@{ g = $g; f = $f } }
 Get-ChildItem "$ls\*" -Include *.c, *.S | Where-Object { $x86only -notcontains $_.Name -and $_.Name -notlike 'swiftui_*.c' } | ForEach-Object {
     Add-Src $(if ($_.Name -eq 'sqlite3_mos.c') { 'shim' } else { 'ls' }) $_.FullName }
-Get-ChildItem "$tp\h264bsd\*.c" | ForEach-Object { Add-Src 'ls' $_.FullName }
 Add-Src 'shim' "$root\userland\host-audio\audiodec.c"
 Add-Src 'compls' "$root\userland\frameworks\libcompression\compression.c"
 @('lz4.c','lz4hc.c','lz4frame.c','xxhash.c') | ForEach-Object { Add-Src 'comp' "$tp\lz4\$_" }

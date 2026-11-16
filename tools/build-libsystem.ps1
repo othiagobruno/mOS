@@ -8,7 +8,7 @@ if (-not $mosZigPick) { exit 1 }
 $zig = $mosZigPick.Path
 $zigdir = $mosZigPick.Dir
 New-Item -ItemType Directory -Force "$root\build" | Out-Null
-$src = @(Get-ChildItem "$root\userland\libsystem\*" -Include *.c, *.S | ForEach-Object FullName) + @(Get-ChildItem "$root\userland\third_party\h264bsd\*.c" | ForEach-Object FullName)
+$src = @(Get-ChildItem "$root\userland\libsystem\*" -Include *.c, *.S | ForEach-Object FullName)
 $src += "$root\userland\frameworks\libcompression\compression.c"
 $src += @('lz4.c','lz4hc.c','lz4frame.c','xxhash.c') | ForEach-Object { "$root\userland\third_party\lz4\$_" }
 $src += @('lzfse_decode.c','lzfse_decode_base.c','lzfse_encode.c','lzfse_encode_base.c','lzfse_fse.c','lzvn_decode_base.c','lzvn_encode_base.c') | ForEach-Object { "$root\userland\third_party\lzfse\$_" }
@@ -46,7 +46,7 @@ foreach ($s in Get-MuslSources $mu 'x86_64') {
 
 & $zig cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie `
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header `
-    "-I$root\userland\libsystem\kshim" "-I$root\userland\libsystem\fsinc" "-I$root\kernel\include" "-I$root\userland\third_party\h264bsd" `
+    "-I$root\userland\libsystem\kshim" "-I$root\userland\libsystem\fsinc" "-I$root\kernel\include" `
     "-I$root\userland\libsystem\kshim\xz-config" `
     "-I$root\userland\third_party\zlib" "-I$root\userland\third_party\lz4" "-I$root\userland\third_party\lzfse" `
     "-I$xz" "-I$xz\src\liblzma\api" "-I$xz\src\liblzma\common" "-I$xz\src\liblzma\check" `

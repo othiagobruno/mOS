@@ -18,7 +18,7 @@ build_one() {
     [ "$o" -nt "$f" ] && [ -z "$(find "$ROOT/userland/libsystem" -name '*.inc' -newer "$o" -print -quit)" ] && return 0
     "$ZIG" cc -target x86_64-freestanding-none -O2 -c -ffreestanding -fno-builtin -nostdlib -fpie -mno-red-zone -w \
         -I "$ROOT/userland/libsystem/kshim" -I "$ROOT/userland/libsystem/fsinc" -I "$ROOT/kernel/include" \
-        -I "$ROOT/userland/third_party/h264bsd" -isystem "$ZIGDIR/lib/include" "$f" -o "$o" || echo "não compilou: $f" >&2
+        -isystem "$ZIGDIR/lib/include" "$f" -o "$o" || echo "não compilou: $f" >&2
 }
 export -f build_one; export ROOT CACHE ZIG ZIGDIR
 ls "$ROOT"/userland/libsystem/*.c | grep -v sqlite3_mos.c | xargs -P2 -I{} bash -c 'build_one {}'
