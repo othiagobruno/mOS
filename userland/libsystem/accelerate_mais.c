@@ -20,7 +20,18 @@ typedef struct { float *realp, *imagp; } dsp_split_t;
 typedef struct { double *realp, *imagp; } dsp_splitd_t;
 typedef struct { double real, imag; } dsp_complexd_t;
 #define PI 3.14159265358979323846
+/* x$NEWLAPACK: no ELF um alias da função; no Mach-O (libSystem arm64, que não aceita alias) um salto em assembly com o
+ * mesmo nome */
+#if defined(__MACH__)
+# if defined(__aarch64__)
+#  define MOS_TRAMP(n, t) __asm__(".text\n.globl \"_" n "\"\n.p2align 2\n\"_" n "\":\n\tb _" t "\n");
+# else
+#  define MOS_TRAMP(n, t) __asm__(".text\n.globl \"_" n "\"\n\"_" n "\":\n\tjmp _" t "\n");
+# endif
+# define NEWLAPACK(f) MOS_TRAMP(#f "$NEWLAPACK", #f)
+#else
 #define NEWLAPACK(f) extern __typeof(f) f##_nl __asm__(#f "$NEWLAPACK") __attribute__((alias(#f)));
+#endif
 
 /* ---------------------------------------------------------------- vDSP */
 void vDSP_vclrD(double *c, vstride ic, vlen n) { for (vlen i = 0; i < n; i++) c[i * ic] = 0; }
