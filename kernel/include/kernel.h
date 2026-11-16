@@ -159,6 +159,8 @@ void   sleep_ms(u64 ms);
 void   cpu_info(char *vendor, char *brand);
 u64    rdtsc(void);
 
+/* portas de E/S só existem no x86; o motor JS (kernel/web) também compila arm64 no JavaScriptCore.framework */
+#if defined(__x86_64__) || defined(__i386__)
 static inline void outb(u16 p, u8 v)  { __asm__ volatile("outb %0,%1" :: "a"(v), "Nd"(p)); }
 static inline void outw(u16 p, u16 v) { __asm__ volatile("outw %0,%1" :: "a"(v), "Nd"(p)); }
 static inline void outl(u16 p, u32 v) { __asm__ volatile("outl %0,%1" :: "a"(v), "Nd"(p)); }
@@ -166,6 +168,7 @@ static inline u8   inb(u16 p)  { u8 v;  __asm__ volatile("inb %1,%0" : "=a"(v) :
 static inline u16  inw(u16 p)  { u16 v; __asm__ volatile("inw %1,%0" : "=a"(v) : "Nd"(p)); return v; }
 static inline u32  inl(u16 p)  { u32 v; __asm__ volatile("inl %1,%0" : "=a"(v) : "Nd"(p)); return v; }
 static inline void io_wait(void) { outb(0x80, 0); }
+#endif
 static inline void cli(void) { __asm__ volatile("cli"); }
 static inline void sti(void) { __asm__ volatile("sti"); }
 void cpu_idle(void);           /* proc/sched.c: o hlt que solta a trava grande se for o desktop no BSP */

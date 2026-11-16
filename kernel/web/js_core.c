@@ -163,6 +163,16 @@ __attribute__((no_sanitize("address"))) static void scan_range(uptr lo, uptr hi)
 
 static void __attribute__((noinline, no_sanitize("address"))) scan_stack(void) {
     u64 regs[20];
+#if defined(__aarch64__)
+    /* x19-x28 e d8-d15: o que a AAPCS64 preserva entre chamadas (18 palavras, como no x86_64); o x29 aponta para a
+     * própria pilha, que é varrida logo abaixo */
+    __asm__ volatile(
+        "stp x19, x20, [%0, #0]\n\tstp x21, x22, [%0, #16]\n\tstp x23, x24, [%0, #32]\n\t"
+        "stp x25, x26, [%0, #48]\n\tstp x27, x28, [%0, #64]\n\t"
+        "stp d8, d9, [%0, #80]\n\tstp d10, d11, [%0, #96]\n\tstp d12, d13, [%0, #112]\n\t"
+        "stp d14, d15, [%0, #128]\n\t"
+        :: "r"(regs) : "memory");
+#else
     __asm__ volatile(
         "movq %%rbx, 0(%0)\n\tmovq %%rbp, 8(%0)\n\tmovq %%rdi, 16(%0)\n\tmovq %%rsi, 24(%0)\n\t"
         "movq %%r12, 32(%0)\n\tmovq %%r13, 40(%0)\n\tmovq %%r14, 48(%0)\n\tmovq %%r15, 56(%0)\n\t"
@@ -170,8 +180,9 @@ static void __attribute__((noinline, no_sanitize("address"))) scan_stack(void) {
         "movq %%xmm10, 96(%0)\n\tmovq %%xmm11, 104(%0)\n\tmovq %%xmm12, 112(%0)\n\tmovq %%xmm13, 120(%0)\n\t"
         "movq %%xmm14, 128(%0)\n\tmovq %%xmm15, 136(%0)\n\t"
         :: "r"(regs) : "memory");
+#endif
     uptr sp;
-    __asm__ volatile("movq %%rsp, %0" : "=r"(sp));
+    JS_GET_SP(sp);
     for (int i = 0; i < 18; i++) { consider((uptr)regs[i]); consider((uptr)(regs[i] & JS_PTRMASK)); }
     if (J.stack_base && J.stack_base >= sp) scan_range(sp, J.stack_base);
     js_coro_scan_chain(scan_range);
@@ -1491,7 +1502,7 @@ void js_leave(void) {
 
 bool js_check_stack(void) {
     uptr sp;
-    __asm__ volatile("movq %%rsp, %0" : "=r"(sp));
+    JS_GET_SP(sp);
     if ((J.stack_base && J.stack_base - sp > JS_STACK_LIMIT_OF()) || J.calldepth > 2000) {
         js_throw_err(E_RANGE, "Tamanho máximo da pilha de chamadas excedido");
         return false;
@@ -1578,7 +1589,7 @@ jsexec_t *js_exec_suspend(void) {
     jsexec_t *e = kcalloc(1, sizeof(jsexec_t));
     if (!e) return NULL;
     uptr sp;
-    __asm__ volatile("movq %%rsp, %0" : "=r"(sp));
+    JS_GET_SP(sp);
     e->st = J;
     e->sp = sp;
     e->t = timer_ticks();

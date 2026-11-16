@@ -45,9 +45,14 @@ static jsobj *genret_marker;
 
 /* convenção System V explícita (como em costack.c): no kernel (ABI da Microsoft) o compilador salva o que a
  * System V não preserva; no teste de host é a convenção nativa. O asm ainda guarda rdi, rsi e xmm6-15. */
-__attribute__((sysv_abi)) void js_coro_switch(void **save_sp, void *to_sp);
-__attribute__((sysv_abi)) void js_coro_tramp(void);
-__attribute__((sysv_abi)) void js_coro_entry(jscoro *co);
+#if defined(__aarch64__)
+#define CO_ABI
+#else
+#define CO_ABI __attribute__((sysv_abi))
+#endif
+CO_ABI void js_coro_switch(void **save_sp, void *to_sp);
+CO_ABI void js_coro_tramp(void);
+CO_ABI void js_coro_entry(jscoro *co);
 
 /* Mach-O (JavaScriptCore.framework no userland) põe "_" na frente dos nomes C */
 #ifdef __APPLE__
@@ -55,6 +60,38 @@ __attribute__((sysv_abi)) void js_coro_entry(jscoro *co);
 #else
 #define CO_SYM(x) #x
 #endif
+#if defined(__aarch64__)
+/* AAPCS64: quadro de 160 bytes com d8-d15 em [0,64) e x19-x30 em [64,160); a corrotina nova começa no trampolim
+ * (x30) com x19 = co */
+#define CO_FRAME 160
+#define CO_SLOT_CO (64 / 8)          /* x19 */
+#define CO_SLOT_RET (152 / 8)        /* x30 */
+__asm__(
+    ".text\n"
+    ".p2align 2\n"
+    ".globl " CO_SYM(js_coro_switch) "\n"
+    CO_SYM(js_coro_switch) ":\n"
+    "    sub sp, sp, #160\n"
+    "    stp d8, d9, [sp, #0]\n    stp d10, d11, [sp, #16]\n    stp d12, d13, [sp, #32]\n    stp d14, d15, [sp, #48]\n"
+    "    stp x19, x20, [sp, #64]\n    stp x21, x22, [sp, #80]\n    stp x23, x24, [sp, #96]\n"
+    "    stp x25, x26, [sp, #112]\n    stp x27, x28, [sp, #128]\n    stp x29, x30, [sp, #144]\n"
+    "    mov x9, sp\n    str x9, [x0]\n"
+    "    mov sp, x1\n"
+    "    ldp d8, d9, [sp, #0]\n    ldp d10, d11, [sp, #16]\n    ldp d12, d13, [sp, #32]\n    ldp d14, d15, [sp, #48]\n"
+    "    ldp x19, x20, [sp, #64]\n    ldp x21, x22, [sp, #80]\n    ldp x23, x24, [sp, #96]\n"
+    "    ldp x25, x26, [sp, #112]\n    ldp x27, x28, [sp, #128]\n    ldp x29, x30, [sp, #144]\n"
+    "    add sp, sp, #160\n"
+    "    ret\n"
+    ".globl " CO_SYM(js_coro_tramp) "\n"
+    CO_SYM(js_coro_tramp) ":\n"
+    "    mov x0, x19\n"
+    "    mov x29, #0\n"
+    "    bl " CO_SYM(js_coro_entry) "\n"
+    "    brk #1\n");
+#else
+#define CO_FRAME 264
+#define CO_SLOT_CO (216 / 8)         /* rbx */
+#define CO_SLOT_RET (232 / 8)        /* endereço de retorno */
 __asm__(
     ".text\n"
     ".globl " CO_SYM(js_coro_switch) "\n"
@@ -80,6 +117,7 @@ __asm__(
     "    andq $-16, %rsp\n"
     "    call " CO_SYM(js_coro_entry) "\n"
     "    ud2\n");
+#endif
 
 static jscoro *coro_new(jsobj *owner, jsv fn, jsv thisv, int argc, jsv *argv) {
     jscoro *co = kcalloc(1, sizeof(jscoro));
@@ -153,10 +191,10 @@ static void co_resume(jscoro *co, int mode, jsv val) {
         co->stack = kmalloc(CO_STACK);
         if (!co->stack) panic("JS: memória esgotada (pilha de corrotina)");
         uptr top = ((uptr)co->stack + CO_STACK) & ~(uptr)15;
-        u64 *sp = (u64 *)(top - 264);
-        memset(sp, 0, 264);
-        sp[216 / 8] = (u64)(uptr)co;                 /* rbx = co */
-        sp[232 / 8] = (u64)(uptr)js_coro_tramp;      /* endereço de retorno */
+        u64 *sp = (u64 *)(top - CO_FRAME);
+        memset(sp, 0, CO_FRAME);
+        sp[CO_SLOT_CO] = (u64)(uptr)co;              /* rbx (x86_64) ou x19 (arm64) = co */
+        sp[CO_SLOT_RET] = (u64)(uptr)js_coro_tramp;  /* endereço de retorno (x86_64) ou x30 (arm64) */
         co->sp = sp;
     }
     jsictx saved;

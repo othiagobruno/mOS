@@ -7,7 +7,7 @@
 # Depois do UIKit, o overlay do PhotosUI (userland/sdk/swift-objc/PhotosUI, módulo clang sdk/PhotosUI):
 # /System/iOSSupport/usr/lib/swift/libswiftPhotosUI.dylib (docs/photosui.md).
 # Antes: tools/build-swift-foundation-objc.sh (Foundation) e tools/build-frameworks-objc.sh (UIKit ObjC).
-#   tools/build-swift-uikit-objc.sh
+#   tools/build-swift-uikit-objc.sh                  (MOS_ARCH=arm64: fatia arm64 em build/swift/objc-arm64)
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 zig=${MOS_ZIG:-}
@@ -20,7 +20,11 @@ if [ -z "$fe" ]; then
     done
 fi
 src=${SWIFT_SRC:-$root/.tools/swift-src}
-objc="$root/build/swift/objc"
+case "${MOS_ARCH:-x86_64}" in
+    x86_64) zt=x86_64-macos; st=x86_64-apple-macos26; objc="$root/build/swift/objc" ;;
+    arm64) zt=aarch64-macos; st=arm64-apple-macos26; objc="$root/build/swift/objc-arm64" ;;   # docs/runtime-arm64-plano.md
+    *) echo "MOS_ARCH=$MOS_ARCH: use x86_64 ou arm64" >&2; exit 1 ;;
+esac
 out="$objc/overlays"
 inc="$objc/sdk/include"
 sdk="$root/userland/sdk/swift-objc"
@@ -61,7 +65,7 @@ overlay() {
     mkdir -p "$out/$low"
     local files
     mapfile -t files < <(find "$sdk/$name" -maxdepth 1 -name '*.swift' | sort)
-    local a=(-c -target x86_64-apple-macos26 -resource-dir "$res" -module-name "$name" -parse-as-library -swift-version 5 -O
+    local a=(-c -target "$st" -resource-dir "$res" -module-name "$name" -parse-as-library -swift-version 5 -O
        -enable-library-evolution -I "$objc" -I "$out" -module-cache-path "$mc"
        -I "$src/stdlib/public/SwiftShims/swift/shims"
        -Xcc "-isystem$inc" -Xcc -nostdlibinc -Xcc -Wno-nullability-completeness -Xcc -DMOS_SWIFT_OBJC=1
@@ -79,7 +83,7 @@ overlay() {
         echo "$name (Swift): FALHOU ($nerr erros, saída $rc)"; return 1
     fi
     echo "$name (Swift): ok ($(( $(stat -c %s "$out/$low/$name.o") / 1024 )) KB, ${#files[@]} fontes)"
-    if ! "$zig" c++ -target x86_64-macos -shared -o "$dir/libswift$name.dylib" \
+    if ! "$zig" c++ -target "$zt" -shared -o "$dir/libswift$name.dylib" \
             -Wl,-install_name,/System/iOSSupport/usr/lib/swift/libswift$name.dylib -Wl,-undefined,dynamic_lookup \
             "$out/$low/$name.o" "$@" "${base[@]}"; then
         echo "libswift$name: link FALHOU"; return 1

@@ -26,10 +26,12 @@ A64=$ESP/mOS/Sistema/Biblioteca/a64
 [ -f "$A64/a64rt.mos" ] && [ -f "$A64/libSystem.mos" ] || { echo "a ESP não tem o a64rt.mos e o libSystem arm64" >&2; exit 1; }
 
 # @try/@catch do arm64: o __objc_personality_v0 do libSystem é o da libc++abi do disco (objc_exc.c). O tools/build.sh
-# põe só a fatia x86_64 em /usr/lib/libc++.1.dylib; aqui vai o universal (o build.ps1 faz o mesmo com o lipo-mos).
+# já põe /usr/lib/libc++.1.dylib universal ("/usr/lib universal"); numa ESP antiga, só x86_64, o universal sai aqui.
 LIPO=$(command -v llvm-lipo || ls /usr/bin/llvm-lipo-* 2>/dev/null | head -1 || true)
 CXX=$ESP/mOS/usr/lib/libc++.1.dylib
-if [ -n "$LIPO" ] && [ -f "$ROOT/build/libcxx-arm64/libc++.1.dylib" ] && [ -f "$CXX" ]; then
+if [ -f "$CXX" ] && python3 -I "$ROOT/tools/lipo-mos.py" --info "$CXX" 2>/dev/null | grep -qw arm64; then
+    :
+elif [ -n "$LIPO" ] && [ -f "$ROOT/build/libcxx-arm64/libc++.1.dylib" ] && [ -f "$CXX" ]; then
     "$LIPO" -create "$CXX" "$ROOT/build/libcxx-arm64/libc++.1.dylib" -output "$OUT/libc++.universal.dylib" &&
         rm -f "$CXX" && cp "$OUT/libc++.universal.dylib" "$CXX"      # rm antes: o arquivo é hardlink da ESP do build.sh
 else echo "aviso: sem libc++ universal (llvm-lipo e build/libcxx-arm64); o abi.mm aborta no @try/@catch"; fi
