@@ -1007,6 +1007,9 @@ static msl_fn_t *pick_fn(P_t *P, const char *name, node_t *call) {
             if (!at) continue;
             if (pt == at) sc += 4;
             else if (is_num(pt) && is_num(at)) {
+                /* número -> bool: o GLSL não converte (mix(vec, vec, float) não pode cair no mix(vec, vec, bvec));
+                 * no MSL a conversão vale, mas não ganha ponto */
+                if ((ty_scal(pt) == K_BOOL) != (ty_scal(at) == K_BOOL)) { if (P->glsl) { sc = -100; break; } continue; }
                 if (shape(pt) == shape(at) && pt->k == at->k) sc += 2;
                 else if (shape(pt) == shape(at) || shape(at) == 1) sc += 1;
                 else { sc = -100; break; }
@@ -2062,7 +2065,7 @@ msl_lib_t *msl_compile2(const char *src, u64 n, const char *defines, char *err, 
     int anybar = 0, anydisc = 0;
     for (int i = 0; i < L->nfn; i++) { anybar |= L->fns[i]->barrier; anydisc |= L->fns[i]->discard; }
     for (int i = 0; i < L->nfn; i++) {
-        if (L->fns[i]->stage == MSL_KERNEL) L->fns[i]->barrier |= anybar;
+        if (L->fns[i]->stage == MSL_KERNEL || L->fns[i]->stage == MSL_HELPER) L->fns[i]->barrier |= anybar;   /* MSL_HELPER: o main do GLSL (TCS) */
         if (L->fns[i]->stage == MSL_FRAGMENT) L->fns[i]->discard |= anydisc;
     }
     for (int i = 0; i < L->nfn; i++) msl_spirv_attach(L->fns[i]);

@@ -128,7 +128,7 @@ tail -1 /tmp/cgpid_host.log
 # OpenGL por software: fixed function, GLSL (core e compat), texturas, FBO, UBO, transform feedback
 L=userland/libsystem
 gcc -std=gnu11 -O1 -w -fno-builtin -I tools/hostinc -I $L -o /tmp/gl_host tools/gl_host.c tools/gl_host_glsl.c \
-    $L/gl_ctx.c $L/gl_buf.c $L/gl_tex.c $L/gl_fbo.c $L/gl_raster.c $L/gl_ffp.c $L/gl_misc.c $L/gl_eval.c $L/gl_arbprog.c $L/gl_debug.c $L/gl_glsl.c $L/gl_glsl_tr.c \
+    $L/gl_ctx.c $L/gl_buf.c $L/gl_tex.c $L/gl_fbo.c $L/gl_raster.c $L/gl_tess.c $L/gl_ffp.c $L/gl_misc.c $L/gl_eval.c $L/gl_arbprog.c $L/gl_debug.c $L/gl_glsl.c $L/gl_glsl_tr.c \
     $L/gl_glsl_pre.c $L/mtltex.c $L/mtlshader.c $L/mtlexec.c $L/mslspirv.c -lm -lpthread
 /tmp/gl_host > /tmp/gl_host.log || { cat /tmp/gl_host.log; exit 1; }
 tail -1 /tmp/gl_host.log

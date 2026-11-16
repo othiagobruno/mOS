@@ -1451,6 +1451,7 @@ void msl_run_group(msl_fn_t *f, msl_ctx_t *tmpl, const u32 tg[3], const u32 tptg
                     if (exact && (c.tpig[0] >= grid[0] || c.tpig[1] >= grid[1] || c.tpig[2] >= grid[2])) continue;
                     c.tiitg = (z * tptg[1] + y) * tptg[0] + x;
                     c.discarded = 0;
+                    if (c.tid_out) *c.tid_out = c.tiitg;
                     msl_run(f, &c, 0);
                 }
         free(tgs);
@@ -1480,6 +1481,7 @@ void msl_run_group(msl_fn_t *f, msl_ctx_t *tmpl, const u32 tg[3], const u32 tptg
         for (u32 t = 0; t < live; t++) {
             if (fs[t].done) continue;
             g_fib = &fs[t];
+            if (c.tid_out) *c.tid_out = fs[t].ctx.tiitg;
             msl_ctx_switch(&g_sched_sp, fs[t].sp);
             g_fib = 0;
             if (!fs[t].done) alive = 1;

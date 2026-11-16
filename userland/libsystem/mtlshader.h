@@ -85,6 +85,7 @@ typedef struct msl_ctx {
     int front_facing;
     u32 sample_id, primitive_id;
     u32 sample_mask;           /* [[sample_mask]] de entrada: amostras cobertas (0 = 1) */
+    u32 *tid_out;              /* msl_run_group grava aqui o índice da thread antes de rodar/retomar cada uma (GLSL: gl_InvocationID) */
     float point_coord[2];
     u32 tpig[3], tpitg[3], tgpig[3], tptg[3], tpg[3], tgpg[3], tiitg;
     int discarded;
