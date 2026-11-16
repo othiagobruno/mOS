@@ -859,8 +859,14 @@ i32 cx_retain_count(id o) {
     if (is_crr(o)) { u64 n = (u64)crr_send(o, "retainCount"); return n > 0x7FFFFFFF ? 0x7FFFFFFF : (i32)n; }
     return 1;
 }
+/* sem cabeçalho, sem contagem própria (CFSTR, classes, blocos globais, estáticos): imortal, como no macOS,
+ * onde -retainCount desses objetos devolve NSUIntegerMax */
+int cx_is_immortal(id o) {
+    if (!o || ((u64)o & 7) || IS_HEAP_BLOCK(o) || cx_is_dispatch_object(o)) return 0;
+    return !hdr(o) && !is_crr(o);
+}
 /* objc_isUniquelyReferenced: o isUniquelyReferenced_nonNull do Swift para objetos ObjC */
-BOOL objc_isUniquelyReferenced(id o) { return cx_retain_count(o) == 1; }
+BOOL objc_isUniquelyReferenced(id o) { return !cx_is_immortal(o) && cx_retain_count(o) == 1; }
 /* chamado pelo -[NSObject dealloc]: zera weaks e devolve a memória */
 /* objc_destructInstance: o clang gera -.cxx_destruct para soltar as ivars __strong (ARC) de cada classe */
 void cx_destruct_instance(id o) {

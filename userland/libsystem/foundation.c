@@ -487,7 +487,8 @@ extern void objc_release(id), cx_object_free(id);
 extern id objc_autorelease(id);
 static id cx_autorelease(id o) { return o ? objc_autorelease(o) : o; }
 extern i32 cx_retain_count(id);
-static u64 o_retain_count(id self, SEL c) { (void)c; return (u64)cx_retain_count(self); }
+int cx_is_immortal(id o);
+static u64 o_retain_count(id self, SEL c) { (void)c; return cx_is_immortal(self) ? ~0ULL : (u64)cx_retain_count(self); }
 static id o_retain(id self, SEL c) { (void)c; return objc_retain(self); }
 static void o_release(id self, SEL c) { (void)c; objc_release(self); }
 static id o_autorelease(id self, SEL c) { (void)c; return objc_autorelease(self); }

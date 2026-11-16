@@ -89,8 +89,8 @@ id_ CFBundleGetMainBundle(void) { return MSG0_(id_, cx_class_named("NSBundle"), 
 id_ CFStringCreateWithFileSystemRepresentation(void *alloc, const char *s) {
     (void)alloc;
     if (!s) return 0;
-    id_ str = MSG1_(id_, cx_class_named("NSString"), "stringWithUTF8String:", s);
-    return str ? objc_retain(str) : 0;
+    /* +1 sem autorelease, como o CF: CFRetain em seguida dá retainCount 2 */
+    return MSG1_(id_, MSG0_(id_, cx_class_named("NSString"), "alloc"), "initWithUTF8String:", s);
 }
 
 id_ CFBundleGetValueForInfoDictionaryKey(id_ bundle, id_ key) {
