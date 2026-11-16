@@ -111,6 +111,11 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    ResizeObserver (content-box/border-box, só quando muda) e IntersectionObserver (viewport ou elemento raiz,
    rootMargin, limiares, rolagem). Teste: `tools/web_host_obs.c`. Falta: registro transitório de subárvores
    removidas e recorte por overflow dos ancestrais no IntersectionObserver.
+6g. ✅ **Web Workers e BroadcastChannel** (`web_worker.c`): cada Worker é uma página JS própria sem DOM
+   (DedicatedWorkerGlobalScope: self, postMessage, onmessage, close, importScripts, name, WorkerLocation), rodada no
+   tick da dona; mensagens por clone estruturado; blob:/data:/file:/http; workers clássicos e de módulo; erros e 404
+   viram evento error na dona; terminate; workers aninhados; BroadcastChannel entre páginas e workers da mesma
+   origem. Teste: `tools/web_host_worker.c`. Falta: SharedWorker e ServiceWorker.
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.

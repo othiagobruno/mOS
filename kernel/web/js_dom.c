@@ -3113,6 +3113,7 @@ void js_dom_init(jsrealm *r) {
     js_fetch_init(r);   /* fetch, Headers, Request, Response, FormData, AbortController, XMLHttpRequest */
     js_plat_init(r);    /* structuredClone, MessageChannel, crypto */
     js_obs_init(r);     /* MutationObserver, ResizeObserver, IntersectionObserver */
+    js_worker_init(r);  /* Worker, BroadcastChannel */
     jsobj *dpp = js_newobj(op);
     js_defnative(dpp, "parseFromString", domparser_parse, 2, 0);
     js_defn(g, "DOMParser", jv_obj(js_newctor(domparser_ctor, "DOMParser", 0, dpp)), PF_NOENUM);
@@ -3224,6 +3225,29 @@ js_page_t *js_cur_page(void) { return cur_page(); }
 node_t *js_page_focus(js_page_t *p) { return p ? p->focus : NULL; }
 int js_page_add_timer(js_page_t *p, jsv fn, double ms) { return p ? add_timer(p, fn, ms, false, 0, NULL) : 0; }
 const char *js_page_origin(js_page_t *p) { return p ? p->origin : "null"; }
+jsrealm *js_page_realm(js_page_t *p) { return p ? p->realm : NULL; }
+void js_page_set_origin(js_page_t *p, const char *o) { if (p) snprintf(p->origin, sizeof p->origin, "%s", o); }
+
+/* mensagem para a janela de uma página (worker): val já é um clone; outro clone sai no reino de destino */
+void js_page_post_message(js_page_t *dst, jsv val, const char *origin) {
+    pmsg_t *m = kcalloc(1, sizeof(pmsg_t));
+    if (!m) return;
+    m->val = val;
+    snprintf(m->origin, sizeof m->origin, "%s", origin ? origin : "");
+    if (dst->msgs_tail) dst->msgs_tail->next = m; else dst->msgs = m;
+    dst->msgs_tail = m;
+}
+
+/* script de módulo com fonte pronta (worker type=module) */
+void js_page_add_module_source(js_page_t *p, const char *src, int len) {
+    node_t *s = new_elem(p->doc, "script", 6);
+    if (!s) return;
+    set_attr0(p, s, "type", "module", 6);
+    node_t *t = new_text(p->doc, src, len);
+    if (t) insert_before(s, t, NULL);
+    insert_before(p->doc->root, s, NULL);
+    queue_script(p, s);
+}
 
 static box_t *find_box(box_t *b, node_t *n, int depth) {
     if (!b || depth > 300) return NULL;
@@ -3315,6 +3339,8 @@ void js_page_free(js_page_t *p) {
     for (int i = 0; i < p->nnets; i++) { if (p->nets[i].req) http_free(p->nets[i].req); kfree(p->nets[i].body); }
     kfree(p->nets);
     web_fetch_drop(p);
+    web_worker_drop(p);
+    web_bc_realm_gone(p->realm);
     for (int i = 0; i < p->nxdocs; i++) doc_free(p->xdocs[i]);
     while (p->msgs) { pmsg_t *m = p->msgs; p->msgs = m->next; kfree(m); }
     for (js_page_t *q = pages; q; q = q->next) if (q->parent == p) q->parent = NULL;
@@ -3344,6 +3370,7 @@ bool js_page_tick(js_page_t *p) {
     run_timers(p);
     if (p->nnets) pump_nets(p);
     web_fetch_pump(p);
+    web_worker_pump(p);   /* workers desta página e as mensagens deles */
     js_run_jobs();
     web_obs_tick(p);   /* ResizeObserver e IntersectionObserver, depois do layout */
     js_run_jobs();
@@ -3357,7 +3384,7 @@ bool js_page_tick(js_page_t *p) {
 
 int js_page_next_ms(js_page_t *p) {
     if (!p) return -1;
-    if (p->spos < p->nscripts || p->mpos < p->nscripts || p->nnets || web_fetch_pending(p)) return 10;
+    if (p->spos < p->nscripts || p->mpos < p->nscripts || p->nnets || web_fetch_pending(p) || web_worker_busy(p)) return 10;
     u64 now = timer_ticks();
     int best = -1;
     for (int i = 0; i < p->ntimers; i++) {

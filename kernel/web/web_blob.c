@@ -436,12 +436,16 @@ NATIVE(url_revoke_object) {
 /* Blob de um URL blob: (sem o fragmento) na página atual */
 jsv js_blob_from_url(const char *url) {
     if (strncmp(url, "blob:", 5)) return JS_UNDEF;
-    jsobj *reg = registry(false);
-    if (!reg) return JS_UNDEF;
     const char *h = strchr(url, '#');
     jsstr *k = js_strn(url, h ? (int)(h - url) : (int)strlen(url));
-    jsprop *p = js_ownprop(reg, k);
-    return p ? p->v : JS_UNDEF;
+    /* o registro de URLs blob: é da origem: vale para a página e os workers dela */
+    jsstr *key = js_intern("\x01" "blobs", -1);
+    for (int pass = 0; pass < 2; pass++)
+        for (jsrealm *r = pass ? J.realms : J.realm; r; r = pass ? r->next : NULL) {
+            jsprop *rp = js_ownprop(r->global, key);
+            if (rp && jv_isobj(rp->v)) { jsprop *p = js_ownprop(jv_o(rp->v), k); if (p) return p->v; }
+        }
+    return JS_UNDEF;
 }
 
 /* ============================================================ registro */
