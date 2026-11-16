@@ -2325,6 +2325,7 @@ void cx_avfaudio_init(void) {
     { extern void cx_avwriter_init(void); cx_avwriter_init(); }   /* AVAssetWriter: avwriter.c */
     { extern void cx_avexport_init(void); cx_avexport_init(); }   /* AVAssetExportSession: avexport_objc.c */
     { extern void cx_avmetadata_init(void); cx_avmetadata_init(); }   /* AVMetadataItem: avmetadata.c */
+    { extern void cx_auv3_init(void); cx_auv3_init(); }   /* AUAudioUnit (v3): auv3.c */
     { extern void cx_avcomposition_init(void); cx_avcomposition_init(); }   /* AVMutableComposition: avcomposition.c */
     { extern void cx_mediaplayer_init(void); cx_mediaplayer_init(); }   /* MediaPlayer: mediaplayer.c (antes da casca do vscode_fwclasses) */
     K(&AVPlayerItem_c, &AVPlayerItem_m, "AVPlayerItem", obj, sizeof(avitem_t) - 8);
