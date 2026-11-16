@@ -108,7 +108,7 @@ gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland
 gcc -O1 -w -pthread tools/osactivity_host.c /tmp/osactivity_ls.o -o /tmp/osactivity_host
 /tmp/osactivity_host | tail -1
 # GPU AMD: display, vsync, troca no vblank, buffer duplo, VRAM, SMU, GART, SDMA e IH contra um Picasso simulado
-gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/amdgpu.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c kernel/dev/amdgpu/gfx.c kernel/dev/amdgpu/compute.c kernel/dev/amdgpu/vm.c kernel/dev/amdgpu/abi.c kernel/dev/amdgpu/pm4check.c kernel/dev/amdgpu/pm.c kernel/dev/amdgpu/ddc.c kernel/dev/amdgpu/aux.c \
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/amdgpu.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c kernel/dev/amdgpu/gfx.c kernel/dev/amdgpu/compute.c kernel/dev/amdgpu/vm.c kernel/dev/amdgpu/abi.c kernel/dev/amdgpu/pm4check.c kernel/dev/amdgpu/pm.c kernel/dev/amdgpu/gfxoff.c kernel/dev/amdgpu/ddc.c kernel/dev/amdgpu/aux.c \
     kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw_host
 /tmp/amdgpu_hw_host > /tmp/amdgpu_hw_host.log || { cat /tmp/amdgpu_hw_host.log; exit 1; }
 tail -1 /tmp/amdgpu_hw_host.log

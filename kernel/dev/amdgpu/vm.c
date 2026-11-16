@@ -88,10 +88,12 @@ amd_vm_t *amdgpu_vm_create(amdgpu_t *a) {
     vm->vmid = vmid;
     a->vmid_used |= 1u << vmid;
     u64 base = tbl_pa(a, vm->root) | AMD_PDE_VALID;
+    amdgpu_gfxoff_get(a);                        /* a GFXHUB é do GC */
     for (int hub = 0; hub < 2; hub++) {
         WR(a, hub ? gfxhub_vm(R_VM_CTX_PT_BASE_LO(vmid)) : R_VM_CTX_PT_BASE_LO(vmid), (u32)base);
         WR(a, hub ? gfxhub_vm(R_VM_CTX_PT_BASE_HI(vmid)) : R_VM_CTX_PT_BASE_HI(vmid), (u32)(base >> 32));
     }
+    amdgpu_gfxoff_put(a);
     amdgpu_tlb_flush(a, 1u << vmid);
     return vm;
 }
@@ -99,10 +101,12 @@ amd_vm_t *amdgpu_vm_create(amdgpu_t *a) {
 void amdgpu_vm_destroy(amdgpu_t *a, amd_vm_t *vm) {
     if (!a || !vm || !vm->vmid) return;
     u32 vmid = vm->vmid;
+    amdgpu_gfxoff_get(a);
     for (int hub = 0; hub < 2; hub++) {
         WR(a, hub ? gfxhub_vm(R_VM_CTX_PT_BASE_LO(vmid)) : R_VM_CTX_PT_BASE_LO(vmid), 0);
         WR(a, hub ? gfxhub_vm(R_VM_CTX_PT_BASE_HI(vmid)) : R_VM_CTX_PT_BASE_HI(vmid), 0);
     }
+    amdgpu_gfxoff_put(a);
     amdgpu_tlb_flush(a, 1u << vmid);
     for (u32 c = 0; c < vm->nchunks; c++) amdgpu_vram_free(a, vm->chunk[c], CHUNK_BYTES);
     a->vmid_used &= ~(1u << vmid);
