@@ -1187,6 +1187,7 @@ void cx_objc_boot(u64 sects, u64 n) {
     { extern void cx_chrome_init(void) __attribute__((weak)); if (cx_chrome_init) cx_chrome_init(); }   /* classes privadas que o Chrome pede (chrome.c) */
     { extern void cx_compat_objc_extra_init(void); cx_compat_objc_extra_init(); }   /* compat_objc_extra.c: depois de todas as classes (o NSURL vem do cx_darwin_init) */
     { extern void cx_fdn_filemanager_init(void); cx_fdn_filemanager_init(); }   /* fdn_filemanager.c: NSFileManager completo, por último */
+    { extern void cx_fdn_bundle_init(void); cx_fdn_bundle_init(); }   /* fdn_bundle.c: NSBundle/CFBundle completos, por cima do básico */
     }
     if (n) cx_objc_init_image(sects, n);
 }
