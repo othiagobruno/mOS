@@ -331,7 +331,7 @@ static long on_frame(mnet_h2_t *c, int type, int flags, uint32_t sid, const uint
         if (c->on_data && c->on_data(c->ctx, s, d, dn, end)) return stream_error(c, sid, MNET_H2_CANCEL) ? -1 : 0;
         s = mnet_h2_find(c, sid);
         if (!s) return 0;
-        if (!end && s->recv_unacked >= c->local_initial_win / 2) {
+        if (!end && !c->manual_win && s->recv_unacked >= c->local_initial_win / 2) {
             winup(c, sid, (uint32_t)s->recv_unacked);
             s->recv_win += s->recv_unacked;
             s->recv_unacked = 0;
@@ -455,4 +455,16 @@ long mnet_h2_feed(mnet_h2_t *c, const uint8_t *d, size_t n) {
     }
     mnet_buf_consume(&c->in, off);
     return (long)n;
+}
+/* modo manual_win: o dono do fluxo avisa o que já consumiu; a janela volta em blocos de meia janela */
+int mnet_h2_consumed(mnet_h2_t *c, mnet_h2_stream_t *s, size_t n) {
+    if (!c || !s || !n) return 0;
+    s->consumed += (long long)n;
+    if (s->consumed > s->recv_unacked) s->consumed = s->recv_unacked;
+    if ((s->state & ST_REMOTE) || s->consumed < c->local_initial_win / 2) return 0;
+    int r = winup(c, s->id, (uint32_t)s->consumed);
+    s->recv_win += s->consumed;
+    s->recv_unacked -= s->consumed;
+    s->consumed = 0;
+    return r;
 }

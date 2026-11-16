@@ -158,12 +158,14 @@ typedef struct mnet_h2_stream {
     int state;                         /* 0 aberto, 1 meio fechado (local), 2 meio fechado (remoto), 3 fechado */
     long long send_win, recv_win;
     long long recv_unacked;            /* bytes recebidos ainda sem WINDOW_UPDATE */
+    long long consumed;                /* manual_win: bytes já consumidos pelo dono, ainda sem WINDOW_UPDATE */
     int got_headers;
     void *user;
     struct mnet_h2_stream *next;
 } mnet_h2_stream_t;
 typedef struct mnet_h2 {
     int is_server, dead, goaway_recv, goaway_sent;
+    int manual_win;                    /* 1: a janela do fluxo só volta com mnet_h2_consumed (quem lê devagar segura o par) */
     uint32_t next_id, last_peer_id, goaway_last;
     int err_code;
     const char *err;
@@ -203,6 +205,7 @@ int mnet_h2_ping(mnet_h2_t *c, const uint8_t opaque[8]);
 int mnet_h2_goaway(mnet_h2_t *c, int code);
 mnet_h2_stream_t *mnet_h2_find(mnet_h2_t *c, uint32_t id);
 int mnet_h2_can_open(const mnet_h2_t *c);
+int mnet_h2_consumed(mnet_h2_t *c, mnet_h2_stream_t *s, size_t n);   /* manual_win: o dono consumiu n bytes */
 
 /* ---- Content-Encoding (gzip, deflate, br, em cadeia). NULL = codificação desconhecida ou ausente. */
 typedef struct mnet_dec mnet_dec_t;
@@ -257,6 +260,8 @@ typedef struct {
     int idle_timeout_ms;
     mnet_jar_t *jar;                                /* cookies compartilhados (NSHTTPCookieStorage) ou NULL */
     char user_agent[160];
+    void *h2live;                                   /* conexões HTTP/2 compartilhadas (mnet_client.c) */
+    void *origins;                                  /* origens HTTPS: abrindo, HTTP/1.1 ou h2 (coalescência) */
 } mnet_client_t;
 typedef struct {
     int status, version;                            /* version: 10, 11 ou 20 */
