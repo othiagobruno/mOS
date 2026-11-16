@@ -279,6 +279,17 @@ static node_t *new_text(doc_t *d, const char *s, int len) {
     return n;
 }
 
+/* <img>: escolhe a imagem de novo; URLs blob: vêm direto do registro da página */
+static void img_refresh(js_page_t *p, node_t *n) {
+    img_update_node(p->doc, n, p->vw, 1.0f);
+    img_t *im = n->img;
+    if (!im || im->state != IMG_PENDING || strncmp(im->url, "blob:", 5)) return;
+    const u8 *b;
+    u32 len;
+    if (js_blob_bytes(js_blob_from_url(im->url), &b, &len, NULL) && len) img_set_data(im, b, len);
+    im->state = im->surf ? IMG_OK : IMG_ERROR;
+}
+
 static void set_attr0(js_page_t *p, node_t *n, const char *name, const char *val, int vlen) {
     doc_t *d = p->doc;
     if (n->tag == T_IFRAME && (!strcmp(name, "src") || !strcmp(name, "srcdoc"))) frame_navigate(n, NULL);
@@ -309,7 +320,7 @@ static void set_attr(js_page_t *p, node_t *n, const char *name, const char *val,
     /* <canvas>: width/height recriam o bitmap (mesmo com o mesmo valor) */
     if (n->tag == T_CANVAS && (!strcmp(name, "width") || !strcmp(name, "height"))) js_canvas_attr_changed(p, n);
     /* <img>: src/srcset trocados pedem a imagem já, mesmo fora do documento */
-    if (n->tag == T_IMG && (!strcmp(name, "src") || !strcmp(name, "srcset") || !strcmp(name, "sizes"))) img_update_node(p->doc, n, p->vw, 1.0f);
+    if (n->tag == T_IMG && (!strcmp(name, "src") || !strcmp(name, "srcset") || !strcmp(name, "sizes"))) img_refresh(p, n);
 }
 
 static void remove_attr(js_page_t *p, node_t *n, const char *name) {
@@ -319,7 +330,7 @@ static void remove_attr(js_page_t *p, node_t *n, const char *name) {
             n->nattrs--;
             page_dirty(p, n);
             if (n->tag == T_CANVAS && (!strcmp(name, "width") || !strcmp(name, "height"))) js_canvas_attr_changed(p, n);
-            if (n->tag == T_IMG && (!strcmp(name, "src") || !strcmp(name, "srcset"))) img_update_node(p->doc, n, p->vw, 1.0f);
+            if (n->tag == T_IMG && (!strcmp(name, "src") || !strcmp(name, "srcset"))) img_refresh(p, n);
             return;
         }
     }
@@ -1441,7 +1452,7 @@ const char *js_page_base(js_page_t *p) { return p ? p->doc->base : ""; }
 static void scan_imgs(js_page_t *p, node_t *n) {
     for (node_t *c = n->first; c; c = c->next) {
         if (c->type != N_ELEM) continue;
-        if (c->tag == T_IMG && !c->img) img_update_node(p->doc, c, p->vw, 1.0f);
+        if (c->tag == T_IMG && !c->img) img_refresh(p, c);
         if (c->first) scan_imgs(p, c);
     }
 }
@@ -1630,7 +1641,7 @@ static jsv node_get(jsobj *o, jsstr *k, bool *found) {
         bool c_ = keyis(k, "complete"), nw = keyis(k, "naturalWidth"), nh = keyis(k, "naturalHeight"), cs = keyis(k, "currentSrc");
         bool w_ = keyis(k, "width"), h_ = keyis(k, "height");
         if (c_ || nw || nh || cs || w_ || h_) {
-            if (!n->img && (node_attr(n, "src") || node_attr(n, "srcset"))) img_update_node(d, n, p->vw, 1.0f);
+            if (!n->img && (node_attr(n, "src") || node_attr(n, "srcset"))) img_refresh(p, n);
             img_t *im = n->img;
             bool ok = im && im->state == IMG_OK && im->surf;
             if (c_) return jv_bool(!im || im->state == IMG_OK || im->state == IMG_ERROR);
@@ -2605,7 +2616,7 @@ NATIVE(img_decode) {
     js_page_t *p = page_of(thisv);
     if (!n || !p || n->tag != T_IMG) return js_throw_err(E_TYPE, "decode: não é um HTMLImageElement");
     jsobj *pr = js_promise_new();
-    if (!n->img && (node_attr(n, "src") || node_attr(n, "srcset"))) img_update_node(p->doc, n, p->vw, 1.0f);
+    if (!n->img && (node_attr(n, "src") || node_attr(n, "srcset"))) img_refresh(p, n);
     if (!p->imgdec) p->imgdec = js_newarr(0);
     js_arr_push(p->imgdec, thisv);
     js_arr_push(p->imgdec, jv_obj(pr));
@@ -2901,6 +2912,7 @@ static void net_deliver(js_page_t *p, jnet_t *n) {
         js_defn(r, "bodyUsed", JS_FALSE, 0);
         js_defn(r, "headers", jv_obj(headers_obj(p, n->ctype, n->blen)), 0);
         js_defn(r, "\x01" "corpo", jv_str(net_text(n)), PF_NOENUM);
+        js_defn(r, "\x01" "bytes", jv_obj(js_blob_new((const u8 *)n->body, n->body ? (u32)n->blen : 0, n->ctype)), PF_NOENUM);
         js_promise_resolve(prom, jv_obj(r));
         return;
     }
@@ -3007,6 +3019,32 @@ NATIVE(w_fetch) {
             if (jv_isstr(c1)) snprintf(ct, sizeof ct, "%s", jv_s(c1)->d);
         }
     }
+    if (!strncmp(url, "blob:", 5)) {
+        /* blob: da página: resposta local, sem rede */
+        const u8 *b;
+        u32 bl;
+        const char *type;
+        jsv blob = js_blob_from_url(u->d);
+        if (strcmp(method, "GET") || !js_blob_bytes(blob, &b, &bl, &type)) {
+            js_promise_reject(prom, jv_obj(js_make_err(E_TYPE, js_str_fmt("Falha ao buscar %s", u->d))));
+            return jv_obj(prom);
+        }
+        jsobj *r = js_newobj(p->realm->p_response);
+        js_defn(r, "status", jv_int(200), 0);
+        js_defn(r, "ok", JS_TRUE, 0);
+        js_defn(r, "statusText", jv_str(js_strz("OK")), 0);
+        js_defn(r, "url", jv_str(u), 0);
+        js_defn(r, "type", jv_str(js_strz("basic")), 0);
+        js_defn(r, "redirected", JS_FALSE, 0);
+        js_defn(r, "bodyUsed", JS_FALSE, 0);
+        js_defn(r, "headers", jv_obj(headers_obj(p, type, (int)bl)), 0);
+        bool bad;
+        jsstr *t = js_utf8_decode(b, bl, false, &bad);
+        js_defn(r, "\x01" "corpo", jv_str(t ? t : A[A_empty]), PF_NOENUM);
+        js_defn(r, "\x01" "bytes", blob, PF_NOENUM);
+        js_promise_resolve(prom, jv_obj(r));
+        return jv_obj(prom);
+    }
     net_start(p, url, method, body ? body->d : NULL, body ? (int)body->len : 0, ct, 0, prom);
     return jv_obj(prom);
 }
@@ -3024,7 +3062,20 @@ NATIVE(resp_text) {
     jsv b = resp_body(thisv);
     TRYV(b);
     jsobj *pr = js_promise_new();
-    if (self->u.nat.magic == 0) js_promise_resolve(pr, b);
+    if (self->u.nat.magic >= 2) {
+        /* arrayBuffer() e blob(): os bytes da resposta */
+        jsprop *bp = js_ownprop(jv_o(thisv), js_intern("\x01" "bytes", -1));
+        const u8 *d = NULL;
+        u32 n = 0;
+        const char *type = "";
+        if (bp) js_blob_bytes(bp->v, &d, &n, &type);
+        if (self->u.nat.magic == 3) js_promise_resolve(pr, bp ? bp->v : jv_obj(js_blob_new(NULL, 0, "")));
+        else {
+            jsobj *ab = js_abuf_new(n);
+            if (ab && n) memcpy(ab->u.buf.data, d, n);
+            js_promise_resolve(pr, jv_obj(ab));
+        }
+    } else if (self->u.nat.magic == 0) js_promise_resolve(pr, b);
     else {
         jsv v = js_json_parse(jv_s(b), JS_UNDEF);
         if (v == JS_EXC) js_promise_reject(pr, js_catch());
@@ -3322,6 +3373,8 @@ void js_dom_init(jsrealm *r) {
     r->p_response = js_newobj(op);
     js_defnative(r->p_response, "text", resp_text, 0, 0);
     js_defnative(r->p_response, "json", resp_text, 0, 1);
+    js_defnative(r->p_response, "arrayBuffer", resp_text, 0, 2);
+    js_defnative(r->p_response, "blob", resp_text, 0, 3);
     r->p_xhr = js_newobj(op);
     jsobj *xc = js_newctor(xhr_ctor, "XMLHttpRequest", 0, r->p_xhr);
     js_defn(g, "XMLHttpRequest", jv_obj(xc), PF_NOENUM);
@@ -3335,6 +3388,8 @@ void js_dom_init(jsrealm *r) {
     js_defn(scr, "width", jv_int(1280), 0);
     js_defn(scr, "height", jv_int(800), 0);
     js_defn(g, "screen", jv_obj(scr), PF_NOENUM);
+    js_blob_init(r);
+    js_url_init(r);
     js_canvas_init(r);
 }
 
@@ -3344,6 +3399,8 @@ doc_t *js_page_doc(js_page_t *p) { return p ? p->doc : NULL; }
 void js_page_repaint(js_page_t *p) { if (p) p->dirty = true; }
 js_page_t *js_cur_page(void) { return cur_page(); }
 node_t *js_page_focus(js_page_t *p) { return p ? p->focus : NULL; }
+int js_page_add_timer(js_page_t *p, jsv fn, double ms) { return p ? add_timer(p, fn, ms, false, 0, NULL) : 0; }
+const char *js_page_origin(js_page_t *p) { return p ? p->origin : "null"; }
 
 /* ============================================================ interface pública */
 static void page_origin(const char *url, char *out, int cap) {

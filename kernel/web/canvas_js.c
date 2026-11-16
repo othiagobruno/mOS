@@ -33,6 +33,9 @@ jsv js_throw_dom(const char *name, const char *msg) {
     return js_throw(jv_obj(e));
 }
 
+/* DOMException como valor (para rejeitar promessas) */
+static jsv js_catch_dom(const char *name, const char *msg) { js_throw_dom(name, msg); return js_catch(); }
+
 NATIVE(domexc_ctor) {
     UNUSED_ARGS;
     jsobj *e = js_newobj(J.realm->p_domexc);
@@ -639,7 +642,13 @@ static int image_source(ctx_t *X, jsv v, isrc_t *S) {
     memset(S, 0, sizeof *S);
     node_t *n = jv_iscls(v, CL_NODE) ? jv_o(v)->u.host.node : NULL;
     if (!n || n->type != N_ELEM || (n->tag != T_IMG && n->tag != T_CANVAS && n->tag != T_SVG)) {
-        js_throw_err(E_TYPE, "origem de imagem inválida (esperado <img> ou <canvas>)");
+        if (jv_iscls(v, CL_HOST) && has_proto(jv_o(v), J.realm->p_imgbitmap)) {
+            cpat_t *b = blob_of(v);   /* ImageBitmap: pixels no mesmo formato do padrão */
+            if (!b || !b->w || !b->h) { js_throw_dom("InvalidStateError", "ImageBitmap fechado"); return -1; }
+            S->px = b->px; S->w = b->w; S->h = b->h; S->stride = b->w;
+            return 1;
+        }
+        js_throw_err(E_TYPE, "origem de imagem inválida (esperado <img>, <canvas> ou ImageBitmap)");
         return -1;
     }
     if (n->tag == T_CANVAS) {
@@ -1152,6 +1161,150 @@ NATIVE(cv_todataurl) {
     return jv_str(r);
 }
 
+/* tarefa do toBlob: data = callback, data2 = Blob ou null */
+NATIVE(cv_toblob_task) {
+    UNUSED_ARGS;
+    jsv a = self->u.nat.data2;
+    if (js_call(self->u.nat.data, JS_NULL, 1, &a) == JS_EXC) js_report_exception();
+    return JS_UNDEF;
+}
+
+NATIVE(cv_toblob) {
+    UNUSED_ARGS;
+    node_t *n = this_canvas(thisv);
+    if (!n) return JS_EXC;
+    if (!js_iscallable(ARG(0))) return js_throw_err(E_TYPE, "toBlob: callback esperado");
+    canvas2d_t *c = canvas_of(js_page_doc(jv_o(thisv)->u.host.page), n, true);
+    jsv blob = JS_NULL;
+    if (c && c->s && c->w && c->h) {
+        /* só PNG é codificado aqui; a especificação manda cair em PNG para os outros tipos */
+        usize len = 0;
+        u8 *png = canvas_png(c, &len);
+        if (png) { jsobj *b = js_blob_new(png, (u32)len, "image/png"); kfree(png); if (!b) return JS_EXC; blob = jv_obj(b); }
+    }
+    jsobj *task = js_newnative(cv_toblob_task, "toBlob", 0, 0);
+    task->u.nat.data = ARG(0);
+    task->u.nat.data2 = blob;
+    js_page_add_timer(jv_o(thisv)->u.host.page, jv_obj(task), 0);
+    return JS_UNDEF;
+}
+
+/* ============================================================ ImageBitmap */
+static jsobj *new_bitmap(int w, int h, cpat_t **out) {
+    void *d;
+    jsobj *o = new_blob_obj(J.realm->p_imgbitmap, (u32)(sizeof(cpat_t) + (usize)w * h * 4), &d);
+    if (!o) return NULL;
+    cpat_t *b = d;
+    b->w = w; b->h = h; b->rep = REP_NONE; b->m = MID;
+    *out = b;
+    return o;
+}
+
+/* createImageBitmap(origem[, sx, sy, sw, sh][, opções]) */
+NATIVE(w_createimagebitmap) {
+    UNUSED_ARGS;
+    jsobj *pr = js_promise_new();
+    jsv src = ARG(0), opts = argc == 2 || argc == 6 ? ARG(argc - 1) : JS_UNDEF;
+    if (argc < 1) return js_throw_err(E_TYPE, "createImageBitmap: é necessária uma origem");
+    /* pixels da origem (pré-multiplicados) */
+    const u32 *px = NULL;
+    int w = 0, h = 0, stride = 0;
+    surface_t *own = NULL;
+    const u8 *bd;
+    u32 bn;
+    if (js_blob_bytes(src, &bd, &bn, NULL)) {
+        own = bn ? image_decode(bd, bn) : NULL;
+        if (!own) { js_promise_reject(pr, js_catch_dom("InvalidStateError", "createImageBitmap: o Blob não é uma imagem decodificável")); return jv_obj(pr); }
+        px = own->px; w = own->w; h = own->h; stride = own->stride;
+    } else if (jv_isobj(src) && has_proto(jv_o(src), J.realm->p_imgdata)) {
+        u8 *rgba;
+        if (!imagedata_of(src, &w, &h, &rgba)) return JS_EXC;
+        own = surface_new(w, h);
+        if (!own || !own->px) { surface_free(own); return js_throw_err(E_RANGE, "sem memória"); }
+        for (int i = 0; i < w * h; i++) {
+            u32 a = rgba[4 * i + 3];
+            own->px[i] = a << 24 | ((rgba[4 * i] * a + 127) / 255) << 16 | ((rgba[4 * i + 1] * a + 127) / 255) << 8 | (rgba[4 * i + 2] * a + 127) / 255;
+        }
+        px = own->px; stride = w;
+    } else {
+        js_page_t *p = js_cur_page();
+        ctx_t X;
+        memset(&X, 0, sizeof X);
+        X.p = p;
+        isrc_t S;
+        int r = image_source(&X, src, &S);
+        if (r < 0) { js_promise_reject(pr, js_catch()); return jv_obj(pr); }
+        if (!r) { js_promise_reject(pr, js_catch_dom("InvalidStateError", "createImageBitmap: a imagem ainda não carregou")); return jv_obj(pr); }
+        own = S.own;
+        px = S.px; w = S.w; h = S.h; stride = S.stride;
+    }
+    /* recorte */
+    int sx = 0, sy = 0, sw = w, sh = h;
+    if (argc >= 5) {
+        float f[4];
+        int r = fargs(argc, argv, 1, 4, f);
+        if (r < 0) { surface_free(own); return JS_EXC; }
+        if (!r || f[2] == 0 || f[3] == 0) { surface_free(own); return js_throw_dom("IndexSizeError", "createImageBitmap: retângulo inválido"); }
+        sx = (int)ffloor(f[0]); sy = (int)ffloor(f[1]); sw = (int)f[2]; sh = (int)f[3];
+        if (sw < 0) { sx += sw; sw = -sw; }
+        if (sh < 0) { sy += sh; sh = -sh; }
+    }
+    /* opções: resizeWidth/resizeHeight e imageOrientation flipY. premultiplyAlpha e colorSpaceConversion só mudam o
+     * resultado em upload de textura WebGL; no 2D o desenho é sempre pré-multiplicado e sai igual. */
+    int rw = sw, rh = sh;
+    bool flip = false;
+    if (jv_isobj(opts)) {
+        jsv a = js_getn(opts, "resizeWidth"), b = js_getn(opts, "resizeHeight"), o = js_getn(opts, "imageOrientation");
+        if (js_pending()) { surface_free(own); return JS_EXC; }
+        if (a != JS_UNDEF) { double v = js_tonum(a); if (!(v >= 1) || v > 16384) { surface_free(own); return js_throw_dom("InvalidStateError", "resizeWidth inválido"); } rw = (int)v; if (b == JS_UNDEF) rh = (int)((double)sh * rw / sw + 0.5); }
+        if (b != JS_UNDEF) { double v = js_tonum(b); if (!(v >= 1) || v > 16384) { surface_free(own); return js_throw_dom("InvalidStateError", "resizeHeight inválido"); } rh = (int)v; if (a == JS_UNDEF) rw = (int)((double)sw * rh / sh + 0.5); }
+        flip = str_is(o, "flipY");
+    }
+    if ((u64)rw * rh > (64u << 20)) { surface_free(own); return js_throw_err(E_RANGE, "ImageBitmap grande demais"); }
+    /* cópia do recorte (fora da origem fica transparente) */
+    surface_t *cut = surface_new(sw, sh);
+    if (!cut || !cut->px) { surface_free(cut); surface_free(own); return js_throw_err(E_RANGE, "sem memória"); }
+    for (int y = 0; y < sh; y++)
+        for (int x = 0; x < sw; x++) {
+            int ix = sx + x, iy = sy + y;
+            cut->px[(usize)y * sw + x] = ix >= 0 && iy >= 0 && ix < w && iy < h ? px[(usize)iy * stride + ix] : 0;
+        }
+    surface_free(own);
+    surface_t *fin = cut;
+    if (rw != sw || rh != sh) { fin = image_scale(cut, rw, rh); surface_free(cut); if (!fin) return js_throw_err(E_RANGE, "sem memória"); }
+    cpat_t *bm;
+    jsobj *o = new_bitmap(fin->w, fin->h, &bm);
+    if (!o) { surface_free(fin); return JS_EXC; }
+    for (int y = 0; y < fin->h; y++) {
+        const u32 *row = fin->px + (usize)(flip ? fin->h - 1 - y : y) * fin->stride;
+        memcpy(bm->px + (usize)y * fin->w, row, (usize)fin->w * 4);
+    }
+    surface_free(fin);
+    js_promise_resolve(pr, jv_obj(o));
+    return jv_obj(pr);
+}
+
+/* getters: 0 width 1 height */
+NATIVE(bm_get) {
+    UNUSED_ARGS;
+    if (!jv_iscls(thisv, CL_HOST) || !has_proto(jv_o(thisv), J.realm->p_imgbitmap)) return js_throw_err(E_TYPE, "Invocação ilegal: não é um ImageBitmap");
+    cpat_t *b = blob_of(thisv);
+    return jv_int(b ? (self->u.nat.magic ? b->h : b->w) : 0);
+}
+
+NATIVE(bm_close) {
+    UNUSED_ARGS;
+    if (!jv_iscls(thisv, CL_HOST) || !has_proto(jv_o(thisv), J.realm->p_imgbitmap)) return js_throw_err(E_TYPE, "Invocação ilegal: não é um ImageBitmap");
+    jsv b = jv_o(thisv)->u.host.extra;
+    if (jv_iscls(b, CL_ARRAYBUFFER)) {
+        /* libera os pixels já: largura e altura viram 0 */
+        jsobj *ab = jv_o(b);
+        cpat_t *nb = krealloc(ab->u.buf.data, sizeof(cpat_t));
+        if (nb) { nb->w = nb->h = 0; ab->u.buf.data = (u8 *)nb; ab->u.buf.len = sizeof(cpat_t); }
+    }
+    return JS_UNDEF;
+}
+
 NATIVE(illegal_ctor) { UNUSED_ARGS; return js_throw_err(E_TYPE, "Construtor ilegal"); }
 
 /* ============================================================ registro */
@@ -1174,6 +1327,7 @@ void js_canvas_init(jsrealm *r) {
     js_defaccessor(cp, js_intern("height", -1), jv_obj(js_newnative(cv_size_get, "height", 0, 1)), jv_obj(js_newnative(cv_size_set, "height", 1, 1)), 0);
     js_defnative(cp, "getContext", cv_getcontext, 1, 0);
     js_defnative(cp, "toDataURL", cv_todataurl, 0, 0);
+    js_defnative(cp, "toBlob", cv_toblob, 1, 0);
     iface(g, "HTMLCanvasElement", cp, NULL, 0);
     /* CanvasRenderingContext2D */
     r->p_ctx2d = js_newobj(op);
@@ -1221,6 +1375,13 @@ void js_canvas_init(jsrealm *r) {
     r->p_cpat = js_newobj(op);
     js_defnative(r->p_cpat, "setTransform", pat_settransform, 0, 0);
     iface(g, "CanvasPattern", r->p_cpat, NULL, 0);
+    /* ImageBitmap e createImageBitmap */
+    r->p_imgbitmap = js_newobj(op);
+    js_defgetter(r->p_imgbitmap, "width", bm_get, 0);
+    js_defgetter(r->p_imgbitmap, "height", bm_get, 1);
+    js_defnative(r->p_imgbitmap, "close", bm_close, 0, 0);
+    iface(g, "ImageBitmap", r->p_imgbitmap, NULL, 0);
+    js_defnative(g, "createImageBitmap", w_createimagebitmap, 1, 0);
     /* Path2D */
     r->p_path2d = js_newobj(op);
     for (int i = 0; i < 10; i++) js_defnative(r->p_path2d, po[i], path_op, pon[i], i);
