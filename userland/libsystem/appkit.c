@@ -3091,7 +3091,7 @@ static void dispatch(gui_event_t *g) {
         { extern void cx_gc_keyboard_event(u16 mac_keycode, u64 mods, int down); cx_gc_keyboard_event(mac_keycode(g->key), mac_mods(g->mods), 1); }
         if (menu_shortcut(g)) break;
         if ((g->mods & 8) && (g->key == 'q' || g->key == 'Q')) { MSG(void, NSApp, "terminate:", (id)0); break; }
-        if ((g->mods & 8) && (g->key == 'w' || g->key == 'W')) { w_perform_close(w, 0, 0); break; }
+        if ((g->mods & 8) && (g->key == 'w' || g->key == 'W')) { MSG(void, w, "performClose:", w); break; }   /* pela mensagem: o NSDocument e as subclasses interceptam */
         /* Enter aciona o botão padrão */
         /* (um campo de texto com ação própria trata o Return; sem ação, vale o botão padrão, como no Cocoa) */
         if (g->key == 10 && !(s->first && ((vs(s->first)->kind == K_TEXT && vs(s->first)->action) || vs(s->first)->kind == K_TV))) {
@@ -3370,7 +3370,7 @@ static void al_begin_sheet_delegate(id self, SEL c, id win, id delegate, SEL did
 /* ================================================================ NSMenu (aceito, sem efeito visual) */
 typedef struct { id title, attr_title, items, key, submenu; SEL action; id target; i64 tag; int state; BOOL sep, disabled; u64 mask; BOOL mask_set;
                  BOOL hidden, alternate, header; id image, represented;
-                 id owner, delegate; } menust_t;   /* owner: o NSMenu que contém o item (fraco); delegate: do NSMenu (fraco) */
+                 id owner, delegate; BOOL auto_off; } menust_t;   /* auto_off: desligado pela validação (autoenablesItems); owner: o NSMenu que contém o item (fraco); delegate: do NSMenu (fraco) */
 static menust_t *mn(id m) { if (!ST(m)) { menust_t *s = calloc(1, sizeof *s); s->items = cx_arr_new(&NSMutableArray_c); ST(m) = s; } return ST(m); }
 static id mn_init_title(id self, SEL c, id t) { (void)c; keep(&mn(self)->title, t); menus_dirty = YES; return self; }
 static void mn_add(id self, SEL c, id item) { (void)c; if (!item) return; cx_arr_add(mn(self)->items, item); mn(item)->owner = self; menus_dirty = YES; }
@@ -3529,7 +3529,29 @@ static void shortcut_text(id key, u64 mask, char *out, usize cap) {
     snprintf(out, cap, "%s%s%s\xE2\x8C\x98%c", (mask & (1u << 19)) ? "\xE2\x8C\xA5" : "", (upper || (mask & (1u << 17))) ? "\xE2\x87\xA7" : "",
              (mask & (1u << 18)) ? "\xE2\x8C\x83" : "", (char)toupper((u8)k[0]));
 }
+/* validação dos itens da barra (autoenablesItems + validateMenuItem: pela cadeia), como o Cocoa faz ao abrir o
+ * menu: aqui a barra é desenhada pelo window server, então o estado é recalculado a cada 0,4 s e republicado só
+ * quando muda */
+int cx_menu_item_valid(id menu, id item, id from_view);
+static void revalidate_menu(id menu, int depth) {
+    if (!menu || depth > 6) return;
+    nsarr_t *its = (nsarr_t *)mn(menu)->items;
+    BOOL autoen = cx_responds(menu->isa, sel_registerName("autoenablesItems")) ? MSG0(BOOL, menu, "autoenablesItems") : YES;
+    for (u64 i = 0; i < its->n; i++) {
+        id it = its->items[i];
+        menust_t *m = mn(it);
+        if (m->submenu) revalidate_menu(m->submenu, depth + 1);
+        if (m->sep || !m->action) continue;
+        BOOL off = autoen ? !cx_menu_item_valid(menu, it, 0) : NO;
+        if (off != m->auto_off) { m->auto_off = off; menus_dirty = YES; }
+    }
+}
 static void sync_menus(void) {
+    if (app.menu) {
+        static double last;
+        double now = cx_now();
+        if (now - last > 0.4) { last = now; revalidate_menu(app.menu, 0); }
+    }
     if (!app.menu || (menus_sent && !menus_dirty)) return;
     menus_dirty = NO;
     menus_sent = YES;
@@ -3548,7 +3570,7 @@ static void sync_menus(void) {
         mb_put(&b, &n, &cap, &cnt, 4);
         for (u64 k = 0; k < its->n; k++) {
             menust_t *m = mn(its->items[k]);
-            u32 act = m->sep ? 0 : menu_id(its->items[k]), fl = (m->disabled ? 1 : 0) | (m->state ? 2 : 0);
+            u32 act = m->sep ? 0 : menu_id(its->items[k]), fl = ((m->disabled || m->auto_off) ? 1 : 0) | (m->state ? 2 : 0);
             char sc[32];
             shortcut_text(m->key, mi_mask_get(its->items[k], 0), sc, sizeof sc);
             mb_put(&b, &n, &cap, &act, 4);
@@ -3566,19 +3588,12 @@ static id key_window_obj(void);
 static BOOL perform_item(id item) {
     menust_t *m = mn(item);
     if (!m->action) return NO;
+    if (m->auto_off || m->disabled) return NO;
     id t = m->target;
-    if (!t) {
+    if (!t) {   /* cadeia completa: first responder → nextResponder… → janela → delegate → controlador → documento → NSApp → delegate → NSDocumentController */
+        extern id cx_menu_find_target(SEL a, id from_view);
         id w = key_window_obj();
-        id cands[8];
-        int nc = 0;
-        if (w) {
-            for (id r = ws(w)->first; r && nc < 4; r = cx_is_subclass(r->isa, &NSView_c) ? vs(r)->superview : 0) cands[nc++] = r;
-            cands[nc++] = w;
-            if (ws(w)->delegate) cands[nc++] = ws(w)->delegate;
-        }
-        cands[nc++] = NSApp;
-        if (app.delegate) cands[nc++] = app.delegate;
-        for (int i = 0; i < nc && !t; i++) if (cands[i] && cx_responds(cands[i]->isa, m->action)) t = cands[i];
+        t = cx_menu_find_target(m->action, w ? ws(w)->first : 0);
     }
     if (!t) return NO;
     ((void (*)(id, SEL, id))objc_msgSend)(t, m->action, item);

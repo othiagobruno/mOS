@@ -82,10 +82,13 @@ id cx_menu_find_target(SEL a, id from_view) {
         if (responds_sel(r, a)) return r;
         r = responds(r, "nextResponder") ? MSG0(id, r, "nextResponder") : 0;
     }
-    id tail[5] = {w, w && responds(w, "delegate") ? MSG0(id, w, "delegate") : 0,
-                  w && responds(w, "windowController") ? MSG0(id, w, "windowController") : 0,
-                  NSApp, NSApp ? MSG0(id, NSApp, "delegate") : 0};
-    for (int i = 0; i < 5; i++) if (responds_sel(tail[i], a)) return tail[i];
+    id wcl = w && responds(w, "windowController") ? MSG0(id, w, "windowController") : 0;
+    id doc = wcl && responds(wcl, "document") ? MSG0(id, wcl, "document") : 0;
+    cx_class_t *dcc = kls("NSDocumentController");
+    id dc = dcc && cx_responds(dcc->isa, sl("sharedDocumentController")) ? MSG0(id, (id)dcc, "sharedDocumentController") : 0;
+    id tail[7] = {w, w && responds(w, "delegate") ? MSG0(id, w, "delegate") : 0, wcl, doc,
+                  NSApp, NSApp ? MSG0(id, NSApp, "delegate") : 0, dc};
+    for (int i = 0; i < 7; i++) if (responds_sel(tail[i], a)) return tail[i];
     return 0;
 }
 
@@ -95,7 +98,7 @@ int cx_menu_item_valid(id menu, id item, id from_view) {
     if (!item) return 0;
     if (responds(item, "isSeparatorItem") && MSG0(BOOL, item, "isSeparatorItem")) return 0;
     if (!menu_autoenables(menu)) return responds(item, "isEnabled") ? MSG0(BOOL, item, "isEnabled") : 1;
-    if (responds(item, "isEnabled") && !MSG0(BOOL, item, "isEnabled")) return 0;
+    /* com autoenablesItems o alvo decide; o setEnabled: do item não conta (Cocoa) */
     SEL a = responds(item, "action") ? MSG0(SEL, item, "action") : 0;
     id sub = responds(item, "submenu") ? MSG0(id, item, "submenu") : 0;
     if (!a) return sub != 0;

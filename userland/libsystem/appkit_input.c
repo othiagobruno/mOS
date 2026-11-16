@@ -608,6 +608,7 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_menupop_init(void); cx_appkit_menupop_init(); }   /* appkit_menupop.c: menu flutuante, menu de contexto, validação */
     { extern void cx_appkit_controls_init(void); cx_appkit_controls_init(); } /* appkit_controls.c: NSPopUpButton, NSSegmentedControl */
     { extern void cx_appkit_controls2_init(void); cx_appkit_controls2_init(); } /* appkit_controls2.c: NSSearchField, NSColorWell/NSColorPanel, NSDatePicker */
+    { extern void cx_appkit_document_init(void); cx_appkit_document_init(); } /* appkit_document.c: NSDocument, NSDocumentController */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");
