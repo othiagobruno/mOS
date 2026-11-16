@@ -88,6 +88,7 @@ typedef struct mnet_h1 {
     void *ctx;
     void (*on_info)(void *ctx, int status, const mnet_hdrs_t *h);          /* 1xx (menos 101) */
     int (*on_body)(void *ctx, const uint8_t *d, size_t n);                 /* != 0 aborta */
+    int (*on_head)(void *ctx, struct mnet_h1 *p);                          /* cabeça final pronta, antes do corpo; != 0 aborta */
 } mnet_h1_t;
 void mnet_h1_init(mnet_h1_t *p, int no_body);
 /* Consome o que puder; devolve bytes usados (< n só quando a mensagem termina antes: o resto é da próxima)
@@ -202,3 +203,90 @@ int mnet_h2_ping(mnet_h2_t *c, const uint8_t opaque[8]);
 int mnet_h2_goaway(mnet_h2_t *c, int code);
 mnet_h2_stream_t *mnet_h2_find(mnet_h2_t *c, uint32_t id);
 int mnet_h2_can_open(const mnet_h2_t *c);
+
+/* ---- Content-Encoding (gzip, deflate, br, em cadeia). NULL = codificação desconhecida ou ausente. */
+typedef struct mnet_dec mnet_dec_t;
+mnet_dec_t *mnet_dec_new(const char *content_encoding, int (*sink)(void *, const uint8_t *, size_t), void *ctx);
+int mnet_dec_feed(mnet_dec_t *d, const uint8_t *in, size_t n);
+int mnet_dec_finish(mnet_dec_t *d);
+const char *mnet_dec_error(const mnet_dec_t *d);
+void mnet_dec_free(mnet_dec_t *d);
+
+/* ---- URL (RFC 3986): partes e resolução de referência relativa (Location, redirects) */
+typedef struct {
+    char scheme[16];
+    char host[256];          /* sem colchetes; IPv6 literal fica "::1" */
+    int port;                /* explícita ou a padrão do esquema; 0 se desconhecida */
+    int port_explicit, ipv6;
+    char *target;            /* caminho + "?" consulta (malloc), sem fragmento; "/" se vazio */
+    char *userinfo;          /* "usuario:senha" ou NULL */
+} mnet_url_t;
+int mnet_url_parse(const char *url, mnet_url_t *u);      /* 0 ok, -1 URL inválida */
+void mnet_url_free(mnet_url_t *u);
+char *mnet_url_resolve(const char *base, const char *ref); /* malloc; NULL se inválida */
+int mnet_default_port(const char *scheme);
+char *mnet_url_authority(const mnet_url_t *u);           /* "host[:porta]" para Host/:authority (malloc) */
+
+/* ---- cliente HTTP (NSURLSession, CFNetwork, libcurl usam isto). Erros = códigos de NSURLErrorDomain. */
+enum { MNET_E_UNKNOWN = -1, MNET_E_CANCELLED = -999, MNET_E_BAD_URL = -1000, MNET_E_TIMEOUT = -1001,
+       MNET_E_UNSUPPORTED = -1002, MNET_E_NO_HOST = -1003, MNET_E_CONNECT = -1004, MNET_E_LOST = -1005,
+       MNET_E_REDIRECTS = -1007, MNET_E_OFFLINE = -1009, MNET_E_BAD_RESPONSE = -1011, MNET_E_DECODE = -1015,
+       MNET_E_PARSE = -1017, MNET_E_TLS = -1200, MNET_E_CERT_UNTRUSTED = -1202, MNET_E_PROXY = -1004 };
+/* transporte da plataforma (sockets + TLS). Tempos em ms; read devolve >0 bytes, 0 fim, -1 erro, -2 tempo. */
+typedef struct mnet_io {
+    void *env;
+    void *(*connect)(void *env, const char *host, int port, int timeout_ms, int *err);
+    int (*starttls)(void *env, void *conn, const char *sni, const uint8_t *alpn, size_t alpn_len, char alpn_out[33],
+                    int timeout_ms, char *msg, size_t msglen);    /* 0 ou MNET_E_TLS/MNET_E_CERT_UNTRUSTED/... */
+    long (*read)(void *env, void *conn, void *buf, size_t n, int timeout_ms);
+    long (*write)(void *env, void *conn, const void *buf, size_t n, int timeout_ms);
+    void (*close)(void *env, void *conn);
+    long long (*now_ms)(void *env);                 /* relógio monotônico */
+    long long (*unix_time)(void *env);              /* segundos Unix (cookies) */
+    void (*lock)(void *env);                        /* protege o pool (NULL = um só fio) */
+    void (*unlock)(void *env);
+} mnet_io_t;
+typedef struct mnet_pool_ent mnet_pool_ent_t;
+typedef struct {
+    const mnet_io_t *io;
+    mnet_pool_ent_t *idle;
+    int idle_count, max_idle;
+    int idle_timeout_ms;
+    mnet_jar_t *jar;                                /* cookies compartilhados (NSHTTPCookieStorage) ou NULL */
+    char user_agent[160];
+} mnet_client_t;
+typedef struct {
+    int status, version;                            /* version: 10, 11 ou 20 */
+    mnet_hdrs_t hdrs;
+    char *url;                                      /* URL final (depois dos redirects) */
+    long long expected_len;                         /* Content-Length ou -1 */
+    char alpn[33];
+    int redirects;
+    int reused;                                     /* conexão reaproveitada */
+} mnet_resp_t;
+typedef struct {
+    const char *method, *url;
+    const mnet_hdrs_t *hdrs;
+    const uint8_t *body; size_t body_len;           /* corpo em memória, ou: */
+    long (*body_read)(void *ctx, uint8_t *buf, size_t n);   /* corpo em fluxo (0 = fim, <0 erro) */
+    int (*body_rewind)(void *ctx);                  /* para repetir depois de redirect 307/308 ou nova conexão */
+    long long body_stream_len;                      /* -1 = desconhecido (chunked no 1.1) */
+    int timeout_ms;                                 /* sem dados por este tempo -> MNET_E_TIMEOUT (0 = 60 s) */
+    int total_timeout_ms;                           /* pedido inteiro (0 = sem limite) */
+    int max_redirects;                              /* 0 = 16; -1 = não segue */
+    int no_cookies, no_decode, http1_only, no_reuse;
+    const char *proxy;                              /* "http://h:p", "https://h:p", "socks5://h:p" ou NULL */
+    const char *proxy_auth;                         /* valor de Proxy-Authorization ou usuário:senha do SOCKS */
+    void *ctx;
+    int (*on_response)(void *ctx, const mnet_resp_t *r);           /* 0 segue; != 0 cancela */
+    int (*on_body)(void *ctx, const uint8_t *d, size_t n);         /* != 0 cancela */
+    /* redirect: devolve 1 para seguir (pode trocar *url), 0 para entregar o 3xx como resposta final */
+    int (*on_redirect)(void *ctx, const mnet_resp_t *r, char **url);
+    void (*on_sent)(void *ctx, long long sent, long long total);
+    volatile int *cancel;                           /* != 0: cancela no próximo ponto de E/S */
+} mnet_req_t;
+void mnet_client_init(mnet_client_t *c, const mnet_io_t *io);
+void mnet_client_close_idle(mnet_client_t *c);
+/* 0 ok (resposta em *r, corpo já entregue por on_body) ou MNET_E_*; msg recebe o texto do erro */
+int mnet_fetch(mnet_client_t *c, const mnet_req_t *q, mnet_resp_t *r, char *msg, size_t msglen);
+void mnet_resp_free(mnet_resp_t *r);

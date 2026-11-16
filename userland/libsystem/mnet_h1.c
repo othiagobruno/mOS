@@ -53,8 +53,9 @@ void mnet_h1_init(mnet_h1_t *p, int no_body) {
     void *ctx = p->ctx;
     void (*oi)(void *, int, const mnet_hdrs_t *) = p->on_info;
     int (*ob)(void *, const uint8_t *, size_t) = p->on_body;
+    int (*oh)(void *, mnet_h1_t *) = p->on_head;
     memset(p, 0, sizeof *p);
-    p->ctx = ctx; p->on_info = oi; p->on_body = ob;
+    p->ctx = ctx; p->on_info = oi; p->on_body = ob; p->on_head = oh;
     p->no_body = no_body;
     p->length = -1;
 }
@@ -134,7 +135,13 @@ static int last_coding_chunked(const char *te) {
 }
 
 /* cabeçalhos completos: decide como o corpo termina */
+static int head_end2(mnet_h1_t *p);
 static int head_end(mnet_h1_t *p) {
+    int r = head_end2(p);
+    if (!r && p->head_done && p->on_head && p->on_head(p->ctx, p)) { p->err = "cancelado"; return -2; }
+    return r;
+}
+static int head_end2(mnet_h1_t *p) {
     if (p->status >= 100 && p->status < 200 && p->status != 101) {
         if (p->on_info) p->on_info(p->ctx, p->status, &p->hdrs);
         mnet_hdrs_free(&p->hdrs);
@@ -251,6 +258,7 @@ long mnet_h1_feed(mnet_h1_t *p, const uint8_t *d, size_t n) {
             int st = p->state;
             int r = line(p, l, ln);
             p->line.n = 0;
+            if (r == -2) { p->state = MNET_H1_ERROR; return -1; }
             if (r) return fail(p, st == MNET_H1_STATUS ? "linha de status inválida" :
                                   st == MNET_H1_HEADERS ? "cabeçalho inválido" : "chunked inválido");
             if (st == MNET_H1_HEADERS && p->state != MNET_H1_HEADERS && p->state != MNET_H1_STATUS) p->head_bytes = 0;

@@ -1,6 +1,6 @@
 /* Teste de host do núcleo mnet (docs/rede-apps.md): HTTP/1.1, cookies, datas e HPACK.
  *   gcc -std=gnu11 -Wall -Wextra -DMNET_HOST -I userland/libsystem userland/libsystem/mnet_*.c \
- *       tools/mnet_host_test.c -o /tmp/mnet_host_test && /tmp/mnet_host_test
+ *       tools/mnet_host_test.c -lz -l:libbrotlidec.so.1 -o /tmp/mnet_host_test && /tmp/mnet_host_test
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -277,6 +277,83 @@ static void t_hpack(void) {
     mnet_buf_free(&hb); mnet_buf_free(&back);
 }
 
+/* ---- URL (RFC 3986 §5.4) e Content-Encoding */
+static void t_url(void) {
+    const char *base = "http://a/b/c/d;p?q";
+    const char *ex[][2] = {
+        {"g:h", "g:h"}, {"g", "http://a/b/c/g"}, {"./g", "http://a/b/c/g"}, {"g/", "http://a/b/c/g/"},
+        {"/g", "http://a/g"}, {"//g", "http://g"}, {"?y", "http://a/b/c/d;p?y"}, {"g?y", "http://a/b/c/g?y"},
+        {"#s", "http://a/b/c/d;p?q#s"}, {"g#s", "http://a/b/c/g#s"}, {"g?y#s", "http://a/b/c/g?y#s"},
+        {";x", "http://a/b/c/;x"}, {"g;x", "http://a/b/c/g;x"}, {"", "http://a/b/c/d;p?q"}, {".", "http://a/b/c/"},
+        {"./", "http://a/b/c/"}, {"..", "http://a/b/"}, {"../", "http://a/b/"}, {"../g", "http://a/b/g"},
+        {"../..", "http://a/"}, {"../../", "http://a/"}, {"../../g", "http://a/g"},
+        {"../../../g", "http://a/g"}, {"../../../../g", "http://a/g"}, {"/./g", "http://a/g"}, {"/../g", "http://a/g"},
+        {"g.", "http://a/b/c/g."}, {".g", "http://a/b/c/.g"}, {"g..", "http://a/b/c/g.."}, {"..g", "http://a/b/c/..g"},
+        {"./../g", "http://a/b/g"}, {"./g/.", "http://a/b/c/g/"}, {"g/./h", "http://a/b/c/g/h"}, {"g/../h", "http://a/b/c/h"},
+        {"g;x=1/./y", "http://a/b/c/g;x=1/y"}, {"g;x=1/../y", "http://a/b/c/y"},
+    };
+    for (size_t i = 0; i < sizeof ex / sizeof *ex; i++) {
+        char *r = mnet_url_resolve(base, ex[i][0]);
+        CHECKS(r, ex[i][1]);
+        free(r);
+    }
+    mnet_url_t u;
+    CHECK(mnet_url_parse("HTTPS://user:pw@Exemplo.COM.:8443/a b?x=1#frag", &u) == 0);
+    CHECKS(u.scheme, "https"); CHECKS(u.host, "exemplo.com"); CHECK(u.port == 8443 && u.port_explicit);
+    CHECKS(u.target, "/a%20b?x=1"); CHECKS(u.userinfo, "user:pw");
+    char *au = mnet_url_authority(&u); CHECKS(au, "exemplo.com:8443"); free(au);
+    mnet_url_free(&u);
+    CHECK(mnet_url_parse("http://[::1]/", &u) == 0 && u.ipv6 && !strcmp(u.host, "::1") && u.port == 80);
+    au = mnet_url_authority(&u); CHECKS(au, "[::1]"); free(au);
+    mnet_url_free(&u);
+    CHECK(mnet_url_parse("http://h?q", &u) == 0); CHECKS(u.target, "/?q"); mnet_url_free(&u);
+    CHECK(mnet_url_parse("http://h:99999/", &u) < 0 && mnet_url_parse("nada", &u) < 0 && mnet_url_parse("http:///x", &u) < 0);
+}
+static int dec_sink(void *c, const uint8_t *d, size_t n) { return mnet_buf_put(c, d, n); }
+static int run_dec(const char *ce, const char *file, mnet_buf_t *out, size_t step) {
+    FILE *f = fopen(file, "rb");
+    if (!f) return -2;
+    uint8_t buf[1 << 16]; size_t n = fread(buf, 1, sizeof buf, f); fclose(f);
+    mnet_dec_t *d = mnet_dec_new(ce, dec_sink, out);
+    if (!d) return -3;
+    int r = 0;
+    for (size_t i = 0; i < n && !r; i += step) r = mnet_dec_feed(d, buf + i, n - i < step ? n - i : step);
+    if (!r) r = mnet_dec_finish(d);
+    mnet_dec_free(d);
+    return r;
+}
+static void t_decode(void) {
+    /* conteúdo de referência e versões comprimidas pelas ferramentas do host */
+    FILE *f = fopen("/tmp/mnet_dec_src", "wb");
+    for (int i = 0; i < 3000; i++) fprintf(f, "linha %d do corpo comprimido do mOS\n", i);
+    fclose(f);
+    int ok = system("python3 -I tools/mnet_dec_amostras.py") == 0;
+    f = fopen("/tmp/mnet_dec_src", "rb");
+    static uint8_t src[1 << 17]; size_t sn = fread(src, 1, sizeof src, f); fclose(f);
+    const char *cases[][2] = {{"gzip", "/tmp/mnet_dec.gz"}, {"x-gzip", "/tmp/mnet_dec.gz"}, {"deflate", "/tmp/mnet_dec.zlib"},
+                              {"deflate", "/tmp/mnet_dec.raw"}, {"br", "/tmp/mnet_dec.br"}};
+    CHECK(ok);
+    for (size_t i = 0; i < 5; i++) {
+        for (size_t step = 1; step <= 5000; step *= 70) {
+            mnet_buf_t o = {0};
+            int r = run_dec(cases[i][0], cases[i][1], &o, step);
+            if (r == -2 && i == 4) { printf("  (sem brotli no host: br não testado)\n"); break; }
+            CHECK(r == 0 && o.n == sn && !memcmp(o.p, src, sn));
+            mnet_buf_free(&o);
+        }
+    }
+    mnet_buf_t o = {0};
+    CHECK(run_dec("gzip", "/tmp/mnet_dec2.gz", &o, 999) == 0 && o.n == 2 * sn);   /* dois membros */
+    mnet_buf_free(&o);
+    CHECK(!mnet_dec_new("zstd", dec_sink, &o) && !mnet_dec_new("identity", dec_sink, &o));
+    /* truncado */
+    f = fopen("/tmp/mnet_dec.gz", "rb"); uint8_t g[1 << 16]; size_t gn = fread(g, 1, sizeof g, f); fclose(f);
+    mnet_dec_t *d = mnet_dec_new("gzip", dec_sink, &o);
+    CHECK(mnet_dec_feed(d, g, gn / 2) == 0 && mnet_dec_finish(d) < 0);
+    mnet_dec_free(d); mnet_buf_free(&o);
+    system("rm -f /tmp/mnet_dec_src /tmp/mnet_dec.gz /tmp/mnet_dec2.gz /tmp/mnet_dec.zlib /tmp/mnet_dec.raw /tmp/mnet_dec.br");
+}
+
 /* ---- HTTP/2: cliente e servidor do mnet ligados em memória */
 typedef struct { mnet_h2_t *c; int is_srv; mnet_buf_t body; int status, closed, close_code, trailers, heads, pings; long long body_want; } peer_t;
 static void h2_on_headers(void *ctx, mnet_h2_stream_t *st, const mnet_hdrs_t *h, int end) {
@@ -451,6 +528,8 @@ int main(void) {
     t_dates();
     t_cookies();
     t_hpack();
+    t_url();
+    t_decode();
     t_h2();
     t_h2_curl();
     printf("mnet: %d/%d ok\n", checks - fails, checks);
