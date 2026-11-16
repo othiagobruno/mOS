@@ -1,10 +1,13 @@
-# OpenH264 2.6.0 (Cisco, BSD-2) — só o decodificador
+# OpenH264 2.6.0 (Cisco, BSD-2) — decodificador e codificador
 
 Origem: https://github.com/cisco/openh264, tag v2.6.0 (tarball de 10/02/2025). Licença em `LICENSE` (BSD de 2 cláusulas).
-Copiados só `codec/api/wels`, `codec/common/{inc,src}` e `codec/decoder/{core,plus}/{inc,src}`; sem o codificador, sem
+Copiados só `codec/api/wels`, `codec/common/{inc,src}`, `codec/decoder/{core,plus}/{inc,src}`, `codec/encoder/core/{inc,src}`,
+`codec/encoder/plus/{inc,src/welsEncoderExt.cpp}` e `codec/processing/{interface,src}` (pré-processamento do codificador); sem
 assembly (o build do mOS não define `X86_ASM`/`HAVE_NEON`: código C genérico, o mesmo resultado em x86_64 e arm64).
 
 ## Alterações do mOS (`mos.patch` contra o original)
+
+O codificador e o `processing` estão como no original. As alterações são no decodificador:
 
 O decodificador original não sai bit-exato em fluxos Main/High com quadros B. Corrigido aqui, provado contra o ffmpeg
 (`tools/h264_test.sh`):

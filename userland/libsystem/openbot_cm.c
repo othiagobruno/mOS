@@ -75,6 +75,8 @@ typedef struct {
     u8 *pset;
     size_t *poff, *psz;
     size_t np, nal;
+    u8 *cookie;                 /* magic cookie do áudio (esds/ASC, OpusHead, alac...) */
+    size_t cookie_n;
 } fd_t;
 
 typedef struct {
@@ -111,6 +113,7 @@ static void fd_dealloc(id s, SEL c) {
     free(f->pset);
     free(f->poff);
     free(f->psz);
+    free(f->cookie);
     IMP sup = cx_lookup(cx_class_named("NSObject"), c);
     if (sup) ((void (*)(id, SEL))sup)(s, c);
 }
@@ -360,15 +363,23 @@ int CMAudioFormatDescriptionGetRichestDecodableFormat(void *d, void *asbd) {
     return cm_copy_asbd(f ? f->asbd : 0, f && f->has_asbd, asbd, 40);
 }
 int CMAudioFormatDescriptionCreate(void *a, const void *asbd, size_t ls, const void *l, size_t cs, const void *c, id ext, void **out) {
-    (void)a; (void)ls; (void)l; (void)cs; (void)c;
+    (void)a; (void)ls; (void)l;
     if (!out || !asbd) return CM_BAD_FMT;
-    fd_t *f = fd_new(0x736F756E /* soun */, 0);
+    u32 fmtid;
+    memcpy(&fmtid, (const u8 *)asbd + 8, 4);   /* mFormatID: o subtipo, como no macOS */
+    fd_t *f = fd_new(0x736F756E /* soun */, fmtid);
     if (!f) return CM_BAD_FMT;
     memcpy(f->asbd, asbd, sizeof f->asbd);
     f->has_asbd = 1;
+    if (cs && c && (f->cookie = malloc(cs))) { memcpy(f->cookie, c, cs); f->cookie_n = cs; }
     if (ext) { objc_release(f->ext); f->ext = objc_retain(ext); }
     *out = f;
     return 0;
+}
+const void *CMAudioFormatDescriptionGetMagicCookie(void *d, size_t *size) {
+    fd_t *f = as_fd(d);
+    if (size) *size = f ? f->cookie_n : 0;
+    return f && f->cookie_n ? f->cookie : 0;
 }
 const void *CMAudioFormatDescriptionGetStreamBasicDescription(void *d) {
     fd_t *f = as_fd(d);

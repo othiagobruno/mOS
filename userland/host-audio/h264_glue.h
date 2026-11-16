@@ -19,6 +19,28 @@ int cx_h264_decode(cx_h264 *d, const uint8_t *annexb, int n, uint64_t tag, cx_h2
 /* fim do fluxo: entrega os quadros que esperavam reordenação e deixa o decodificador pronto para continuar */
 int cx_h264_flush(cx_h264 *d, cx_h264_emit emit, void *ctx);
 void cx_h264_close(cx_h264 *d);
+
+/* ---- codificador (OpenH264 2.6.0, BSD-2): I420 -> Annex B, sem quadros B (como o VideoToolbox em tempo real) */
+typedef struct cx_h264enc cx_h264enc;
+typedef struct {
+    int width, height;
+    double fps;                 /* quadros por segundo esperados (controle de taxa) */
+    int bitrate;                /* bits por segundo; 0 = qualidade constante (qp) */
+    int qp;                     /* com bitrate 0: 0..51 */
+    int keyint;                 /* quadros entre IDRs; 0 = só o primeiro */
+    int profile;                /* 66 Baseline (CAVLC), 77 Main, 100 High (CABAC) */
+    int realtime;               /* 1: baixa latência (câmera, chamada); 0: arquivo */
+    int entropy;                /* 0 pelo perfil (Baseline CAVLC, Main/High CABAC), 1 CAVLC, 2 CABAC (Main/High) */
+} cx_h264enc_cfg;
+/* nal: uma NAL sem start code; type = nal_unit_type (5 IDR, 1 fatia, 7 SPS, 8 PPS, 6 SEI) */
+typedef void (*cx_h264enc_nal)(void *ctx, const uint8_t *nal, int n, int type);
+cx_h264enc *cx_h264enc_open(const cx_h264enc_cfg *cfg);
+/* um quadro; *idr = 1 se saiu IDR. 0 ok (quadro pulado pelo controle de taxa: nenhuma NAL), < 0 erro */
+int cx_h264enc_encode(cx_h264enc *e, const uint8_t *y, const uint8_t *u, const uint8_t *v, int sy, int suv, uint64_t ts_ms,
+                      int force_idr, cx_h264enc_nal nal, void *ctx, int *idr);
+int cx_h264enc_set_bitrate(cx_h264enc *e, int bitrate);
+int cx_h264enc_set_fps(cx_h264enc *e, double fps);
+void cx_h264enc_close(cx_h264enc *e);
 #ifdef __cplusplus
 }
 #endif
