@@ -1,7 +1,8 @@
 #!/bin/bash
 # Mede o corpus inteiro, um app por vez. Regras de RAM do PC (/home/thiago/OpenBot/Shared/mos-regras-de-ram.md):
-# o download (rede, pouca RAM) corre fora da trava e já adianta o próximo app; extração e machocheck correm dentro de
-# `flock /tmp/mos-pesado.lock nice -n 10`, só com RAM disponível >= 3000 MB. O binário é apagado depois de medido.
+# o download (rede, pouca RAM) corre fora da trava e já adianta o próximo app; extração e machocheck de arquivo com
+# 200 MB ou mais correm dentro de `flock /tmp/mos-pesado.lock nice -n 10` (descompactação grande); os menores, só com
+# `nice`. Tudo só com RAM disponível >= 3000 MB. O binário é apagado depois de medido.
 # Não roda o build: usa o libSystem.mos já compilado em build/. Uso: tools/corpus/varrer-tudo.sh [ids...]
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -29,7 +30,11 @@ for i in "${!ids[@]}"; do
         pre=""
     fi
     while [ "$(free -m | awk '/^Mem/{print $7}')" -lt 3000 ]; do sleep 60; done
-    flock /tmp/mos-pesado.lock nice -n 10 timeout 1800 python3 "$H" scan --tolerante --limpar --fixar --continuar \
+    # arquivo pequeno (< 200 MB) não é descompactação grande: mede fora da trava; o resto espera a vez nela
+    tam=$(du -sm "build/corpus/$id" 2>/dev/null | cut -f1)
+    trava=(flock /tmp/mos-pesado.lock)
+    [ "${tam:-999}" -lt 200 ] && trava=()
+    "${trava[@]}" nice -n 10 timeout 1800 python3 "$H" scan --tolerante --limpar --fixar --continuar \
         --lib build/libSystem.mos --disco build/disco-x86 --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/disco-arm64 \
         --summary "build/corpus/$id.summary.json" "$id" 2>&1 | grep -v '^baixando' | tail -2
 done
