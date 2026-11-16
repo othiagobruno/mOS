@@ -264,6 +264,12 @@ cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
     -ldl -o "$OUT/unw_hosttest"
 "$OUT/unw_hosttest"
 
+echo "==> libdispatch, runtime de blocos e Unicode do libSystem (testes de host)"
+sh "$ROOT/tools/dispatch_hosttest.sh"
+sh "$ROOT/tools/blocks_hosttest.sh"
+cc -DMOS_HOST_TEST -O1 "$ROOT/userland/libsystem/swiftrt.c" "$ROOT/tools/swiftrt_hosttest.c" -o "$OUT/swiftrt_hosttest"
+"$OUT/swiftrt_hosttest"
+
 echo "==> runtime Swift do Grok (teste de host)"
 bash "$ROOT/tools/swift-rt-grok-teste.sh" "$ZIG" "$OUT/swift-rt-grok"
 

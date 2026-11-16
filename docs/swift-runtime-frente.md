@@ -69,8 +69,13 @@ o runtime de verdade e o app chamava um `ret`.
    chamado na criação, início e fim da thread.
 7. **Concurrency sobre o Dispatch**: conferir que o executor global do `libswift_Concurrency` real usa
    `dispatch_async_swift_job`/fila global com QoS, `Task.sleep` (`dispatch_after`), `MainActor` na fila principal.
-8. **Unicode** de `swiftrt.c` (`_swift_stdlib_getNormData`, composição): conferir se a libswiftCore real traz
-   as tabelas; se sim, o fallback em C sai.
+8. ✅ **Unicode** de `swiftrt.c` (a stdlib Embedded e o caminho sem ObjC; a libswiftCore real tem a cópia interna dela):
+   NFC/NFD, maiúscula/minúscula/título, mapeamentos especiais, quebra de grafema e de palavra e emoji estendido com
+   as tabelas do próprio Swift 6.4.2 (`userland/third_party/swift-unicode`, Apache 2.0). Antes só ASCII/Latin-1 e
+   nenhuma normalização. Teste: `tools/swiftrt_hosttest.c` 15/15 (é = e + U+0301, ç, α, armênio, ß -> SS, 😀).
+9. ✅ **Runtime de blocos** (`objc.c`): a variável `__block` já no heap ganha referência em vez de nova cópia (o
+   dispatch_async aninhado lia valor velho; 2 falhas do dispatchteste na VM). Teste: `tools/blocks_hosttest.sh` 3/3
+   com blocos reais (2/3 com o código antigo). Os três testes de host entram no `tools/build.sh`.
 
 ## Decisão: os `swift_*` do libSystem
 O libSystem exporta ~209 `swift_*` de um runtime próprio (o caminho sem ObjC, usado pelo código C de SwiftUI/OpenBot do
