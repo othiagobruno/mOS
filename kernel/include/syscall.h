@@ -294,13 +294,13 @@ typedef struct {
 #define MOS_DESK_ACT_FOREGROUND  4u
 #define MOS_DESK_FLAG_DISMISS    1u    /* avisar quando o usuário fechar (evento action = -2) */
 #define MOS_DESK_FLAG_SILENT     2u    /* sem som */
-typedef struct { u64 title, subtitle, body, actions; i32 token; u32 flags; } mos_desk_banner_t;
+typedef struct { u64 title, subtitle, body, actions; int token; unsigned flags; } mos_desk_banner_t;   /* int/unsigned: o userland (mos.h) não define i32/u32 */
 
 /* MOS_DESK_TAKE_EX. action: -1 clique no corpo, -2 fechado pelo usuário (com MOS_DESK_FLAG_DISMISS), 0..3 botão;
  * text: o que foi digitado (ação com MOS_DESK_ACT_TEXT). */
 #define MOS_DESK_EV_CLICK   (-1)
 #define MOS_DESK_EV_DISMISS (-2)
-typedef struct { i32 token; i32 action; char text[256]; } mos_desk_event_t;
+typedef struct { int token; int action; char text[256]; } mos_desk_event_t;
 
 /* SYS_SPAWNVEC: vetores no espaço do pai. argv e envp são char *const * terminados em NULL.
  * envp 0 = o ambiente curto padrão (HOME, PATH, …). O Electron passa os dois completos:
