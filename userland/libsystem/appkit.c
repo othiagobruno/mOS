@@ -439,6 +439,45 @@ void NSEraseRect(NSRect r) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fi
 void NSFrameRectWithWidth(NSRect r, double t) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_rstroke(x + t / 2, y + t / 2, w - t, h - t, 0, t, ctx.fill); }
 void NSFrameRect(NSRect r) { NSFrameRectWithWidth(r, 1); }
 void NSRectFillList(const NSRect *r, i64 n) { for (i64 i = 0; i < n; i++) NSRectFill(r[i]); }
+void NSRectFillListUsingOperation(const NSRect *r, i64 n, u64 op) { for (i64 i = 0; i < n; i++) NSRectFillUsingOperation(r[i], op); }
+/* uma cor por retângulo (o NSColor vira a cor de preenchimento corrente, como -set) */
+void NSRectFillListWithColorsUsingOperation(const NSRect *r, const id *colors, i64 n, u64 op) {
+    u32 keep_fill = ctx.fill;
+    for (i64 i = 0; i < n; i++) { if (colors && colors[i]) ctx.fill = argb(colors[i]); NSRectFillUsingOperation(r[i], op); }
+    ctx.fill = keep_fill;
+}
+void NSRectFillListWithColors(const NSRect *r, const id *colors, i64 n) { NSRectFillListWithColorsUsingOperation(r, colors, n, 2 /* sourceOver */); }
+/* moldura com operação: as quatro faixas, cada uma com a operação pedida */
+void NSFrameRectWithWidthUsingOperation(NSRect r, double t, u64 op) {
+    if (t <= 0) return;
+    NSRect b[4] = {{{r.o.x, r.o.y}, {r.s.w, t}}, {{r.o.x, r.o.y + r.s.h - t}, {r.s.w, t}},
+                   {{r.o.x, r.o.y + t}, {t, r.s.h - 2 * t}}, {{r.o.x + r.s.w - t, r.o.y + t}, {t, r.s.h - 2 * t}}};
+    for (int i = 0; i < 4; i++) if (b[i].s.w > 0 && b[i].s.h > 0) NSRectFillUsingOperation(b[i], op);
+}
+/* recorte: interseção com o recorte vigente (NSRectClip); a lista usa o retângulo que cobre todos
+ * (o window server recorta por um retângulo só) */
+void NSRectClip(NSRect r) {
+    double x, y, w, h;
+    px_rect(r, &x, &y, &w, &h);
+    if (last_clip_on) {
+        double x0 = x > last_clip[0] ? x : last_clip[0], y0 = y > last_clip[1] ? y : last_clip[1];
+        double x1 = x + w < last_clip[0] + last_clip[2] ? x + w : last_clip[0] + last_clip[2];
+        double y1 = y + h < last_clip[1] + last_clip[3] ? y + h : last_clip[1] + last_clip[3];
+        x = x0; y = y0; w = x1 > x0 ? x1 - x0 : 0; h = y1 > y0 ? y1 - y0 : 0;
+    }
+    g_clip(x, y, w, h);
+}
+void NSRectClipList(const NSRect *r, i64 n) {
+    if (n <= 0) return;
+    double x0 = r[0].o.x, y0 = r[0].o.y, x1 = x0 + r[0].s.w, y1 = y0 + r[0].s.h;
+    for (i64 i = 1; i < n; i++) {
+        if (r[i].o.x < x0) x0 = r[i].o.x;
+        if (r[i].o.y < y0) y0 = r[i].o.y;
+        if (r[i].o.x + r[i].s.w > x1) x1 = r[i].o.x + r[i].s.w;
+        if (r[i].o.y + r[i].s.h > y1) y1 = r[i].o.y + r[i].s.h;
+    }
+    NSRectClip((NSRect){{x0, y0}, {x1 - x0, y1 - y0}});
+}
 void NSBeep(void) { extern void cx_beep(void); cx_beep(); }   /* coreaudio.c: o alerta do sistema no mixer */
 
 /* ================================================================ texto */
