@@ -7,6 +7,7 @@ extern "C" {
 #define _SC_NPROCESSORS_ONLN 58
 long sysconf(int name);
 int usleep(useconds_t us);
+pid_t getpid(void);
 #ifdef __cplusplus
 }
 #endif
