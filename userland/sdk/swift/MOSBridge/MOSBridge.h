@@ -28,6 +28,8 @@ void mos_request_render(void);
 void *mos_main_window(void);
 void mos_run_app(const char *title, double w, double h, void (*render)(void *, void *, double, double), void *ctx);
 void mos_log(const char *s);
+/* delegate do @NSApplicationDelegateAdaptor: o delegate interno do mos_run_app repassa a ele o que não trata */
+void mos_set_app_delegate(void *delegate);
 /* Geometria do hosting SwiftUI (userland/libsystem/swiftui_geom.c). O vidro é fallback: não amostra o fundo. */
 double mos_sui_clamp_offset(double offset, double delta, double viewport, double content);
 int mos_sui_intersect(double ax, double ay, double aw, double ah, double bx, double by, double bw, double bh,

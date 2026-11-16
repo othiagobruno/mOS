@@ -27,8 +27,12 @@ final class _MOSHostingState {
 
     nonisolated(unsafe) static var live: [ObjectIdentifier: _MOSHostingState] = [:]
     nonisolated(unsafe) static var timer: UnsafeMutableRawPointer?
+    /// o NSHostingView cujo grafo está sendo atualizado agora (as NSViewRepresentable viram subviews dele)
+    nonisolated(unsafe) static var renderingView: NSView?
+    weak var view: NSView?
 
     func attach(to view: AnyObject) {
+        self.view = view as? NSView
         let me = Unmanaged.passUnretained(self).toOpaque()
         let cv = mos_canvas({ ctx, _, _ in
             guard let ctx else { return }
@@ -56,7 +60,7 @@ final class _MOSHostingState {
         if let canvas { mos_set_frame(canvas, 0, 0, Double(s.width), Double(s.height)) }
         if host == nil || abs(s.width - size.width) > 0.5 || abs(s.height - size.height) > 0.5 {
             size = s
-            makeHost?(s)
+            withRenderingView { makeHost?(s) }
         }
         renderNow()
     }
@@ -69,7 +73,14 @@ final class _MOSHostingState {
             self.lastList = list
             if let c = self.canvas { mos_set_needs_display(c) }
         }
-        render()
+        withRenderingView { render() }
+    }
+
+    func withRenderingView(_ body: () -> Void) {
+        let old = _MOSHostingState.renderingView
+        _MOSHostingState.renderingView = view
+        defer { _MOSHostingState.renderingView = old }
+        body()
     }
 
     func install<Content: View>(host: StdoutRendererHost<Content>) {
@@ -97,13 +108,15 @@ final class _MOSHostingState {
 open class NSHostingView<Content>: NSView where Content: View {
     private let _mosState = _MOSHostingState()
     private var _rootView: Content
+    /// atualiza o host já criado: tamanho novo e raiz nova, sem recriar o grafo
+    private var _mosUpdateHost: ((CGSize) -> Void)?
 
-    /// A raiz da hierarquia de views do SwiftUI. Trocar a raiz recria o grafo.
+    /// A raiz da hierarquia de views do SwiftUI. Trocar a raiz atualiza o grafo existente (o estado fica).
     public var rootView: Content {
         get { _rootView }
         set {
             _rootView = newValue
-            if _mosState.size.width > 0 { _mosState.makeHost?(_mosState.size); _mosState.renderNow() }
+            if _mosState.size.width > 0 { _mosState.withRenderingView { _mosState.makeHost?(_mosState.size) }; _mosState.renderNow() }
         }
     }
 
@@ -122,10 +135,15 @@ open class NSHostingView<Content>: NSView where Content: View {
     private func _mosSetUp() {
         _mosState.makeHost = { [unowned self] size in
             Update.dispatchImmediately(reason: nil) {
+                if let update = self._mosUpdateHost { update(size); return }
                 var options = _RendererConfiguration.StdoutOptions()
                 options.surface = size
                 let host = StdoutRendererHost(rootView: self._rootView.frame(width: size.width, height: size.height),
                                               environment: EnvironmentValues(), options: options)
+                self._mosUpdateHost = { [unowned self, unowned host] s in
+                    host.mosSetSurface(s)
+                    host.mosSetRootView(self._rootView.frame(width: s.width, height: s.height))
+                }
                 self._mosState.install(host: host)
             }
         }

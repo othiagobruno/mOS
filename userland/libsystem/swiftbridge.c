@@ -148,7 +148,9 @@ void *mos_on_text(void *field, void (*fn)(void *, const char *), void *ctx) {
 void mos_set_callback_ctx(void *target, void *ctx) { cb_t *b = target ? ST((id)target) : 0; if (b) b->ctx = ctx; }
 
 /* ---- app: janela principal + renderização inicial e a cada redimensionamento */
-typedef struct { void (*render)(void *ctx, void *content, double w, double h); void *ctx; id window; } appcb_t;
+/* user: o delegate do @NSApplicationDelegateAdaptor do app SwiftUI; o delegate interno repassa a ele o que não trata
+ * (como o AppDelegate do SwiftUI da Apple, que fica no NSApp.delegate e encaminha ao do adaptor) */
+typedef struct { void (*render)(void *ctx, void *content, double w, double h); void *ctx; id window; id user; } appcb_t;
 static appcb_t appcb;
 static cx_class_t *appdel_cls;
 static void render_now(void) {
@@ -158,9 +160,26 @@ static void render_now(void) {
     rc_t f = ((rc_t (*)(id, SEL))cx_lookup(content->isa, fs))(content, fs);   /* retorno grande: chama o IMP direto */
     appcb.render(appcb.ctx, content, f.s.w, f.s.h);
 }
-static void ad_finish(id self, SEL c, id n) { (void)self; (void)c; (void)n; render_now(); MSG(void, appcb.window, "makeKeyAndOrderFront:", (id)0); }
+static BOOL user_responds(SEL s) { return appcb.user && MSG(BOOL, appcb.user, "respondsToSelector:", s); }
+static void ad_finish(id self, SEL c, id n) {
+    (void)self;
+    render_now();
+    MSG(void, appcb.window, "makeKeyAndOrderFront:", (id)0);
+    if (user_responds(c)) MSG(void, appcb.user, "applicationDidFinishLaunching:", n);
+}
+static id ad_forward(id self, SEL c, SEL s) { (void)self; (void)c; return user_responds(s) ? appcb.user : (id)0; }
+static BOOL ad_responds(id self, SEL c, SEL s) {
+    (void)c;
+    return cx_lookup(self->isa, s) != 0 || user_responds(s);
+}
 static void ad_resize(id self, SEL c, id n) { (void)self; (void)c; (void)n; render_now(); }
-static BOOL ad_last(id self, SEL c, id a) { (void)self; (void)c; (void)a; return YES; }
+static BOOL ad_last(id self, SEL c, id a) {
+    (void)self;
+    if (user_responds(c)) return MSG(BOOL, appcb.user, "applicationShouldTerminateAfterLastWindowClosed:", a);
+    return YES;
+}
+/* o delegate do @NSApplicationDelegateAdaptor (retido: vive enquanto o app) */
+void mos_set_app_delegate(void *d) { appcb.user = d ? MSG0(id, (id)d, "retain") : (id)0; }
 void mos_request_render(void) { render_now(); }
 void *mos_main_window(void) { return appcb.window; }
 void mos_run_app(const char *title, double w, double h, void (*render)(void *, void *, double, double), void *ctx) {
@@ -169,6 +188,8 @@ void mos_run_app(const char *title, double w, double h, void (*render)(void *, v
     cx_add_method(appdel_cls, "applicationDidFinishLaunching:", (void *)ad_finish);
     cx_add_method(appdel_cls, "windowDidResize:", (void *)ad_resize);
     cx_add_method(appdel_cls, "applicationShouldTerminateAfterLastWindowClosed:", (void *)ad_last);
+    cx_add_method(appdel_cls, "forwardingTargetForSelector:", (void *)ad_forward);
+    cx_add_method(appdel_cls, "respondsToSelector:", (void *)ad_responds);
     id del = cx_alloc_instance(appdel_cls);
     rc_t r = {{0, 0}, {w, h}};
     id win = MSG(id, MSG0(id, cls("NSWindow"), "alloc"), "initWithContentRect:styleMask:backing:defer:", r, (u64)15, (u64)2, 0);
