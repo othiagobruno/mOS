@@ -187,7 +187,8 @@ static id st_init_set_copy(id s, SEL c, id o, BOOL deep) {
     id a = MSG0(id, o, "allObjects");
     u64 n = MSG0(u64, a, "count");
     for (u64 i = 0; i < n; i++) {
-        id e = MSG(id, MSG(id, a, "objectAtIndex:", i), "copyWithZone:", (void *)0);
+        id src = MSG(id, a, "objectAtIndex:", i);
+        id e = MSG(id, src, "copyWithZone:", (void *)0);
         set_add(S(s), e, 1);
         objc_release(e);
     }
