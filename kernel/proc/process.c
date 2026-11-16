@@ -2523,6 +2523,23 @@ static i64 fsmeta_syscall(process_t *p, int op, u64 ureq) {
         kfree(k);
         return r;
     }
+    case MOS_FSM_ACCESS:                             /* access(2) usa os ids reais; faccessat(AT_EACCESS) os efetivos */
+        return rq.opts & 1 ? vfs_fsmeta(v, op, &rq, NULL, NULL, p->euid, p->egid)
+                           : vfs_fsmeta(v, op, &rq, NULL, NULL, p->uid, p->gid);
+    case MOS_FSM_GETACL: {
+        mos_fsmeta_t q = rq;
+        i64 need = vfs_fsmeta(v, op, &q, NULL, NULL, p->euid, p->egid);
+        if (need < 0 || !rq.buf) return need;
+        if (rq.size < (u64)need) return -MOS_ERANGE;
+        u8 *k = kmalloc((usize)need);
+        if (!k) return -MOS_ENOMEM;
+        q.size = (u64)need;
+        r = vfs_fsmeta(v, op, &q, NULL, k, p->euid, p->egid);
+        if (r > 0 && !uvm_copy_out(p, rq.buf, k, (usize)r)) r = -MOS_EFAULT;
+        kfree(k);
+        return r;
+    }
+    case MOS_FSM_SETACL:
     case MOS_FSM_SETXATTR: {
         if (rq.size > VFS_XATTR_VAL_MAX) return -7 /* E2BIG */;
         u8 *k = kmalloc(rq.size ? rq.size : 1);
@@ -3150,6 +3167,15 @@ static u64 proc_syscall_(int_frame_t *f) {
         bool wr = b & (MOS_O_WRONLY | MOS_O_RDWR);
         if (is_devnull(path)) { /* sem vnode: read/write tratam pelo caminho */ }
         else if (!v) {
+            if (b & MOS_O_CREAT) {                                /* criar: escrever + buscar na pasta (ACL ADD_FILE) */
+                char par[256];
+                strncpy(par, path, sizeof par - 1); par[sizeof par - 1] = 0;
+                char *sl = strrchr(par, '/');
+                if (sl) { if (sl == par) sl[1] = 0; else *sl = 0; }
+                vnode_t *pd = sl ? vfs_lookup_dir(par) : NULL;
+                int pe = pd ? vfs_may_create(pd, false, p->euid, p->egid) : 0;
+                if (pe) { r = pe; break; }
+            }
             if (!(b & MOS_O_CREAT)) {
                 if (diag || cdiag || (open_diag && strstr(path, "workbench"))) kprintf("open[diag]: %s (pid %d): ENOENT %s\n", p->name, p->pid, path);
                 r = -MOS_ENOENT;
@@ -3163,6 +3189,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             criado = 1;
         } else if (v->dir && wr) { if (cdiag) kprintf("open[diag]: %s (pid %d): EISDIR %s\n", p->name, p->pid, path); r = -MOS_EISDIR; break; }
         else if (wr && vfs_immutable(v)) { r = -MOS_EPERM; break; }                     /* uchg/schg */
+        else if (vfs_access(v, (wr ? 2 : 0) | (!(b & MOS_O_WRONLY) ? 4 : 0), p->euid, p->egid)) { r = -MOS_EACCES; break; }
         else if (wr && vfs_append_only(v) && (!(b & MOS_O_APPEND) || (b & MOS_O_TRUNC))) { r = -MOS_EPERM; break; }   /* uappnd */
         else if (wr && (b & MOS_O_TRUNC)) vfs_write_file(path, "", 0);
         if (cdiag) kprintf("open[diag]: %s (pid %d): ok %s flags %llx%s\n", p->name, p->pid, path, b, v && v->dir ? " (pasta)" : v ? "" : " (criado)");
@@ -3430,7 +3457,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         vnode_t *cv = vfs_lookup(path);
         if (!cv) { r = -MOS_ENOENT; break; }
         if (vfs_immutable(cv)) { r = -MOS_EPERM; break; }
-        if (p->euid != 0 && (u32)p->euid != cv->uid) { r = -MOS_EPERM; break; }   /* só o dono ou root */
+        if (vfs_authorize(cv, VFS_KR_WRITE_SECURITY, p->euid, p->egid)) { r = -MOS_EPERM; break; }   /* dono, root ou ACL */
         mode_apply(&cv->mode, (unsigned)b);
         vfs_meta_changed(cv);
         r = 0;
@@ -3442,7 +3469,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         vnode_t *fv = vfs_lookup(p->fds[a].path);
         if (!fv) { r = -MOS_ENOENT; break; }
         if (vfs_immutable(fv)) { r = -MOS_EPERM; break; }
-        if (p->euid != 0 && (u32)p->euid != fv->uid) { r = -MOS_EPERM; break; }
+        if (vfs_authorize(fv, VFS_KR_WRITE_SECURITY, p->euid, p->egid)) { r = -MOS_EPERM; break; }
         fchmod_apply(&fv->mode, &p->fds[a].mode, (unsigned)b);
         vfs_meta_changed(fv);
         r = 0;
@@ -3460,6 +3487,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         vnode_t *d = vfs_lookup(path);
         if (!d) { r = -MOS_ENOENT; break; }
         if (!d->dir) { r = -MOS_EINVAL; break; }
+        if (b == 0 && vfs_access(d, 4, p->euid, p->egid)) { r = -MOS_EACCES; break; }   /* LIST_DIRECTORY */
         vnode_t *e = d->child;
         for (u64 i = 0; e && i < b; i++) e = e->next;
         if (!e) { r = 0; break; }
@@ -3477,6 +3505,16 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         {
             bool existia = vfs_lookup(path) != NULL;
+            if (!existia) {                                       /* ACL ADD_SUBDIRECTORY ou escrever + buscar */
+                char par[256];
+                strncpy(par, path, sizeof par - 1); par[sizeof par - 1] = 0;
+                char *sl = strrchr(par, '/');
+                while (sl && sl > par && !sl[1]) { *sl = 0; sl = strrchr(par, '/'); }   /* "a/b/" */
+                if (sl) { if (sl == par) sl[1] = 0; else *sl = 0; }
+                vnode_t *pd = sl ? vfs_lookup_dir(par) : NULL;
+                int pe = pd ? vfs_may_create(pd, true, p->euid, p->egid) : 0;
+                if (pe) { r = pe; break; }
+            }
             vnode_t *nd = vfs_mkdir(path);
             r = nd ? 0 : -MOS_ENOENT;
             if (nd && !existia) { nd->uid = (u32)p->euid; nd->gid = nd->parent ? nd->parent->gid : (u32)p->egid; vfs_meta_changed(nd); }
@@ -3488,6 +3526,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         vnode_t *v = vfs_lookup(path);
         if (v && (vfs_no_unlink(v) || (v->parent && (vfs_immutable(v->parent) || vfs_append_only(v->parent))))) { r = -MOS_EPERM; break; }
+        if (v) { int de = vfs_may_delete(v, p->euid, p->egid); if (de) { r = de; break; } }
         r = !v ? -MOS_ENOENT : (orphan_if_open(v, path) || vfs_delete(v)) ? 0 : -MOS_EINVAL;
         if (r == 0) unix_unbind(path);
         break;
@@ -3501,16 +3540,19 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!v) { r = -MOS_ENOENT; break; }
         if (!slash || !slash[1]) { r = -MOS_EINVAL; break; }
         if (vfs_no_unlink(v) || (v->parent && vfs_immutable(v->parent))) { r = -MOS_EPERM; break; }
+        { int de = vfs_may_delete(v, p->euid, p->egid); if (de) { r = de; break; } }
         *slash = 0;
         vnode_t *np = vfs_lookup_dir(to[0] ? to : "/");   /* a pasta de destino pode ser um link (opt/<f> -> Cellar) */
         if (!np || !np->dir) { r = -MOS_ENOENT; break; }
         vnode_t *old = vfs_child(np, slash + 1);
         if (old == v) { r = 0; break; }
+        if (np != v->parent || !old) { int ce = vfs_may_create(np, v->dir, p->euid, p->egid); if (ce) { r = ce; break; } }
         if (old) {                                          /* POSIX: o destino é substituído (o git grava X.lock e renomeia) */
             if (old->dir && !v->dir) { r = -MOS_EISDIR; break; }
             if (!old->dir && v->dir) { r = -MOS_ENOTDIR; break; }
             if (old->dir && old->child) { r = -MOS_ENOTEMPTY; break; }
             if (vfs_no_unlink(old)) { r = -MOS_EPERM; break; }
+            { int de = vfs_may_delete(old, p->euid, p->egid); if (de) { r = de; break; } }
             if (!orphan_if_open(old, to_full) && !vfs_delete(old)) { r = -MOS_EINVAL; break; }
             unix_unbind(to_full);
         }
@@ -4002,6 +4044,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         vnode_t *d = vfs_lookup(path);
         if (!d) { r = -MOS_ENOENT; break; }
         if (!d->dir) { r = -MOS_EINVAL; break; }
+        if (vfs_access(d, 1, p->euid, p->egid)) { r = -MOS_EACCES; break; }   /* SEARCH */
         vfs_path(d, p->cwd, sizeof p->cwd);                 /* normaliza "..", "." */
         r = 0;
         break;

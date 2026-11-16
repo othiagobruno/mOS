@@ -195,6 +195,7 @@ i64 vfs_xattr_list(vnode_t *n, char *buf, u64 cap) {
     u64 need = 0;
     for (vxattr_t *x = n ? n->xattr : NULL; x; x = x->next) {
         if (is_finfo(x->name) && finfo_empty(x)) continue;
+        if (!strcmp(x->name, VFS_XATTR_SECURITY)) continue;          /* a ACL não é listada (xnu) */
         u64 k = strlen(x->name) + 1;
         if (buf && cap) {
             if (need + k > cap) return -E_RANGE;
@@ -269,15 +270,14 @@ void vfs_statx(vnode_t *v, void *stv) {
         st->nlink = 2;
         for (vnode_t *c = v->child; c; c = c->next) if (c->dir) st->nlink++;
     } else st->nlink = 1;
-    for (vxattr_t *x = v->xattr; x; x = x->next) st->nxattr++;
+    for (vxattr_t *x = v->xattr; x; x = x->next) if (strcmp(x->name, VFS_XATTR_SECURITY)) st->nxattr++;
     st->atime_ns = vfs_time_ns(v, VT_ATIME);
     st->mtime_ns = vfs_time_ns(v, VT_MTIME);
     st->ctime_ns = vfs_time_ns(v, VT_CTIME);
     st->btime_ns = vfs_time_ns(v, VT_BTIME);
 }
 
-/* o usuário comum do mOS é administrador (como a 1ª conta do macOS): staff, everyone e admin */
-static bool in_group(u32 gid, u32 egid) { return gid == egid || gid == 20 || gid == 12 || gid == 80; }
+static bool hidden_name(const char *n) { return n && !strcmp(n, VFS_XATTR_SECURITY); }
 
 i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf, int euid, int egid) {
     const mos_fsmeta_t *rq = rqv;
@@ -289,15 +289,50 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
         if (rq->size < sizeof(mos_statx_t)) return -MOS_EINVAL;
         vfs_statx(v, kbuf);
         return 0;
-    case MOS_FSM_GETXATTR:
+    case MOS_FSM_GETXATTR: {
+        int e = vfs_authorize(v, VFS_KR_READ_EXTATTR, euid, egid);
+        if (e) return e;
+        if (hidden_name(name)) return -MOS_ENOATTR;    /* a ACL não aparece como xattr (como no xnu) */
         return vfs_xattr_get(v, name, kbuf, rq->size, rq->pos);
-    case MOS_FSM_LISTXATTR:
-        return vfs_xattr_list(v, kbuf, kbuf ? rq->size : 0);
+    }
+    case MOS_FSM_LISTXATTR: {
+        int e = vfs_authorize(v, VFS_KR_READ_EXTATTR, euid, egid);
+        return e ? e : vfs_xattr_list(v, kbuf, kbuf ? rq->size : 0);
+    }
+    case MOS_FSM_ACCESS:                               /* access(2): rq->a = R 4 | W 2 | X 1 (0 = existe) */
+        if ((rq->a & 2) && ro) return -MOS_EROFS;
+        if ((rq->a & 2) && vfs_immutable(v)) return -MOS_EPERM;
+        return vfs_access(v, (int)(rq->a & 7), euid, egid);
+    case MOS_FSM_GETACL: {                             /* filesec inteiro (buf 0 = tamanho) */
+        int e = vfs_authorize(v, VFS_KR_READ_SECURITY, euid, egid);
+        if (e) return e;
+        vxattr_t *x = vfs_xattr_find(v, VFS_XATTR_SECURITY);
+        if (!x) return -MOS_ENOATTR;
+        if (!kbuf) return x->len;
+        if (rq->size < x->len) return -MOS_ERANGE;
+        memcpy(kbuf, x->val, x->len);
+        return x->len;
+    }
+    case MOS_FSM_SETACL: {                             /* size 0 = tira a ACL */
+        if (ro) return -MOS_EROFS;
+        if (vfs_immutable(v)) return -MOS_EPERM;
+        int e = vfs_authorize(v, VFS_KR_WRITE_SECURITY, euid, egid);
+        if (e) return e;
+        if (!rq->size) {
+            int r = vfs_xattr_remove(v, VFS_XATTR_SECURITY);
+            return r == -MOS_ENOATTR ? 0 : r;
+        }
+        if (!vfs_filesec_valid(kbuf, rq->size)) return -MOS_EINVAL;
+        return vfs_xattr_set(v, VFS_XATTR_SECURITY, kbuf, rq->size, 0, 0);
+    }
     case MOS_FSM_SETXATTR:
     case MOS_FSM_REMOVEXATTR: {
         if (ro) return -MOS_EROFS;
         if (vfs_immutable(v)) return -MOS_EPERM;
         int e = check_name(name);
+        if (e) return e;
+        if (hidden_name(name)) return op == MOS_FSM_SETXATTR ? -MOS_EPERM : -MOS_ENOATTR;   /* ACL: só por SETACL */
+        e = vfs_authorize(v, VFS_KR_WRITE_EXTATTR, euid, egid);
         if (e) return e;
         /* com.apple.system.*: só o kernel (ACL em com.apple.system.Security, fase 2) */
         if (!strncmp(name, "com.apple.system.", 17) && !root) return -MOS_EPERM;
@@ -324,7 +359,7 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
         if (ng == 0xffffffffu) ng = v->gid;
         if (!root) {
             if (!owner || nu != v->uid) return -MOS_EPERM;
-            if (ng != v->gid && !in_group(ng, (u32)egid)) return -MOS_EPERM;
+            if (ng != v->gid && !vfs_in_group(ng, euid, egid)) return -MOS_EPERM;
         }
         bool changed = nu != v->uid || ng != v->gid;
         v->uid = nu;
@@ -337,8 +372,11 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
         u32 mask = (u32)rq->a, now = (u32)rq->b;
         if (ro) return -MOS_EROFS;
         if (vfs_immutable(v)) return -MOS_EPERM;
-        /* datas explícitas: só o dono (ou root); "agora": quem pode escrever também pode (aqui: o dono) */
-        if (!owner) return -MOS_EPERM;
+        /* datas explícitas: só o dono (ou root, ou ACL com WRITE_ATTRIBUTES); "agora" nas duas (utimes(NULL)):
+         * basta poder escrever, como no xnu */
+        bool only_now = (mask & ~(u32)(VT_ATIME | VT_MTIME)) == 0 && (now & mask) == mask;
+        if (only_now) { if (!owner && vfs_access(v, 2, euid, egid)) return -MOS_EACCES; }
+        else if (!owner && vfs_authorize(v, VFS_KR_WRITE_ATTRIBUTES, euid, egid)) return -MOS_EPERM;
         i64 t = vfs_now_ns();
         i64 *slot[4] = {&v->atime_ns, &v->mtime_ns, &v->ctime_ns, &v->btime_ns};
         for (int i = 0; i < 4; i++) {
@@ -360,6 +398,7 @@ i64 vfs_fsmeta(vnode_t *v, int op, const void *rqv, const char *name, void *kbuf
     case MOS_FSM_READDIR: {
         mos_fsm_dirent_t *d = kbuf;
         if (!v->dir) return -MOS_ENOTDIR;
+        if (rq->pos == 0) { int e = vfs_access(v, 4, euid, egid); if (e) return e; }
         if (rq->size < sizeof *d) return -MOS_EINVAL;
         vnode_t *e = v->child;
         for (u64 i = 0; e && i < rq->pos; i++) e = e->next;

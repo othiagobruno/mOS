@@ -60,6 +60,7 @@ static vnode_t *add_child(vnode_t *dir, const char *name, bool isdir) {
     n->mtime = timer_ticks();
     vfs_meta_init(n, dir);
     n->meta = vfs_meta_live;
+    if (vfs_meta_live) vfs_acl_inherit(n, dir);           /* ACEs herdáveis da pasta (kernel/lib/vfsperm.c) */
     if (dir->flags & VFS_UF_TRACKED) n->flags |= VFS_UF_TRACKED;
     /* inserção ordenada (diretórios e arquivos misturados, ordem alfabética sem caixa) */
     vnode_t **pp = &dir->child;
@@ -330,6 +331,10 @@ void vfs_init(void) {
         if (!f) continue;
         f->data = bf->data; f->size = bf->size; f->cap = 0; f->mtime = 0;
         nf++;
+    }
+    {   /* /tmp: 1777 de root, como no macOS (só o dono apaga o que é seu) */
+        vnode_t *t = vfs_lookup("/tmp");
+        if (t) { t->mode = 01777 | 0x10000u; t->uid = 0; t->gid = 0; }
     }
     vfs_write_file("/Sistema/Biblioteca/versao.txt", MOS_NAME " " MOS_VERSION "\n", strlen(MOS_NAME " " MOS_VERSION "\n"));
     if (persist_available()) kprintf("VFS: arquivos carregados do disco do sistema (gravação ativa)\n");

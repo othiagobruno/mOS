@@ -119,6 +119,9 @@ enum {
     MOS_FSM_SETTIMES,      /* t[0..3] = acesso, modificação, mudança, criação (ns); a = máscara VT_* a gravar,
                             * b = máscara das que valem "agora" -> 0 */
     MOS_FSM_READDIR,       /* path = pasta, pos = índice, buf = mos_fsm_dirent_t*, size -> 1 copiado | 0 fim */
+    MOS_FSM_ACCESS,        /* a = R 4 | W 2 | X 1 (0 = só existe); opts 1 = ids efetivos (faccessat AT_EACCESS) -> 0 | -EACCES */
+    MOS_FSM_GETACL,        /* buf (0 = só o tamanho), size -> bytes da kauth_filesec (big-endian) | -ENOATTR */
+    MOS_FSM_SETACL,        /* buf, size (0 = tirar a ACL) -> 0; precisa de WRITE_SECURITY (dono ou ACL) */
 };
 #define MOS_FSM_ATIME 1   /* máscaras do MOS_FSM_SETTIMES (= VT_* do vfs.h) */
 #define MOS_FSM_MTIME 2

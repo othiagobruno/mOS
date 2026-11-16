@@ -66,3 +66,29 @@ nenhum vazamento ao apagar), também com `-fsanitize=address,undefined`.
 - `d_ino` do `readdir` do libSystem continua o índice (o `MOS_FSM_READDIR` já dá o inode; troca na fase 4).
 - `.vfsmeta` é regravado inteiro a cada mudança (registro incremental fica para quando pesar).
 - Verificado só no host e com `clang -fsyntax-only` nos arquivos do kernel e do libSystem; no QEMU, no build final.
+
+# Permissões e ACL (fase 2)
+
+`kernel/lib/vfsperm.c` decide todo acesso: bits POSIX (dono, grupo, outros), root (que só não executa arquivo sem
+nenhum bit x), sticky (`/tmp` é 1777 de root: só o dono do arquivo, o dono da pasta ou root apagam) e a ACL.
+
+- **ACL**: `kauth_filesec` big-endian no xattr protegido `com.apple.system.Security` (escondido de `listxattr` e
+  `getxattr`, como no xnu; só `MOS_FSM_GETACL`/`SETACL`). Avaliação do xnu: ACEs na ordem, uma negação que pega um
+  direito pedido nega, permissões tiram direitos da lista, o resto vai para os bits POSIX. Direitos `KAUTH_VNODE_*`.
+- **Herança**: arquivo novo leva as ACEs `file_inherit` da pasta; pasta nova leva as `directory_inherit` e, como
+  só-herança, as `file_inherit` (`limit_inherit` para no primeiro nível); todas marcadas `inherited`.
+- **Grupos da conta** (501): os de um administrador do macOS (staff 20, everyone 12, localaccounts 61, admin 80,
+  _lpadmin 98, _developer 204, access_ssh 399...). GUIDs de usuário e grupo como o `mbr_uid_to_uuid` do macOS.
+- **Onde vale**: open (ler/escrever), criar arquivo/pasta (ADD_FILE/ADD_SUBDIRECTORY), unlink/rmdir/rename (DELETE
+  no arquivo ou DELETE_CHILD na pasta, mais sticky), readdir (LIST_DIRECTORY), chdir (SEARCH), chmod e SETACL
+  (WRITE_SECURITY), get/set/list xattr (READ/WRITE_EXTATTR), utimes (NULL: basta escrever; datas: dono ou
+  WRITE_ATTRIBUTES), `access`/`faccessat` (ids reais; `AT_EACCESS` efetivos).
+- **libSystem** (`userland/libsystem/acl.c`): API inteira do `sys/acl.h` do Darwin (entradas, permset, flagset,
+  qualificador GUID, `acl_get/set_file/link_np/fd(_np)`, `acl_to_text`/`acl_from_text` no formato do macOS,
+  `acl_copy_ext/int`, `acl_size`, `acl_valid*`) e `membership.h` (`mbr_uid_to_uuid`, `mbr_gid_to_uuid`,
+  `mbr_uuid_to_id`, `mbr_check_membership`, nomes e strings). A tabela de ACL por processo do `cli.c` saiu.
+- Ainda não: travessia (busca em todas as pastas do caminho, só a última é checada), bit x no exec pelo kernel
+  (o carregador Mach-O é da Paula; hoje o libSystem decide pelo conteúdo), umask no kernel (o libSystem aplica 022).
+
+Testes: `tools/vfsmeta_test.c` (agora 115 verificações, com permissões, ACL, sticky e herança) e
+`sh tools/acl_test.sh` (26: texto ida e volta, entradas, formato externo, membership).

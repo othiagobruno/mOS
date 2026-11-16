@@ -1038,7 +1038,26 @@ int chdir(const char *path) {
     SYS1(SYS_CHDIR, rp);                                 /* o kernel guarda a pasta do processo: fork e posix_spawn herdam dele */
     return 0;
 }
-int access(const char *path, int mode) { mos_stat_t st; (void)mode; PATH(p, path); return ret_errno(SYS2(SYS_STAT, p, &st)) < 0 ? -1 : 0; }
+/* access/faccessat: o kernel decide (bits POSIX, root, ACL; ids reais, ou efetivos com AT_EACCESS) */
+int cx_follow_path(const char *in, char *out, size_t cap);
+int cx_access(const char *path, int mode, int eff, int follow) {
+    char p[1024];
+    if (follow) { if (cx_follow_path(path, p, sizeof p) < 0) return -1; }
+    else cx_path(path, p, sizeof p);
+    if (mode & ~7) { cx_errno = CX_EINVAL; return -1; }
+    mos_fsmeta_t rq = {0};
+    rq.fd = -1;
+    rq.path = (unsigned long long)p;
+    rq.a = (unsigned)mode;
+    rq.opts = eff ? 1 : 0;
+    long r = SYS2(SYS_FSMETA, MOS_FSM_ACCESS, &rq);
+    if (r == -MOS_ENOENT) {                        /* /dev/null, terminais: não são vnodes; existir basta */
+        mos_stat_t st;
+        if (SYS2(SYS_STAT, p, &st) == 0) return 0;
+    }
+    return ret_errno(r) < 0 ? -1 : 0;
+}
+int access(const char *path, int mode) { return cx_access(path, mode, 0, 1); }
 int fsync(int fd) {
     struct { int aio_fildes; int aio_pad; long long aio_offset; volatile void *aio_buf;
              unsigned long long aio_nbytes; int aio_reqprio; int aio_lio_opcode; } cb;
