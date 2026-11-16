@@ -125,4 +125,4 @@ Funções existentes em `kernel/ui/icons.c`; os ícones de pasta/documento/disco
 
 ## Verificação e limites
 
-Verificados os 42 PNGs (integridade, dimensões, RGBA, transparência e canto externo transparente), sintaxe de `kernel/ui/icons_tahoe.c` com Clang e `git diff --check`. Ainda não foi validada a renderização dentro do mOS, nem o comportamento visual no modo escuro. Nenhum build do projeto ou QEMU executado.
+Verificados os 42 PNGs (integridade, dimensões, RGBA, transparência e canto externo com alfa de no máximo 1/255), sintaxe de `kernel/ui/icons_tahoe.c` com Clang e `git diff --check`. Ainda não foi validada a renderização dentro do mOS, nem o comportamento visual no modo escuro. Nenhum build do projeto ou QEMU executado.
