@@ -733,6 +733,9 @@ enum {
 #define MOS_ESPIPE 29            /* pread/pwrite num pipe */
 #define MOS_EAGAIN 35            /* valores do macOS */
 #define MOS_ETIMEDOUT 60
+#ifndef MOS_EINPROGRESS
+#define MOS_EINPROGRESS 36       /* MOS_WEB_EVAL: o script parou num diálogo; o resultado chega com MOS_WEB_EV_EVALDONE */
+#endif
 #define MOS_EBUSY  16            /* SYS_THREADCTL GETSTATE: a thread ainda não parou */
 #define MOS_ENXIO  6             /* open() de um caminho que é socket AF_UNIX */
 #define MOS_ENOTSOCK 38
@@ -851,6 +854,8 @@ enum {
     MOS_WEB_FIND,          /* (id, texto) -> 1 achou (rola até ele), 0 não */
     MOS_WEB_TEXT,          /* (id, buf, cap) -> tamanho                         texto da página */
     MOS_WEB_RESULT,        /* (id, buf, cap) -> tamanho                         resultado do último EVAL que não coube */
+    MOS_WEB_DIALOG,        /* (id, mos_web_dialog_t*) -> 0                     lê (GET) ou responde (REPLY) o alert/confirm/prompt aberto */
+    MOS_WEB_EVALDONE,      /* (id, mos_web_eval_t*) -> tamanho; tipo em ->type  resultado do EVAL que esperou um diálogo */
 };
 enum {   /* bits devolvidos por MOS_WEB_PUMP */
     MOS_WEB_EV_DIRTY    = 1,      /* a imagem mudou: pinte de novo */
@@ -865,6 +870,8 @@ enum {   /* bits devolvidos por MOS_WEB_PUMP */
     MOS_WEB_EV_PROGRESS = 512,
     MOS_WEB_EV_REDIRECT = 1024,   /* didReceiveServerRedirectForProvisionalNavigation */
     MOS_WEB_EV_NEWWIN   = 2048,   /* link com target=_blank: info.req_url (createWebViewWithConfiguration…) */
+    MOS_WEB_EV_DIALOG   = 4096,   /* o script parou num alert/confirm/prompt: MOS_WEB_DIALOG GET, depois REPLY */
+    MOS_WEB_EV_EVALDONE = 8192,   /* o EVAL que devolveu -MOS_EINPROGRESS terminou: MOS_WEB_EVALDONE */
 };
 enum { MOS_WEB_GO_BACK = 1, MOS_WEB_GO_FORWARD, MOS_WEB_GO_RELOAD, MOS_WEB_GO_STOP };
 enum { MOS_WEB_OPT_NOJS = 1, MOS_WEB_OPT_TRANSPARENT = 2 };
@@ -934,3 +941,16 @@ typedef struct {
     int at_end;                  /* 0 = AtDocumentStart, 1 = AtDocumentEnd */
 } mos_web_script_t;
 typedef struct { char url[1024]; char title[256]; } mos_web_hist_t;
+/* alert/confirm/prompt que bloqueia: enquanto está aberto, LOAD/GO/EVAL/DECIDE/INPUT da vista devolvem -MOS_EBUSY,
+ * PUMP não avança e PAINT mostra o último quadro; as outras vistas seguem normais */
+enum { MOS_WEB_DLG_GET = 1, MOS_WEB_DLG_REPLY = 2 };
+enum { MOS_WEB_DLG_ALERT = 0, MOS_WEB_DLG_CONFIRM, MOS_WEB_DLG_PROMPT };
+typedef struct {
+    int op;                          /* MOS_WEB_DLG_* */
+    int kind;                        /* GET: MOS_WEB_DLG_ALERT/CONFIRM/PROMPT */
+    int ok;                          /* REPLY: 1 = OK, 0 = cancelar */
+    int has_default;                 /* GET: o prompt tem texto padrão */
+    unsigned long long msg, def, frame_url, text;   /* buffers do app (text: resposta do prompt) */
+    unsigned msg_cap, def_cap, frame_cap, text_len;
+    unsigned msg_len, def_len, frame_len, pad;      /* GET: tamanhos reais (o texto é cortado em cap) */
+} mos_web_dialog_t;

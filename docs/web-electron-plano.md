@@ -54,8 +54,13 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    (`form_build`, `frame.c`) é a mesma do documento principal. Teste: `iframe_formularios`.
    **Falta nos iframes:** cursor de link sobre o iframe, `sandbox`/`allow`, `window.frames[i]`/`length`, `history`
    do iframe e o `WKFrameInfo` dos delegates.
-5. **Diálogos JS bloqueantes**: o script para em `alert/confirm/prompt` até o `completionHandler` do app
-   (pilha própria do motor por vista, retomada quando o app responde).
+5. ✅ **Diálogos JS bloqueantes** — `kernel/web/costack.c` (corrotina com troca `sysv_abi`, a mesma no kernel e
+   no host), `js_exec_suspend`/`js_exec_resume` (`js_core.c`: estado de execução do motor guardado, pilhas
+   suspensas varridas pelo coletor, inclusive dentro de async/gerador), `MOS_WEB_DIALOG`/`MOS_WEB_EVALDONE`
+   (`webview.c`) e o WKUIDelegate/WebUIDelegate no `WebKit.m`. Os iframes herdam o gancho do pai. Teste de host:
+   `tools/web_host_dialog.c` (4 casos: confirm/prompt/alert em sequência com outra página rodando JS e o coletor
+   no meio, página fechada, async e geradores). As corrotinas do motor (`js_gen.c`) passaram a rodar também no
+   host (`sysv_abi`), então geradores e async agora têm teste. Na VM: caso 14b do `tests-webkit` (build final).
 6. **Canvas 2D** (`<canvas>`, `getContext('2d')`, caminhos, texto, imagens, `getImageData`/`toDataURL`).
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
@@ -81,6 +86,7 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 ## Diário
 
 - 15 nov.: harness de host do motor (`tools/web_host.sh`, 5/5).
+- 16 nov.: diálogos bloqueantes (`dialogo_bloqueante`, `dialogo_pagina_fechada`, `dialogo_em_async`, `geradores_e_async`): 215/215.
 - 16 nov.: formulários em iframes (`iframe_formularios`): 199/199.
 - 16 nov.: iframes parte 1 (`iframe_src_pintura_js`, `iframe_clique_rodinha_src`, `iframe_aninhado_e_limites`): 188/188.
 - 15 nov.: SVG (`svg_formas`, `svg_path_comandos`, `svg_regras_e_traco`, `svg_viewbox_transform`, `svg_gradientes`,

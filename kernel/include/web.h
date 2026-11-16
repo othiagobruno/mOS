@@ -261,6 +261,17 @@ frag_t *doc_hit(doc_t *d, int x, int y, box_t **owner);  /* coordenadas do docum
 box_t *doc_hit_atom(doc_t *d, int x, int y);
 int    doc_anchor_y(doc_t *d, const char *name);
 
+/* ============================================================ corrotinas (kernel/web/costack.c) */
+typedef struct costack costack_t;
+costack_t *cs_new(usize stack_size, void (*fn)(void *), void *arg);
+costack_t *cs_new_on(u8 *stack, usize stack_size, void (*fn)(void *), void *arg);   /* pilha (kmalloc) já pronta */
+u8        *cs_release(costack_t *c);       /* libera a corrotina terminada; devolve a pilha */
+bool       cs_resume(costack_t *c);        /* roda até terminar (true) ou ceder (false) */
+void       cs_yield(void);                 /* de dentro da corrotina atual */
+costack_t *cs_current(void);
+bool       cs_done(costack_t *c);
+void       cs_free(costack_t *c);
+
 /* ============================================================ iframes (kernel/web/frame.c) */
 enum { FRAME_CLICK, FRAME_WHEEL };
 enum { FRAME_HANDLED = 1, FRAME_PREVENTED = 2 };   /* frame_input: 0 = não tratou */

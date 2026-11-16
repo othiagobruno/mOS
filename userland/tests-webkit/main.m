@@ -201,6 +201,18 @@ static void check(BOOL c, const char *name, NSString *detail) {
     [self.alerts addObject:m];
     h();
 }
+/* confirm e prompt respondem depois (no próximo giro do run loop): o script tem de esperar a resposta */
+- (void)webView:(WKWebView *)w runJavaScriptConfirmPanelWithMessage:(NSString *)m initiatedByFrame:(id)f completionHandler:(void (^)(BOOL))h {
+    [self.alerts addObject:m];
+    void (^hc)(BOOL) = [h copy];
+    [NSTimer scheduledTimerWithTimeInterval:0.05 repeats:NO block:^(NSTimer *t) { hc([m isEqualToString:@"sim?"]); }];
+}
+- (void)webView:(WKWebView *)w runJavaScriptTextInputPanelWithPrompt:(NSString *)p defaultText:(NSString *)d initiatedByFrame:(id)f
+    completionHandler:(void (^)(NSString *))h {
+    [self.alerts addObject:p];
+    void (^hc)(NSString *) = [h copy];
+    [NSTimer scheduledTimerWithTimeInterval:0.05 repeats:NO block:^(NSTimer *t) { hc([NSString stringWithFormat:@"%@!", d ?: @""]); }];
+}
 /* ---- WKScriptMessageHandler e WithReply */
 - (void)userContentController:(id)c didReceiveScriptMessage:(WKScriptMessage *)m {
     [self.msgs addObject:m.body ?: [NSNull null]];
@@ -431,6 +443,12 @@ static void check(BOOL c, const char *name, NSString *detail) {
     [[self.legacy mainFrame] loadData:html MIMEType:@"text/html" textEncodingName:@"utf-8" baseURL:[NSURL URLWithString:@"https://mos.test/lock.html"] completionHandler:^(NSError *e) { loadDone = e ? 2 : 1; }];
     check(loadDone == 1, "WebFrame loadData:completionHandler: (Sparkle)", nil);
 
+    /* 14b. diálogos bloqueantes: o script para em confirm/prompt até o completionHandler (assíncrono) */
+    {
+        NSError *e = nil;
+        id v = [self eval:@"var a = confirm('sim?'); var b = confirm('nao?'); var c = prompt('nome', 'Ana'); String(a) + ',' + String(b) + ',' + c" error:&e];
+        check([v isKindOfClass:[NSString class]] && [v isEqualToString:@"true,false,Ana!"], "confirm/prompt esperam o WKUIDelegate", [v description] ?: [e description]);
+    }
     /* 15. NSClassFromString acha o WKWebView do framework, não a fachada do libSystem */
     check(NSClassFromString(@"WKWebView") == [WKWebView class], "NSClassFromString(WKWebView) é o do framework", nil);
 

@@ -43,9 +43,11 @@ typedef struct jscoro {
 static jscoro *coros;
 static jsobj *genret_marker;
 
-void js_coro_switch(void **save_sp, void *to_sp);
-void js_coro_tramp(void);
-void js_coro_entry(jscoro *co);
+/* convenção System V explícita (como em costack.c): no kernel (ABI da Microsoft) o compilador salva o que a
+ * System V não preserva; no teste de host é a convenção nativa. O asm ainda guarda rdi, rsi e xmm6-15. */
+__attribute__((sysv_abi)) void js_coro_switch(void **save_sp, void *to_sp);
+__attribute__((sysv_abi)) void js_coro_tramp(void);
+__attribute__((sysv_abi)) void js_coro_entry(jscoro *co);
 
 __asm__(
     ".text\n"
@@ -57,8 +59,8 @@ __asm__(
     "    movdqu %xmm6, 0(%rsp)\n    movdqu %xmm7, 16(%rsp)\n    movdqu %xmm8, 32(%rsp)\n    movdqu %xmm9, 48(%rsp)\n"
     "    movdqu %xmm10, 64(%rsp)\n    movdqu %xmm11, 80(%rsp)\n    movdqu %xmm12, 96(%rsp)\n    movdqu %xmm13, 112(%rsp)\n"
     "    movdqu %xmm14, 128(%rsp)\n    movdqu %xmm15, 144(%rsp)\n"
-    "    movq %rsp, (%rcx)\n"
-    "    movq %rdx, %rsp\n"
+    "    movq %rsp, (%rdi)\n"
+    "    movq %rsi, %rsp\n"
     "    movdqu 0(%rsp), %xmm6\n    movdqu 16(%rsp), %xmm7\n    movdqu 32(%rsp), %xmm8\n    movdqu 48(%rsp), %xmm9\n"
     "    movdqu 64(%rsp), %xmm10\n    movdqu 80(%rsp), %xmm11\n    movdqu 96(%rsp), %xmm12\n    movdqu 112(%rsp), %xmm13\n"
     "    movdqu 128(%rsp), %xmm14\n    movdqu 144(%rsp), %xmm15\n"
@@ -68,8 +70,8 @@ __asm__(
     "    ret\n"
     ".globl js_coro_tramp\n"
     "js_coro_tramp:\n"
-    "    movq %rbx, %rcx\n"
-    "    subq $40, %rsp\n"
+    "    movq %rbx, %rdi\n"
+    "    andq $-16, %rsp\n"
     "    call js_coro_entry\n"
     "    ud2\n");
 
@@ -120,10 +122,12 @@ void js_coro_gc_begin(void) {
 }
 
 /* corrotinas ativas (quem retomou quem): cada uma deixou sua pilha em [caller_sp, caller_base) */
-void js_coro_scan_chain(void (*scan)(uptr lo, uptr hi)) {
-    for (jscoro *co = J.cur_coro; co; co = co->caller)
+void js_coro_scan_chain_from(struct jscoro *co, void (*scan)(uptr lo, uptr hi)) {
+    for (; co; co = co->caller)
         if (co->caller_sp && co->caller_base) scan((uptr)co->caller_sp, co->caller_base);
 }
+void js_coro_scan_chain(void (*scan)(uptr lo, uptr hi)) { js_coro_scan_chain_from(J.cur_coro, scan); }
+uptr js_coro_stack_top(struct jscoro *co) { return co && co->stack ? (uptr)(co->stack + CO_STACK) : 0; }
 
 /* pilhas suspensas cujo dono já foi marcado; devolve true se varreu alguma */
 bool js_coro_scan(void (*scan)(uptr lo, uptr hi)) {
@@ -180,7 +184,7 @@ static void co_suspend(jscoro *co, int kind, jsv val) {
     js_coro_switch(&co->sp, co->caller_sp);
 }
 
-void js_coro_entry(jscoro *co) {
+__attribute__((sysv_abi)) void js_coro_entry(jscoro *co) {
     jsobj *args = co->args;
     jsv r = js_call_body(jv_o(co->fn), co->thisv, (int)args->alen, args->arr, JS_UNDEF);
     if (r == JS_EXC) {
