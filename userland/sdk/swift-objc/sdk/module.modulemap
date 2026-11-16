@@ -8,6 +8,7 @@ module Darwin [system] [extern_c] {
     module crt_externs { export * }
     module sysdir { export * }
     module uuid { export * }
+    module Mach { export * }   // import Darwin.Mach (swift-system: MachPort.swift)
 }
 
 module MachO [system] [extern_c] {

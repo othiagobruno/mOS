@@ -130,6 +130,12 @@ typedef struct { void *(*fn)(void *); void *arg; u64 stack_top, stack_size; } cx
  * acima do "início" (CHECK numa verificação de pilha, int3). A própria thread registra antes de rodar o código dela. */
 static struct { u64 top, size; } thread_stacks[4096];
 static char main_thread[8192];                  /* pthread_self() = main_thread + (tid & 0xFFF) */
+/* pthread_introspection_hook_install: o gancho recebe (evento, thread, pilha, tamanho) na criação (1), no início (2),
+ * no fim (3) e na liberação (4); aqui a liberação vem logo depois do fim, na própria thread (o mOS não guarda o
+ * bloco da thread depois que ela sai). Devolve o gancho anterior, como o libpthread. */
+typedef void (*cx_pt_hook_t)(unsigned int event, void *thread, void *addr, size_t size);
+static cx_pt_hook_t volatile pt_hook;
+cx_pt_hook_t pthread_introspection_hook_install(cx_pt_hook_t h) { return __sync_lock_test_and_set(&pt_hook, h); }
 static __attribute__((noreturn)) void cx_thread_entry(cx_tstart_t *ts) {
     void *(*fn)(void *) = ts->fn;
     void *arg = ts->arg;
@@ -138,8 +144,12 @@ static __attribute__((noreturn)) void cx_thread_entry(cx_tstart_t *ts) {
     thread_stacks[me & 0xFFF].size = ts->stack_size;
     free(ts);
     cx_tsd();                                   /* tabela TSD própria desta thread (GS) */
+    cx_pt_hook_t h = pt_hook;
+    u64 st_lo = thread_stacks[me & 0xFFF].top - thread_stacks[me & 0xFFF].size;
+    if (h) h(2, pthread_self(), (void *)st_lo, thread_stacks[me & 0xFFF].size);
     void *r = fn(arg);
     cx_thread_run_dtors();                      /* destrutores das chaves (pthread_key_create), como no macOS */
+    if ((h = pt_hook)) { h(3, pthread_self(), (void *)st_lo, thread_stacks[me & 0xFFF].size); h(4, pthread_self(), 0, 0); }
     SYS1(SYS_THREAD_EXIT, (long)r);
     for (;;) {}
 }
@@ -185,6 +195,7 @@ int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void
     if (tid < 0) { munmap(stack, sz + guard); free(ts); cx_fdprintf(2, "[thread] pthread_create: o kernel recusou a thread (%ld)\n", tid); return 35; }
     { char *getenv(const char *); if (getenv("CX_TRACE_THREADS")) cx_fdprintf(2, "[thread] %ld: entrada %p, arg %p\n", tid, (void *)fn, arg); }   /* diagnóstico (porte do VS Code): CX_TRACE_THREADS=1 */
     *t = (unsigned long)tid;
+    { cx_pt_hook_t h = pt_hook; if (h) h(1, (void *)(unsigned long)tid, (void *)((u64)stack + guard), sz); }
     return 0;
 }
 int pthread_join(unsigned long t, void **ret) {

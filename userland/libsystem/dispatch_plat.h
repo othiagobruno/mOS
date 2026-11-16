@@ -53,6 +53,7 @@ static inline void dp_sleep_ms(long ms) { struct timespec t = {ms / 1000, (ms % 
 void *_Block_copy(const void *b);
 void _Block_release(const void *b);
 static inline void dp_main_wakeup(void) {}
+static inline void dp_set_qos(unsigned q) { (void)q; }
 static inline int dp_write_err(const char *s) { return (int)write(2, s, strlen(s)); }
 #else
 #include "sys.h"
@@ -96,6 +97,8 @@ void _Block_release(const void *b);
 void *CFRunLoopGetMain(void);
 void CFRunLoopWakeUp(void *rl);
 static inline void dp_main_wakeup(void) { CFRunLoopWakeUp(CFRunLoopGetMain()); }
+int pthread_set_qos_class_self_np(unsigned q, int r);   /* darwin.c: QoS da thread e prioridade no escalonador */
+static inline void dp_set_qos(unsigned q) { pthread_set_qos_class_self_np(q, 0); }
 static inline int dp_write_err(const char *s) { return (int)write(2, s, strlen(s)); }
 #endif
 

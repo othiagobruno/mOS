@@ -59,6 +59,22 @@ int os_log_type_enabled(void *log, unsigned char type) {
     return type != 2;             /* OS_LOG_TYPE_DEBUG */
 }
 
+/* ---------------------------------------------------------------- ids de signpost (os/signpost.h)
+ * generate: único no processo (nunca NULL, INVALID nem EXCLUSIVE); make_with_pointer: o endereço, como no macOS */
+static volatile unsigned long long sp_next;
+unsigned long long os_signpost_id_generate(void *log) {
+    (void)log;
+    for (;;) {
+        unsigned long long v = __sync_add_and_fetch(&sp_next, 1);
+        if (v != 0 && v != ~0ull && v != 0xeeeeb0b5b2b2eeeeull) return v;
+    }
+}
+unsigned long long os_signpost_id_make_with_pointer(void *log, const void *ptr) {
+    (void)log;
+    unsigned long long v = (unsigned long long)(unsigned long)ptr;
+    return v == 0 || v == ~0ull || v == 0xeeeeb0b5b2b2eeeeull ? ~0ull : v;
+}
+
 /* ---------------------------------------------------------------- envio ao logd */
 static void send_log(unsigned level, unsigned source, const char *subsys, const char *cat, const char *msg, size_t mlen) {
     char meta[384];

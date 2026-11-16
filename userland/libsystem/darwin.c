@@ -673,14 +673,44 @@ int pthread_attr_setschedparam(void *a, const void *p) { (void)a; (void)p; retur
 int pthread_attr_getschedparam(const void *a, int *p) { (void)a; if (p) *p = 31; return 0; }
 int pthread_attr_setinheritsched(void *a, int i) { (void)a; (void)i; return 0; }
 int pthread_attr_set_qos_class_np(void *a, unsigned q, int r) { (void)a; (void)q; (void)r; return 0; }
-static unsigned self_qos = 0x15;                                  /* QOS_CLASS_DEFAULT */
+/* QoS por thread (tid -> classe); 0 no tid = vaga livre. A thread principal nasce user-interactive, as outras default. */
+#define QOS_SLOTS 512
+static struct { volatile int tid; unsigned qos; int rel; } qos_tab[QOS_SLOTS];
+static int qos_slot(int tid, int make) {
+    unsigned h = (unsigned)tid % QOS_SLOTS;
+    for (int n = 0; n < QOS_SLOTS; n++, h = (h + 1) % QOS_SLOTS) {
+        if (qos_tab[h].tid == tid) return (int)h;
+        if (!qos_tab[h].tid) {
+            if (!make) return -1;
+            if (__sync_bool_compare_and_swap(&qos_tab[h].tid, 0, tid)) return (int)h;
+            if (qos_tab[h].tid == tid) return (int)h;
+        }
+    }
+    return -1;
+}
+extern int cx_main_tid;
+static unsigned qos_of(int tid, int *rel) {
+    int i = qos_slot(tid, 0);
+    if (rel) *rel = i >= 0 ? qos_tab[i].rel : 0;
+    if (i >= 0) return qos_tab[i].qos;
+    return cx_main_tid && tid == cx_main_tid ? 0x21 : 0x15;
+}
 int pthread_set_qos_class_self_np(unsigned q, int r) {
-    (void)r;
-    self_qos = q ? q : 0x15;
+    if (q != 0x21 && q != 0x19 && q != 0x15 && q != 0x11 && q != 0x09 && q != 0x05) return 22;   /* EINVAL */
+    if (r > 0 || r < -15) return 22;
+    int tid = (int)SYS0(SYS_GETTID);
+    int i = qos_slot(tid, 1);
+    if (i >= 0) { qos_tab[i].qos = q; qos_tab[i].rel = r; }
     SYS3(60, 5, 0, q);                                            /* SYS_THREADCTL, MOS_THR_SETQOS, tid 0 = atual */
     return 0;
 }
-unsigned qos_class_self(void) { return self_qos; }
+unsigned qos_class_self(void) { return qos_of((int)SYS0(SYS_GETTID), 0); }
+long dw_pthread_tid(void *t) __asm__("cx_pthread_tid");         /* extra.c (devolve long) */
+int pthread_get_qos_class_np(void *t, unsigned *q, int *r) {
+    unsigned v = qos_of((int)dw_pthread_tid(t), r);
+    if (q) *q = v;
+    return 0;
+}
 unsigned qos_class_main(void) { return 0x21; }
 /* prioridade Mach da thread (SYS_THREADCTL MOS_THR_SETPRIO, kernel/proc/sched.c). SCHED_FIFO (4) e SCHED_RR (2)
  * ficam fixas, sem decaimento; SCHED_OTHER (1) é timeshare. A última escolha de cada thread fica numa tabela pequena
