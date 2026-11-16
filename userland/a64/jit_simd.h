@@ -44,6 +44,10 @@ static int s_shimm(T *t, int x, int eb, int kind, int sh);
 static int s_fcmpv(T *t, int q, int dbl, int kind, int abs, int n, int m, int d, int sc);
 static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc);
 static int s_fcvt_vec(T *t, int q, int dbl, int u, int mode, int n, int d, int sc);
+static int s_fpsc_elem(T *t, int kind, int dbl, int n, int m, int lane, int d);
+static int s_faddp_lo(T *t, int dbl, int sc, int n, int m, int d);
+static void s_lanecheck(T *t, int dbl, int q);
+static void s_wsc_rax(T *t, int d);
 static void s_widen(T *t, int x, int v, int hi, int sz, int sgn);
 static int s_dot(T *t, int q, int sa, int sb, int n, int m, int lane, int d);
 static void s_qaddsub_core(T *t, int u, int size, int sub);
@@ -1674,6 +1678,54 @@ static int s_dot(T *t, int q, int sa, int sb, int n, int m, int lane, int d) {
     s_st(t, d, 2, q);
     return 1;
 }
+/* FMUL / FMLA / FMLS escalares de S/D por elemento: m = V[m].lane. Mesmo critério do fpv_core:
+ * FPCR fora do padrão, exceção do MXCSR ou resultado subnormal/inf/NaN vão ao interpretador. */
+static int s_fpsc_elem(T *t, int kind, int dbl, int n, int m, int lane, int d) {   /* kind 0 FMUL, 1 FMLA, 2 FMLS */
+    if (kind && !jit_g.fma) return 0;
+    fl_clobber(t);
+    mx_clean(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 0x01C00000);
+    slow_if(t, CC_NE);
+    xo em = VOE(m, lane << (dbl ? 3 : 2));
+    if (dbl) x_movq_ld(B, 2, em); else x_movd_ld(B, 2, em);
+    if (kind) {
+        if (dbl) { x_movq_ld(B, 0, VO(d)); x_movq_ld(B, 1, VO(n)); } else { x_movd_ld(B, 0, VO(d)); x_movd_ld(B, 1, VO(n)); }
+        vex_fma_r(t, kind == 1 ? 0xB9 : 0xBD, dbl, 0, 1, 2);   /* vfmadd231 / vfnmadd231 escalar */
+    } else {
+        if (dbl) x_movq_ld(B, 0, VO(n)); else x_movd_ld(B, 0, VO(n));
+        xop2(B, dbl ? XF_F2 : XF_F3, 0x59, 0, XR(2));
+    }
+    xop2(B, 0, 0xAE, 3, XM(XSP, 0));
+    x_test8_mi(B, XM(XSP, 0), 0x1F);
+    slow_if(t, CC_NE);
+    s_lanecheck(t, dbl, 0);
+    ixc_if_pe(t);
+    s_st(t, d, 0, 0);
+    return 1;
+}
+/* FADDP escalar (Sd/Dd = n[0] + n[1]) e vetorial 2S: haddps/haddpd somam na mesma ordem */
+static int s_faddp_lo(T *t, int dbl, int sc, int n, int m, int d) {
+    fl_clobber(t);
+    mx_clean(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 0x01C00000);
+    slow_if(t, CC_NE);
+    if (dbl) s_ld(t, 0, n); else x_movq_ld(B, 0, VO(n));
+    if (sc) xop2(B, dbl ? XF_66 : XF_F2, 0x7C, 0, XR(0));
+    else {                                          /* 2S: [n0+n1, 0, m0+m1, 0] → lanes 0 e 2 */
+        x_movq_ld(B, 1, VO(m));
+        xop2(B, XF_F2, 0x7C, 0, XR(1));
+        xop2(B, XF_66, 0x70, 0, XR(0)); xe8(B, 0x08);
+    }
+    if (sc) { if (dbl) xop2(B, XF_F3, 0x7E, 0, XR(0)); else { s_const2(t, 4, 0xFFFFFFFFull, 0); s_op(t, 0xDB, 0, 4); } }
+    else xop2(B, XF_F3, 0x7E, 0, XR(0));            /* movq: zera 127:64 */
+    xop2(B, 0, 0xAE, 3, XM(XSP, 0));
+    x_test8_mi(B, XM(XSP, 0), 0x1F);
+    slow_if(t, CC_NE);
+    s_lanecheck(t, dbl, 0);
+    ixc_if_pe(t);
+    s_st(t, d, 0, 0);
+    return 1;
+}
 static int s_fpvec(T *t, a64_u32 w) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), a = (int)BIT(w, 23), dbl = (int)BIT(w, 22), op = (int)BITS(w, 13, 11);
     int m = (int)BITS(w, 20, 16), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
@@ -1685,7 +1737,7 @@ static int s_fpvec(T *t, a64_u32 w) {
     if (u && !a && op == 7) return q ? fpv_core(t, 0x5E, 0, dbl, q, d, n, m, -1) : 0;     /* FDIV (Q=0: 0/0 nas lanes zeradas) */
     if (!u && op == 1 && jit_g.fma) return fpv_core(t, a ? 0xBC : 0xB8, 1, dbl, q, d, n, m, -1);   /* FMLS / FMLA */
     if (u && !a && op == 2) {                       /* FADDP: haddps/haddpd (SSE3) dão a mesma ordem */
-        if (!q) return 0;
+        if (!q) return s_faddp_lo(t, 0, 0, n, m, d);
         fl_clobber(t);
         mx_clean(t);
         x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 0x01C00000);
@@ -2766,6 +2818,25 @@ static int s_shift_scalar(T *t, a64_u32 w) {
 /* Escalar AdvSIMD (op0 0x5/0x7): só o que tem forma de uma lane de 64, ou SCVTF da mesma largura. */
 static int s_scalar_simd(T *t, a64_u32 w) {
     if (BIT(w, 24) && BIT(w, 10) && !BIT(w, 23) && BITS(w, 22, 19) != 0) return s_shift_scalar(t, w);
+    if (!BIT(w, 24) && !BIT(w, 29) && BITS(w, 23, 21) == 0 && BITS(w, 15, 10) == 0x01) {   /* DUP (elemento → escalar) */
+        int imm5 = (int)BITS(w, 20, 16), size = __builtin_ctz((unsigned)imm5 | 32);
+        if (size > 3) return 0;
+        fl_clobber(t);
+        s_elem(t, (int)BITS(w, 9, 5), imm5 >> (size + 1), size);
+        s_wsc_rax(t, (int)(w & 31));
+        return 1;
+    }
+    if (BIT(w, 24) && !BIT(w, 10)) {                /* por elemento escalar: FMUL FMLA FMLS de S/D */
+        int u = (int)BIT(w, 29), sz = (int)BIT(w, 22), op = (int)BITS(w, 15, 12), L = (int)BIT(w, 21), M = (int)BIT(w, 20);
+        int H = (int)BIT(w, 11), rm = (int)BITS(w, 19, 16), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
+        if (BIT(w, 23) && !u && (op == 9 || op == 1 || op == 5) && !(sz && L)) {
+            int lane = sz ? H : (H << 1) | L, m = (M << 4) | rm;
+            return s_fpsc_elem(t, op == 9 ? 0 : op == 1 ? 1 : 2, sz, n, m, lane, d);
+        }
+        return 0;
+    }
+    if (BIT(w, 29) && !BIT(w, 23) && BITS(w, 21, 17) == 0x18 && BITS(w, 16, 12) == 0x0D && BITS(w, 11, 10) == 2)   /* FADDP escalar */
+        return s_faddp_lo(t, (int)BIT(w, 22), 1, (int)BITS(w, 9, 5), 0, (int)(w & 31));
     if (BIT(w, 24)) return 0;           /* por elemento e deslocamento por imediato: o resto fica com o interpretador */
     if (BIT(w, 21) && BIT(w, 10)) {
         int size = (int)BITS(w, 23, 22), op = (int)BITS(w, 15, 11);
