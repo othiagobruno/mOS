@@ -720,6 +720,17 @@ void dispatch_set_qos_class_floor(void *o, unsigned qos, int rel) {
     if (is_obj(h) && h->kind == DK_QUEUE && h->ref >= 0) { ((dp_queue_t *)h)->qos = qos; ((dp_queue_t *)h)->rel = rel; }
 }
 void dispatch_set_qos_class(void *o, unsigned qos, int rel) { dispatch_set_qos_class_floor(o, qos, rel); }
+/* SPI dispatch_queue_set_width: largura de uma fila concorrente; os negativos são DISPATCH_QUEUE_WIDTH_MAX_PHYSICAL_CPUS
+ * (-1), _ACTIVE_CPUS (-2) e _MAX_LOGICAL_CPUS (-3). 1 vira serial. Filas raiz e a principal não mudam. */
+void dispatch_queue_set_width(void *o, long width) {
+    dp_queue_t *q = o;
+    if (!is_obj(q) || q->h.kind != DK_QUEUE || (q->flags & (QF_ROOT | QF_MAIN | QF_WORKLOOP))) return;
+    int w = width > 0 ? (width > 0x7fffffff ? 0x7fffffff : (int)width) : width >= -3 ? dp_ncpu() : 1;
+    dp_lock(&q->lock);
+    q->width = w;
+    dp_unlock(&q->lock);
+    q_wakeup(q);
+}
 /* suspender/retomar/ativar: filas aqui; fontes em dispatch_source.c (o gancho é chamado depois) */
 void cx_dispatch_source_resumed(void *s);
 void dispatch_suspend(void *o) {
