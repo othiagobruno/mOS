@@ -72,6 +72,7 @@ enum { UDAT_FULL = 0, UDAT_LONG = 1, UDAT_MEDIUM = 2, UDAT_SHORT = 3, UDAT_RELAT
     X(ulocdata_getDelimiter, int32_t, (void *, int32_t, UChar *, int32_t, UErrorCode *)) \
     X(ulocdata_getMeasurementSystem, int32_t, (const char *, UErrorCode *)) \
     X(ulocdata_getExemplarSet, void *, (void *, void *, uint32_t, int32_t, UErrorCode *)) \
+    X(uset_openPattern, void *, (const UChar *, int32_t, UErrorCode *)) \
     X(uset_close, void, (void *)) \
     X(uset_getItemCount, int32_t, (const void *)) \
     X(uset_getItem, int32_t, (const void *, int32_t, UChar32 *, UChar32 *, UChar *, int32_t, UErrorCode *)) \

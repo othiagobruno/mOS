@@ -379,98 +379,7 @@ id CFURLCreateStringByReplacingPercentEscapes(void *alloc, id s, id leave) {
     return r;
 }
 
-/* ================================================================ CFCharacterSet (bitmap de 0x110000 bits) */
-typedef struct { void *isa; u8 *bits; } cfcs_t;
-static cx_class_t cs_c, cs_m;
-#define CS_BYTES (0x110000 / 8)
-static id cs_new(void) {
-    cfcs_t *c = (cfcs_t *)cx_alloc_instance(&cs_c);
-    c->bits = calloc(1, CS_BYTES);
-    return (id)c;
-}
-static u8 *cs_bits(id s) { return s && object_getClass(s) == &cs_c ? ((cfcs_t *)s)->bits : 0; }
-static void cs_add(u8 *b, u32 lo, u32 hi) { for (u32 c = lo; c <= hi && c < 0x110000; c++) b[c >> 3] |= (u8)(1 << (c & 7)); }
-static int cs_has(const u8 *b, u32 c) { return b && c < 0x110000 && (b[c >> 3] >> (c & 7) & 1); }
-id CFCharacterSetCreateMutable(void *alloc) { (void)alloc; return cs_new(); }
-void CFCharacterSetAddCharactersInRange(id s, cf_range_t r) { u8 *b = cs_bits(s); if (b && r.len > 0) cs_add(b, (u32)r.loc, (u32)(r.loc + r.len - 1)); }
-void CFCharacterSetAddCharactersInString(id s, id str) {
-    u8 *b = cs_bits(s);
-    if (!b) return;
-    long n = to_utf16(utf8(str), 0, 0);
-    u16 *u = malloc((size_t)(n + 1) * 2);
-    if (!u) return;
-    to_utf16(utf8(str), u, n);
-    for (long i = 0; i < n; i++) cs_add(b, u[i], u[i]);
-    free(u);
-}
-void CFCharacterSetUnion(id s, id other) {
-    u8 *a = cs_bits(s), *b = cs_bits(other);
-    if (a && b) for (u32 i = 0; i < CS_BYTES; i++) a[i] |= b[i];
-}
-u8 CFCharacterSetIsLongCharacterMember(id s, u32 c) { return (u8)cs_has(cs_bits(s), c); }
-u8 CFCharacterSetIsCharacterMember(id s, unsigned short c) { return CFCharacterSetIsLongCharacterMember(s, c); }
-u64 CFCharacterSetGetTypeID(void) { return 45; }
-id CFCharacterSetCreateWithCharactersInString(void *alloc, id str) {
-    id s = CFCharacterSetCreateMutable(alloc);
-    CFCharacterSetAddCharactersInString(s, str);
-    return s;
-}
-id CFCharacterSetCreateCopy(void *alloc, id s) {
-    (void)alloc;
-    id n = cs_new();
-    u8 *a = cs_bits(n), *b = cs_bits(s);
-    if (a && b) memcpy(a, b, CS_BYTES);
-    return n;
-}
-id CFCharacterSetCreateInvertedSet(void *alloc, id s) {
-    (void)alloc;
-    id n = cs_new();
-    u8 *a = cs_bits(n), *b = cs_bits(s);
-    if (a) {
-        if (b) for (u32 i = 0; i < CS_BYTES; i++) a[i] = (u8)~b[i];
-        else memset(a, 0xff, CS_BYTES);
-    }
-    return n;
-}
-/* conjuntos predefinidos (kCFCharacterSet*): faixas ASCII/Latin-1 e os blocos mais comuns */
-id CFCharacterSetGetPredefined(long which) {
-    static id cache[16];
-    if (which < 1 || which > 15) return 0;
-    if (cache[which]) return cache[which];
-    id s = cs_new();
-    u8 *b = cs_bits(s);
-    switch (which) {
-    case 1: cs_add(b, ' ', ' '); cs_add(b, '\t', '\t'); cs_add(b, 0xA0, 0xA0); cs_add(b, 0x2000, 0x200B); cs_add(b, 0x3000, 0x3000); break;
-    case 2: cs_add(b, ' ', ' '); cs_add(b, '\t', '\r'); cs_add(b, 0x85, 0x85); cs_add(b, 0xA0, 0xA0); cs_add(b, 0x2000, 0x200B); cs_add(b, 0x2028, 0x2029); cs_add(b, 0x3000, 0x3000); break;
-    case 3: cs_add(b, '0', '9'); cs_add(b, 0x660, 0x669); cs_add(b, 0xFF10, 0xFF19); break;
-    case 4: case 9:
-        cs_add(b, 'A', 'Z'); cs_add(b, 'a', 'z'); cs_add(b, 0xAA, 0xAA); cs_add(b, 0xB5, 0xB5); cs_add(b, 0xBA, 0xBA);
-        cs_add(b, 0xC0, 0xD6); cs_add(b, 0xD8, 0xF6); cs_add(b, 0xF8, 0x2FF); cs_add(b, 0x370, 0x3FF); cs_add(b, 0x400, 0x52F);
-        cs_add(b, 0x4E00, 0x9FFF); cs_add(b, 0x3040, 0x30FF); cs_add(b, 0xAC00, 0xD7A3);
-        if (which == 9) { cs_add(b, '0', '9'); }
-        break;
-    case 5: cs_add(b, 'a', 'z'); cs_add(b, 0xDF, 0xF6); cs_add(b, 0xF8, 0xFF); break;
-    case 6: cs_add(b, 'A', 'Z'); cs_add(b, 0xC0, 0xD6); cs_add(b, 0xD8, 0xDE); break;
-    case 13: cs_add(b, 'A', 'Z'); cs_add(b, 0xC0, 0xD6); cs_add(b, 0xD8, 0xDE); break;
-    case 7: cs_add(b, 0x300, 0x36F); cs_add(b, 0x20D0, 0x20FF); break;
-    case 8: cs_add(b, 0xC0, 0xC5); cs_add(b, 0xC7, 0xCF); cs_add(b, 0xD1, 0xD6); cs_add(b, 0xD9, 0xDD); cs_add(b, 0xE0, 0xE5); cs_add(b, 0xE7, 0xEF); cs_add(b, 0xF1, 0xF6); cs_add(b, 0xF9, 0xFD); break;
-    case 10: cs_add(b, '!', '#'); cs_add(b, '%', '*'); cs_add(b, ',', '/'); cs_add(b, ':', ';'); cs_add(b, '?', '@'); cs_add(b, '[', ']'); cs_add(b, '_', '_'); cs_add(b, '{', '{'); cs_add(b, '}', '}'); cs_add(b, 0xA1, 0xA1); cs_add(b, 0xBF, 0xBF); cs_add(b, 0x2010, 0x2027); break;
-    case 11: cs_add(b, 0, 0x1F); cs_add(b, 0x7F, 0x9F); break;
-    case 12: cs_add(b, 0xFFFE, 0xFFFF); cs_add(b, 0xD800, 0xDFFF); break;
-    case 14: cs_add(b, '$', '$'); cs_add(b, '+', '+'); cs_add(b, '<', '>'); cs_add(b, '^', '^'); cs_add(b, '`', '`'); cs_add(b, '|', '|'); cs_add(b, '~', '~'); cs_add(b, 0xA2, 0xA9); cs_add(b, 0x2100, 0x2BFF); cs_add(b, 0x1F300, 0x1FAFF); break;
-    case 15: cs_add(b, '\n', '\r'); cs_add(b, 0x85, 0x85); cs_add(b, 0x2028, 0x2029); break;
-    }
-    cache[which] = s;
-    return s;
-}
-/* o formato do macOS: 8192 bytes do plano básico */
-id CFCharacterSetCreateBitmapRepresentation(void *alloc, id s) {
-    (void)alloc;
-    u8 *b = cs_bits(s);
-    u8 z[8192];
-    if (!b) { memset(z, 0, sizeof z); return CFDataCreate(0, z, 8192); }
-    return CFDataCreate(0, b, 8192);
-}
+/* CFCharacterSet: fdn_charset.c (o mesmo objeto do NSCharacterSet) */
 
 /* ================================================================ CFBinaryHeap */
 typedef struct {
@@ -777,7 +686,6 @@ void cx_vscode_cf_classes(void) {
     cx_add_method(&uuid_c, "UUIDString", (void *)uuid_string);
     cx_add_method(&uuid_c, "description", (void *)uuid_string);
     cx_add_method(&uuid_c, "getUUIDBytes:", (void *)uuid_get_bytes);
-    cx_define_class(&cs_c, &cs_m, "__mOSCFCharacterSet", ob, 8);
     cx_define_class(&bh_c, &bh_m, "__mOSCFBinaryHeap", ob, (u32)(sizeof(cfbh_t) - 8));
     cx_define_class(&cfalloc_c, &cfalloc_m, "__NSCFAllocator", ob, (u32)(sizeof(cf_alloc_t) - 8));
     cx_add_method(&cfalloc_c, "dealloc", (void *)cfa_dealloc);

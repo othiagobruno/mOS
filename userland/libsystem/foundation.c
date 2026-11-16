@@ -1872,9 +1872,8 @@ void cx_foundation_init(void) {
     M(NSFileManager, "removeItemAtPath:error:", fm_remove); M(NSFileManager, "currentDirectoryPath", fm_cwd);
 
     cx_define_class(&NSData_c, &NSData_m, "NSData", &NSObject_c, 16);
-    cx_define_class(&NSCharacterSet_c, &NSCharacterSet_m, "NSCharacterSet", &NSObject_c, 0);
-    CM(NSCharacterSet, "whitespaceCharacterSet", g_singleton); CM(NSCharacterSet, "whitespaceAndNewlineCharacterSet", g_singleton);
-    CM(NSCharacterSet, "newlineCharacterSet", g_singleton);
+    /* NSCharacterSet: faixas Unicode {isa, crs_t, flags}; métodos em fdn_charset.c */
+    cx_define_class(&NSCharacterSet_c, &NSCharacterSet_m, "NSCharacterSet", &NSObject_c, 24);
     cx_define_class(&NSValue_c, &NSValue_m, "NSValue", &NSObject_c, 32);
     cx_define_class(&NSError_c, &NSError_m, "NSError", &NSObject_c, 0);
     M(NSError, "localizedDescription", err_desc); M(NSError, "description", err_desc);

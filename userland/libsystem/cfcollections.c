@@ -55,7 +55,7 @@ u64 CFGetTypeID(id o) {
     if (kind_of(o, "NSSet") || kind_of(o, "NSMutableSet")) return 17;
     if (kind_of(o, "NSAttributedString") || kind_of(o, "NSMutableAttributedString")) return 31;
     if (kind_of(o, "__mOSCFLocale")) return 25;
-    if (kind_of(o, "__mOSCFCharacterSet")) return 45;
+    if (kind_of(o, "NSCharacterSet")) return 45;
     if (kind_of(o, "NSArray")) return TID_ARRAY;
     if (kind_of(o, "NSData")) return TID_DATA;
     if (kind_of(o, "NSDate")) return TID_DATE;

@@ -18,7 +18,7 @@ extern id cx_plist_parse(const u8 *b, u64 n);
 #define XMETA(N) extern cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
 XCLASS(NSObject) XCLASS(NSString) XCLASS(NSMutableString) XCLASS(NSNumber) XCLASS(NSArray) XCLASS(NSMutableArray)
 XCLASS(NSDictionary) XCLASS(NSMutableDictionary) XCLASS(NSData) XCLASS(NSDate) XCLASS(NSNull) XCLASS(NSError) XMETA(NSError)
-XCLASS(NSSet) XCLASS(NSMutableSet) XCLASS(NSValue) XCLASS(NSCharacterSet)
+XCLASS(NSSet) XCLASS(NSMutableSet) XCLASS(NSValue)
 XCLASS(NSAttributedString)
 extern cx_class_t NSConstantString_c __asm__("__CFConstantStringClassReference");
 char *strcasestr(const char *h, const char *n);
@@ -36,7 +36,7 @@ CLASS(NSHTTPURLResponse) CLASS(NSIndexPath)
 CLASS(NSItemProvider) CLASS(NSJSONSerialization)
 CLASS(NSKeyedArchiver) CLASS(NSKeyedUnarchiver) CLASS(NSLinguisticTagger) CLASS(NSLock)
 CLASS(NSMachBootstrapServer) CLASS(NSMachPort) CLASS(NSMapTable) 
-CLASS(NSMetadataItem) CLASS(NSMetadataQuery) CLASS(NSMutableAttributedString) CLASS(NSMutableCharacterSet)
+CLASS(NSMetadataItem) CLASS(NSMetadataQuery) CLASS(NSMutableAttributedString)
 CLASS(NSMutableURLRequest) CLASS(NSNetService) CLASS(NSNetServiceBrowser)
 
 CLASS(NSPipe) CLASS(NSPointerArray) CLASS(NSPredicate) CLASS(NSProgress) CLASS(NSPropertyListSerialization)
@@ -2135,49 +2135,7 @@ static void mas_replace(id s, SEL c, rng_t r, id str) {
 }
 static void mas_set_attr(id s, SEL c, id name, id value, rng_t r) { (void)s; (void)c; (void)name; (void)value; (void)r; }
 
-static id cset_bitmap(id s) {
-    if (!BOX(s)->p) { BOX(s)->p = calloc(1, 8192); }
-    return (id)BOX(s)->p;
-}
-static void cs_add(id s, SEL c, u32 ch) { (void)c; if (ch < 65536) { u8 *b = (u8 *)cset_bitmap(s); b[ch >> 3] |= (u8)(1u << (ch & 7)); } }
-static void cs_addrange(id s, SEL c, rng_t r) {
-    for (u64 i = 0; i < r.length && r.location + i < 65536; i++) cs_add(s, c, (u32)(r.location + i));
-}
-static BOOL cs_member(id s, SEL c, u32 ch) {
-    (void)c;
-    if (!s || !cx_is_subclass(s->isa, &NSMutableCharacterSet_c))
-        return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
-    if (!BOX(s)->p || ch >= 65536) return NO;
-    u8 *b = BOX(s)->p;
-    return (b[ch >> 3] >> (ch & 7)) & 1;
-}
-static id cs_letter(id cls, SEL c) {
-    (void)c;
-    static id s;
-    if (!s) {
-        s = cx_alloc_instance((cx_class_t *)cls);
-        for (u32 ch = 'A'; ch <= 'Z'; ch++) cs_add(s, c, ch);
-        for (u32 ch = 'a'; ch <= 'z'; ch++) cs_add(s, c, ch);
-    }
-    return s;
-}
-static id cs_digit(id cls, SEL c) {
-    (void)c;
-    static id s;
-    if (!s) { s = cx_alloc_instance((cx_class_t *)cls); for (u32 ch = '0'; ch <= '9'; ch++) cs_add(s, c, ch); }
-    return s;
-}
-static id cs_alnum(id cls, SEL c) {
-    (void)c;
-    static id s;
-    if (!s) {
-        s = cx_alloc_instance((cx_class_t *)cls);
-        for (u32 ch = 'A'; ch <= 'Z'; ch++) cs_add(s, c, ch);
-        for (u32 ch = 'a'; ch <= 'z'; ch++) cs_add(s, c, ch);
-        for (u32 ch = '0'; ch <= '9'; ch++) cs_add(s, c, ch);
-    }
-    return s;
-}
+/* NSCharacterSet/NSMutableCharacterSet: fdn_charset.c */
 
 /* ---------------------------------------------------------------- registro */
 #define M(cls, s, f) cx_add_method(&cls##_c, s, (void *)(f))
@@ -2516,13 +2474,6 @@ void cx_foundation_more_init(void) {
         M(NSMutableAttributedString, "addAttribute:value:range:", mas_set_attr);
         M(NSMutableAttributedString, "mutableString", get_a);
     }
-    DEF(&NSMutableCharacterSet_c, &NSMutableCharacterSet_m, "NSMutableCharacterSet", &NSCharacterSet_c, BEX);
-    CM(NSMutableCharacterSet, "letterCharacterSet", cs_letter);
-    CM(NSMutableCharacterSet, "decimalDigitCharacterSet", cs_digit);
-    CM(NSMutableCharacterSet, "alphanumericCharacterSet", cs_alnum);
-    M(NSMutableCharacterSet, "addCharactersInRange:", cs_addrange);
-    M(NSCharacterSet, "characterIsMember:", cs_member);
-    M(NSMutableCharacterSet, "characterIsMember:", cs_member);
 
     DEF(&NSPurgeableData_c, &NSPurgeableData_m, "NSPurgeableData", &NSData_c, 0);
     M(NSPurgeableData, "beginContentAccess", yes_m); M(NSPurgeableData, "endContentAccess", noop);
