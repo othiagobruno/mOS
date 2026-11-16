@@ -2433,7 +2433,11 @@ CLASS(NSPasteboardItem)
 void cx_appkit_input_init(void);
 id NSPasteboardTypeString, NSStringPboardType;
 id CFDataCreate(void *alloc, const u8 *bytes, long n);
-typedef struct { id name; i64 count; id items; id owner; char *disk; int used; } pbstate_t;
+/* Cada pasteboard tem uma lista de NSPasteboardItem (arrastar 3 arquivos = 3 itens, como no Cocoa); as chamadas de
+ * um tipo só (setString:forType:, dataForType:...) usam o 1º item. Tipos legados viram a UTI (appkit_pb_core.c, teste
+ * userland/tests-appkit/pasteboard_host.c); NSFilenamesPboardType é a lista dos public.file-url dos itens. */
+#include "appkit_pb_core.h"
+typedef struct { id name; i64 count; id list; id declared; id owner; char *disk; int used; } pbstate_t;
 #define PB_MAX 32
 static pbstate_t pb_tab[PB_MAX];
 static id pb_obj[PB_MAX];
@@ -2444,6 +2448,7 @@ static pbstate_t *pb_st(id self) {
     for (int i = 0; i < PB_MAX; i++) if (pb_obj[i] == self) return &pb_tab[i];
     return &pb_tab[0];
 }
+static id pb_self(pbstate_t *p) { return pb_obj[p - pb_tab]; }
 static int pb_is_general(pbstate_t *p) { return p->name && !strcmp(cx_cstr(p->name), "Apple CFPasteboard general"); }
 static void pb_path(char *out, usize cap) {
     id h = NSHomeDirectory();
@@ -2457,14 +2462,99 @@ static void pb_write(const char *s, usize n) {
     fwrite(s, 1, n, f);
     fclose(f);
 }
-static id pb_dict(pbstate_t *p) {
-    if (!p->items) p->items = objc_retain(MSG0(id, pb_cls("NSMutableDictionary"), "dictionary"));
-    return p->items;
+static id canon(id type) { if (!type || !cx_is_str(type)) return type; const char *c = pbk_canonical(cx_cstr(type)); return c == cx_cstr(type) ? type : cx_str(c); }
+
+/* ---- NSPasteboardItem: dicionário tipo → valor (ivar logo depois do isa) + provedor de dados por tipo */
+typedef struct { void *isa; id items; } pbitem_t;
+static char k_pi_prov, k_pi_ptypes, k_pi_pb;
+static id pi_dict(id self) {
+    pbitem_t *it = (pbitem_t *)self;
+    if (!it->items) it->items = objc_retain(MSG0(id, pb_cls("NSMutableDictionary"), "dictionary"));
+    return it->items;
 }
+static id pi_init(id self, SEL c) { (void)c; pi_dict(self); return self; }
+static BOOL pi_set(id self, SEL c, id v, id type) { (void)c; if (!type || !v) return NO; MSG(void, pi_dict(self), "setObject:forKey:", v, canon(type)); return YES; }
+static id pi_find(id self, id type) {
+    id d = pi_dict(self);
+    id v = MSG(id, d, "objectForKey:", canon(type));
+    return v;
+}
+static id pi_get(id self, id type) {
+    if (!type) return 0;
+    id v = pi_find(self, type);
+    if (v) return v;
+    id prov = objc_getAssociatedObject(self, &k_pi_prov), pt = objc_getAssociatedObject(self, &k_pi_ptypes);
+    if (!prov || !pt) return 0;
+    nsarr_t *a = (nsarr_t *)pt;
+    for (u64 i = 0; i < a->n; i++) {
+        if (!pbk_same(cx_cstr(a->items[i]), cx_cstr(type))) continue;
+        if (pb_resp(prov, "pasteboard:item:provideDataForType:"))   /* sob demanda, como o Cocoa */
+            MSG(void, prov, "pasteboard:item:provideDataForType:", objc_getAssociatedObject(self, &k_pi_pb), self, a->items[i]);
+        return pi_find(self, type);
+    }
+    return 0;
+}
+static id pb_as_data(id v) {
+    if (!v) return 0;
+    if (cx_is_str(v)) { const char *t = cx_cstr(v); return objc_autorelease(CFDataCreate(0, (const u8 *)t, (long)strlen(t))); }
+    return pb_is_data(v) ? v : 0;
+}
+static id pb_as_string(id v) {
+    if (!v) return 0;
+    if (cx_is_str(v)) return v;
+    if (pb_is_data(v)) return cx_str_n((const char *)MSG0(const void *, v, "bytes"), (usize)MSG0(u64, v, "length"));
+    return 0;
+}
+static id pi_data(id self, SEL c, id type) { (void)c; return pb_as_data(pi_get(self, type)); }
+static id pi_string(id self, SEL c, id type) { (void)c; return pb_as_string(pi_get(self, type)); }
+static id pi_plist(id self, SEL c, id type) { (void)c; return pi_get(self, type); }
+static id pi_types(id self, SEL c) {
+    (void)c;
+    id a = MSG0(id, MSG0(id, pi_dict(self), "allKeys"), "mutableCopy");
+    id pt = objc_getAssociatedObject(self, &k_pi_ptypes);
+    nsarr_t *t = (nsarr_t *)pt;
+    for (u64 i = 0; pt && i < t->n; i++) { id x = canon(t->items[i]); if (!MSG(BOOL, a, "containsObject:", x)) cx_arr_add(a, x); }
+    return objc_autorelease(a);
+}
+static id pi_available(id self, SEL c, id want) {
+    (void)c;
+    nsarr_t *w = (nsarr_t *)want;
+    id have = pi_types(self, 0);
+    for (u64 i = 0; want && i < w->n; i++) if (MSG(BOOL, have, "containsObject:", canon(w->items[i]))) return w->items[i];
+    return 0;
+}
+static BOOL pi_set_provider(id self, SEL c, id prov, id types) {
+    (void)c;
+    if (!prov || !types) return NO;
+    objc_setAssociatedObject(self, &k_pi_prov, prov, 1);
+    objc_setAssociatedObject(self, &k_pi_ptypes, types, 1);
+    return YES;
+}
+static id pi_new(void) { return objc_autorelease(pi_init(cx_alloc_instance(&NSPasteboardItem_c), 0)); }
+static BOOL pi_empty(id it) { return !MSG0(u64, pi_dict(it), "count") && !objc_getAssociatedObject(it, &k_pi_ptypes); }
+
+/* ---- estado do pasteboard */
+static id pb_list(pbstate_t *p) { if (!p->list) p->list = objc_retain(cx_arr_new(&NSMutableArray_c)); return p->list; }
+static id pb_first(pbstate_t *p, BOOL make) {
+    id l = pb_list(p);
+    if (((nsarr_t *)l)->n) return ((nsarr_t *)l)->items[0];
+    if (!make) return 0;
+    id it = pi_new();
+    objc_setAssociatedObject(it, &k_pi_pb, pb_self(p), 0);
+    cx_arr_add(l, it);
+    return it;
+}
+static id pb_dict(pbstate_t *p) { return pi_dict(pb_first(p, YES)); }
 static void pb_remember(pbstate_t *p, const char *t, usize n) {
     free(p->disk);
     p->disk = malloc(n + 1);
     if (p->disk) { memcpy(p->disk, t, n); p->disk[n] = 0; }
+}
+static void pb_reset(pbstate_t *p) {
+    MSG0(void, pb_list(p), "removeAllObjects");
+    objc_release(p->declared);
+    p->declared = 0;
+    p->owner = 0;
 }
 /* o geral: se outro processo escreveu um texto novo no arquivo, adota-o */
 static void pb_sync(pbstate_t *p) {
@@ -2477,15 +2567,15 @@ static void pb_sync(pbstate_t *p) {
     int same = p->disk ? (strlen(p->disk) == n && !memcmp(p->disk, b, n)) : n == 0;
     if (!same) {
         pb_remember(p, (const char *)b, n);
-        MSG0(void, pb_dict(p), "removeAllObjects");
+        pb_reset(p);
         if (n) MSG(void, pb_dict(p), "setObject:forKey:", cx_str_n((const char *)b, n), NSPasteboardTypeString);
-        p->owner = 0;
         p->count++;
     }
     free(b);
 }
 static void pb_store(pbstate_t *p, id v, id type) {
     if (!type) type = NSPasteboardTypeString;
+    type = canon(type);
     if (v) MSG(void, pb_dict(p), "setObject:forKey:", v, type);
     else MSG(void, pb_dict(p), "removeObjectForKey:", type);
     if (pb_is_general(p) && cx_is_str(type) && !strcmp(cx_cstr(type), "public.utf8-plain-text")) {
@@ -2521,44 +2611,79 @@ static i64 pb_count(id self, SEL c) { (void)c; pbstate_t *p = pb_st(self); pb_sy
 static i64 pb_clear(id self, SEL c) {
     (void)c;
     pbstate_t *p = pb_st(self);
-    MSG0(void, pb_dict(p), "removeAllObjects");
+    pb_reset(p);
     if (pb_is_general(p)) { pb_write("", 0); pb_remember(p, "", 0); }
-    p->owner = 0;
     return ++p->count;
 }
+static void pb_prepare(id self, SEL c, u64 opts) { (void)opts; pb_clear(self, c); }
 static i64 pb_declare(id self, SEL c, id types, id owner) {
-    (void)types;
     i64 n = pb_clear(self, c);
-    pb_st(self)->owner = owner;
+    pbstate_t *p = pb_st(self);
+    p->owner = owner;
+    p->declared = types ? MSG0(id, types, "copy") : 0;   /* copy já vem com +1 */
     return n;
 }
-static i64 pb_add_types(id self, SEL c, id types, id owner) { (void)c; (void)types; pbstate_t *p = pb_st(self); if (owner) p->owner = owner; return p->count; }
+static i64 pb_add_types(id self, SEL c, id types, id owner) {
+    (void)c;
+    pbstate_t *p = pb_st(self);
+    if (owner) p->owner = owner;
+    if (types) {
+        id a = p->declared ? MSG0(id, p->declared, "mutableCopy") : cx_arr_new(&NSMutableArray_c);
+        nsarr_t *t = (nsarr_t *)types;
+        for (u64 i = 0; i < t->n; i++) if (!MSG(BOOL, a, "containsObject:", t->items[i])) cx_arr_add(a, t->items[i]);
+        objc_release(p->declared);
+        p->declared = a;
+    }
+    return p->count;
+}
 static void pb_release(id self, SEL c) { (void)self; (void)c; }
+/* lista de caminhos dos public.file-url de todos os itens (NSFilenamesPboardType) */
+static id pb_filenames(pbstate_t *p) {
+    id out = cx_arr_new(&NSMutableArray_c);
+    nsarr_t *l = (nsarr_t *)pb_list(p);
+    for (u64 i = 0; i < l->n; i++) {
+        id u = pb_as_string(pi_get(l->items[i], cx_str("public.file-url")));
+        char path[2048];
+        if (u && pbk_url_to_path(cx_cstr(u), path, sizeof path)) cx_arr_add(out, cx_str(path));
+    }
+    return objc_autorelease(out);
+}
 static id pb_value(id self, id type) {
     pbstate_t *p = pb_st(self);
     pb_sync(p);
-    id v = type ? MSG(id, pb_dict(p), "objectForKey:", type) : 0;
+    if (!type) return 0;
+    if (pbk_is_filenames(cx_cstr(type))) { id a = pb_filenames(p); return ((nsarr_t *)a)->n ? a : 0; }
+    nsarr_t *l = (nsarr_t *)pb_list(p);
+    for (u64 i = 0; i < l->n; i++) { id v = pi_get(l->items[i], type); if (v) return v; }
     /* tipo declarado e ainda sem dado: o dono fornece sob demanda (pasteboard:provideDataForType:) */
-    if (!v && type && pb_resp(p->owner, "pasteboard:provideDataForType:")) {
+    if (pb_resp(p->owner, "pasteboard:provideDataForType:")) {
         MSG(void, p->owner, "pasteboard:provideDataForType:", self, type);
-        v = MSG(id, pb_dict(p), "objectForKey:", type);
+        if (l->n) return pi_find(l->items[0], type);
     }
-    return v;
-}
-static id pb_as_data(id v) {
-    if (!v) return 0;
-    if (cx_is_str(v)) { const char *t = cx_cstr(v); return objc_autorelease(CFDataCreate(0, (const u8 *)t, (long)strlen(t))); }
-    return pb_is_data(v) ? v : 0;
-}
-static id pb_as_string(id v) {
-    if (!v) return 0;
-    if (cx_is_str(v)) return v;
-    if (pb_is_data(v)) return cx_str_n((const char *)MSG0(const void *, v, "bytes"), (usize)MSG0(u64, v, "length"));
     return 0;
 }
 static BOOL pb_set_data(id self, SEL c, id d, id type) { (void)c; pb_store(pb_st(self), d, type); return YES; }
 static BOOL pb_set_string(id self, SEL c, id s, id type) { (void)c; if (!s) return NO; pb_store(pb_st(self), s, type); return YES; }
-static BOOL pb_set_plist(id self, SEL c, id pl, id type) { (void)c; pb_store(pb_st(self), pl, type); return YES; }
+static BOOL pb_set_plist(id self, SEL c, id pl, id type) {
+    (void)c;
+    pbstate_t *p = pb_st(self);
+    if (type && pbk_is_filenames(cx_cstr(type)) && pl && pb_resp(pl, "count")) {   /* um item public.file-url por caminho */
+        nsarr_t *a = (nsarr_t *)pl;
+        id first = pb_first(p, NO);
+        if (first && pi_empty(first)) MSG(void, pb_list(p), "removeObject:", first);
+        for (u64 i = 0; i < a->n; i++) {
+            char url[4096];
+            if (!cx_is_str(a->items[i]) || !pbk_path_to_url(cx_cstr(a->items[i]), url, sizeof url)) continue;
+            id it = pi_new();
+            objc_setAssociatedObject(it, &k_pi_pb, self, 0);
+            pi_set(it, 0, cx_str(url), cx_str("public.file-url"));
+            cx_arr_add(pb_list(p), it);
+        }
+        return YES;
+    }
+    pb_store(p, pl, type);
+    return YES;
+}
 static id pb_data(id self, SEL c, id type) { (void)c; return pb_as_data(pb_value(self, type)); }
 static id pb_string(id self, SEL c, id type) { (void)c; return pb_as_string(pb_value(self, type ? type : NSPasteboardTypeString)); }
 static id pb_plist(id self, SEL c, id type) { (void)c; return pb_value(self, type); }
@@ -2566,91 +2691,182 @@ static id pb_types(id self, SEL c) {
     (void)c;
     pbstate_t *p = pb_st(self);
     pb_sync(p);
-    id a = MSG0(id, pb_dict(p), "allKeys");
-    return a ? a : objc_autorelease(cx_arr_new(0));
+    id a = cx_arr_new(&NSMutableArray_c);
+    nsarr_t *l = (nsarr_t *)pb_list(p);
+    for (u64 i = 0; i < l->n; i++) {
+        nsarr_t *t = (nsarr_t *)pi_types(l->items[i], 0);
+        for (u64 j = 0; j < t->n; j++) if (!MSG(BOOL, a, "containsObject:", t->items[j])) cx_arr_add(a, t->items[j]);
+    }
+    nsarr_t *d = (nsarr_t *)p->declared;
+    for (u64 i = 0; d && i < d->n; i++) { id x = canon(d->items[i]); if (!MSG(BOOL, a, "containsObject:", x)) cx_arr_add(a, x); }
+    /* nomes legados que apps antigos procuram em -types */
+    static const char *leg[][2] = {{"public.file-url", "NSFilenamesPboardType"}, {"public.url", "Apple URL pasteboard type"},
+        {"public.rtf", "NeXT Rich Text Format v1.0 pasteboard type"}, {"public.tiff", "NeXT TIFF v4.0 pasteboard type"},
+        {"public.html", "Apple HTML pasteboard type"}, {"com.adobe.pdf", "Apple PDF pasteboard type"}};
+    for (unsigned k = 0; k < sizeof leg / sizeof leg[0]; k++)
+        if (MSG(BOOL, a, "containsObject:", cx_str(leg[k][0])) && !MSG(BOOL, a, "containsObject:", cx_str(leg[k][1]))) cx_arr_add(a, cx_str(leg[k][1]));
+    return objc_autorelease(a);
 }
 static id pb_available(id self, SEL c, id want) {
     (void)c;
     nsarr_t *w = (nsarr_t *)want;
-    for (u64 i = 0; want && i < w->n; i++) if (pb_value(self, w->items[i])) return w->items[i];
+    id have = pb_types(self, 0);
+    for (u64 i = 0; want && i < w->n; i++)
+        if (MSG(BOOL, have, "containsObject:", w->items[i]) || MSG(BOOL, have, "containsObject:", canon(w->items[i]))) return w->items[i];
     return 0;
 }
 static BOOL pb_can_conform(id self, SEL c, id want) { return pb_available(self, c, want) != 0; }
-/* ---- NSPasteboardItem: um dicionário tipo → valor (ivar logo depois do isa, como DEF reserva 8 bytes) */
-typedef struct { void *isa; id items; } pbitem_t;
-static id pi_dict(id self) {
-    pbitem_t *it = (pbitem_t *)self;
-    if (!it->items) it->items = objc_retain(MSG0(id, pb_cls("NSMutableDictionary"), "dictionary"));
-    return it->items;
-}
-static id pi_init(id self, SEL c) { (void)c; pi_dict(self); return self; }
-static BOOL pi_set(id self, SEL c, id v, id type) { (void)c; if (!type || !v) return NO; MSG(void, pi_dict(self), "setObject:forKey:", v, type); return YES; }
-static id pi_get(id self, id type) { return type ? MSG(id, pi_dict(self), "objectForKey:", type) : 0; }
-static id pi_data(id self, SEL c, id type) { (void)c; return pb_as_data(pi_get(self, type)); }
-static id pi_string(id self, SEL c, id type) { (void)c; return pb_as_string(pi_get(self, type)); }
-static id pi_plist(id self, SEL c, id type) { (void)c; return pi_get(self, type); }
-static id pi_types(id self, SEL c) { (void)c; return MSG0(id, pi_dict(self), "allKeys"); }
-static id pi_available(id self, SEL c, id want) {
-    (void)c;
-    nsarr_t *w = (nsarr_t *)want;
-    for (u64 i = 0; want && i < w->n; i++) if (pi_get(self, w->items[i])) return w->items[i];
+
+/* ---- writeObjects: um item por objeto (NSPasteboardWriting) */
+static id item_for_object(id pbo, id o) {
+    if (cx_is_subclass(object_getClass(o), &NSPasteboardItem_c)) { objc_setAssociatedObject(o, &k_pi_pb, pbo, 0); return o; }
+    id it = pi_new();
+    objc_setAssociatedObject(it, &k_pi_pb, pbo, 0);
+    if (cx_is_str(o)) { pi_set(it, 0, o, NSPasteboardTypeString); return it; }
+    if (pb_resp(o, "absoluteString") && pb_resp(o, "isFileURL")) {
+        id u = MSG0(id, o, "absoluteString");
+        if (MSG0(BOOL, o, "isFileURL")) pi_set(it, 0, u, cx_str("public.file-url"));
+        pi_set(it, 0, u, cx_str("public.url"));
+        pi_set(it, 0, u, NSPasteboardTypeString);
+        return it;
+    }
+    if (pb_resp(o, "writableTypesForPasteboard:") && pb_resp(o, "pasteboardPropertyListForType:")) {   /* protocolo do app */
+        id types = MSG(id, o, "writableTypesForPasteboard:", pbo);
+        nsarr_t *t = (nsarr_t *)types;
+        for (u64 i = 0; types && i < t->n; i++) { id v = MSG(id, o, "pasteboardPropertyListForType:", t->items[i]); if (v) pi_set(it, 0, v, t->items[i]); }
+        return it;
+    }
+    if (pb_resp(o, "string") && pb_resp(o, "attributesAtIndex:effectiveRange:")) {   /* NSAttributedString */
+        id str = MSG0(id, o, "string");
+        if (str) pi_set(it, 0, str, NSPasteboardTypeString);
+        if (pb_resp(o, "RTFFromRange:documentAttributes:")) {
+            u64 len = MSG0(u64, o, "length");
+            typedef struct { u64 loc, len; } rg_t;
+            id rtf = ((id (*)(id, SEL, rg_t, id))objc_msgSend)(o, sel_registerName("RTFFromRange:documentAttributes:"), (rg_t){0, len}, (id)0);
+            if (rtf) pi_set(it, 0, rtf, cx_str("public.rtf"));
+        }
+        return it;
+    }
+    if (cx_is_subclass(object_getClass(o), &NSImage_c)) {
+        id d = pb_resp(o, "TIFFRepresentation") ? MSG0(id, o, "TIFFRepresentation") : 0;
+        if (d) pi_set(it, 0, d, cx_str("public.tiff"));
+        pi_set(it, 0, o, cx_str("com.apple.mos.nsimage"));      /* no mesmo processo: o objeto */
+        return it;
+    }
+    if (cx_is_subclass(object_getClass(o), &NSColor_c)) { pi_set(it, 0, o, cx_str("com.apple.cocoa.pasteboard.color")); return it; }
     return 0;
 }
 static BOOL pb_write_objects(id self, SEL c, id arr) {
+    (void)c;
+    pbstate_t *p = pb_st(self);
     nsarr_t *a = (nsarr_t *)arr;
     BOOL any = NO;
+    id first = pb_first(p, NO);
+    if (first && pi_empty(first)) MSG(void, pb_list(p), "removeObject:", first);
     for (u64 i = 0; arr && i < a->n; i++) {
-        id o = a->items[i];
-        if (cx_is_str(o)) { pb_set_string(self, c, o, NSPasteboardTypeString); any = YES; }
-        else if (cx_is_subclass(object_getClass(o), &NSPasteboardItem_c)) {
-            id d = pi_dict(o);
-            id keys = MSG0(id, d, "allKeys");
-            nsarr_t *k = (nsarr_t *)keys;
-            for (u64 j = 0; keys && j < k->n; j++) pb_store(pb_st(self), MSG(id, d, "objectForKey:", k->items[j]), k->items[j]);
-            any = YES;
-        } else if (pb_resp(o, "absoluteString")) {
-            id u = MSG0(id, o, "absoluteString");
-            pb_store(pb_st(self), u, cx_str("public.url"));
-            if (pb_resp(o, "isFileURL") && MSG0(BOOL, o, "isFileURL")) pb_store(pb_st(self), u, cx_str("public.file-url"));
-            any = YES;
-        }
+        id it = item_for_object(self, a->items[i]);
+        if (!it) continue;
+        cx_arr_add(pb_list(p), it);
+        any = YES;
+        id s = pi_find(it, NSPasteboardTypeString);   /* texto do 1º item também vai para os outros processos */
+        if (i == 0 && pb_is_general(p) && s && cx_is_str(s)) { pb_write(cx_cstr(s), strlen(cx_cstr(s))); pb_remember(p, cx_cstr(s), strlen(cx_cstr(s))); }
     }
     return any;
 }
-/* um item só com tudo o que o pasteboard tem (o Chromium lê pasteboardItems[0]) */
 static id pb_items(id self, SEL c) {
     (void)c;
     pbstate_t *p = pb_st(self);
     pb_sync(p);
-    id a = cx_arr_new(0);
-    id keys = MSG0(id, pb_dict(p), "allKeys");
-    nsarr_t *k = (nsarr_t *)keys;
-    if (keys && k->n) {
-        id it = pi_init(cx_alloc_instance(&NSPasteboardItem_c), 0);
-        for (u64 j = 0; j < k->n; j++) pi_set(it, 0, MSG(id, pb_dict(p), "objectForKey:", k->items[j]), k->items[j]);
-        cx_arr_add(a, it);
-        objc_release(it);
-    }
-    return objc_autorelease(a);
+    return objc_autorelease(MSG0(id, pb_list(p), "copy"));
 }
-static id pb_read_objects(id self, SEL c, id classes, id opts) {
-    (void)opts;
-    nsarr_t *cl = (nsarr_t *)classes;
-    id out = cx_arr_new(0);
-    for (u64 i = 0; classes && i < cl->n; i++) {
-        const char *n = cx_class_name((cx_class_t *)cl->items[i]);
-        if (!n) continue;
-        if (strstr(n, "String")) { id s = pb_string(self, c, NSPasteboardTypeString); if (s) cx_arr_add(out, s); }
-        else if (strstr(n, "URL")) {
-            id s = pb_as_string(pb_value(self, cx_str("public.file-url")));
-            if (!s) s = pb_as_string(pb_value(self, cx_str("public.url")));
-            if (s) { id u = MSG(id, pb_cls("NSURL"), "URLWithString:", s); if (u) cx_arr_add(out, u); }
-        } else if (strstr(n, "PasteboardItem")) {
-            id items = pb_items(self, c);
-            nsarr_t *it = (nsarr_t *)items;
-            for (u64 j = 0; j < it->n; j++) cx_arr_add(out, it->items[j]);
+static u64 pb_index_of_item(id self, SEL c, id it) {
+    (void)c;
+    i64 i = MSG(i64, pb_list(pb_st(self)), "indexOfObject:", it);
+    return (u64)i;
+}
+
+/* ---- readObjectsForClasses:options: — por item, a 1ª classe que o item satisfaz */
+static BOOL opt_bool(id opts, const char *k) { id v = opts ? MSG(id, opts, "objectForKey:", cx_str(k)) : 0; return v && MSG0(BOOL, v, "boolValue"); }
+static BOOL url_conforms(id url, id utis) {
+    if (!utis) return YES;
+    id ext = MSG0(id, MSG0(id, url, "path"), "pathExtension");
+    id ut = pb_cls("UTType") && ext ? MSG(id, pb_cls("UTType"), "typeWithFilenameExtension:", ext) : 0;
+    nsarr_t *u = (nsarr_t *)utis;
+    for (u64 i = 0; i < u->n; i++) {
+        if (ut && pb_resp(ut, "conformsToType:")) {
+            id want = MSG(id, pb_cls("UTType"), "typeWithIdentifier:", u->items[i]);
+            if (want && MSG(BOOL, ut, "conformsToType:", want)) return YES;
+        }
+        id ident = ut && pb_resp(ut, "identifier") ? MSG0(id, ut, "identifier") : 0;
+        if (ident && MSG(BOOL, ident, "isEqualToString:", u->items[i])) return YES;
+        if (!strcmp(cx_cstr(u->items[i]), "public.item") || !strcmp(cx_cstr(u->items[i]), "public.data")) return YES;
+    }
+    return NO;
+}
+static id read_item_as(id item, id cls, id opts) {
+    const char *n = cx_class_name((cx_class_t *)cls);
+    if (!n) return 0;
+    cx_class_t *k = (cx_class_t *)cls;
+    if (cx_is_subclass(k, &NSPasteboardItem_c)) return item;
+    cx_class_t *urlk = cx_class_named("NSURL");
+    if (urlk && cx_is_subclass(k, urlk)) {
+        id s = pb_as_string(pi_get(item, cx_str("public.file-url")));
+        BOOL file = s != 0;
+        if (!s && !opt_bool(opts, "NSPasteboardURLReadingFileURLsOnlyKey")) s = pb_as_string(pi_get(item, cx_str("public.url")));
+        if (!s) return 0;
+        id u = MSG(id, pb_cls("NSURL"), "URLWithString:", s);
+        if (!u) return 0;
+        id want = opts ? MSG(id, opts, "objectForKey:", cx_str("NSPasteboardURLReadingContentsConformToTypesKey")) : 0;
+        if (want && file && !url_conforms(u, want)) return 0;
+        return u;
+    }
+    if (strstr(n, "AttributedString")) {
+        id rtf = pi_get(item, cx_str("public.rtf"));
+        if (rtf && pb_is_data(rtf) && cx_responds(k, sel_registerName("initWithRTF:documentAttributes:"))) {
+            id a = MSG(id, MSG0(id, cls, "alloc"), "initWithRTF:documentAttributes:", rtf, (id)0);
+            if (a) return objc_autorelease(a);
+        }
+        id s = pb_as_string(pi_get(item, NSPasteboardTypeString));
+        return s ? objc_autorelease(MSG(id, MSG0(id, cls, "alloc"), "initWithString:", s)) : 0;
+    }
+    if (strstr(n, "String")) {
+        id s = pb_as_string(pi_get(item, NSPasteboardTypeString));
+        if (!s) s = pb_as_string(pi_get(item, cx_str("public.url")));
+        return s;
+    }
+    if (cx_is_subclass(k, &NSImage_c)) {
+        id o = pi_get(item, cx_str("com.apple.mos.nsimage"));
+        if (o) return o;
+        static const char *imgt[] = {"public.png", "public.tiff", "public.jpeg", "com.compuserve.gif", "com.microsoft.bmp"};
+        for (unsigned i = 0; i < sizeof imgt / sizeof imgt[0]; i++) {
+            id d = pb_as_data(pi_get(item, cx_str(imgt[i])));
+            if (d) { id img = MSG(id, MSG0(id, cls, "alloc"), "initWithData:", d); if (img) return objc_autorelease(img); }
+        }
+        return 0;
+    }
+    if (cx_is_subclass(k, &NSColor_c)) return pi_get(item, cx_str("com.apple.cocoa.pasteboard.color"));
+    /* NSPasteboardReading do app */
+    if (cx_responds(k->isa, sel_registerName("readableTypesForPasteboard:")) && cx_responds(k, sel_registerName("initWithPasteboardPropertyList:ofType:"))) {
+        id types = MSG(id, cls, "readableTypesForPasteboard:", objc_getAssociatedObject(item, &k_pi_pb));
+        nsarr_t *t = (nsarr_t *)types;
+        for (u64 i = 0; types && i < t->n; i++) {
+            id v = pi_get(item, t->items[i]);
+            if (!v) continue;
+            id o = MSG(id, MSG0(id, cls, "alloc"), "initWithPasteboardPropertyList:ofType:", v, t->items[i]);
+            if (o) return objc_autorelease(o);
         }
     }
+    return 0;
+}
+static id pb_read_objects(id self, SEL c, id classes, id opts) {
+    (void)c;
+    pbstate_t *p = pb_st(self);
+    pb_sync(p);
+    nsarr_t *cl = (nsarr_t *)classes;
+    id out = cx_arr_new(0);
+    nsarr_t *l = (nsarr_t *)pb_list(p);
+    for (u64 i = 0; i < l->n; i++)
+        for (u64 j = 0; classes && j < cl->n; j++) { id o = read_item_as(l->items[i], cl->items[j], opts); if (o) { cx_arr_add(out, o); break; } }
     return objc_autorelease(out);
 }
 static BOOL pb_can_read(id self, SEL c, id classes, id opts) { id r = pb_read_objects(self, c, classes, opts); return r && ((nsarr_t *)r)->n > 0; }
@@ -5339,10 +5555,12 @@ void cx_appkit_init(void) {
     M(NSPasteboard, "writeObjects:", pb_write_objects); M(NSPasteboard, "readObjectsForClasses:options:", pb_read_objects);
     M(NSPasteboard, "canReadObjectForClasses:options:", pb_can_read); M(NSPasteboard, "canReadItemWithDataConformingToTypes:", pb_can_conform);
     M(NSPasteboard, "pasteboardItems", pb_items); M(NSPasteboard, "types", pb_types); M(NSPasteboard, "availableTypeFromArray:", pb_available);
+    M(NSPasteboard, "prepareForNewContentsWithOptions:", pb_prepare); M(NSPasteboard, "indexOfPasteboardItem:", pb_index_of_item);
     DEF(NSPasteboardItem, NSObject);
     M(NSPasteboardItem, "init", pi_init); M(NSPasteboardItem, "types", pi_types); M(NSPasteboardItem, "availableTypeFromArray:", pi_available);
     M(NSPasteboardItem, "setData:forType:", pi_set); M(NSPasteboardItem, "setString:forType:", pi_set); M(NSPasteboardItem, "setPropertyList:forType:", pi_set);
     M(NSPasteboardItem, "dataForType:", pi_data); M(NSPasteboardItem, "stringForType:", pi_string); M(NSPasteboardItem, "propertyListForType:", pi_plist);
+    M(NSPasteboardItem, "setDataProvider:forTypes:", pi_set_provider);
     NSPasteboardTypeString = NSStringPboardType = cx_str("public.utf8-plain-text");
     DEF(NSVisualEffectView, NSView);
     DEF(NSColorWell, NSControl);
