@@ -3020,6 +3020,27 @@ static void trace_zig_fs(process_t *p, u64 nr, u64 a, u64 b, u64 c, i64 res) {
 }
 bool xtrace_on(process_t *p);
 void xtrace_log(process_t *p, int tid, u64 nr, u64 a, u64 b, u64 c, i64 res, bool blocked);
+/* Syscalls que só leem um campo do próprio processo ou o relógio: rodam sem a trava grande (arch/cpu.c chama isto
+ * antes do sched_klock). Leituras de palavra alinhada; ninguém mais precisa de exclusão para elas. Devolve 0 quando
+ * a syscall não é destas (segue o caminho com a trava). A thread morta por outro núcleo sai no sched_kexit
+ * (PEND_RESCHED); sinais pendentes saem na próxima entrada com a trava ou no tique. */
+u64 proc_syscall_fast(int_frame_t *f) {
+    thread_t *t = thread_current();
+    process_t *p = t ? t->proc : NULL;
+    if (!p || (f->cs & 3) != 3 || t->state != TH_RUNNING) return 0;
+    switch (f->rax) {
+    case SYS_TIME: f->rax = timer_ticks(); break;
+    case SYS_GETPID: f->rax = (u64)(i64)p->pid; break;
+    case SYS_GETTID: f->rax = (u64)(i64)t->id; break;
+    case SYS_GETUID: f->rax = (u64)(i64)p->uid; break;
+    case SYS_GETEUID: f->rax = (u64)(i64)p->euid; break;
+    case SYS_GETGID: f->rax = (u64)(i64)p->gid; break;
+    case SYS_GETEGID: f->rax = (u64)(i64)p->egid; break;
+    case SYS_CPUS: f->rax = (u64)(i64)smp_cpu_count(); break;
+    default: return 0;
+    }
+    return (u64)f;
+}
 u64 proc_syscall(int_frame_t *f) {
     static int trace_zig = -1;
     if (trace_zig < 0) trace_zig = vfs_lookup("/Sistema/Biblioteca/rastrear-arquivos-zig") != NULL;

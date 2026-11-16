@@ -521,18 +521,22 @@ static int add_component(const u8 *xar, u64 xn, u64 heap, const xfile_t *files, 
     const xfile_t *bomf = sibling(files, nf, parent, "Bom");
     u8 *pb = 0, *bb = 0, *cpio = 0;
     u64 pn = 0, bn = 0, cn = 0;
-    char paths[PKG_MAX_FILES][256];
+    /* PKG_MAX_FILES caminhos de 256 bytes (32 KiB) no heap: na pilha, o frame passava da pilha de 32 KiB de uma
+     * thread do kernel (docs/kernel-auditoria.md, item 4) */
+    char (*paths)[256] = kmalloc((usize)PKG_MAX_FILES * 256);
     int np = 0, own = 0, rc;
-    if (!payload || !bomf) return -1;
-    if (load_member(xar, xn, heap, bomf, &bb, &bn)) return -1;
-    if (bom_paths(bb, bn, paths, PKG_MAX_FILES, &np)) { kfree(bb); return -5; }
+    if (!paths) return -1;
+    if (!payload || !bomf) { kfree(paths); return -1; }
+    if (load_member(xar, xn, heap, bomf, &bb, &bn)) { kfree(paths); return -1; }
+    if (bom_paths(bb, bn, paths, PKG_MAX_FILES, &np)) { kfree(bb); kfree(paths); return -5; }
     kfree(bb);
-    if (load_member(xar, xn, heap, payload, &pb, &pn)) return -1;
+    if (load_member(xar, xn, heap, payload, &pb, &pn)) { kfree(paths); return -1; }
     own = payload_to_cpio(pb, pn, &cpio, &cn);
-    if (own < 0) { kfree(pb); return -1; }
+    if (own < 0) { kfree(pb); kfree(paths); return -1; }
     if (own == 1) { cpio = pb; cn = pn; pb = 0; }
     else kfree(pb);
     rc = cpio_collect(cpio, cn, paths, np, outf, nout, PKG_MAX_FILES);
+    kfree(paths);
     if (rc) { kfree(cpio); return rc; }
     if (*nbuf >= 8) { kfree(cpio); return -1; }
     bufs[(*nbuf)++] = cpio;

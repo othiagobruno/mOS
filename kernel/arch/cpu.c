@@ -112,6 +112,7 @@ __attribute__((weak)) void sched_klock(void) {}
 __attribute__((weak)) bool sched_ktry(void) { return true; }
 __attribute__((weak)) u64 sched_dead_check(int_frame_t *f) { (void)f; return 0; }
 __attribute__((weak)) u64 sched_kexit(u64 r) { return r; }
+__attribute__((weak)) u64 proc_syscall_fast(int_frame_t *f) { (void)f; return 0; }
 __attribute__((weak)) void sched_post(void) {}
 
 static void exc_panic(int_frame_t *f) {
@@ -177,6 +178,8 @@ u64 isr_dispatch(int_frame_t *f) {
     sched_kentry(f);
     u64 r;
     if (f->vector == 0x80) {
+        r = proc_syscall_fast(f);                /* tempo, pid, uid, CPUs: sem a trava grande (process.c) */
+        if (r) return sched_kexit(r);
         sched_klock();
         r = sched_dead_check(f);
         if (!r) r = proc_syscall(f);

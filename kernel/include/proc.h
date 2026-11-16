@@ -258,6 +258,7 @@ int       proc_tty_interrupt_fg(int pid);                        /* idem, só se
 bool      proc_alive(int pid);
 int       proc_exit_code(int pid);                               /* -1000 se ainda roda ou não existe */
 u64       proc_syscall(int_frame_t *f);         /* int 0x80 */
+u64       proc_syscall_fast(int_frame_t *f);    /* int 0x80 só de leitura, sem a trava grande; 0 = não é */
 u64       proc_fault(int_frame_t *f, u64 cr2);  /* exceção em ring 3: COW, sinal ou encerra o processo */
 u64       proc_signal_check(int_frame_t *f);    /* antes de voltar ao ring 3: entrega sinais pendentes */
 bool      proc_signal(int pid, int sig);        /* envia um sinal (SIGKILL encerra na hora); siginfo SI_USER */
