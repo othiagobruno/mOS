@@ -193,18 +193,7 @@ unsigned char CFStringGetCString(id_ s, char *buf, long size, u32 enc);
 /* tamanho máximo do caminho em UTF-8 (+ NUL) */
 long CFStringGetMaximumSizeOfFileSystemRepresentation(id_ s) { return CFStringGetLength(s) * 3 + 1; }
 u8 CFStringGetFileSystemRepresentation(id_ s, char *buf, long max) { return CFStringGetCString(s, buf, max, ENC_UTF8); }
-/* CFComparisonResult CFStringCompare(a, b, options): kCFCompareCaseInsensitive = 1 */
-long CFStringCompare(id_ a, id_ b, u64 opts) {
-    const char *x = cf_utf8(a), *y = cf_utf8(b);
-    if (!x) x = "";
-    if (!y) y = "";
-    for (;; x++, y++) {
-        int cx = (unsigned char)*x, cy = (unsigned char)*y;
-        if (opts & 1) { if (cx >= 'A' && cx <= 'Z') cx += 32; if (cy >= 'A' && cy <= 'Z') cy += 32; }
-        if (cx != cy) return cx < cy ? -1 : 1;
-        if (!cx) return 0;
-    }
-}
+/* CFStringCompare e as outras funções de texto: fdn_cfstring.c */
 /* CFDictionary/CFArray/CFNumber em ponte com NSDictionary/NSArray/NSNumber */
 id_ CFDictionaryGetValue(id_ d, id_ key) { return d && key ? MSG1_(id_, d, "objectForKey:", key) : 0; }
 u8 CFDictionaryGetValueIfPresent(id_ d, id_ key, id_ *out) { id_ v = CFDictionaryGetValue(d, key); if (out) *out = v; return v != 0; }

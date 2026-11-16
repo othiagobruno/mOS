@@ -45,8 +45,6 @@ id_ objc_retain(id_ o);
 #define MSG1(T, o, s, a) ((T (*)(id_, void *, __typeof__(a)))objc_msgSend)((id_)(o), sel_registerName(s), (a))
 #define CLS(n) ((id_)cx_class_named(n))
 
-static const char *utf8(id_ s) { return s ? MSG0(const char *, s, "UTF8String") : 0; }
-static id_ nsstr(const char *s) { return s ? MSG1(id_, CLS("NSString"), "stringWithUTF8String:", s) : 0; }
 
 /* ---- constantes CFString no formato de @"..." (o mesmo de darwin.c) */
 extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
@@ -239,10 +237,6 @@ objc_exc_pre_t objc_setExceptionPreprocessor(objc_exc_pre_t fn) { objc_exc_pre_t
 objc_exc_pre_t cx_objc_exception_preprocessor(void) { return exc_pre; }   /* objc_exc.c: aplicado no objc_exception_throw */
 
 /* ---- CoreFoundation */
-Boolean CFStringHasPrefix(id_ s, id_ p) {
-    const char *a = utf8(s), *b = utf8(p);
-    return a && b && !strncmp(a, b, strlen(b));
-}
 id_ CFStringCreateCopy(void *alloc, id_ s) { (void)alloc; id_ c = s ? MSG0(id_, s, "copy") : 0; return c; }
 id_ CFStringCreateMutableCopy(void *alloc, long max, id_ s) { (void)alloc; (void)max; return s ? MSG0(id_, s, "mutableCopy") : 0; }
 void CFStringAppend(id_ m, id_ s) { if (m && s) (void)MSG1(id_, m, "appendString:", s); }
@@ -252,26 +246,6 @@ void free(void *p);
 long CFStringGetLength(id_ s);
 void CFStringGetCharacters(id_ s, CFRange r, unsigned short *out);
 id_ CFStringCreateWithCharacters(void *alloc, const unsigned short *chars, long n);
-id_ CFStringCreateWithSubstring(void *alloc, id_ s, CFRange r) {
-    (void)alloc;
-    if (!s || r.loc < 0 || r.len < 0 || r.loc + r.len > CFStringGetLength(s)) return 0;
-    unsigned short tmp[512], *w = r.len <= 512 ? tmp : malloc((size_t)r.len * 2);
-    if (!w) return 0;
-    CFStringGetCharacters(s, r, w);
-    id_ o = CFStringCreateWithCharacters(0, w, r.len);   /* +1, como todo Create */
-    if (w != tmp) free(w);
-    return o;
-}
-CFRange CFStringGetRangeOfCharacterClusterAtIndex(id_ s, long i, int type) {
-    (void)type;
-    const char *u = utf8(s);
-    CFRange r = {i, 1};
-    if (!u) return r;
-    while (r.loc > 0 && ((u8)u[r.loc] & 0xC0) == 0x80) r.loc--;        /* começo do caractere UTF-8 */
-    r.len = 1;
-    while (u[r.loc + r.len] && ((u8)u[r.loc + r.len] & 0xC0) == 0x80) r.len++;
-    return r;
-}
 id_ CFStringCreateArrayWithFindResults(void *alloc, id_ s, id_ find, CFRange r, unsigned opts) { (void)alloc; (void)s; (void)find; (void)r; (void)opts; return 0; }   /* NULL = nenhuma ocorrência */
 
 /* (CFDictionaryApplyFunction e as outras coleções ficam em cfcollections.c) */
