@@ -60,7 +60,8 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 | 11 CloudKit/iCloud | ✅ código e nomes (16 nov.); não executado em VM | `CloudKit.m` compila para Mach-O (170 classes); overlay `CloudKit.swift` compilado contra o Foundation Swift real: os **41/41** nomes mangled que os apps pedem saem dele |
 | 7 Spotlight | ✅ (16 nov.); não executado em VM | `tools/agentes_host.c` **39/39** (predicado com `$time.*` e `InRange`), `tools/mdclitest.sh` **18/18** (mdfind, mdls, mdutil) |
 | 8 Apple Events, AppleScript, osascript | ✅ (16 nov.); não executado em VM | `tools/astest.c` **118/118** sob ASan (descritores, API C `AEDesc`, linguagem), `tools/osascripttest.sh` **18/18** |
-| 4, 6, 9, 10, 12 | a fazer | — |
+| 6 UserNotifications | ✅ (16 nov.); não executado em VM | `userland/tests-appkit/un_host.c` **49/49** sob ASan (gatilhos, calendário em hora local, Central, ações, persistência) |
+| 4, 9, 10, 12 | a fazer | — |
 
 ## Fase 1 — o que entrou (15 nov.)
 
@@ -177,4 +178,24 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 - Limites: `.scpt` compilado (binário) não roda (erro claro); só AppleScript (`-l JavaScript` dá erro); dicionários
   de script (`sdef`) dos apps não são lidos — comandos próprios de um app (fora de abrir/ativar/sair/abrir
   documento/URL) chegam como erro `-1708`.
+
+## Fase 6 — UserNotifications (16 nov.)
+
+- **Centro** (`un_center.c`): pendentes e entregues em listas separadas; gatilho de intervalo (repetição ≥ 60 s) e
+  de calendário com a regra do NSCalendar (unidades abaixo da menor informada valem 0), em hora local e com dia da
+  semana; mesmo identificador substitui; Central com as 64 mais novas; badge; categorias com ações. Tudo vai para
+  `~/Library/Application Support/com.mos.usernotifications/<bundle>.txt`: o que venceu com o app fechado é entregue
+  quando ele abre (uma vez só, e a repetição segue).
+- **UserNotifications** (`usernotifications.c`): conteúdo completo (título, subtítulo, corpo, som, badge, userInfo em
+  plist, categoria, thread, anexos, nível de interrupção, relevância), cópia mutável, pedidos, gatilhos com
+  `nextTriggerDate`, `getPending`/`getDelivered`, remoções, categorias, `UNNotificationAction`/`UNTextInputNotificationAction`
+  com ícone, `UNNotificationSound` (crítico também), anexos validados e movidos como no macOS, configurações,
+  `setBadgeCount:`, `.provisional`; delegates no fio principal (na frente só aparece se o delegate pedir) e respostas
+  com `UNTextInputNotificationResponse`. A tabela fixa de 48 objetos saiu (vazava e travava depois de 48).
+- **Banner da Interface** (Camila, PR #402): `MOS_DESK_BANNER_EX` com subtítulo e até 4 ações (destrutiva, texto,
+  abrir o app), `MOS_DESK_TAKE_EX` (clique, botão, texto, fechar) e `MOS_DESK_REMOVE`.
+- **NSUserNotification** (`nsusernotification.c`): entregar, agendar (data e repetição por dias/horas/semanas, 1 mês
+  ou 1 ano), botões de ação e resposta, ações adicionais, entregues/agendadas, delegate `shouldPresent`/`didDeliver`/`didActivate`.
+- Limites: sem APNs (push falha com `UNErrorDomain`); a imagem do anexo não aparece no banner; outras repetições do
+  `NSUserNotification` (ex.: a cada 2 meses) dão aviso e não são agendadas.
 
