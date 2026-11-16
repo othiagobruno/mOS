@@ -29,6 +29,8 @@ typedef struct {
     u32 prim;
     int srgb_on;
     int sel;                        /* GL_SELECT / GL_FEEDBACK */
+    int ls_on, ps_on;               /* GL_LINE_STIPPLE / GL_POLYGON_STIPPLE */
+    u32 ls_cnt;                     /* contador do pontilhado de linha */
 } rs_t;
 
 /* ================================================================ testes e escrita de pixel */
@@ -336,6 +338,7 @@ static void raster_tri(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, gl_vtx_t *c, double zo
             double w2 = e[2][0] * cx + e[2][1] * cy + e[2][2];
             if (w0 < 0 || w1 < 0 || w2 < 0) continue;
             if ((w0 == 0 && bias[0]) || (w1 == 0 && bias[1]) || (w2 == 0 && bias[2])) continue;
+            if (R->ps_on && !(R->C->pstipple[py & 31] >> (px & 31) & 1)) continue;
             double b0 = w0 / A, b1 = w1 / A, b2 = w2 / A;
             f.coord[0] = (float)cx;
             f.coord[1] = (float)cy;
@@ -377,6 +380,11 @@ static void raster_line(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, double zoff, int last
     f.prim_id = R->prim;
     f.pcoord[0] = f.pcoord[1] = 0;
     for (int i = i0; dir > 0 ? i < i1 : i > i1; i += dir) {
+        if (R->ls_on) {
+            /* bit (s / fator) mod 16 do padrão; s conta os fragmentos ao longo do eixo maior */
+            u32 bit = (R->ls_cnt++ / (u32)C->ls_factor) & 15;
+            if (!(C->ls_pattern >> bit & 1)) continue;
+        }
         double c = i + 0.5;
         double t = len > 0 ? (c - s0) / (s1 - s0) : 0;
         if (t < 0) t = 0;
@@ -571,6 +579,7 @@ static void tri_post(rs_t *R, gl_vtx_t **pv, int n, gl_vtx_t *provoke) {
         for (int i = 1; i + 1 < n; i++) raster_tri(R, pv[0], pv[i], pv[i + 1], zo);
     } else if (mode == GL_LINE) {
         double zo = R->poff_line && n >= 3 ? poly_offset(R, pv) : 0;
+        R->ls_cnt = 0; /* cada polígono em modo linha recomeça o pontilhado */
         for (int i = 0; i < n; i++) if (pv[i]->edge) raster_line(R, pv[i], pv[(i + 1) % n], zo, 1);
     } else {
         double zo = R->poff_point && n >= 3 ? poly_offset(R, pv) : 0;
@@ -751,7 +760,7 @@ void gl_raster_gs_emit(gl_ctx_t *C, GLenum outprim, gl_vtx_t *v, const u8 *cut, 
         int len = i - start;
         gl_vtx_t *s = v + start;
         if (outprim == GL_POINTS) for (int k = 0; k < len; k++) emit_point(R, &s[k]);
-        else if (outprim == GL_LINE_STRIP) for (int k = 0; k + 1 < len; k++) { gl_vtx_t a = s[k], b = s[k + 1]; emit_line(R, &a, &b, &b, 0); }
+        else if (outprim == GL_LINE_STRIP) { R->ls_cnt = 0; for (int k = 0; k + 1 < len; k++) { gl_vtx_t a = s[k], b = s[k + 1]; emit_line(R, &a, &b, &b, 0); } }
         else for (int k = 2; k < len; k++) {
             gl_vtx_t a = s[k - 2], b = s[k - 1], c = s[k];
             if (k & 1) emit_tri(R, &b, &a, &c, &c); else emit_tri(R, &a, &b, &c, &c);
@@ -810,9 +819,10 @@ static void assemble(asm_t *A, const u32 *e, i64 n) {
     rs_t *R = A->R;
     if (R->S->gs) { gs_assemble(A, e, n); return; }
     int last = R->flat_last;
+    R->ls_cnt = 0; /* início do primitivo (glBegin, draw ou reinício) */
     switch (A->mode) {
     case GL_POINTS: for (i64 i = 0; i < n; i++) prim1(A, e[i]); break;
-    case GL_LINES: for (i64 i = 0; i + 1 < n; i += 2) prim2(A, e[i], e[i + 1], last, 0); break;
+    case GL_LINES: for (i64 i = 0; i + 1 < n; i += 2) { R->ls_cnt = 0; prim2(A, e[i], e[i + 1], last, 0); } break;
     case GL_LINE_STRIP: for (i64 i = 0; i + 1 < n; i++) prim2(A, e[i], e[i + 1], last, 0); break;
     case GL_LINE_LOOP:
         for (i64 i = 0; i + 1 < n; i++) prim2(A, e[i], e[i + 1], last, 0);
@@ -839,7 +849,7 @@ static void assemble(asm_t *A, const u32 *e, i64 n) {
         else for (i64 i = 1; i + 1 < n; i++) prim3(A, e[0], e[i], e[i + 1], 0);
         break;
     }
-    case GL_LINES_ADJACENCY: for (i64 i = 0; i + 3 < n; i += 4) prim2(A, e[i + 1], e[i + 2], last, 0); break;
+    case GL_LINES_ADJACENCY: for (i64 i = 0; i + 3 < n; i += 4) { R->ls_cnt = 0; prim2(A, e[i + 1], e[i + 2], last, 0); } break;
     case GL_LINE_STRIP_ADJACENCY: for (i64 i = 1; i + 2 < n; i++) prim2(A, e[i], e[i + 1], last, 0); break;
     case GL_TRIANGLES_ADJACENCY: for (i64 i = 0; i + 5 < n; i += 6) prim3(A, e[i], e[i + 2], e[i + 4], last ? 2 : 0); break;
     case GL_TRIANGLE_STRIP_ADJACENCY:
@@ -898,6 +908,8 @@ void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const
     R.C = C;
     R.T = T;
     R.S = &C->st;
+    R.ls_on = gl_is_on(C, GL_LINE_STIPPLE) && (C->ls_pattern != 0xffff);
+    R.ps_on = gl_is_on(C, GL_POLYGON_STIPPLE);
     R.depth_on = gl_is_on(C, GL_DEPTH_TEST) && T->depth;
     R.stencil_on = gl_is_on(C, GL_STENCIL_TEST) && T->stencil;
     R.cull_on = gl_is_on(C, GL_CULL_FACE);

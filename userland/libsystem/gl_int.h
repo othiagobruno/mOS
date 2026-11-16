@@ -295,6 +295,7 @@ typedef struct gl_ctx {
     GLenum cull_mode, front_face, pmode[2];
     float poff_factor, poff_units, poff_clamp;
     float line_w, point_s, point_min, point_max, point_fade, point_att[3];
+    int ls_factor; u16 ls_pattern; u32 pstipple[32]; /* pontilhado: linha (fator, padrão) e polígono (bit x da linha y) */
     GLenum point_origin;
     GLenum logic_op;
     float samp_cov; int samp_inv;

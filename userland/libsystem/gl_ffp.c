@@ -142,7 +142,7 @@ enum {
     DL_COLOR2, DL_FOG, DL_EDGE, DL_MMODE, DL_LOADM, DL_MULTM, DL_PUSHM, DL_POPM, DL_MATERIAL, DL_LIGHT, DL_LMODEL, DL_SHADE,
     DL_ALPHAF, DL_BLENDF, DL_DEPTHF, DL_DEPTHM, DL_COLORM, DL_LINEW, DL_POINTS, DL_PMODE, DL_CULL, DL_FRONT, DL_TEXENV,
     DL_TEXPARAM, DL_FOGP, DL_CALL, DL_RASTER, DL_BITMAP, DL_DRAWPIX, DL_POFF, DL_SCISSOR, DL_COLORMAT, DL_TEXGEN, DL_CLIPP,
-    DL_PUSHA, DL_POPA, DL_ATTR, DL_STENCILF, DL_STENCILO, DL_ACTIVE, DL_CLEARCOL, DL_CLEARDEPTH, DL_LSTIPPLE, DL_IDENT,
+    DL_PUSHA, DL_POPA, DL_ATTR, DL_STENCILF, DL_STENCILO, DL_ACTIVE, DL_CLEARCOL, DL_CLEARDEPTH, DL_LSTIPPLE, DL_PSTIPPLE, DL_IDENT,
     DL_LOADNAME, DL_PUSHNAME, DL_POPNAME, DL_BLENDCOL, DL_BLENDEQ, DL_USEPROG, DL_LISTBASE, DL_ZOOM, DL_HINT,
 };
 struct gl_dlcmd {
@@ -1010,12 +1010,48 @@ void glGetClipPlane(GLenum plane, GLdouble *eq) {
     if (p < 0 || p >= GLX_CLIP) GLERR(GL_INVALID_ENUM, );
     for (int j = 0; j < 4; j++) eq[j] = C->clip_plane[p][j];
 }
-static u32 g_stipple[32];
-static int g_ls_factor = 1;
-static u16 g_ls_pattern = 0xffff;
-void glLineStipple(GLint f, GLushort p) { GLC(); RECU(DL_LSTIPPLE, (u32)f, p); g_ls_factor = f < 1 ? 1 : f > 256 ? 256 : f; g_ls_pattern = p; }
-void glPolygonStipple(const GLubyte *m) { GLC(); if (m) memcpy(g_stipple, m, 128); }
-void glGetPolygonStipple(GLubyte *m) { GLC(); if (m) memcpy(m, g_stipple, 128); }
+void glLineStipple(GLint f, GLushort p) { GLC(); RECU(DL_LSTIPPLE, (u32)f, p); C->ls_factor = f < 1 ? 1 : f > 256 ? 256 : f; C->ls_pattern = p; }
+/* máscara 32x32 de 1 bit, lida e escrita com os parâmetros de unpack/pack (alinhamento, ROW_LENGTH, SKIP_*, LSB_FIRST, PBO) */
+static int pstip_unpack(gl_ctx_t *C, const GLubyte *m, u32 rows[32]) {
+    const u8 *src = m;
+    if (C->b_unpack) src = C->b_unpack->data ? C->b_unpack->data + (uintptr_t)m : 0;
+    if (!src) return 0;
+    int rl = C->up_row > 0 ? C->up_row : 32;
+    i64 rs = ((rl + 7) / 8 + C->up_align - 1) / C->up_align * C->up_align;
+    for (int y = 0; y < 32; y++) {
+        const u8 *r = src + (i64)(y + C->up_skrow) * rs;
+        u32 v = 0;
+        for (int x = 0; x < 32; x++) {
+            int c = x + C->up_skpix;
+            int bit = C->up_lsb ? (r[c >> 3] >> (c & 7)) & 1 : (r[c >> 3] >> (7 - (c & 7))) & 1;
+            v |= (u32)bit << x;
+        }
+        rows[y] = v;
+    }
+    return 1;
+}
+void glPolygonStipple(const GLubyte *m) {
+    GLC();
+    u32 rows[32];
+    if (!pstip_unpack(C, m, rows)) return;
+    if (C->dl_cur && !C->dl_exec) { u32 z = 0; if (dl_blob(C, DL_PSTIPPLE, &z, sizeof z, rows, sizeof rows)) return; }
+    memcpy(C->pstipple, rows, sizeof rows);
+}
+void glGetPolygonStipple(GLubyte *m) {
+    GLC();
+    u8 *dst = m;
+    if (C->b_pack) dst = C->b_pack->data ? C->b_pack->data + (uintptr_t)m : 0;
+    if (!dst) return;
+    int rl = C->pk_row > 0 ? C->pk_row : 32;
+    i64 rs = ((rl + 7) / 8 + C->pk_align - 1) / C->pk_align * C->pk_align;
+    for (int y = 0; y < 32; y++) {
+        u8 *r = dst + (i64)(y + C->pk_skrow) * rs;
+        for (int x = 0; x < 32; x++) {
+            int c = x + C->pk_skpix, b = C->pk_lsb ? (c & 7) : 7 - (c & 7);
+            if (C->pstipple[y] >> x & 1) r[c >> 3] |= (u8)(1 << b); else r[c >> 3] &= (u8)~(1 << b);
+        }
+    }
+}
 
 /* ================================================================ vertex shader do fixed function */
 static void nrm3(float *v) { double l = sqrt((double)v[0] * v[0] + (double)v[1] * v[1] + (double)v[2] * v[2]); if (l > 0) for (int i = 0; i < 3; i++) v[i] = (float)(v[i] / l); }
@@ -1652,7 +1688,8 @@ void glPopAttrib(void) {
     if (m & GL_VIEWPORT_BIT) { RESTORE(vp); RESTORE(dr); }
     if (m & GL_SCISSOR_BIT) RESTORE(sc);
     if (m & GL_POLYGON_BIT) { RESTORE(cull_mode); RESTORE(front_face); RESTORE(pmode); RESTORE(poff_factor); RESTORE(poff_units); }
-    if (m & GL_LINE_BIT) RESTORE(line_w);
+    if (m & GL_LINE_BIT) { RESTORE(line_w); RESTORE(ls_factor); RESTORE(ls_pattern); }
+    if (m & GL_POLYGON_STIPPLE_BIT) RESTORE(pstipple);
     if (m & GL_POINT_BIT) { RESTORE(point_s); RESTORE(point_min); RESTORE(point_max); RESTORE(point_fade); RESTORE(point_att); RESTORE(point_origin); }
     if (m & GL_LIGHTING_BIT) { RESTORE(light); RESTORE(lm_amb); RESTORE(lm_local); RESTORE(lm_two); RESTORE(lm_sep_spec); RESTORE(mat); RESTORE(cm_face); RESTORE(cm_mode); RESTORE(shade); }
     if (m & GL_FOG_BIT) { RESTORE(fog_mode); RESTORE(fog_src); RESTORE(fog_d); RESTORE(fog_s); RESTORE(fog_e); RESTORE(fog_c); RESTORE(fog_index); }
@@ -1663,7 +1700,7 @@ void glPopAttrib(void) {
     if (m & GL_LIST_BIT) RESTORE(list_base);
     if (m & GL_MULTISAMPLE_BIT) { RESTORE(samp_cov); RESTORE(samp_inv); }
     /* os bits de enable que pertencem a cada grupo também voltam */
-    if (m & (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT | GL_POLYGON_BIT | GL_LIGHTING_BIT | GL_FOG_BIT | GL_TEXTURE_BIT | GL_SCISSOR_BIT | GL_TRANSFORM_BIT | GL_LINE_BIT | GL_POINT_BIT | GL_MULTISAMPLE_BIT))
+    if (m & (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT | GL_POLYGON_BIT | GL_LIGHTING_BIT | GL_FOG_BIT | GL_TEXTURE_BIT | GL_SCISSOR_BIT | GL_TRANSFORM_BIT | GL_LINE_BIT | GL_POINT_BIT | GL_MULTISAMPLE_BIT | GL_POLYGON_STIPPLE_BIT))
         RESTORE(en);
     free(s);
 }
@@ -1752,6 +1789,7 @@ static void dl_exec(gl_ctx_t *C, gl_dlist_t *L, int depth) {
             break;
         }
         case DL_LSTIPPLE: glLineStipple((GLint)u[0], (GLushort)u[1]); break;
+        case DL_PSTIPPLE: if (c->blob) memcpy(C->pstipple, c->blob, sizeof C->pstipple); break;
         case DL_PUSHA: glPushAttrib(u[0]); break;
         case DL_POPA: glPopAttrib(); break;
         case DL_LOADNAME: glLoadName(u[0]); break;

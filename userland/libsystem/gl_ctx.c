@@ -206,6 +206,9 @@ gl_ctx_t *gl_ctx_create(gl_ctx_t *share, int core, int major, int minor, int w, 
     C->front_face = GL_CCW;
     C->pmode[0] = C->pmode[1] = GL_FILL;
     C->line_w = C->point_s = 1;
+    C->ls_factor = 1;
+    C->ls_pattern = 0xffff;
+    for (int i = 0; i < 32; i++) C->pstipple[i] = 0xffffffffu;
     C->point_min = 0; C->point_max = 1024; C->point_fade = 1;
     C->point_att[0] = 1;
     C->point_origin = GL_UPPER_LEFT;
@@ -611,6 +614,8 @@ static int get_any(gl_ctx_t *C, GLenum p, gv_t *g) {
     case GL_POLYGON_OFFSET_FACTOR: gfv(g, 1, &C->poff_factor); return 1;
     case GL_POLYGON_OFFSET_UNITS: gfv(g, 1, &C->poff_units); return 1;
     case GL_LINE_WIDTH: gfv(g, 1, &C->line_w); return 1;
+    case GL_LINE_STIPPLE_PATTERN: I1(C->ls_pattern); return 1;
+    case GL_LINE_STIPPLE_REPEAT: I1(C->ls_factor); return 1;
     case GL_POINT_SIZE: gfv(g, 1, &C->point_s); return 1;
     case GL_POINT_SIZE_MIN: gfv(g, 1, &C->point_min); return 1;
     case GL_POINT_SIZE_MAX: gfv(g, 1, &C->point_max); return 1;
