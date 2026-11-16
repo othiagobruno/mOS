@@ -113,7 +113,37 @@ u64 pmm_alloc(u64 pages) {
     return s * 4096;
 }
 
+/* Memória de dispositivo (VRAM da GPU, BARs): faixas que nunca são RAM do PMM. Mapeadas em processos por
+ * gpu_user_map_io (process.c); page_put, page_ref_inc e pmm_free ignoram essas páginas, então munmap, saída do
+ * processo e fork nunca as devolvem como RAM livre. Até 16 faixas, registradas na subida do driver. */
+static struct { u64 base, end; } devr[16];
+static volatile u32 ndevr;
+void pmm_mark_device(u64 phys, u64 size) {
+    u64 b = ALIGN_DOWN(phys, 4096), e = ALIGN_UP(phys + size, 4096);
+    if (e <= b) return;
+    u64 f = spin_lock_irqsave(&pmm_lock);
+    u32 n = ndevr;
+    bool dup = false;
+    for (u32 i = 0; i < n; i++) if (devr[i].base == b && devr[i].end == e) dup = true;
+    if (!dup && n < 16) { devr[n].base = b; devr[n].end = e; __atomic_store_n(&ndevr, n + 1, __ATOMIC_RELEASE); }
+    spin_unlock_irqrestore(&pmm_lock, f);
+    if (!dup && n >= 16) kprintf("pmm: faixa de dispositivo 0x%llx+0x%llx não registrada (tabela cheia)\n", b, e - b);
+}
+bool pmm_is_device(u64 phys) {
+    u32 n = __atomic_load_n(&ndevr, __ATOMIC_ACQUIRE);
+    for (u32 i = 0; i < n; i++) if (phys >= devr[i].base && phys < devr[i].end) return true;
+    return false;
+}
+/* [phys, phys+len) inteiro dentro de uma faixa de dispositivo */
+bool pmm_is_device_range(u64 phys, u64 len) {
+    u32 n = __atomic_load_n(&ndevr, __ATOMIC_ACQUIRE);
+    if (phys + len < phys) return false;
+    for (u32 i = 0; i < n; i++) if (phys >= devr[i].base && phys + len <= devr[i].end) return true;
+    return false;
+}
+
 void pmm_free(u64 addr, u64 pages) {
+    if (ndevr && pmm_is_device(addr)) { kprintf("pmm_free: 0x%llx é memória de dispositivo; ignorado\n", addr); return; }
     u64 f = spin_lock_irqsave(&pmm_lock);
     for (u64 p = addr / 4096; p < addr / 4096 + pages; p++) {
         if (bm_test(p)) { bm_clear(p); free_count++; }
@@ -185,6 +215,7 @@ void vmm_map_mmio(u64 phys, u64 size) {
 /* memória de vídeo fora do framebuffer do GOP (VRAM da GPU AMD, kernel/dev/amdgpu): write-combining (PAT1),
  * como o próprio framebuffer no paging_init. Faixa em páginas de 2 MiB; só para BAR de memória de vídeo. */
 void vmm_map_wc(u64 phys, u64 size) {
+    pmm_mark_device(phys, size);                 /* VRAM: nunca vira RAM livre (gpu_user_map_io) */
     for (u64 a = ALIGN_DOWN(phys, 0x200000); a < phys + size; a += 0x200000) map_2m(a, PG_PWT);
     __asm__ volatile("mov %%cr3,%%rax; mov %%rax,%%cr3" ::: "rax", "memory");
 }

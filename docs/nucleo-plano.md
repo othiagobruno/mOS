@@ -97,3 +97,4 @@ antes do build final (REGRAS.md).
 ## Pedidos de outras frentes
 
 - `dma_alloc32(bytes, &phys)` e `pmm_alloc_below(pages, limit)` (Felipe, Wi-Fi RTL8821CE com DMA de 32 bits): bloco contíguo, zerado, inteiro abaixo de 4 GiB; libera com `pmm_free`. Não há zona reservada abaixo de 4 GiB: chamar na subida do driver. Busca com limite testada no host (harness temporário).
+- `gpu_user_map_io(p, va, phys, len, rw)` / `gpu_user_unmap_io` (Thais, VRAM): PTE WC (PWT = PAT1), `PTE_SHARED`, NX, sem escrita com `PTE_NOW` se rw = 0. Exige a faixa registrada por `pmm_mark_device` (o `vmm_map_wc` registra). `page_put`, `page_ref_inc` e `pmm_free` ignoram páginas de dispositivo: munmap, fork e saída do processo nunca devolvem VRAM ao PMM. Tabela testada no host (harness temporário).

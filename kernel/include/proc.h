@@ -279,6 +279,8 @@ bool      uvm_map(process_t *p, u64 va, u64 len);       /* páginas de 4 KiB, ze
 u64      *uvm_pte(process_t *p, u64 va);               /* NULL se não mapeado */
 bool      gpu_user_map(process_t *p, u64 va, u64 phys, u64 len, int rw);
 bool      gpu_user_unmap(process_t *p, u64 va, u64 len);
+bool      gpu_user_map_io(process_t *p, u64 va, u64 phys, u64 len, int rw);   /* VRAM: WC, sem refcount (process.c) */
+bool      gpu_user_unmap_io(process_t *p, u64 va, u64 len);
 bool      uvm_copy_out(process_t *p, u64 va, const void *src, usize len);
 bool      uvm_copy_in(process_t *p, void *dst, u64 va, usize len);
 
