@@ -67,7 +67,7 @@ de host passando (o build do projeto fica para o fim, pela fila `build-final.sh`
 | 2 Permissões e ACL | ✅ kernel (`vfsperm.c`) + `acl.c` + testes de host (115 + 26). |
 | 3 FSEvents | ✅ journal no kernel (`vfsevents.c`) + FSEventStream sobre ele (`docs/fsevents.md`); testes 130 + 23 + 42. EVFILT_VNODE: o journal está pronto, o `kevent` é da Renata. |
 | 4 getattrlist e operações | ✅ `attrlist.c` + `vfsops.c`; testes 147 + 50. Hard links ficam com a fase 10. |
-| 9 Bookmarks, alias e quarentena | ✅ `bookmark.c`, `quarantine.c`, `/usr/bin/xattr` (`docs/bookmarks-quarentena.md`); teste 71. |
+| 9 Bookmarks, alias e quarentena | ✅ `bookmark.c`, `quarantine.c`, `/usr/bin/xattr` (`docs/bookmarks-quarentena.md`); teste 71. File Manager do Carbon (FSRef, catálogo, forks, iteradores, `FSFindFolder`): `filemgr.c` (`docs/file-manager-carbon.md`), teste 91. |
 | 8 Instalador .pkg | ✅ `/usr/sbin/installer`, `/usr/sbin/pkgutil`, motor `userland/pkg/pkgengine.c` (`docs/pkg-instalador.md`); teste 30 + pacote real. |
 | 7 .dmg e hdiutil | 🟡 `/usr/bin/hdiutil` Mach-O + `userland/pkg/udif.c` (leitor e escritor UDIF) + `volfmt.c` (HFS+/HFSX/FAT32); teste 52 (`tools/hdiutil_test.sh`). Falta UDRW gravável no kernel (`create -srcfolder`), UDSP/sparsebundle, AES, compact. |
 | 5, 6, 10, 11 | a fazer (desenho abaixo) |
