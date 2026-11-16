@@ -315,6 +315,9 @@ static int admit(const thread_t *t, int cpu) {
     m = t->affinity ? t->affinity : ~(u64)0;
     return (m & (1ULL << cpu)) != 0;
 }
+/* Carga de um núcleo: a fila mais a thread que ele roda agora. O BSP pesa mais 2: lá uma thread de usuário só roda
+ * quando o desktop fica ocioso (num hlt). Antes só a fila contava: com todos ocupados e as filas vazias, toda thread
+ * nova ia para o BSP, e três operários de CPU dividiam um núcleo (smpteste 0,4x com o autoteste rodando junto). */
 static int pick_cpu(const thread_t *t) {
     int best = 0, load = 0x7fffffff, i, n;
     n = __atomic_load_n(&ncpu, __ATOMIC_RELAXED);
@@ -323,7 +326,8 @@ static int pick_cpu(const thread_t *t) {
     for (i = 0; i < n; i++) {
         if (i && !pc[i].online) continue;
         if (!admit(t, i)) continue;
-        if (pc[i].rq_n < load) { load = pc[i].rq_n; best = i; }
+        int l = pc[i].rq_n + (pc[i].cur && pc[i].cur != pc[i].idle ? 1 : 0) + (i == 0 && t->proc ? 2 : 0);
+        if (l < load) { load = l; best = i; }
     }
     return best;
 }
@@ -665,7 +669,7 @@ static void sweep_ready(void) {
     if (now - last_sweep < 100) return;
     last_sweep = now;
     for (thread_t *t = threads; t; t = t->next)
-        if (t->state == TH_READY && !t->on_rq && !on_cpu(t)) {
+        if (t->state == TH_READY && !t->on_rq && !on_cpu(t) && t != &thread0 && t->id >= 0) {   /* desktop e ociosos não entram em fila */
             if (!sched_rescued++) kprintf("sched: thread %d \"%s\" pronta fora da fila (resgatada)\n", t->id, t->name);
             rq_put(t);
         }
