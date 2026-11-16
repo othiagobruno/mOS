@@ -42,9 +42,12 @@ Este documento separa o que está pronto e testado do que falta. "Teste de host"
    e `__invert_f*` (SIMD; mais perto da Accelerate). Os de `getfsent`/`vm_read`/`mach_*` vão aos donos.
 5. **libc++ fallback.** `libcxx.c`/`cxxabi.c` só valem sem a dylib no disco; o `__cxa_throw` de lá ainda aborta.
    Plano: com a dylib sempre na imagem, tirar o caminho de reserva ou fazê-lo chamar o motor de exceção real.
-6. **Unwind `-O1`/`-O2`.** Bateria de casos (frame pointer omitido, `-fomit-frame-pointer`, funções folha, tail call,
-   `alloca`, sinais, `__builtin_unwind_init`, catch através de C, `std::rethrow_exception`, `std::nested_exception`,
-   exceção estrangeira ObjC↔C++) em x86_64 e arm64, no host e com Mach-O real.
+6. **Unwind `-O1`/`-O2`.** Núcleo **provado** no host x86_64 (`tools/cxx_unwind_host.sh`, passa em `-O0`/`-O1`/`-O2`
+   com `-fomit-frame-pointer`): throw através de frames, destrutores, `catch(...)`, callee-saved (rbx/r12-r15) e XMM
+   vivos no catch, `current_exception`/`rethrow_exception`, rethrow aninhado e `throw;`; mais o compact unwind
+   (immediate/indirect/rbp/DWARF) e `backtrace`. Falta cobrir, com teste: catch através de um frame C, `alloca`,
+   tail call, `std::nested_exception`/`throw_with_nested`, catch por classe base (RTTI), e a bateria no **arm64** e em
+   **Mach-O real** (hoje só host x86_64). ObjC↔C++ tem `tools/objc_eh_hosttest.c` à parte.
 7. ~~`qsort_r` O(n²)~~ — já resolvido: `qsort`/`qsort_r`/`heapsort`/`mergesort`/`psort` são O(n log n) (`libc.c`,
    `sortb.c`). A nota de `docs/libsys-pendencias.md` §3 está desatualizada.
 8. **libc++ de ponta a ponta**: `iostream`, `filesystem`, `regex`, `thread`, `atomic` (`__ulock_wait/wake`), `locale`
