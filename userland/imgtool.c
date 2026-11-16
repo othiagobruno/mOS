@@ -1,5 +1,5 @@
 /* mOS — imgtool: monta e desmonta imagens de disco (.dmg) pelo leitor do kernel (fs/dmg.c, só leitura).
- * Usado pelo /usr/bin/hdiutil de mentira (tools/brew-shims/hdiutil) para os casks .dmg do Homebrew.
+ * Usado pelo tools/brew-shims/diskutil para os casks .dmg do Homebrew.
  *   imgtool attach <caminho absoluto do .dmg>    imprime os pontos de montagem, um por linha
  *   imgtool detach <ponto de montagem>
  * Saída 0 = ok; 1 = erro (mensagem no stderr). */
