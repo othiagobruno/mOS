@@ -42,9 +42,8 @@ saída do QEMU conferido no host. Esse teste de VM **não foi reexecutado** nest
   bit a bit com o ffmpeg. O MP3, depois do atraso do lame, teve correlação 1 no seno de teste. Ver
   [midia-licencas.md](midia-licencas.md). O CoreAudio troca o arquivo por esse PCM e o AVPlayer toca o áudio.
 
-**Reconhecido, sem PCM (limitação):**
-- AAC (ADTS e `mp4a`) e Opus (Ogg e CAF). Continuam `kAudioFileUnsupportedDataFormatError`. FAAD2 é GPL e não entra.
-  fdk-aac (BSD) e libopus (BSD-3) não foram vendidos.
+**AAC e Opus (host, `tools/midia_audio_test.sh`, 9/9 contra o ffmpeg):** FDK AAC 2.0.3 e libopus 1.5.2 em
+  ADTS, M4A/MP4/MOV, CAF (Opus) e Ogg, pelo demuxer próprio `mp4demux.c`. Ver [midia-plano.md](midia-plano.md).
 
 **Microfone:** `DEV_AUDIO_READ` lê `audio_capture_read` (48 kHz estéreo i16). `AudioQueueNewInput` e
 `AudioUnitRender` no barramento de entrada só seguem se `cx_tcc_request("kTCCServiceMicrophone")` devolver 1.

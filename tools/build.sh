@@ -277,6 +277,9 @@ done
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
     -I"$ROOT/userland/host-audio/shim" -I"$ROOT/userland/libsystem" \
     -c "$ROOT/userland/host-audio/audiodec.c" -o "$OUT/audiodec.o"
+# Opus (libopus) e AAC (FDK AAC) com as cascas: docs/midia-plano.md
+bash "$ROOT/tools/build-midia.sh" "$OUT" "$ZIG" "$ZIGDIR" "$(( JOBS < 2 ? JOBS : 2 ))" x86_64
+mapfile -t MIDIA_OBJS < "$OUT/midia-x86_64/objs.txt"
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
     -Wno-unused-function -Wno-unused-variable -Wno-unreachable-code \
@@ -356,7 +359,7 @@ ZIG="$ZIG" bash "$ROOT/tools/libc_bsd_hosttest.sh" "$OUT/libc-bsd-hosttest"
     -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" -I"$ROOT/userland/third_party/h264bsd" \
     -isystem "$ZIGDIR/lib/include" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
-    "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" \
+    "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" "${MIDIA_OBJS[@]}" \
     "$OUT/compression.o" "$OUT/lz4.o" "$OUT/lz4hc.o" "$OUT/lz4frame.o" "$OUT/xxhash.o" \
     "$OUT/lzfse_decode.o" "$OUT/lzfse_decode_base.o" "$OUT/lzfse_encode.o" \
     "$OUT/lzfse_encode_base.o" "$OUT/lzfse_fse.o" "$OUT/lzvn_decode_base.o" "$OUT/lzvn_encode_base.o" \

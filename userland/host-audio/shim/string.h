@@ -1,5 +1,8 @@
 #pragma once
 #include "stddef.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 void *memcpy(void *d, const void *s, size_t n);
 void *memset(void *d, int c, size_t n);
 void *memmove(void *d, const void *s, size_t n);
@@ -19,3 +22,6 @@ char *strcat(char *d, const char *s);
 int atoi(const char *s);
 long atol(const char *s);
 double atof(const char *s);
+#ifdef __cplusplus
+}
+#endif

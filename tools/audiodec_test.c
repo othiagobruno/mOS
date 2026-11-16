@@ -1,6 +1,6 @@
 /* Teste de host dos decodificadores. Gera os arquivos com o ffmpeg e compara.
  * Não é teste de VM e não exercita microfone de hardware.
- *   clang -std=c11 -O1 -o /tmp/audiodec_test tools/audiodec_test.c userland/host-audio/audiodec.c -lm
+ *   Liga com os objetos de libopus, FDK AAC, cascas e mp4demux (ver tools/midia_audio_test.sh).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -130,16 +130,14 @@ int main(void) {
 
     b = loadf("/tmp/airtry/media/t.aac", &n);
     expect_i("aac reconhecido", b && cx_audiodec(b, n, &o), 1);
-    expect_i("aac sem PCM", o.status, 1);
-    expect_i("aac sem buffer", o.pcm ? 1 : 0, 0);
-    if (o.limit) printf("aac limitação: %s\n", o.limit);
+    expect_i("aac decodificado", o.status, 0);
+    expect_i("aac com PCM", o.pcm && o.frames > 0 ? 1 : 0, 1);
     cx_audiodec_free(&o); free(b);
 
     b = loadf("/tmp/airtry/media/t.opus", &n);
     expect_i("opus reconhecido", b && cx_audiodec(b, n, &o), 1);
-    expect_i("opus sem PCM", o.status, 1);
-    expect_i("opus sem buffer", o.pcm ? 1 : 0, 0);
-    if (o.limit) printf("opus limitação: %s\n", o.limit);
+    expect_i("opus decodificado", o.status, 0);
+    expect_i("opus com PCM", o.pcm && o.frames > 0 ? 1 : 0, 1);
     cx_audiodec_free(&o); free(b);
 
     expect_i("tcc ausente", cx_media_tcc("kTCCServiceMicrophone"), -1);
