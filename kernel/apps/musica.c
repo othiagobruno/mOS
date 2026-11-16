@@ -1,4 +1,4 @@
-/* mOS — Música: biblioteca de arquivos WAV em ~/Música (pastas viram álbuns; inclui as Gravações), busca,
+/* mOS — Música: biblioteca de arquivos WAV e MP3 em ~/Música (pastas viram álbuns; inclui as Gravações), busca,
  * playlists próprias, reprodução contínua com aleatório e repetir, barra de progresso arrastável, volume,
  * "Tocando Agora" e faixas de demonstração (melodias de domínio público sintetizadas na primeira abertura). */
 #include "kit.h"
@@ -24,6 +24,7 @@ static struct {
     /* reprodução */
     int cur;
     i16 *pcm;
+    kit_stream_t *mp3;        /* faixa MP3 em decodificação (pcm e frames vêm dela; NULL para WAV) */
     u32 frames, pos, pos0;
     bool playing, shuffle;
     int repeat;               /* 0 não, 1 todas, 2 uma */
@@ -105,15 +106,19 @@ static void scan_dir(const char *dir, const char *album, int depth) {
         char sub[220];
         snprintf(sub, sizeof sub, "%s/%s", dir, c->name);
         if (c->dir) { if (depth < 3 && c->name[0] != '.') scan_dir(sub, c->name, depth + 1); continue; }
-        if (strcasecmp(vfs_ext(c->name), "wav")) continue;
+        bool mp3 = !strcasecmp(vfs_ext(c->name), "mp3");
+        if (!mp3 && strcasecmp(vfs_ext(c->name), "wav")) continue;
         track_t *t = &MU.t[MU.nt++];
         snprintf(t->path, sizeof t->path, "%s", sub);
         snprintf(t->title, sizeof t->title, "%.*s", (int)(strlen(c->name) - 4), c->name);
         snprintf(t->album, sizeof t->album, "%s", album);
-        /* duração pelo cabeçalho (PCM 16 bits) */
+        /* duração pelo cabeçalho: PCM 16 bits, ou Xing/Info/taxa do MP3 */
         vfs_ensure(c);
-        u32 rate = c->size > 44 ? kit_get32(c->data + 24) : 48000, ch = c->size > 44 ? c->data[22] : 2;
-        t->frames = c->size > 44 && rate && ch ? (u32)((u64)(c->size - 44) / (ch * 2) * 48000 / rate) : 0;
+        if (mp3) t->frames = kit_mp3_estimate_frames(c->data, c->size);
+        else {
+            u32 rate = c->size > 44 ? kit_get32(c->data + 24) : 48000, ch = c->size > 44 ? c->data[22] : 2;
+            t->frames = c->size > 44 && rate && ch ? (u32)((u64)(c->size - 44) / (ch * 2) * 48000 / rate) : 0;
+        }
         t->mtime = c->mtime;
     }
 }
@@ -180,13 +185,30 @@ static bool in_view(int i) {
 
 /* ------------------------------------------------------------ reprodução */
 static void stop(void) { MU.playing = false; }
+static void drop_pcm(void) {
+    if (MU.mp3) kit_stream_close(MU.mp3);         /* o pcm é dela */
+    else kfree(MU.pcm);
+    MU.mp3 = NULL; MU.pcm = NULL; MU.frames = 0;
+}
+/* MP3: decodifica um pouco por chamada (a mesa não para) e acompanha o buffer, que pode mudar de lugar */
+static void mp3_pump(u32 budget_us) {
+    if (!MU.mp3) return;
+    bool was_done = kit_stream_done(MU.mp3);
+    kit_stream_step(MU.mp3, budget_us);
+    MU.pcm = kit_stream_pcm(MU.mp3);
+    MU.frames = kit_stream_frames(MU.mp3);
+    if (!was_done && kit_stream_done(MU.mp3) && MU.cur >= 0 && MU.cur < MU.nt) MU.t[MU.cur].frames = MU.frames;   /* duração exata */
+}
 static void play_track(int i) {
     if (i < 0 || i >= MU.nt) return;
-    if (MU.pcm) { kfree(MU.pcm); MU.pcm = NULL; }
-    MU.pcm = kit_load_wav(MU.t[i].path, &MU.frames);
+    drop_pcm();
+    if (!strcasecmp(vfs_ext(MU.t[i].path), "mp3")) {
+        MU.mp3 = kit_stream_open(MU.t[i].path);
+        mp3_pump(20000);                          /* os primeiros segundos antes de começar */
+    } else MU.pcm = kit_load_wav(MU.t[i].path, &MU.frames);
     MU.cur = i;
     MU.pos = 0;
-    if (!MU.pcm) { MU.playing = false; notify("Música", "Não foi possível tocar este arquivo (use WAV PCM de 16 bits)."); return; }
+    if (!MU.pcm || !MU.frames) { drop_pcm(); MU.playing = false; notify("Música", "Não foi possível tocar este arquivo (use WAV PCM de 16 bits ou MP3)."); return; }
     MU.playing = audio_available();
     MU.t0 = timer_ticks(); MU.pos0 = 0; MU.fed = 0;
 }
@@ -210,6 +232,11 @@ static void feed(void) {
     if (!MU.playing || !MU.pcm) return;
     u64 el = timer_ticks() - MU.t0;
     u32 cur = MU.pos0 + (u32)(el * 48);
+    if (cur >= MU.frames && MU.mp3 && !kit_stream_done(MU.mp3)) {
+        /* a decodificação ficou para trás (máquina ocupada): segura o relógio no que já está pronto */
+        MU.pos0 = MU.pos = MU.frames; MU.t0 = timer_ticks(); MU.fed = 0;
+        return;
+    }
     if (cur >= MU.frames) {
         MU.playing = false;
         if (MU.repeat == 2) play_track(MU.cur); else next(1);
@@ -376,7 +403,7 @@ static void paint(window_t *w, ui_t *u) {
         ry += 30;
         n++;
     }
-    if (!n) ui_label_center(u, rect_make(a.x, view.y + 40, a.w, 20), MU.search[0] ? "Nenhum resultado" : "Coloque arquivos .wav na pasta Música", FONT_SEMIBOLD, 14, T.text3);
+    if (!n) ui_label_center(u, rect_make(a.x, view.y + 40, a.w, 20), MU.search[0] ? "Nenhum resultado" : "Coloque arquivos .wav ou .mp3 na pasta Música", FONT_SEMIBOLD, 14, T.text3);
     surface_pop_clip(s, pc);
     ui_scroll(u, UI_ID, view, n * 30 + 20, &MU.scroll);
     if (u->key == KEY_ENTER && !u->focus && MU.sel >= 0) { build_queue(MU.sel); play_track(MU.sel); u->key_used = true; }
@@ -387,6 +414,7 @@ static void paint(window_t *w, ui_t *u) {
 
 static void on_menu(app_t *a, int act);
 static void tick(app_t *a) {
+    mp3_pump(3000);
     feed();
     if (MU.demo_next >= 0 && MU.demo_next < (int)ARRAY_LEN(demos) && !MU.playing) {
         char p[260];

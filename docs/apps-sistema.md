@@ -43,9 +43,9 @@ para a janela em foco), e Busca/Launchpad abrem os painéis. "Repouso" está no 
 | Bolsa | Bolsa | cotações diárias (Stooq, Yahoo como alternativa), gráfico com períodos, estatísticas | `~/Biblioteca/Bolsa/lista.tsv` |
 | Fotos | Fotos | biblioteca (Imagens, Mesa, Downloads), favoritos, álbuns, visualizador, edição (luz, contraste, cor, filtros, girar) | `~/Biblioteca/Fotos/dados.tsv` |
 | Pré-Visualização | Pré-Visualização | PNG/JPEG/GIF/BMP/PPM, miniaturas da pasta, zoom, girar, espelhar, marcação, ajustar tamanho, exportar BMP | — |
-| Música | Música | biblioteca WAV de `~/Música` (álbuns por pasta), playlists, aleatório/repetir, toca com a janela fechada; faixas de demonstração sintetizadas | `~/Biblioteca/Música/playlists.tsv` |
+| Música | Música | biblioteca WAV e MP3 de `~/Música` (álbuns por pasta), playlists, aleatório/repetir, toca com a janela fechada; faixas de demonstração sintetizadas | `~/Biblioteca/Música/playlists.tsv` |
 | Gravador | Gravador | grava do microfone, forma de onda, ±15 s, renomear, melhorar (normalizar) | `~/Música/Gravações/*.wav` |
-| QuickTime Player | QuickTime Player | gravação de tela (GIF animado), gravação de áudio (WAV), reprodução de GIF e WAV | `~/Filmes` |
+| QuickTime Player | QuickTime Player | gravação de tela (GIF animado), gravação de áudio (WAV), reprodução de GIF, WAV e MP3 | `~/Filmes` |
 | Livros | Livros | EPUB (ZIP + OPF + XHTML) e TXT, duas colunas, temas, tamanho de fonte, sumário, posição lembrada | `~/Livros`, `~/Biblioteca/Livros` |
 | Freeform | Freeform | quadros com notas, formas, texto, caneta e setas; mover, redimensionar, cores, zoom | `~/Biblioteca/Freeform/*.freeform` |
 | Diário | Diário | entradas, sugestões de escrita, marcadores, busca, resumo (sequência, palavras) | `~/Biblioteca/Diário/entradas.tsv` |
@@ -70,7 +70,9 @@ Stooq/Yahoo Finance e Wikimedia (Wikcionário/Wikipédia). Os apps mostram a atr
   Telefone, Image Playground. Não serão feitos.
 - **Photo Booth** e **Captura de Imagem**: o mOS ainda não tem driver de câmera/scanner (UVC exige transferências
   isócronas no xHCI).
-- **Podcasts**: falta um decodificador de MP3; a Música e o QuickTime tocam só WAV PCM de 16 bits.
+- **Podcasts**: ainda não existe. O MP3 já toca na Música e no QuickTime (`kernel/apps/audiostream.c`: minimp3, CC0,
+  decodificação aos poucos no `tick`, gapless pelo cabeçalho LAME/Info igual ao ffmpeg; teste de host
+  `tools/audiostream_host.c`). AAC, ALAC e Opus ainda não tocam nos apps do sistema.
 - **Automator**: coberto pelo Atalhos.
 - No QEMU (TCG) o sistema roda abaixo do tempo real; a gravação de tela usa 1/4 da resolução a 2 quadros/s.
 
