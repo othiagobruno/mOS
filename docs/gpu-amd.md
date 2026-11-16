@@ -39,7 +39,7 @@ Legenda: ✅ pronto com teste de host · 🔶 escrito, sem teste no hardware · 
 | F3 | SMU10 (MP1): caixa de mensagens, PowerUpGfx/Sdma, dispclk/dppclk/dcfclk/socclk mínimos | ⬜ | simulador de mailbox |
 | F4a | Display sem trocar o modo: leitura do timing de cada OTG e do plano de cada HUBP deixados pela UEFI, conferência com o framebuffer do GOP, vsync pelo OTG (vblank, posição, contador, taxa medida), troca de superfície no vblank (BGRA/RGBA linear, trava do OTG, confirmação por EARLIEST_INUSE), buffer duplo da tela do compositor na VRAM (WC), HPD, alocador de VRAM | ✅ escrito e testado no host | `tools/amdgpu_hw_host.c`: 190/190 (timing de 25+ modos ida e volta, 40 quadros com áreas sujas aleatórias iguais à superfície, travamento da troca volta ao GOP) |
 | F4b | Troca de modo e outras saídas: DDC/I2C e AUX por hardware (EDID ao vivo), DCCG/PLL, DIG + PHY por ATOM, HDMI (AVI, SCDC), DP (treino de link), DPP/MPC/OPP, watermarks, várias saídas | ⬜ | — |
-| F5 | GMC v9: gfxhub + mmhub, GART do sistema, VMID 1..15 com tabelas de 4 níveis, alocador de VRAM e GTT, BOs da ABI | ⬜ | host |
+| F5 | Alocador de VRAM e BOs da ABI na VRAM: ✅ (F4a). Falta a GMC v9: gfxhub + mmhub, GART do sistema, VMID 1..15 com tabelas de 4 níveis, alocador de VRAM e GTT, BOs da ABI | ⬜ | host |
 | F6 | IH (OSSSYS 4.1): anel de interrupções, MSI, fontes vblank/pageflip/HPD/EOP/SDMA | ⬜ | host |
 | F7 | SDMA 4.1: microcódigo, anel, copy/fill linear, fences; cópia do compositor pela GPU | ⬜ | host |
 | F8 | GFX9: RLC, CP (PFP/CE/ME/MEC), golden registers do Picasso/Raven2, CSB, anel GFX, IBs, fences EOP, fila de compute (HQD) | ⬜ | host |
@@ -53,9 +53,11 @@ Legenda: ✅ pronto com teste de host · 🔶 escrito, sem teste no hardware · 
 sozinho ao GOP (com o quadro atual) e o compositor segue com a cópia direta. `MOS_GPU_KMS_SET` troca a
 superfície no vblank se for do mesmo tamanho; outro tamanho devolve `-MOS_EINVAL` até a F4b.
 
-Pendência com o Gustavo (memória virtual): `gpu_user_map` conta referência por página e `gpu_user_unmap`
-chama `page_put`, que faria `pmm_free` de páginas da VRAM. Por isso BOs `MOS_GPU_BO_GPU` continuam em RAM;
-para mapear VRAM em processos falta um mapeamento de dispositivo sem refcount (pedido feito a ele).
+BOs `MOS_GPU_BO_GPU` vão para a VRAM quando há uma Raven (até 64 MiB cada; em RAM continuam com 16 MiB), são
+zerados, mapeados no processo em WC por `gpu_user_map_io` do Gustavo (sem refcount: unmap, fork e saída nunca
+devolvem VRAM ao PMM) e podem ir para a tela por `MOS_GPU_KMS_SET` quando o compositor não está com o buffer
+duplo. Falta na ABI (não é só da AMD): liberar os BOs de um processo que sai sem `BO_DESTROY`; hoje ficam
+presos até o boot seguinte, na RAM e na VRAM.
 
 ## Ordem de bring-up no boot
 
