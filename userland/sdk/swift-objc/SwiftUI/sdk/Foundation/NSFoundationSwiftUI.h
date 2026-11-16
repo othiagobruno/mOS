@@ -96,44 +96,6 @@ NS_SWIFT_NAME(ISO8601DateFormatter) @interface NSISO8601DateFormatter : NSFormat
 @property (null_resettable, copy) NSTimeZone *timeZone;
 @end
 
-typedef NS_OPTIONS(NSUInteger, NSCalendarUnit) {
-    NSCalendarUnitEra = (1UL << 1),
-    NSCalendarUnitYear = (1UL << 2),
-    NSCalendarUnitMonth = (1UL << 3),
-    NSCalendarUnitDay = (1UL << 4),
-    NSCalendarUnitHour = (1UL << 5),
-    NSCalendarUnitMinute = (1UL << 6),
-    NSCalendarUnitSecond = (1UL << 7),
-    NSCalendarUnitWeekday = (1UL << 9),
-    NSCalendarUnitWeekdayOrdinal = (1UL << 10),
-    NSCalendarUnitQuarter = (1UL << 11),
-    NSCalendarUnitWeekOfMonth = (1UL << 12),
-    NSCalendarUnitWeekOfYear = (1UL << 13),
-    NSCalendarUnitYearForWeekOfYear = (1UL << 14),
-    NSCalendarUnitNanosecond = (1UL << 15),
-    NSCalendarUnitCalendar = (1UL << 20),
-    NSCalendarUnitTimeZone = (1UL << 21),
-} NS_SWIFT_NAME(NSCalendar.Unit);
-
-@interface NSCalendar : NSObject <NSCopying, NSSecureCoding>
-@property (class, readonly, copy) NSCalendar *currentCalendar;
-@end
-
-typedef NSString *NSRunLoopMode NS_SWIFT_NAME(RunLoop.Mode) __attribute__((swift_wrapper(struct)));
-FOUNDATION_EXPORT NSRunLoopMode const NSDefaultRunLoopMode NS_SWIFT_NAME(RunLoop.Mode.default);
-FOUNDATION_EXPORT NSRunLoopMode const NSRunLoopCommonModes NS_SWIFT_NAME(RunLoop.Mode.common);
-NS_SWIFT_NAME(RunLoop) @interface NSRunLoop : NSObject
-- (void)addTimer:(NSTimer *)timer forMode:(NSRunLoopMode)mode;
-- (void)performInModes:(NSArray<NSRunLoopMode> *)modes block:(void (^)(void))block;
-- (void)performBlock:(void (^)(void))block;
-@property (nullable, readonly, copy) NSRunLoopMode currentMode;
-- (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)limitDate NS_SWIFT_NAME(run(mode:before:));
-@property (class, readonly, strong) NSRunLoop *currentRunLoop;
-@property (class, readonly, strong) NSRunLoop *mainRunLoop;
-- (void)run;
-- (void)runUntilDate:(NSDate *)limitDate;
-@end
-
 NS_SWIFT_NAME(UserDefaults) @interface NSUserDefaults : NSObject
 @property (class, readonly, strong) NSUserDefaults *standardUserDefaults;
 - (nullable instancetype)initWithSuiteName:(nullable NSString *)suitename;
@@ -179,14 +141,6 @@ NS_SWIFT_NAME(JSONSerialization) @interface NSJSONSerialization : NSObject
 + (BOOL)isValidJSONObject:(id)obj;
 + (nullable NSData *)dataWithJSONObject:(id)obj options:(NSJSONWritingOptions)opt error:(NSError **)error;
 + (nullable id)JSONObjectWithData:(NSData *)data options:(NSJSONReadingOptions)opt error:(NSError **)error;
-@end
-
-NS_SWIFT_NAME(Timer) @interface NSTimer : NSObject
-+ (NSTimer *)scheduledTimerWithTimeInterval:(double)interval repeats:(BOOL)repeats block:(void (^)(NSTimer *timer))block;
-+ (NSTimer *)timerWithTimeInterval:(double)interval repeats:(BOOL)repeats block:(void (^)(NSTimer *timer))block;
-- (void)invalidate;
-- (void)fire;
-@property (readonly, getter=isValid) BOOL valid;
 @end
 
 @interface NSLock : NSObject

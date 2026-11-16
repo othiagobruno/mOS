@@ -4,7 +4,7 @@
 // O vidro não amostra o fundo (mos_sui_glass_fallback: fallback=1, samples_backdrop=0).
 #if !OPENSWIFTUI_SWIFTUI_RENDERER
 public import OpenSwiftUICore
-import CoreGraphics
+public import CoreGraphics   // CGFloat/CGRect na API pública (InternalImportsByDefault)
 import Foundation
 import MOSBridge
 
@@ -368,7 +368,7 @@ private struct MOSPopoverLayer<Base: View, Pop: View>: View {
         let showCard = native?.replacesCard != true
         return ZStack(alignment: .topLeading) {
             base
-            if isPresented.wrappedValue {
+            if isPresented {
                 if native != nil {
                     Color.white.opacity(0)
                         .onAppear { presentNative() }
@@ -429,7 +429,7 @@ public struct Glass {
 
 private func mosGlassFill(clear: Bool) -> (Color, CGFloat) {
     var r = 0.0, g = 0.0, b = 0.0, a = 0.0, radius = 0.0
-    var fallback: Int32 = 0, samples = 0
+    var fallback: Int32 = 0, samples: Int32 = 0
     mos_sui_glass_fallback(&r, &g, &b, &a, &radius, &fallback, &samples)
     let alpha = clear ? 0.28 : a
     return (Color.white.opacity(alpha), CGFloat(radius))
