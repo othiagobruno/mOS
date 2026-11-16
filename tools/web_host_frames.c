@@ -173,3 +173,21 @@ WEB_HOST_CASE(frames_quadros_do_anfitriao) {
     CHECK(!strcmp(g_msgs, "canal:topo:principal|canal:de sim:about:srcdoc"), "mensagens: %s", g_msgs);
     close_page(&g);
 }
+
+WEB_HOST_CASE(frames_permissoes) {
+    fg_t g = open_page("<html><body><script>var r=[]; onmessage=function(e){ r.push(e.data) }</script>"
+                       "<iframe id=a srcdoc='<p>a</p>'></iframe>"
+                       "<iframe id=b allow=\"camera; geolocation 'none'; fullscreen *\" srcdoc='<p>b</p>'></iframe>"
+                       "<iframe sandbox=allow-scripts allowfullscreen allow=\"microphone; camera http://outro.site\" "
+                       "srcdoc=\"<script>var f=document.featurePolicy; parent.postMessage([f.allowsFeature('microphone'), f.allowsFeature('camera'), f.allowsFeature('sync-xhr'), f.allowsFeature('geolocation'), document.fullscreenEnabled].join(),'*')</script>\"></iframe>"
+                       "</body></html>");
+    EQ("var fp=document.featurePolicy; [fp.allowsFeature('camera'), fp.allowsFeature('nada'), fp.features().length>20, Object.prototype.toString.call(fp), document.fullscreenEnabled, document.domain].join()",
+       "true,false,true,[object FeaturePolicy],true,teste");
+    /* mesma origem, sem allow: listas 'self' valem */
+    EQ("var A=document.getElementById('a').contentDocument; [A.featurePolicy.allowsFeature('camera'), A.featurePolicy.allowsFeature('sync-xhr'), A.featurePolicy.allowsFeature('camera','http://outro.site')].join()", "true,true,false");
+    EQ("var B=document.getElementById('b').contentDocument; [B.featurePolicy.allowsFeature('camera'), B.featurePolicy.allowsFeature('geolocation'), B.fullscreenEnabled, B.featurePolicy.getAllowlistForFeature('camera').join()].join()",
+       "true,false,true,http://teste");
+    /* origem opaca: só o que o allow libera para 'src' (camera é de outra origem); 'self' do padrão não vale */
+    EQ("r.join()", "true,false,true,false,true");
+    close_page(&g);
+}
