@@ -1170,6 +1170,8 @@ void cx_objc_boot(u64 sects, u64 n) {
         { extern void cx_fdn_operation_init(void); cx_fdn_operation_init(); }   /* fdn_operation.c: NSOperation e NSOperationQueue (libdispatch) */
         { extern void cx_fdn_undo_init(void); cx_fdn_undo_init(); }   /* fdn_undo.c: NSUndoManager */
         { extern void cx_fdn_units_init(void); cx_fdn_units_init(); }   /* fdn_units.c: NSUnit, NSDimension, NSMeasurement e o formatter */
+        { extern void cx_fdn_cfsocket_init(void); cx_fdn_cfsocket_init(); }   /* fdn_cfsocket.c: CFSocket e CFFileDescriptor */
+        { extern void cx_fdn_misc_init(void); cx_fdn_misc_init(); }   /* fdn_misc.c: CFURLEnumerator */
         /* blocks são objetos: [block copy] etc. */
         cx_class_t *nsobj = cx_class_named("NSObject");
         cx_class_t *bl[3] = {&_NSConcreteStackBlock_c, &_NSConcreteGlobalBlock_c, &_NSConcreteMallocBlock_c};

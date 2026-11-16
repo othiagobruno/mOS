@@ -93,44 +93,8 @@ long CFAttributedStringGetLength(id a) { return CFStringGetLength(CFAttributedSt
 
 /* CFNumberFormatter e CFDateFormatter são os NSNumberFormatter/NSDateFormatter de fdn_formatters.c */
 
-/* ---- descritor de arquivo ---- */
-typedef void (*fd_cb_f)(void *fd, unsigned long flags, void *info);
-typedef struct { int k; int fd; int close_on; int valid; unsigned long enabled; fd_cb_f cb; void *info; } fd_o;
-u64 CFFileDescriptorGetTypeID(void) { return 35; }
-id CFFileDescriptorCreate(void *alloc, int fd, unsigned char close_on, void *cb, const void *ctx) {
-    (void)alloc;
-    fd_o *f = calloc(1, sizeof *f);
-    if (!f) return 0;
-    f->k = K_FD; f->fd = fd; f->close_on = close_on; f->valid = 1; f->cb = (fd_cb_f)cb;
-    f->info = ctx ? *(void **)((char *)ctx + sizeof(long)) : 0;
-    return box_new(f);
-}
-static fd_o *as_fd(id o);
-void CFFileDescriptorEnableCallBacks(id o, unsigned long flags) { fd_o *f = as_fd(o); if (f) f->enabled |= flags; }
-static void fd_perform(void *info) {
-    fd_o *f = info;
-    if (f && f->valid && f->enabled && f->cb) f->cb(f, f->enabled, f->info);
-}
-void *CFFileDescriptorCreateRunLoopSource(void *alloc, id fd, long order) {
-    struct {
-        long version; void *info; const void *(*retain)(const void *); void (*release)(const void *);
-        void *copyDescription, *equal, *hash;
-        void (*schedule)(void *, void *, void *); void (*cancel)(void *, void *, void *);
-        void (*perform)(void *);
-    } ctx;
-    memset(&ctx, 0, sizeof ctx);
-    ctx.info = as_fd(fd);
-    ctx.perform = fd_perform;
-    return CFRunLoopSourceCreate(alloc, order, &ctx);
-}
-static fd_o *as_fd(id o) { fd_o *f = is_box(o) ? ((box_t *)o)->p : 0; return f && f->k == K_FD ? f : 0; }
-int CFFileDescriptorGetNativeDescriptor(id o) { fd_o *f = as_fd(o); return f ? f->fd : -1; }
-void CFFileDescriptorInvalidate(id o) {
-    fd_o *f = as_fd(o);
-    if (!f || !f->valid) return;
-    if (f->close_on) close(f->fd);
-    f->valid = 0;
-}
+/* CFFileDescriptor e CFSocket estão em fdn_cfsocket.c (com a thread que sinaliza o run loop) */
+int connect(int fd, const void *addr, unsigned len);
 
 /* ---- CFMessagePort: entrega no mesmo processo, pelo nome ---- */
 typedef id (*mp_cb_f)(void *local, long msgid, id data, void *info);
@@ -201,68 +165,6 @@ void *CFMessagePortCreateRunLoopSource(void *alloc, id port, long order) {
     memset(&ctx, 0, sizeof ctx);
     return CFRunLoopSourceCreate(alloc, order, &ctx);
 }
-
-/* ---- CFSocket: o descritor nativo vem de socket() ---- */
-typedef void (*sock_cb_f)(void *s, unsigned long type, void *addr, const void *data, void *info);
-typedef struct { int k; int fd; int valid; unsigned long flags; sock_cb_f cb; void *info; } sock_o;
-u64 CFSocketGetTypeID(void) { return 37; }
-id CFSocketCreate(void *alloc, int family, int type, int proto, unsigned long flags, void *cb, const void *ctx) {
-    (void)alloc;
-    sock_o *s = calloc(1, sizeof *s);
-    int fd;
-    if (!s) return 0;
-    fd = socket(family, type, proto);
-    s->k = K_SOCK; s->fd = fd; s->valid = fd >= 0; s->flags = flags; s->cb = (sock_cb_f)cb;
-    s->info = ctx ? *(void **)((char *)ctx + sizeof(long)) : 0;
-    return box_new(s);
-}
-static void sock_bridge(void *info, int kind, const void *data, int n) {
-    sock_o *s = info;
-    (void)n;
-    if (s && s->cb) s->cb(s, (unsigned long)kind, 0, data, s->info);
-}
-static void sock_perform(void *info) {
-    sock_o *s = info;
-    if (s && s->valid) cf_sock_service(s->fd, (unsigned)s->flags, sock_bridge, s);
-}
-static sock_o *as_sock(id o);
-void *CFSocketCreateRunLoopSource(void *alloc, id sock, long order) {
-    struct {
-        long version; void *info; const void *(*retain)(const void *); void (*release)(const void *);
-        void *copyDescription, *equal, *hash;
-        void (*schedule)(void *, void *, void *); void (*cancel)(void *, void *, void *);
-        void (*perform)(void *);
-    } ctx;
-    memset(&ctx, 0, sizeof ctx);
-    ctx.info = as_sock(sock);
-    ctx.perform = sock_perform;
-    return CFRunLoopSourceCreate(alloc, order, &ctx);
-}
-long recv(int fd, void *b, unsigned long n, int flags);
-int connect(int fd, const void *addr, unsigned len);
-long send(int fd, const void *b, unsigned long n, int flags);
-int CFSocketConnectToAddress(id sock, id addr, double timeout) {
-    sock_o *s = as_sock(sock);
-    (void)timeout;
-    if (!s || !s->valid || !addr) return -1;
-    return connect(s->fd, CFDataGetBytePtr(addr), (unsigned)CFDataGetLength(addr));
-}
-void CFSocketSendData(id sock, id addr, id data, double timeout) {
-    sock_o *s = as_sock(sock);
-    (void)addr; (void)timeout;
-    if (!s || !s->valid || !data) return;
-    send(s->fd, CFDataGetBytePtr(data), (unsigned long)CFDataGetLength(data), 0);
-}
-void CFSocketSetSocketFlags(id sock, unsigned long flags) { sock_o *s = as_sock(sock); if (s) s->flags = flags; }
-static sock_o *as_sock(id o) { sock_o *s = is_box(o) ? ((box_t *)o)->p : 0; return s && s->k == K_SOCK ? s : 0; }
-int CFSocketGetNative(id o) { sock_o *s = as_sock(o); return s ? s->fd : -1; }
-void CFSocketInvalidate(id o) {
-    sock_o *s = as_sock(o);
-    if (!s || !s->valid) return;
-    if (s->fd >= 0) close(s->fd);
-    s->valid = 0; s->fd = -1;
-}
-unsigned char CFSocketIsValid(id o) { sock_o *s = as_sock(o); return s && s->valid; }
 
 /* ---- par de streams sobre um anel ---- */
 typedef struct { cf_ring g; int refs; } ring_s;
