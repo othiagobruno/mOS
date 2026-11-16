@@ -318,3 +318,29 @@ Limite honesto: PDFView e PDFThumbnailView só foram compilados (x86_64 e arm64)
 sRGB gravado em ~/Library/ColorSync/Profiles) e 21 constantes kColorSync* de dispositivo. Os de display/eventos/CGS
 da lista são da Camila (avisado ao Igor).
 
+### Passo 7 — Core Text: quebra, bidi, parágrafo, frame e fontes (PR de 16 nov. 2026)
+
+- `ct_layout.c` (C puro): oportunidades de quebra UAX #14 (obrigatórias e permitidas), grafemas UAX #29 e bidi UAX #9
+  completo (embeddings, isolates, números) com a reordenação L1/L2 da linha, pela ICU da libicucore do mOS (carregador
+  próprio de `ubidi`/`ubrk`, sem mexer na tabela da Foundation); sem ICU, regras simplificadas.
+- Typesetter: o texto e as análises guardados; `CTTypesetterSuggestLineBreak/ClusterBreak` pelas oportunidades UAX #14
+  e pelos grafemas (espaço do fim "pendura"); a ordem visual da linha pelos níveis da UAX #9; opções
+  `ForcedEmbeddingLevel` e `DisableBidiProcessing`.
+- `coretext_frame.inc`: `CTParagraphStyle` (18 especificadores; o `NSParagraphStyle` do AppKit também vale),
+  `CTTextTab`, `CTRunDelegate` (largura e métricas do anexo), `CTGlyphInfo` (glifo no lugar do da cmap),
+  `CTRubyAnnotation` (dados), 40 constantes de atributo/frame/typesetter, e o framesetter de verdade no lugar do falso
+  do `vscode_frameworks.c`: recuos, alinhamento (natural pela direção, justificado menos a última linha), tabulações
+  (esquerda, direita, centro; padrão 28 pt), múltiplo/mínimo/máximo de altura, espaçamento, espaço antes/depois,
+  modos de quebra e truncagem, origens relativas à caixa do caminho, faixa visível, `SuggestFrameSizeWithConstraints`,
+  `CreateWithTypesetter`, `GetTypesetter`, `GetFrameAttributes`. Linha: `GetStringIndexForPosition`,
+  `GetPenOffsetForFlush`, `EnumerateCaretOffsets`; typesetter com offset.
+- `coretext_fonts.inc`: `CTFontCopyName` pela chave (tabela `name`, 18 chaves), `CopyDisplayName`, idiomas pela OS/2,
+  `HasTable`, carets de ligadura pelo GDEF, limites ópticos, cópias por família/plataforma/opções, descritores
+  derivados (família, recurso, traços, variação), casamento com progresso, coleções (atributos, cópia, ordenação),
+  gerenciador (URLs e nomes disponíveis, registro/remoção em lote, escopo, suporte, ativação automática, pedidos),
+  `CTRunGetAdvancesPtr` e `GetBaseAdvancesAndOrigins`.
+
+Testes: `tools/ct_layout_host.c` (com e sem ICU), `tools/coretext_host.c` 32/32 (framesetter com contas exatas,
+estilo, tabulação, truncagem, run delegate, nomes/idiomas de uma fonte real registrada), e os antigos
+`ctrun_host`/`ctapps_host` seguem verdes. Limite: o texto de ruby é guardado mas não desenhado.
+

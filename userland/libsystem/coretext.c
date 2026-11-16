@@ -430,7 +430,8 @@ id CTFontCopyVariationAxes(id f) { (void)f; return 0; }
 id CTFontCopyPostScriptName(id f) { return objc_retain(cx_str(fname(f))); }
 id CTFontCopyFullName(id f) { return objc_retain(cx_str(fname(f))); }
 id CTFontCopyFamilyName(id f) { return objc_retain(family_of(f)); }
-id CTFontCopyName(id f, id key) { (void)key; return objc_retain(cx_str(fname(f))); }
+static id ct_copy_name(id f, id key);
+id CTFontCopyName(id f, id key) { id s = ct_copy_name(f, key); return s ? s : (key ? 0 : objc_retain(cx_str(fname(f)))); }
 id CTFontCopyLocalizedName(id f, id key, id *lang) { if (lang) *lang = 0; return CTFontCopyName(f, key); }
 
 /* ---- traços e atributos */
@@ -1559,6 +1560,8 @@ typedef struct {
     double adv;
     id font;
     u8 level;       /* nível bidi resolvido: ímpar = direita para esquerda */
+    u8 rd;          /* run delegate: sem glifo, largura e métricas pelas callbacks */
+    double rasc, rdesc;
 } ct_clus;
 typedef struct {
     id astr;
@@ -1572,6 +1575,10 @@ typedef struct {
     id astr;
     ct_clus *g;
     long n, utf16, seen;
+    u16 *text;          /* o texto em UTF-16 (ct_layout.c trabalha nele) */
+    u8 *brk, *cl, *lv;  /* quebra de linha (UAX #14), grafemas (UAX #29) e níveis bidi (UAX #9) por unidade */
+    int para;           /* nível do primeiro parágrafo */
+    int forced;         /* kCTTypesetterOptionForcedEmbeddingLevel (−1 = automático) */
 } ct_ts_t;
 
 static cx_class_t CTLine_c, CTLine_m, CTTypesetter_c, CTTypesetter_m;
@@ -1698,6 +1705,7 @@ static void ct_recompute(ct_line_t *b) {
     for (long i = 0; i < b->n; i++) {
         double as, de, ld;
         ct_font_metrics(b->g[i].font, &as, &de, &ld);
+        if (b->g[i].rd) { as = b->g[i].rasc; de = b->g[i].rdesc; ld = 0; }
         if (as > b->ascent) b->ascent = as;
         if (de > b->descent) b->descent = de;
         if (ld > b->leading) b->leading = ld;
@@ -1789,11 +1797,63 @@ static void ct_free_line(ct_line_t *b) {
 }
 static void ct_free_ts(ct_ts_t *t) {
     if (!t) return;
+    free(t->text); free(t->brk); free(t->cl); free(t->lv);
     for (long i = 0; i < t->n; i++) objc_release(t->g[i].font);
     free(t->g);
     objc_release(t->astr);
     free(t);
 }
+#include "ct_layout.h"
+/* direção de escrita do parágrafo pelo atributo de estilo (−1 natural) */
+static int ct_para_direction(id astr, long idx);
+/* texto em UTF-16 e as análises da ICU (quebras, grafemas, níveis) */
+static void ct_analyze(ct_ts_t *t, id str) {
+    long n = t->utf16 > 100000 ? 100000 : t->utf16;
+    t->text = malloc((size_t)(n + 1) * sizeof(u16));
+    t->brk = malloc((size_t)n + 1);
+    t->cl = malloc((size_t)n + 1);
+    t->lv = malloc((size_t)n + 1);
+    if (!t->text || !t->brk || !t->cl || !t->lv) { free(t->text); free(t->brk); free(t->cl); free(t->lv); t->text = 0; t->brk = t->cl = t->lv = 0; return; }
+    for (long i = 0; i < n; i++) t->text[i] = MSG(u16, str, "characterAtIndex:", (u64)i);
+    ctl_line_breaks(t->text, n, t->brk);
+    ctl_clusters(t->text, n, t->cl);
+    int dir = t->forced >= 0 ? t->forced : ct_para_direction(t->astr, 0);
+    t->para = ctl_bidi_levels(t->text, n, dir, t->lv);
+}
+/* ordem visual dos clusters da linha pelos níveis do texto (L1 e L2 da UAX #9) */
+static void ct_bidi_text(ct_line_t *b, const u16 *text, const u8 *lv, long ntext, int para) {
+    long n = b->n;
+    if (n <= 0 || !text || !lv) { ct_bidi(b); return; }
+    long a = b->range.loc, e = b->range.loc + b->range.len;
+    if (e > ntext) e = ntext;
+    if (a >= e) { ct_bidi(b); return; }
+    int *map = malloc((size_t)(e - a) * sizeof *map);
+    long *vis = malloc((size_t)(e - a) * sizeof *vis);
+    if (!map || !vis) { free(map); free(vis); ct_bidi(b); return; }
+    ctl_reorder_line(text, lv, a, e, para, map);
+    for (long k = 0; k < e - a; k++) vis[map[k]] = k;
+    for (long i = 0; i < n; i++) {
+        long u = b->g[i].idx - a;
+        b->g[i].level = u >= 0 && u < e - a ? lv[b->g[i].idx] : (u8)para;
+    }
+    /* clusters pela posição visual da primeira unidade (ordenação por inserção: linhas são curtas) */
+    for (long i = 1; i < n; i++) {
+        ct_clus c = b->g[i];
+        long key = c.idx - a >= 0 && c.idx - a < e - a ? vis[c.idx - a] : c.idx;
+        long j = i - 1;
+        while (j >= 0) {
+            long kj = b->g[j].idx - a >= 0 && b->g[j].idx - a < e - a ? vis[b->g[j].idx - a] : b->g[j].idx;
+            if (kj <= key) break;
+            b->g[j + 1] = b->g[j];
+            j--;
+        }
+        b->g[j + 1] = c;
+    }
+    free(map);
+    free(vis);
+}
+static int ct_run_delegate_at(id astr, long idx, double *adv, double *asc, double *desc);
+static void ct_glyph_info_at(id astr, long idx, id font, u16 *glyph);
 static int ct_build(id astr, id str, ct_clus **out, long *nout, long *seen) {
     long len = str ? (long)MSG0(u64, str, "length") : 0;
     if (len < 0) len = 0;
@@ -1814,7 +1874,11 @@ static int ct_build(id astr, id str, ct_clus **out, long *nout, long *seen) {
         }
         u16 gl = ct_glyph(font, cp);
         double adv = ct_adv(font, cp, gl) + ct_kern_at(astr, i);
+        double rasc = 0, rdesc = 0;
+        int rd = ct_run_delegate_at(astr, i, &adv, &rasc, &rdesc);
+        if (!rd) ct_glyph_info_at(astr, i, font, &gl);
         if (adv < 0) adv = 0;
+        g[n].rd = (u8)rd; g[n].rasc = rasc; g[n].rdesc = rdesc;
         g[n].cp = cp;
         g[n].glyph = gl;
         g[n].idx = i;
@@ -1886,7 +1950,14 @@ id CTLineCreateWithAttributedString(id astr) {
     b->range.len = len;
     b->g = g;
     b->n = n;
-    ct_bidi(b);
+    {
+        ct_ts_t tmp;
+        memset(&tmp, 0, sizeof tmp);
+        tmp.astr = astr; tmp.utf16 = len; tmp.forced = -1;
+        if (len > 0) ct_analyze(&tmp, str);
+        ct_bidi_text(b, tmp.text, tmp.lv, len > 100000 ? 100000 : len, tmp.para);
+        free(tmp.text); free(tmp.brk); free(tmp.cl); free(tmp.lv);
+    }
     ct_recompute(b);
     return ct_line_wrap(b);
 }
@@ -1899,12 +1970,15 @@ id CTTypesetterCreateWithAttributedString(id astr) {
     if (!t) return 0;
     t->astr = objc_retain(astr);
     t->utf16 = str ? (long)MSG0(u64, str, "length") : 0;
+    t->forced = -1;
     if (!ct_build(astr, str, &t->g, &t->n, &t->seen)) { ct_free_ts(t); return 0; }
+    ct_analyze(t, str);
     id o = cx_alloc_instance(&CTTypesetter_c);
     if (!o) { ct_free_ts(t); return 0; }
     *(void **)((u8 *)o + 8) = t;
     return o;
 }
+static int ct_hangs(u32 cp) { return cp == ' ' || cp == '\t' || cp == 0x3000 || cp == 0xA0 || (cp >= 0x2000 && cp <= 0x200A); }
 static long ct_suggest(ct_ts_t *t, long start, double width, int word) {
     if (!t || start < 0 || start >= t->utf16) return 0;
     if (start >= t->seen) return t->utf16 - start;
@@ -1912,20 +1986,29 @@ static long ct_suggest(ct_ts_t *t, long start, double width, int word) {
     while (i < t->n && t->g[i].idx + t->g[i].units <= start) i++;
     if (i >= t->n) return start < t->utf16 ? t->utf16 - start : 0;
     double x = 0;
-    long last_brk = -1, count = 0;
+    long last_brk = -1, last_cl = -1, count = 0;
     int any = 0;
     for (; i < t->n; i++) {
         ct_clus *g = &t->g[i];
-        int nl = g->cp == '\n' || g->cp == '\r';
-        if (!nl && any && x + g->adv > width + 1e-6) {
+        long end = g->idx + g->units;
+        int hard = g->cp == '\n' || g->cp == '\r' || g->cp == 0x2028 || g->cp == 0x2029 || (t->brk && end <= t->seen && t->brk[end] == 2);
+        /* espaço no fim da linha "pendura": não conta para a largura (como no macOS) */
+        if (!hard && any && !ct_hangs(g->cp) && x + g->adv > width + 1e-6) {
             if (word && last_brk > start) return last_brk - start;
-            return count;
+            if (last_cl > start) return last_cl - start;
+            return count ? count : end - start;
         }
         x += g->adv;
-        count = (g->idx + g->units) - start;
+        count = end - start;
         any = 1;
-        if (g->cp == ' ' || g->cp == '\t') last_brk = g->idx + g->units;
-        if (nl) return count;
+        if (t->brk && end <= t->seen) { if (t->brk[end]) last_brk = end; }
+        else if (ct_hangs(g->cp)) last_brk = end;
+        if (!t->cl || (end <= t->seen && t->cl[end])) last_cl = end;
+        if (hard) {
+            /* CR LF juntos */
+            if (g->cp == '\r' && i + 1 < t->n && t->g[i + 1].cp == '\n') { count = t->g[i + 1].idx + t->g[i + 1].units - start; }
+            return count;
+        }
     }
     return count ? count : (start < t->utf16 ? t->utf16 - start : 0);
 }
@@ -1954,12 +2037,13 @@ id CTTypesetterCreateLine(id ts, ct_range_t range) {
         b->g[k].font = objc_retain(t->g[i].font);
         k++;
     }
-    ct_bidi(b);
+    ct_bidi_text(b, t->text, t->lv, t->text ? (t->utf16 > 100000 ? 100000 : t->utf16) : 0, t->para);
     ct_recompute(b);
     return ct_line_wrap(b);
 }
 
 static void ct_paint(void *ctx, double x, double y, ct_clus *g) {
+    if (g->rd) return;                 /* run delegate: o app desenha o anexo */
 #if !defined(CT_HOST)
     if (g->font && font_live()) {
         ct_pt_t p;
@@ -2185,10 +2269,11 @@ typedef struct {
 #define CT_RUN_NONMONO 2u
 #define CT_RUN_MATRIX 4u
 typedef struct {
-    id lines, path, astr;
+    id lines, path, astr, attrs;
     ct_pt_t *origins;
     long n;
     ct_range_t range, visible;
+    double x0, y0;      /* origem da caixa do caminho: as origens das linhas são relativas a ela */
 } ct_frame_t;
 typedef struct { id ts; } ct_fs_t;
 
@@ -2209,7 +2294,7 @@ static void ct_run_dealloc(id self, SEL c) {
 static void ct_frame_dealloc(id self, SEL c) {
     ct_frame_t *f = ct_state(self);
     (void)c;
-    if (f) { objc_release(f->lines); objc_release(f->path); objc_release(f->astr); free(f->origins); free(f); }
+    if (f) { objc_release(f->lines); objc_release(f->path); objc_release(f->astr); objc_release(f->attrs); free(f->origins); free(f); }
     *(void **)((u8 *)self + 8) = 0;
     cx_object_free(self);
 }
@@ -2514,10 +2599,7 @@ void CTRunDraw(id run, void *ctx, ct_range_t range) {
         x += g->adv;
     }
 }
-id CTTypesetterCreateWithAttributedStringAndOptions(id astr, id opts) {
-    (void)opts;
-    return CTTypesetterCreateWithAttributedString(astr);
-}
+
 static void ct_path_box(void *path, double *w, double *h) {
     typedef struct { double x, y; } pt_t;
     typedef struct { void *isa; u64 cfinfo; u8 *types; pt_t *pts; u64 n, cap, npts, ptcap; pt_t start, cur; } view_t;
@@ -2538,90 +2620,6 @@ static void ct_path_box(void *path, double *w, double *h) {
     *h = y1 - y0;
     if (*w < 1) *w = 1;
     if (*h < 1) *h = 1;
-}
-id CTFramesetterCreateFrame(id fs, ct_range_t range, void *path, id attrs) {
-    ct_fs_t *owned = 0;
-    id ts;
-    ct_ts_t *t;
-    ct_frame_t *fr;
-    id o, arr;
-    double maxw, maxh, y, usedh;
-    long pos, fit_end;
-    (void)attrs;
-    ct_lines_init();
-    if (fs && object_getClass(fs) == &CTFramesetter_c) {
-        owned = ct_state(fs);
-        ts = owned ? owned->ts : 0;
-    } else ts = CTTypesetterCreateWithAttributedString(fs);
-    if (!ts) return 0;
-    t = ct_state(ts);
-    if (!t) return 0;
-    if (!t) { if (!owned) objc_release(ts); return 0; }
-    if (range.loc == 0 && range.len == 0) { range.loc = 0; range.len = t->utf16; }
-    if (range.loc < 0) range.loc = 0;
-    if (range.len < 0) range.len = 0;
-    if (range.loc > t->utf16) range.loc = t->utf16;
-    if (range.loc + range.len > t->utf16) range.len = t->utf16 - range.loc;
-    ct_path_box(path, &maxw, &maxh);
-    fr = calloc(1, sizeof *fr);
-    if (!fr) return 0;
-    fr->path = path ? objc_retain((id)path) : 0;
-    fr->astr = objc_retain(t->astr);
-    arr = MSG0(id, cls("NSMutableArray"), "array");
-    y = 0;
-    usedh = 0;
-    pos = range.loc;
-    fit_end = range.loc;
-    while (pos < range.loc + range.len) {
-        long br = ct_suggest(t, pos, maxw, 1);
-        id line;
-        ct_line_t *lb;
-        double lh;
-        ct_range_t rr;
-        if (br < 1) br = 1;
-        if (pos + br > range.loc + range.len) br = range.loc + range.len - pos;
-        rr.loc = pos;
-        rr.len = br;
-        line = CTTypesetterCreateLine(ts, rr);
-        lb = ct_state(line);
-        lh = lb ? lb->ascent + lb->descent + lb->leading : 16;
-        if (usedh > 0 && usedh + lh > maxh + 1e-6 && path) { objc_release(line); break; }
-        if (line) MSG(void, arr, "addObject:", line);
-        objc_release(line);
-        y -= lh;
-        usedh += lh;
-        pos += br;
-        fit_end = pos;
-        if (!path && usedh > 0 && pos >= range.loc + range.len) break;
-    }
-    fr->lines = objc_retain(arr);
-    fr->n = (long)MSG0(u64, arr, "count");
-    fr->origins = fr->n ? calloc((size_t)fr->n, sizeof(ct_pt_t)) : 0;
-    y = 0;
-    for (long i = 0; i < fr->n; i++) {
-        id line = MSG(id, arr, "objectAtIndex:", (u64)i);
-        ct_line_t *lb = ct_state(line);
-        double lh = lb ? lb->ascent + lb->descent + lb->leading : 0;
-        if (fr->origins) { fr->origins[i].x = 0; fr->origins[i].y = y - (lb ? lb->ascent : 0); }
-        y -= lh;
-    }
-    fr->range.loc = range.loc;
-    fr->range.len = fit_end - range.loc;
-    fr->visible = fr->range;
-    ct_lines_init();
-    o = cx_alloc_instance(&CTFrame_c);
-    if (!o) {
-        objc_release(fr->lines);
-        objc_release(fr->path);
-        objc_release(fr->astr);
-        free(fr->origins);
-        free(fr);
-        if (!owned) objc_release(ts);
-        return 0;
-    }
-    if (!owned) objc_release(ts);
-    *(void **)((u8 *)o + 8) = fr;
-    return o;
 }
 id CTFrameGetLines(id frame) { ct_frame_t *f = ct_state(frame); return f ? f->lines : 0; }
 id CTFrameGetPath(id frame) { ct_frame_t *f = ct_state(frame); return f ? f->path : 0; }
@@ -2654,7 +2652,7 @@ void CTFrameDraw(id frame, void *ctx) {
     for (long i = 0; i < f->n; i++) {
         id line = MSG(id, f->lines, "objectAtIndex:", (u64)i);
         ct_tm m = CGContextGetTextMatrix(ctx);
-        if (f->origins) { m.tx = f->origins[i].x; m.ty = f->origins[i].y; }
+        if (f->origins) { m.tx = f->x0 + f->origins[i].x; m.ty = f->y0 + f->origins[i].y; }
         CGContextSetTextMatrix(ctx, m);
         CTLineDraw(line, ctx);
     }
@@ -3030,3 +3028,6 @@ ct_rect_t CTRunGetImageBounds(id run, void *ctx, ct_range_t range) {
     free(g); free(p); free(b);
     return z;
 }
+
+#include "coretext_frame.inc"
+#include "coretext_fonts.inc"
