@@ -696,7 +696,18 @@ out:
 
 /* ---------------------------------------------------------------- pontos de entrada (x_ e x$NEWLAPACK) */
 typedef int I;
+/* x$NEWLAPACK: no ELF um alias da função; no Mach-O (libSystem arm64, que não aceita alias) um salto em assembly com o
+ * mesmo nome */
+#if defined(__MACH__)
+# if defined(__aarch64__)
+#  define MOS_TRAMP(n, t) __asm__(".text\n.globl \"_" n "\"\n.p2align 2\n\"_" n "\":\n\tb _" t "\n");
+# else
+#  define MOS_TRAMP(n, t) __asm__(".text\n.globl \"_" n "\"\n\"_" n "\":\n\tjmp _" t "\n");
+# endif
+# define ALIAS(f) MOS_TRAMP(#f "$NEWLAPACK", #f "_")
+#else
 #define ALIAS(f) extern __typeof(f##_) f##_nl __asm__(#f "$NEWLAPACK") __attribute__((alias(#f "_")));
+#endif
 #define FOR4(M) M(s, K_S, float, float) M(d, K_D, double, double) M(c, K_C, cf, float) M(z, K_Z, zc, double)
 #define DEF_GETRF(p, K, T, R) void p##getrf_(const I *m, const I *n, T *a, const I *lda, I *ipiv, I *info) { getrf(K, m, n, a, lda, ipiv, info); } ALIAS(p##getrf)
 #define DEF_GETRS(p, K, T, R) void p##getrs_(const char *t, const I *n, const I *nr, const T *a, const I *lda, const I *ipiv, T *b, const I *ldb, I *info) { getrs(K, t, n, nr, a, lda, ipiv, b, ldb, info); } ALIAS(p##getrs)
