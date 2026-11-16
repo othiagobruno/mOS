@@ -1046,6 +1046,30 @@ static u32 port_op(mspace_t *sp, u32 op, u64 *a) {
         }
         return KERN_INVALID_RIGHT;
     }
+    /* mach_port_destroy (XNU ipc_right_destroy): todos os direitos do nome saem de uma vez. Recepção: a porta morre
+     * (quem tem envio ganha nome morto, as mensagens da fila são destruídas). Envio: a contagem de remetentes cai.
+     * Send-once: o receptor recebe MACH_NOTIFY_SEND_ONCE. Conjunto: os membros saem dele. O nome deixa de existir
+     * (KERN_INVALID_NAME depois). Antes caía no default: KERN_INVALID_ARGUMENT, e o mk_timer_destroy falhava. */
+    case MACH_OP_DESTROY: {
+        ment_t *e = ent_at(sp, (u32)a[0]);
+        if (!e) return KERN_INVALID_NAME;
+        kport_t *p = e->port;
+        u32 type = e->type;
+        if (type & T_SO) {
+            port_ref(p);                 /* sobrevive ao ent_del para o aviso de send-once */
+            ent_del(sp, e);
+            so_drop_unused(p);
+            return KERN_SUCCESS;
+        }
+        if (p) port_ref(p);              /* a entrada sai antes de mexer na porta */
+        ent_del(sp, e);
+        if (p && (type & T_PSET))
+            for (kport_t *q = ports_all; q; q = q->gnext) if (q->pset == p) q->pset = NULL;
+        if (p && (type & (T_RECEIVE | T_PSET)) && (p->recv == sp || !p->recv)) port_kill(p);
+        if (p && (type & T_SEND) && !(type & T_DEAD)) srights_drop(p);
+        port_unref(p);
+        return KERN_SUCCESS;
+    }
     case MACH_OP_MOD_REFS: {
         ment_t *e = ent_find(sp, (u32)a[0]);
         if (!e) return KERN_INVALID_NAME;
