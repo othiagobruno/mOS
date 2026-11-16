@@ -266,6 +266,7 @@ def acha_alvo(extracted: Path) -> Path | None:
     for _volta in range(3):
         bundle = find_app(extracted)
         if bundle is not None:
+            abre_contents_7z(bundle)
             return bundle
         internos = [p for p in extracted.rglob("*") if p.is_file() and p.name.lower().endswith(ANINHADOS)
                     and not p.name.startswith("._")]
@@ -280,6 +281,21 @@ def acha_alvo(extracted: Path) -> Path | None:
                 alvo.mkdir(exist_ok=True)
             interno.unlink()
     return extracted if tem_macho(extracted) else None
+
+
+def abre_contents_7z(bundle: Path) -> None:
+    """Acrobat Reader: o pkg traz Contents/MacOS.7z, Frameworks.7z... e o script de pós-instalação os abre. Sem
+    Mach-O no bundle, cada Contents/<pasta>.7z é aberto no próprio Contents, como faria o instalador."""
+    contents = bundle / "Contents"
+    pacotes = sorted(contents.glob("*.7z"))
+    if not pacotes or tem_macho(bundle):
+        return
+    for pac in pacotes:
+        proc = subprocess.run([sete_zip(), "x", "-y", f"-o{contents}", str(pac)],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        if proc.returncode not in (0, 2):
+            print(f"7z: {pac.name} do bundle não abriu ({proc.returncode})", flush=True)
+        pac.unlink()
 
 
 def find_app(root: Path) -> Path | None:
