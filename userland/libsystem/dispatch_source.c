@@ -2,7 +2,7 @@
  * mOS libSystem — fontes da libdispatch (dispatch_source_*).
  *
  * Tipos: DATA_ADD, DATA_OR, DATA_REPLACE (merge_data), TIMER (timer de dispatch.c), READ, WRITE, PROC, SIGNAL,
- * VNODE, MACH_RECV, MACH_SEND e MEMORYPRESSURE. As que dependem de estado do sistema (fd, processo, sinal, arquivo,
+ * VNODE, MACH_RECV, MACH_SEND e MEMORYPRESSURE (nível do kernel, SYS_VMCTL). As que dependem de estado do sistema (fd, processo, sinal, arquivo,
  * porta) são vigiadas por uma thread monitora: enquanto a condição vale, a fonte recebe o evento (READ/WRITE são de
  * nível, como no kqueue). O evento acumula em `pending` (soma, OU ou troca, conforme o tipo) e um único item leva o
  * handler à fila de destino; dentro dele, dispatch_source_get_data devolve o valor acumulado.
@@ -75,6 +75,7 @@ static void vstat(int fd, dp_vstat_t *v) {
 }
 typedef void (*dp_sig_t)(int);
 static dp_sig_t sig_install(int s, dp_sig_t h) { return signal(s, h); }
+static unsigned mem_pressure(void) { return 1; }   /* o host não informa pressão: sempre normal */
 #else
 int cx_fd_readable(int fd, long *avail, int *eof);   /* kqueue.c */
 int cx_fd_writable(int fd);
@@ -105,6 +106,13 @@ static void vstat(int fd, dp_vstat_t *v) {
 }
 typedef void (*dp_sig_t)(int);
 static dp_sig_t sig_install(int s, dp_sig_t h) { return (dp_sig_t)signal(s, (void *)h); }
+/* nível de pressão de memória do kernel (SYS_VMCTL/MOS_VM_STATS): 1 normal, 2 aviso, 4 crítico (DISPATCH_MEMORYPRESSURE_*) */
+static unsigned mem_pressure(void) {
+    mos_vmstats_t st;
+    memset(&st, 0, sizeof st);
+    if (SYS2(SYS_VMCTL, MOS_VM_STATS, &st) < 0 || !st.pressure_level) return 1;
+    return st.pressure_level;
+}
 #endif
 
 /* ------------------------------------------------------------------ objeto fonte */
@@ -248,7 +256,7 @@ void cx_dispatch_source_resumed(void *p) {
         if (s->canceled) { src_send_cancel_locked(s); dp_unlock(&s->lock); return; }
         if (s->type == ST_TIMER) timer_arm_locked(s);
         dp_unlock(&s->lock);
-        if (s->type != ST_TIMER && s->type > ST_DATA_REPLACE && s->type != ST_MEMORYPRESSURE) monitor_add(s);
+        if (s->type != ST_TIMER && s->type > ST_DATA_REPLACE) monitor_add(s);
         return;
     }
     if (!s->h.susp) arm_locked(s);
@@ -417,6 +425,17 @@ static void *monitor_main(void *a) {
                 if (ev) { src_merge(s, ev, 1); hit = 1; }
                 break;
             }
+            case ST_MEMORYPRESSURE: {                  /* a cada ~1 s: dispara quando o nível muda para um que a máscara pede */
+                u64 now = dp_now_ns();
+                if (now < s->t_next) break;
+                s->t_next = now + 1000000000ull;
+                unsigned lv = mem_pressure();
+                if (lv != (unsigned)s->t_interval) {
+                    s->t_interval = lv;
+                    if (lv & s->mask) { src_merge(s, lv, 2); hit = 1; }
+                }
+                break;
+            }
             default: break;
             }
         }
@@ -434,6 +453,7 @@ static void monitor_add(dp_source_t *s) {
     if (s->type == ST_SIGNAL) { s->t_leeway = (u64)sig_count[s->handle]; sig_hook((int)s->handle); }
     if (s->type == ST_VNODE) vstat((int)s->handle, &s->vs);
     if (s->type == ST_PROC) s->vs.ok = 0;
+    if (s->type == ST_MEMORYPRESSURE) { s->t_next = 0; s->t_interval = 1; }   /* começa em normal: o aviso vem na mudança */
     cx_dispatch_retain(s);
     dp_lock(&mon_lock);
     s->in_monitor = 1;

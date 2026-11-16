@@ -212,20 +212,8 @@ void *pthread_from_mach_thread_np(u32 port) {
     u32 mach_thread_self(void);
     return port == mach_thread_self() ? pthread_self() : 0;
 }
-int pthread_get_qos_class_np(void *thread, unsigned *qos, int *relpri) {
-    (void)thread;
-    if (qos) *qos = qos_class_self();
-    if (relpri) *relpri = 0;
-    return 0;
-}
-/* instala o gancho de introspecção de threads (criação/término/start); devolve o anterior, como no libpthread */
-static void *pthread_introspection_hook;
-void *pthread_introspection_hook_install(void *hook) {
-    void *old = pthread_introspection_hook;
-    pthread_introspection_hook = hook;
-    return old;
-}
-int __pthread_workqueue_setkill(int enable) { (void)enable; return 0; }
+/* pthread_get_qos_class_np e pthread_introspection_hook_install: darwin.c e extra.c (QoS por thread e gancho chamado
+ * no pthread_create e no início/fim da thread); __pthread_workqueue_setkill: dispatch.c */
 /* portas de exceção do próximo filho de posix_spawn: o mOS não propaga portas de exceção no spawn */
 int posix_spawnattr_setexceptionports_np(void *attr, unsigned mask, u32 port, int behavior, int flavor) {
     (void)attr; (void)mask; (void)port; (void)behavior; (void)flavor;

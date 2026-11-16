@@ -315,10 +315,12 @@ static dp_item_t *pool_pop(dp_queue_t **from) {
 static void *worker_main(void *arg) {
     int slot = (int)(long)arg;
     worker_tids[slot] = dp_tid();
+    unsigned cur_qos = 0;
     for (;;) {
         dp_queue_t *r;
         dp_item_t *it = pool_pop(&r);
         if (it) {
+            if (r->qos != cur_qos) { cur_qos = r->qos; dp_set_qos(cur_qos); }   /* a thread herda a QoS da raiz */
             dp_frame_t f;
             frame_push(&f, r);
             run_item(r, it);
@@ -1151,6 +1153,10 @@ void dispatch_apply(size_t n, void *q, void *block) { dispatch_apply_f(n, q, blo
 /* ------------------------------------------------------------------ blocos com flags (dispatch_block.c) */
 unsigned cx_dispatch_block_flags(void *block);   /* bit 0 = DISPATCH_BLOCK_BARRIER */
 static unsigned block_flags(void *block) { return (cx_dispatch_block_flags(block) & 1) ? IT_BARRIER : 0; }
+
+/* SPI do libpthread que o libdispatch da Apple usa para deixar (ou não) o kill de sinais chegar às threads do pool:
+ * no mOS os workers são threads comuns e sempre recebem sinais, então ligar ou desligar não muda nada */
+int __pthread_workqueue_setkill(int enable) { (void)enable; return 0; }
 
 /* depuração */
 void dispatch_debug(void *o, const char *msg, ...) {

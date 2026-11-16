@@ -35,7 +35,12 @@ sproot="$deps/swift-experimental-string-processing-swift-6.4.2-RELEASE"
 OO_REV=b030e44d6471cf1d760137e5da6805cf57aa885b
 OO_SHA=d8b4f7805aa611f73ecbc81447c5f5ca381b74feae0b57bd5f7def2a760b50d5
 ooroot="$deps/OpenObservation-$OO_REV"
-if [ ! -d "$sfroot/Sources" ] || [ ! -d "$scroot/Sources" ] || [ ! -d "$sproot/Sources" ] || [ ! -d "$ooroot/Sources" ]; then
+# swift-system (Apache 2.0) com o nome do módulo da Apple (System): o Package.swift só muda o nome (SystemPackage)
+SY_VER=1.9.0
+SY_SHA=e164360588c9b4a3b1388650e86d7e0f9b61129f303181eae7f85eb15843d8f3
+syroot="$deps/swift-system-$SY_VER"
+if [ ! -d "$sfroot/Sources" ] || [ ! -d "$scroot/Sources" ] || [ ! -d "$sproot/Sources" ] || [ ! -d "$ooroot/Sources" ] ||
+   [ ! -d "$syroot/Sources" ]; then
     # shellcheck source=tools/baixar.sh
     . "$root/tools/baixar.sh"
     mkdir -p "$deps/dl"
@@ -48,6 +53,7 @@ if [ ! -d "$sfroot/Sources" ] || [ ! -d "$scroot/Sources" ] || [ ! -d "$sproot/S
     pega https://github.com/swiftlang/swift-experimental-string-processing/archive/refs/tags/swift-6.4.2-RELEASE.tar.gz \
         swift-experimental-string-processing-6.4.2.tar.gz "$SP_SHA" "$sproot"
     pega "https://github.com/OpenSwiftUIProject/OpenObservation/archive/$OO_REV.tar.gz" "OpenObservation-$OO_REV.tar.gz" "$OO_SHA" "$ooroot"
+    pega "https://github.com/apple/swift-system/archive/refs/tags/$SY_VER.tar.gz" "swift-system-$SY_VER.tar.gz" "$SY_SHA" "$syroot"
 fi
 if [ ! -x "${zig:-/}" ] || [ ! -x "${fe:-/}" ] || [ ! -d "$sfroot/Sources" ] || [ ! -d "$scroot/Sources" ]; then
     echo "build-swift-foundation-objc: falta zig, swift-frontend 6.4.2, swift-foundation ou swift-collections 1.7.3" >&2
@@ -150,6 +156,9 @@ if [ -n "$spr" ]; then
     fi
     mapfile -t f < <(find "$spr/_StringProcessing" -name '*.swift' | sort)
     build_mod _StringProcessing 5 1 -- -autolink-force-load -disable-implicit-string-processing-module-import "${spav[@]}" -Xcc "-I$spr/_CUnicode/include" -- "${f[@]}"
+    # RegexBuilder (a DSL Regex { ... } dos apps) sobre o _StringProcessing acima
+    mapfile -t f < <(find "$spr/RegexBuilder" -name '*.swift' | sort)
+    build_mod RegexBuilder 5 1 -- -autolink-force-load "${spav[@]}" -- "${f[@]}"
 else
     echo "aviso: sem swift-experimental-string-processing em $deps; o Foundation não acha Regex" >&2
 fi
@@ -294,6 +303,20 @@ PY
         -D DATA_LEGACY_ABI -D MOS_NS_OPTIONS -D MOS_NSERROR -- "${f[@]}"
 fi
 
+# ---- System (FilePath, FileDescriptor, Errno, FilePermissions...): swift-system com o nome System, como o
+# System.framework do macOS. As macros de disponibilidade são as do Package.swift dele (a versão -> o macOS).
+if [ -d "$syroot/Sources/System" ]; then
+    syav=()
+    while IFS= read -r ln; do
+        v=$(sed -n 's/^ *Available("\([^"]*\)", "\([^"]*\)").*/\1|\2/p' <<< "$ln")
+        [ -n "$v" ] && syav+=(-enable-experimental-feature "AvailabilityMacro=System ${v%%|*}:${v#*|}")
+    done < "$syroot/Package.swift"
+    mapfile -t f < <(find "$syroot/Sources/System" -name '*.swift' | sort)
+    f+=("$root/userland/sdk/swift-objc/System/SystemABI.swift")   # nomes da ABI antiga do System do macOS
+    # CSystem: o módulo C do swift-system (só cabeçalhos no Darwin; o shims.c é para Linux/BSD)
+    build_mod System 5 1 -- -autolink-force-load -I "$syroot/Sources/CSystem/include" -D SYSTEM_PACKAGE_DARWIN "${syav[@]}" -- "${f[@]}"
+fi
+
 llvm_nm_u() { "$(dirname "$fe")/llvm-nm" -u "$1" 2>/dev/null | awk '{print $NF}'; }
 
 # ---- dylibs, como no tools/link-swift-dylibs-objc.ps1. Uma dylib passada ao link vira LC_LOAD_DYLIB: o
@@ -323,6 +346,21 @@ link_dylib() {
 if [ $fails -eq 0 ] && [ -f "$out/_RegexParser.o" ] && [ -f "$out/_StringProcessing.o" ]; then
     link_dylib libswift_RegexParser "$out/_RegexParser.o"
     link_dylib libswift_StringProcessing "$out/_StringProcessing.o" "$out"/_CUnicode_*.o "$dest/libswift_RegexParser.dylib"
+    [ -f "$out/RegexBuilder.o" ] && link_dylib libswiftRegexBuilder "$out/RegexBuilder.o" "$dest/libswift_StringProcessing.dylib" "$dest/libswift_RegexParser.dylib"
+fi
+# System.framework: o caminho do macOS 11+ (o app pede /System/Library/Frameworks/System.framework/Versions/A/System)
+if [ $fails -eq 0 ] && [ -f "$out/System.o" ]; then
+    sysfw="$objc/dylib/System/Library/Frameworks/System.framework/Versions/A"
+    mkdir -p "$sysfw"
+    if "$zig" c++ -target x86_64-macos -shared -o "$sysfw/System" \
+        -Wl,-install_name,/System/Library/Frameworks/System.framework/Versions/A/System -Wl,-undefined,dynamic_lookup \
+        "$out/System.o" "${base_dylibs[@]}"; then
+        ln -sfn A "$objc/dylib/System/Library/Frameworks/System.framework/Versions/Current"
+        ln -sfn Versions/Current/System "$objc/dylib/System/Library/Frameworks/System.framework/System"
+        echo "System.framework: $(wc -c < "$sysfw/System") bytes"
+    else
+        echo "System.framework: FALHOU no link"; fails=$((fails + 1))
+    fi
 fi
 # libswiftFoundation: o módulo Foundation e o que ele leva dentro. O carregador (kernel/compat/macho.c) a junta a
 # quem pede o Foundation.framework.
@@ -352,6 +390,15 @@ if [ $fails -eq 0 ] && { [ -f "$out/Foundation.swiftmodule" ] || [ -d "$out/Foun
     if build_mod UniformTypeIdentifiers 5 1 -- -import-underlying-module -autolink-force-load -- "${f[@]}" &&
         want UniformTypeIdentifiers; then
         link_dylib libswiftUniformTypeIdentifiers "$out/UniformTypeIdentifiers.o" "$dest/libswiftFoundation.dylib"
+    fi
+fi
+
+# ---- _System_Foundation: a ponte FilePath <-> URL (FilePath(URL)), que precisa do System e do Foundation
+if [ $fails -eq 0 ] && [ -f "$out/System.o" ] && [ -f "$dest/libswiftFoundation.dylib" ]; then
+    if build_mod _System_Foundation 5 1 -- -autolink-force-load -- "$root/userland/sdk/swift-objc/System/SystemFoundation.swift" &&
+        want _System_Foundation; then
+        link_dylib libswift_System_Foundation "$out/_System_Foundation.o" "$dest/libswiftFoundation.dylib" \
+            "$objc/dylib/System/Library/Frameworks/System.framework/Versions/A/System"
     fi
 fi
 

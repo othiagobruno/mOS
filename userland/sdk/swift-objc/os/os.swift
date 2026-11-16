@@ -1,6 +1,6 @@
 // mOS — overlay Swift "os" da variante com interop ObjC (docs/swift-objc-runtime.md, fase 3), com os nomes do SDK
 // da Apple: OSLog (= OS_os_log), os_log(_:dso:log:_:_:) e os tipos de OSLogType. Como no libSystem do mOS
-// (darwin.c), só erro e falha são escritos (no stderr, que vai para o Console do mOS); info/debug/padrão somem.
+// (oslog.c), tudo vai ao log unificado (logd); debug só com perfil de debug, como no macOS.
 
 @_exported import os
 import Darwin
@@ -143,35 +143,158 @@ public struct OSLogMessage: ExpressibleByStringInterpolation, ExpressibleByStrin
     public init(stringInterpolation: OSLogInterpolation) { _text = stringInterpolation._text }
 }
 
-@usableFromInline internal func _mosLogLine(_ level: String, _ category: String, _ message: String) {
-    var line = "[\(level)]"
-    if !category.isEmpty { line += " \(category):" }
-    fputs(line + " " + message + "\n", __stderrp)
-}
-
-public struct Logger: @unchecked Sendable {
-    let _category: String
-    public init(subsystem: String, category: String) { _category = category }
-    public init(_ log: OSLog) { _category = "" }
-    public init() { _category = "" }
-
-    public func log(level: OSLogType, _ message: OSLogMessage) {
-        if level == .error || level == .fault { _mosLogLine(level == .error ? "error" : "fault", _category, message._text) }
+/// Uma linha no log unificado (oslog.c -> logd), pelo mesmo _os_log_impl que o código inlinado dos apps chama:
+/// formato "%{public}s" e um buffer com um argumento string (descritor 0x22: tipo 2 << 4 | público).
+@usableFromInline internal func _mosEmit(_ log: OSLog, _ type: OSLogType, _ text: String) {
+    guard os_log_type_enabled(log, type) != 0 else { return }
+    text.withCString { cs in
+        var buf = [UInt8](repeating: 0, count: 12)
+        buf[0] = 2
+        buf[1] = 1
+        buf[2] = 0x22
+        buf[3] = 8
+        withUnsafeBytes(of: UInt(bitPattern: cs)) { for i in 0..<8 { buf[4 + i] = $0[i] } }
+        buf.withUnsafeMutableBufferPointer { b in
+            "%{public}s".withCString { fmt in _os_log_impl(nil, log, type, fmt, b.baseAddress, 12) }
+        }
     }
-    public func log(_ message: OSLogMessage) {}
-    public func trace(_ message: OSLogMessage) {}
-    public func debug(_ message: OSLogMessage) {}
-    public func info(_ message: OSLogMessage) {}
-    public func notice(_ message: OSLogMessage) {}
-    public func warning(_ message: OSLogMessage) { _mosLogLine("warning", _category, message._text) }
-    public func error(_ message: OSLogMessage) { _mosLogLine("error", _category, message._text) }
-    public func critical(_ message: OSLogMessage) { _mosLogLine("critical", _category, message._text) }
-    public func fault(_ message: OSLogMessage) { _mosLogLine("fault", _category, message._text) }
 }
 
-extension Logger {
-    /// o OSLog por trás do Logger (o mOS não guarda subsistema/categoria num objeto de log: devolve o padrão)
-    public var logObject: OSLog { .default }
+/// Logger (macOS 11): o OSLog do subsistema e da categoria; cada nível vai ao log unificado com o tipo do os_log.
+public struct Logger: @unchecked Sendable {
+    public let logObject: OSLog
+    public init(subsystem: String, category: String) { logObject = os_log_create(subsystem, category) }
+    public init(_ logObj: OSLog) { logObject = logObj }
+    public init() { logObject = .default }
+
+    public func log(level: OSLogType, _ message: OSLogMessage) { _mosEmit(logObject, level, message._text) }
+    public func log(_ message: OSLogMessage) { _mosEmit(logObject, .default, message._text) }
+    public func trace(_ message: OSLogMessage) { _mosEmit(logObject, .debug, message._text) }
+    public func debug(_ message: OSLogMessage) { _mosEmit(logObject, .debug, message._text) }
+    public func info(_ message: OSLogMessage) { _mosEmit(logObject, .info, message._text) }
+    public func notice(_ message: OSLogMessage) { _mosEmit(logObject, .default, message._text) }
+    public func warning(_ message: OSLogMessage) { _mosEmit(logObject, .error, message._text) }
+    public func error(_ message: OSLogMessage) { _mosEmit(logObject, .error, message._text) }
+    public func critical(_ message: OSLogMessage) { _mosEmit(logObject, .fault, message._text) }
+    public func fault(_ message: OSLogMessage) { _mosEmit(logObject, .fault, message._text) }
+}
+
+// MARK: - Signposts (os/signpost.h e OSSignposter do macOS 12)
+// Sem um coletor (Instruments), os_signpost_enabled é falso, como no macOS fora de um trace: os intervalos guardam o
+// estado (aberto/fechado) e nada é gravado. Com um coletor ligado, o texto vai pelo _os_signpost_emit_with_name_impl.
+
+extension os_signpost_type_t {
+    public static var event: os_signpost_type_t { os_signpost_type_t(rawValue: 0x00) }
+    public static var begin: os_signpost_type_t { os_signpost_type_t(rawValue: 0x01) }
+    public static var end: os_signpost_type_t { os_signpost_type_t(rawValue: 0x02) }
+}
+
+@usableFromInline internal func _mosSignpost(_ type: os_signpost_type_t, _ dso: UnsafeRawPointer?, _ log: OSLog,
+                                             _ name: StaticString, _ id: OSSignpostID, _ text: String) {
+    guard os_signpost_enabled(log) else { return }
+    text.withCString { cs in
+        var buf = [UInt8](repeating: 0, count: 12)
+        buf[0] = 2; buf[1] = 1; buf[2] = 0x22; buf[3] = 8
+        withUnsafeBytes(of: UInt(bitPattern: cs)) { for i in 0..<8 { buf[4 + i] = $0[i] } }
+        buf.withUnsafeMutableBufferPointer { b in
+            name.withUTF8Buffer { nb in
+                let np = UnsafeRawPointer(nb.baseAddress!).assumingMemoryBound(to: CChar.self)
+                "%{public}s".withCString { fmt in
+                    _os_signpost_emit_with_name_impl(UnsafeMutableRawPointer(mutating: dso), log, type, id.rawValue, np, fmt, b.baseAddress, 12)
+                }
+            }
+        }
+    }
+}
+
+public func os_signpost(_ type: os_signpost_type_t, dso: UnsafeRawPointer = #dsohandle, log: OSLog, name: StaticString,
+                        signpostID: OSSignpostID = .exclusive) {
+    _mosSignpost(type, dso, log, name, signpostID, "")
+}
+public func os_signpost(_ type: os_signpost_type_t, dso: UnsafeRawPointer = #dsohandle, log: OSLog, name: StaticString,
+                        signpostID: OSSignpostID = .exclusive, _ format: StaticString, _ arguments: CVarArg...) {
+    guard os_signpost_enabled(log) else { return }
+    _mosSignpost(type, dso, log, name, signpostID, _mosFormat(format, arguments))
+}
+
+public enum OSSignpostError: Error {
+    case doubleEnd
+}
+
+/// Estado de um intervalo de OSSignposter: o id e se ainda está aberto (fechar duas vezes é OSSignpostError.doubleEnd).
+public final class OSSignpostIntervalState: Codable, @unchecked Sendable {
+    public let signpostID: OSSignpostID
+    let _open: OSAllocatedUnfairLock<Bool>
+    public init(id: OSSignpostID, isOpen: Bool) {
+        signpostID = id
+        _open = OSAllocatedUnfairLock(uncheckedState: isOpen)
+    }
+    public static func beginState(id: OSSignpostID) -> OSSignpostIntervalState { OSSignpostIntervalState(id: id, isOpen: true) }
+    /// fecha; devolve se estava aberto
+    func _consume() -> Bool { _open.withLockUnchecked { o in let was = o; o = false; return was } }
+    enum CodingKeys: String, CodingKey { case id, isOpen }
+    public convenience init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: OSSignpostID(try c.decode(UInt64.self, forKey: .id)), isOpen: try c.decode(Bool.self, forKey: .isOpen))
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(signpostID.rawValue, forKey: .id)
+        try c.encode(_open.withLockUnchecked { $0 }, forKey: .isOpen)
+    }
+}
+
+/// O código inlinado de endInterval chama isto quando o estado já não está aberto: consome e devolve o erro.
+public func checkForErrorAndConsumeState(state: OSSignpostIntervalState) -> OSSignpostError {
+    _ = state._consume()
+    return .doubleEnd
+}
+
+public struct OSSignposter: @unchecked Sendable {
+    public let logHandle: OSLog
+    public init(subsystem: String, category: String) { logHandle = os_log_create(subsystem, category) }
+    public init(subsystem: String, category: OSLog.Category) { logHandle = os_log_create(subsystem, category.rawValue) }
+    public init(logger: Logger) { logHandle = logger.logObject }
+    public init(logHandle: OSLog) { self.logHandle = logHandle }
+    public static var disabled: OSSignposter { OSSignposter(logHandle: .disabled) }
+    public var isEnabled: Bool { os_signpost_enabled(logHandle) }
+
+    public func makeSignpostID() -> OSSignpostID { OSSignpostID(log: logHandle) }
+    public func makeSignpostID(from object: AnyObject) -> OSSignpostID { OSSignpostID(log: logHandle, object: object) }
+
+    public func emitEvent(_ name: StaticString, id: OSSignpostID = .exclusive) {
+        _mosSignpost(.event, nil, logHandle, name, id, "")
+    }
+    public func emitEvent(_ name: StaticString, id: OSSignpostID = .exclusive, _ message: OSLogMessage) {
+        _mosSignpost(.event, nil, logHandle, name, id, message._text)
+    }
+    public func beginInterval(_ name: StaticString, id: OSSignpostID = .exclusive) -> OSSignpostIntervalState {
+        _mosSignpost(.begin, nil, logHandle, name, id, "")
+        return .beginState(id: id)
+    }
+    public func beginInterval(_ name: StaticString, id: OSSignpostID = .exclusive, _ message: OSLogMessage) -> OSSignpostIntervalState {
+        _mosSignpost(.begin, nil, logHandle, name, id, message._text)
+        return .beginState(id: id)
+    }
+    public func endInterval(_ name: StaticString, _ state: OSSignpostIntervalState) {
+        guard state._consume() else { return }
+        _mosSignpost(.end, nil, logHandle, name, state.signpostID, "")
+    }
+    public func endInterval(_ name: StaticString, _ state: OSSignpostIntervalState, _ message: OSLogMessage) {
+        guard state._consume() else { return }
+        _mosSignpost(.end, nil, logHandle, name, state.signpostID, message._text)
+    }
+    public func withIntervalSignpost<T>(_ name: StaticString, id: OSSignpostID = .exclusive, around task: () throws -> T) rethrows -> T {
+        let st = beginInterval(name, id: id)
+        defer { endInterval(name, st) }
+        return try task()
+    }
+    public func withIntervalSignpost<T>(_ name: StaticString, id: OSSignpostID = .exclusive, _ message: OSLogMessage,
+                                        around task: () throws -> T) rethrows -> T {
+        let st = beginInterval(name, id: id, message)
+        defer { endInterval(name, st) }
+        return try task()
+    }
 }
 
 // MARK: - OSAllocatedUnfairLock (macOS 13): o estado e o os_unfair_lock num ManagedBuffer, com o layout da Apple

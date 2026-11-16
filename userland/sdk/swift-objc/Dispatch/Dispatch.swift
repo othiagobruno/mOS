@@ -526,4 +526,7 @@ public enum DispatchPredicate {
 }
 
 @_transparent
-public func dispatchPrecondition(condition: @autoclosure () -> DispatchPredicate) {}
+public func dispatchPrecondition(condition: @autoclosure () -> DispatchPredicate) {
+    // como no overlay da Apple: o precondition decide entre build de depuração e de release
+    precondition(_dispatchPreconditionTest(condition()), "dispatchPrecondition failure")
+}

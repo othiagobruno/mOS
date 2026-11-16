@@ -39,6 +39,22 @@ static inline void *_mos_os_log_default(void) { return (void *)_os_log_default; 
 static inline void *_mos_os_log_disabled(void) { return (void *)_os_log_disabled; }
 
 os_log_t os_log_create(const char *subsystem, const char *category);
+int os_log_type_enabled(os_log_t log, os_log_type_t type);
+
+/* os/signpost.h: tipo do sinal (swift_wrapper, como no SDK: o overlay estende os_signpost_type_t) e o id de 64 bits */
+typedef uint8_t os_signpost_type_t __attribute__((swift_wrapper(enum)));
+#define OS_SIGNPOST_EVENT          ((os_signpost_type_t)0x00)
+#define OS_SIGNPOST_INTERVAL_BEGIN ((os_signpost_type_t)0x01)
+#define OS_SIGNPOST_INTERVAL_END   ((os_signpost_type_t)0x02)
+typedef uint64_t os_signpost_id_t;
+#define OS_SIGNPOST_ID_NULL      ((os_signpost_id_t)0)
+#define OS_SIGNPOST_ID_INVALID   ((os_signpost_id_t)~0)
+#define OS_SIGNPOST_ID_EXCLUSIVE ((os_signpost_id_t)0xeeeeb0b5b2b2eeee)
+_Bool os_signpost_enabled(os_log_t log);
+os_signpost_id_t os_signpost_id_generate(os_log_t log);
+os_signpost_id_t os_signpost_id_make_with_pointer(os_log_t log, const void *ptr);
+void _os_signpost_emit_with_name_impl(void *dso, os_log_t log, os_signpost_type_t type, os_signpost_id_t spid,
+                                      const char *name, const char *format, uint8_t *buf, uint32_t size);
 void _os_log_impl(void *dso, os_log_t log, os_log_type_t type, const char *format, uint8_t *buf, uint32_t size);
 #ifdef __cplusplus
 }

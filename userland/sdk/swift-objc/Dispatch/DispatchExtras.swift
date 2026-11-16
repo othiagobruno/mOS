@@ -170,6 +170,23 @@ public struct DispatchData: RandomAccessCollection {
     }
 }
 
+extension DispatchData {
+    public typealias Iterator = DispatchDataIterator
+    public func makeIterator() -> DispatchDataIterator { DispatchDataIterator(_data: self) }
+}
+
+/// Iterador de DispatchData, byte a byte (o dispatch_data_t do mOS tem uma região contígua)
+public struct DispatchDataIterator: IteratorProtocol, Sequence {
+    internal let _data: DispatchData
+    internal var _position: Int = 0
+    internal init(_data: DispatchData) { self._data = _data }
+    public mutating func next() -> UInt8? {
+        guard _position < _data.count else { return nil }
+        defer { _position += 1 }
+        return _data[_position]
+    }
+}
+
 extension DispatchData: _ObjectiveCBridgeable {
     public func _bridgeToObjectiveC() -> __DispatchData { __wrapped }
     public static func _forceBridgeFromObjectiveC(_ input: __DispatchData, result: inout DispatchData?) {
@@ -184,9 +201,20 @@ extension DispatchData: _ObjectiveCBridgeable {
     }
 }
 
-// MARK: - dispatchPrecondition: o mOS não acompanha a fila de cada thread com segurança suficiente para recusar
+// MARK: - dispatchPrecondition: dispatch.c acompanha a fila de cada thread; a asserção falha abortando, como no macOS
 
-public func _dispatchPreconditionTest(_ condition: DispatchPredicate) -> Bool { true }
+@_silgen_name("dispatch_assert_queue") internal func _mos_assert_queue(_ q: DispatchQueue)
+@_silgen_name("dispatch_assert_queue_barrier") internal func _mos_assert_queue_barrier(_ q: DispatchQueue)
+@_silgen_name("dispatch_assert_queue_not") internal func _mos_assert_queue_not(_ q: DispatchQueue)
+
+public func _dispatchPreconditionTest(_ condition: DispatchPredicate) -> Bool {
+    switch condition {
+    case .onQueue(let q): _mos_assert_queue(q)
+    case .onQueueAsBarrier(let q): _mos_assert_queue_barrier(q)
+    case .notOnQueue(let q): _mos_assert_queue_not(q)
+    }
+    return true
+}
 
 // MARK: - fontes de sinal e de processo (o helper "Computer Use" do Grok Bot observa SIGTERM e o fim do app pai)
 
