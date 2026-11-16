@@ -9,16 +9,18 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 cd "$TMP"
 
-if ! git -C "$ROOT" cat-file -e 7b65273:tools/mkimg.c 2>/dev/null; then
-    # checkout do Actions é raso; 7b65273 é commit, não um ref.
-    git -C "$ROOT" fetch --depth=80 origin main
+# mkimg de referência (com calloc da imagem inteira). Hash completo: no checkout raso do Actions o commit é buscado
+# direto pelo objeto, a qualquer distância da main (o --depth=80 antigo quebrou quando a main passou de 80 commits).
+REF=7b65273a7de1fdbc703b189f6672e5e5d09922a5
+if ! git -C "$ROOT" cat-file -e "$REF:tools/mkimg.c" 2>/dev/null; then
+    git -C "$ROOT" fetch --depth=1 origin "$REF"
 fi
 mkdir -p "$TMP/ref/tools"
-git -C "$ROOT" show 7b65273:tools/mkimg.c > "$TMP/ref/tools/mkimg.c"
+git -C "$ROOT" show "$REF:tools/mkimg.c" > "$TMP/ref/tools/mkimg.c"
 ln -s "$ROOT/kernel" "$TMP/ref/kernel"
 cc -O2 -o "$TMP/mkimg-ram" "$TMP/ref/tools/mkimg.c"
 cc -O2 -Wall -Wextra -o "$TMP/mkimg" "$ROOT/tools/mkimg.c"
-cc -O2 -Wno-incompatible-library-redeclaration -I"$ROOT/kernel/include" -o "$TMP/ls_lista_host" \
+cc -O2 -std=gnu11 -I"$ROOT/kernel/include" -o "$TMP/ls_lista_host" \
     "$ROOT/tools/ls_lista_host.c" "$ROOT/kernel/compat/plist.c"
 
 cat > "$TMP/libtime.c" <<'EOF'
