@@ -245,7 +245,7 @@ typedef struct jsrealm {
     jsobj *p_abuf, *p_dview, *p_typed, *p_ta[11];   /* ArrayBuffer, DataView, %TypedArray% e um por tipo */
     /* Canvas 2D (canvas_js.c) e DOMException */
     jsobj *p_img;             /* HTMLImageElement.prototype (= Image.prototype) */
-    jsobj *p_worker, *p_bchannel;   /* web_worker.c */
+    jsobj *p_worker, *p_bchannel, *p_sharedworker;   /* web_worker.c */
     jsobj *p_mutobs, *p_mutrec, *p_resizeobs, *p_interobs, *p_domrect;   /* web_obs.c */
     jsobj *p_msgport, *p_msgchannel, *p_msgevent, *p_cryptokey;   /* web_plat.c, web_crypto.c */
     jsobj *p_headers, *p_formdata, *p_request, *p_abortsig, *p_abortctl, *p_xhrup;   /* web_fetch.c */
@@ -622,6 +622,7 @@ void   web_bc_realm_gone(jsrealm *r);
 jsrealm *js_page_realm(struct js_page *p);
 void   js_page_set_origin(struct js_page *p, const char *origin);
 void   js_page_post_message(struct js_page *dst, jsv val, const char *origin);
+jsobj *js_port_pair(jsrealm *other, jsobj **other_port);   /* web_plat.c: MessagePort ligada a outro reino */
 void   js_page_add_module_source(struct js_page *p, const char *src, int len);
 void   web_obs_tick(struct js_page *p);
 void   js_mo_batch(int delta);

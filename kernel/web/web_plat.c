@@ -300,14 +300,30 @@ NATIVE(port_task) {
     jsv data = q->arr[0];
     memmove(q->arr, q->arr + 1, sizeof(jsv) * (q->alen - 1));
     js_arr_setlen(q, q->alen - 1);
+    data = js_structured_clone(data);   /* clone no reino de quem recebe */
+    if (data == JS_EXC) { js_catch(); return JS_UNDEF; }
     port_fire(port, x, data);
     return JS_UNDEF;
 }
 
+/* a entrega roda na página dona da porta (pode ser outro reino: worker, SharedWorker) */
 static void port_schedule(jsobj *port) {
     jsobj *t = js_newnative(port_task, "mensagem", 0, 0);
     t->u.nat.data = jv_obj(port);
-    js_page_add_timer(js_cur_page(), jv_obj(t), 0);
+    js_page_add_timer(port->u.host.page ? port->u.host.page : js_cur_page(), jv_obj(t), 0);
+}
+
+/* par de portas ligadas: uma no reino atual (devolvida) e outra no reino other (*other_port) */
+jsobj *js_port_pair(jsrealm *other, jsobj **other_port) {
+    jsobj *a = port_new();
+    jsrealm *saved = J.realm;
+    J.realm = other;
+    jsobj *b = port_new();
+    J.realm = saved;
+    js_arr_set(jv_o(a->u.host.extra), MP_PEER, jv_obj(b));
+    js_arr_set(jv_o(b->u.host.extra), MP_PEER, jv_obj(a));
+    *other_port = b;
+    return a;
 }
 
 static void port_start(jsobj *port, jsobj *x) {

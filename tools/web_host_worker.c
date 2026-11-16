@@ -80,3 +80,30 @@ WEB_HOST_CASE(worker_modulo_e_canal) {
     EQ("b.name", "c");
     wg_close(&g);
 }
+
+/* SharedWorker: duas páginas da mesma origem ligadas ao mesmo worker (estado compartilhado), outro nome = outro
+ * worker, portas entre reinos e erro de carga */
+WEB_HOST_CASE(worker_compartilhado) {
+    wg_t a = wg_open(), b = wg_open();
+    const char *src = "var SRC='data:text/javascript,var n=0; onconnect=function(e){ var p=e.ports[0]; p.onmessage=function(m){ n++; p.postMessage(m.data+\":\"+n+\":\"+name+\":\"+(e.source===p)) } }';";
+    run(&a, src);
+    run(&b, src);
+    run(&a, "var sw=new SharedWorker(SRC,'cont'); sw.port.onmessage=function(e){ r.push(e.data) }; sw.port.postMessage('a');"
+            "r.push((sw instanceof SharedWorker)+':'+(sw.port instanceof MessagePort))");
+    for (int i = 0; i < 6; i++) { tick(&a, 1); tick(&b, 1); }
+    run(&b, "var sw=new SharedWorker(SRC,{name:'cont'}); sw.port.onmessage=function(e){ r.push(e.data) }; sw.port.postMessage('b');"
+            "var outro=new SharedWorker(SRC,'outro'); outro.port.onmessage=function(e){ r.push(e.data) }; outro.port.postMessage('c');");
+    for (int i = 0; i < 8; i++) { tick(&a, 1); tick(&b, 1); }
+    { wg_t g = a; EQ("r.join('|')", "true:true|a:1:cont:true"); }
+    { wg_t g = b; EQ("r.sort().join('|')", "b:2:cont:true|c:1:outro:true"); }
+    /* erro de carga vai para o SharedWorker */
+    run(&b, "r=[]; var ruim=new SharedWorker('/nao-existe.js'); ruim.onerror=function(){ r.push('erro') };");
+    for (int i = 0; i < 3; i++) tick(&b, 1);
+    { wg_t g = b; EQ("r.join('|')", "erro"); EQ("try{ SharedWorker('x') }catch(e){ e instanceof TypeError }", "true"); }
+    wg_close(&a);
+    /* a primeira página fechou: a segunda continua falando com o mesmo worker */
+    run(&b, "r=[]; sw.port.postMessage('d');");
+    for (int i = 0; i < 6; i++) tick(&b, 1);
+    { wg_t g = b; EQ("r.join('|')", "d:3:cont:true"); }
+    wg_close(&b);
+}
