@@ -96,14 +96,35 @@ static astream_t streams[NSTREAMS];
 static spinlock_t st_lock;
 
 /* soma os streams em acc (n quadros) */
+/* AudioDeviceDuck: um processo abaixa os streams dos outros até duck_target (16.16), numa rampa */
+static int duck_pid;
+static i32 duck_cur = 65536, duck_target = 65536, duck_step = 65536;
+void audio_duck(int pid, i32 level, u32 ramp_ms) {
+    u64 fl = spin_lock_irqsave(&st_lock);
+    if (level >= 65536) level = 65536;
+    if (level < 0) level = 0;
+    if (level == 65536 && duck_pid && pid != duck_pid) { spin_unlock_irqrestore(&st_lock, fl); return; }   /* só quem abaixou devolve */
+    duck_pid = pid;
+    duck_target = level;
+    i32 blocks = (i32)(ramp_ms * RATE / 1000 / BLOCK);
+    i32 diff = duck_target - duck_cur;
+    duck_step = blocks > 0 ? (diff < 0 ? -diff : diff) / blocks + 1 : 65536;
+    spin_unlock_irqrestore(&st_lock, fl);
+}
 static void streams_mix(i32 *acc, int n) {
     u64 fl = spin_lock_irqsave(&st_lock);
+    if (duck_cur != duck_target) {
+        i32 d = duck_target - duck_cur;
+        duck_cur += d > duck_step ? duck_step : d < -duck_step ? -duck_step : d;
+    }
+    if (duck_cur == 65536 && duck_target == 65536) duck_pid = 0;
     for (int s = 0; s < NSTREAMS; s++) {
         astream_t *a = &streams[s];
         if (!a->pid || a->paused || !a->ring) continue;
         int k = 0;
+        i32 dg = duck_pid && a->pid != duck_pid ? duck_cur : 65536;
         for (; k < n && a->n; k++) {
-            i32 g = a->gain;
+            i32 g = (i32)(((i64)a->gain * dg) >> 16);
             acc[k * 2] += (a->ring[a->r * 2] * g) >> 16;
             acc[k * 2 + 1] += (a->ring[a->r * 2 + 1] * g) >> 16;
             a->r = (a->r + 1) % STREAM_CAP;
@@ -208,6 +229,7 @@ void audio_stream_close(int pid, int id) {
 
 /* o processo saiu: fecha os streams dele */
 void audio_stream_proc_exit(int pid) {
+    if (pid == duck_pid) audio_duck(pid, 65536, 0);   /* quem abaixou saiu: volta tudo */
     for (int s = 0; s < NSTREAMS; s++) if (streams[s].pid == pid) audio_stream_close(pid, s);
 }
 

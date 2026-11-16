@@ -829,6 +829,14 @@ OSStatus AudioDeviceStop(u32 d, void *pid) {
     dev_engine_update();
     return 0;
 }
+/* abaixa o áudio dos outros apps (o do próprio processo segue); duckedLevel 1.0 devolve. startTime: agora. */
+OSStatus AudioDeviceDuck(u32 d, float level, const ats_t *start, float ramp) {
+    (void)start;
+    if (d != DEV_OUT) return kAudioHardwareBadObjectError;
+    if (level != level || ramp != ramp) return kAudioHardwareIllegalOperationError;   /* NaN */
+    long lv = (long)((level < 0 ? 0 : level > 1 ? 1 : level) * 65536.0f + 0.5f), ms = (long)((ramp < 0 ? 0 : ramp) * 1000.0f + 0.5f);
+    return dev3(DEV_AUDIO_DUCK, lv, ms, 0) < 0 ? kAudioHardwareIllegalOperationError : 0;
+}
 OSStatus AudioDeviceGetCurrentTime(u32 d, ats_t *t) {
     if (d != DEV_OUT || !t) return kAudioHardwareBadObjectError;
     memset(t, 0, sizeof *t);
