@@ -3,24 +3,16 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Leonardo (runtime C/C++) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**719** símbolos distintos.
+**711** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| libSystem.B.dylib | `_semctl` | 9 | firefox, gimp, iina, krita |
-| libSystem.B.dylib | `_semget` | 9 | firefox, gimp, iina, krita |
-| libSystem.B.dylib | `_semop` | 9 | firefox, gimp, iina, krita |
 | libSystem.B.dylib | `_ftok` | 8 | firefox, gimp, krita, libreoffice |
 | libSystem.B.dylib | `_getprotobyname` | 8 | blender, firefox, gimp, inkscape |
-| libSystem.B.dylib | `_sem_unlink` | 8 | blender, gimp, inkscape, krita |
-| libSystem.B.dylib | `_shmat` | 7 | gimp, krita, libreoffice, musescore |
-| libSystem.B.dylib | `_shmctl` | 7 | gimp, krita, libreoffice, musescore |
-| libSystem.B.dylib | `_shmdt` | 7 | gimp, krita, libreoffice, musescore |
 | libSystem.B.dylib | `_getloadavg` | 6 | blender, gimp, inkscape, krita |
 | libSystem.B.dylib | `_if_freenameindex` | 6 | blender, gimp, inkscape, krita |
 | libSystem.B.dylib | `_if_nameindex` | 6 | blender, gimp, inkscape, krita |
 | libSystem.B.dylib | `_putenv` | 6 | firefox, gimp, krita, libreoffice |
-| libSystem.B.dylib | `_shmget` | 6 | gimp, krita, libreoffice, musescore |
 | libSystem.B.dylib | `__os_activity_create` | 5 | krita, musescore, obs, qbittorrent |
 | libSystem.B.dylib | `_ctermid_r` | 5 | blender, gimp, inkscape, krita |
 | libSystem.B.dylib | `_dbm_clearerr` | 5 | blender, gimp, inkscape, krita |

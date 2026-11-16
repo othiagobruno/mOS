@@ -9,7 +9,7 @@ Corpus: **300** apps no manifesto; **25** medidos com Mach-O; **0** falharam na 
 
 | dono | símbolos distintos | apps afetados | arquivo |
 |---|---:|---:|---|
-| Leonardo (runtime C/C++) | 719 | 20 | [lacunas/leonardo.md](lacunas/leonardo.md) |
+| Leonardo (runtime C/C++) | 711 | 20 | [lacunas/leonardo.md](lacunas/leonardo.md) |
 | Eduardo (Foundation/CoreFoundation) | 615 | 20 | [lacunas/eduardo.md](lacunas/eduardo.md) |
 | Ricardo (SwiftUI, Combine, UIKit) | 874 | 5 | [lacunas/ricardo.md](lacunas/ricardo.md) |
 | Beatriz (AppKit) | 466 | 24 | [lacunas/beatriz.md](lacunas/beatriz.md) |
@@ -20,40 +20,40 @@ Corpus: **300** apps no manifesto; **25** medidos com Mach-O; **0** falharam na 
 | Otavio (OpenGL, Metal, Core Animation) | 136 | 9 | [lacunas/otavio.md](lacunas/otavio.md) |
 | Patricia (rede para apps) | 62 | 13 | [lacunas/patricia.md](lacunas/patricia.md) |
 | Plugins (flat lookup: o símbolo vem do app que carrega o plugin, não do mOS) | 85 | 2 | [lacunas/plugin.md](lacunas/plugin.md) |
+| Renata (BSD/Mach/XPC) | 18 | 14 | [lacunas/renata.md](lacunas/renata.md) |
 | Fabio (WebKit/Electron) | 33 | 12 | [lacunas/fabio.md](lacunas/fabio.md) |
 | Larissa (plataforma: IOKit, USB, áudio HW) | 36 | 11 | [lacunas/larissa.md](lacunas/larissa.md) |
 | Vinicius (arquivos e volumes) | 20 | 3 | [lacunas/vinicius.md](lacunas/vinicius.md) |
-| Renata (BSD/Mach/XPC) | 10 | 10 | [lacunas/renata.md](lacunas/renata.md) |
 | Camila (desktop e window server) | 18 | 2 | [lacunas/camila.md](lacunas/camila.md) |
 | Thais (GPU e telas) | 3 | 2 | [lacunas/thais.md](lacunas/thais.md) |
 
 ## Por app
 
-| app | arch | total | leonardo | eduardo | ricardo | beatriz | isabela | natalia | mariana | fernanda | otavio | patricia | plugin | fabio | larissa | vinicius | renata | camila | thais |
+| app | arch | total | leonardo | eduardo | ricardo | beatriz | isabela | natalia | mariana | fernanda | otavio | patricia | plugin | renata | fabio | larissa | vinicius | camila | thais |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| coteditor | x86_64 | 1447 | 0 | 265 | 792 | 139 | 4 | 65 | 4 | 173 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| krita | x86_64 | 517 | 270 | 50 | 0 | 87 | 12 | 22 | 44 | 0 | 11 | 6 | 0 | 0 | 13 | 0 | 2 | 0 | 0 |
-| inkscape | x86_64 | 507 | 483 | 0 | 0 | 6 | 0 | 4 | 10 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
-| shotcut | x86_64 | 454 | 32 | 58 | 0 | 39 | 136 | 19 | 47 | 0 | 95 | 12 | 0 | 0 | 13 | 0 | 3 | 0 | 0 |
-| blender | x86_64 | 445 | 311 | 3 | 0 | 8 | 104 | 1 | 8 | 0 | 6 | 3 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
-| iterm2 | x86_64 | 367 | 29 | 99 | 11 | 76 | 7 | 55 | 19 | 54 | 0 | 0 | 0 | 14 | 2 | 0 | 1 | 0 | 0 |
-| obs | x86_64 | 342 | 20 | 60 | 0 | 38 | 71 | 17 | 25 | 3 | 5 | 12 | 81 | 5 | 3 | 0 | 2 | 0 | 0 |
-| iina | x86_64 | 268 | 17 | 44 | 34 | 38 | 49 | 11 | 6 | 1 | 12 | 30 | 0 | 12 | 0 | 12 | 1 | 0 | 1 |
-| libreoffice | x86_64 | 238 | 129 | 6 | 0 | 41 | 1 | 29 | 23 | 0 | 0 | 4 | 4 | 0 | 1 | 0 | 0 | 0 | 0 |
-| musescore | x86_64 | 213 | 16 | 57 | 0 | 63 | 6 | 24 | 25 | 0 | 6 | 14 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
-| thunderbird | x86_64 | 212 | 26 | 25 | 0 | 51 | 16 | 49 | 38 | 0 | 2 | 3 | 0 | 0 | 2 | 0 | 0 | 0 | 0 |
-| monitorcontrol | x86_64 | 211 | 35 | 108 | 0 | 19 | 9 | 0 | 20 | 5 | 0 | 0 | 0 | 4 | 7 | 0 | 0 | 1 | 3 |
-| mos | x86_64 | 182 | 33 | 108 | 0 | 19 | 0 | 0 | 13 | 5 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
-| firefox | x86_64 | 177 | 25 | 26 | 0 | 51 | 19 | 14 | 35 | 0 | 2 | 3 | 0 | 0 | 2 | 0 | 0 | 0 | 0 |
-| vlc | x86_64 | 168 | 25 | 15 | 0 | 40 | 14 | 32 | 0 | 2 | 32 | 0 | 0 | 1 | 3 | 0 | 4 | 0 | 0 |
-| gimp | x86_64 | 148 | 106 | 0 | 0 | 5 | 10 | 1 | 10 | 0 | 0 | 3 | 0 | 0 | 0 | 12 | 1 | 0 | 0 |
-| qbittorrent | x86_64 | 131 | 2 | 50 | 0 | 36 | 0 | 16 | 13 | 0 | 0 | 12 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
-| stats | x86_64 | 117 | 12 | 9 | 35 | 1 | 0 | 1 | 0 | 27 | 0 | 11 | 0 | 0 | 13 | 8 | 0 | 0 | 0 |
-| rectangle | x86_64 | 109 | 0 | 9 | 73 | 18 | 0 | 1 | 3 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| alt-tab | x86_64 | 81 | 9 | 14 | 0 | 19 | 0 | 4 | 13 | 2 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 17 | 0 |
-| transmission | x86_64 | 50 | 3 | 6 | 0 | 32 | 0 | 5 | 0 | 2 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
-| macdown | x86_64 | 32 | 2 | 5 | 0 | 6 | 0 | 3 | 0 | 2 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 | 0 |
-| keepingyouawake | x86_64 | 11 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
+| coteditor | x86_64 | 1447 | 0 | 265 | 792 | 139 | 4 | 65 | 4 | 173 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 0 |
+| krita | x86_64 | 517 | 262 | 50 | 0 | 87 | 12 | 22 | 44 | 0 | 11 | 6 | 0 | 10 | 0 | 13 | 0 | 0 | 0 |
+| inkscape | x86_64 | 507 | 482 | 0 | 0 | 6 | 0 | 4 | 10 | 0 | 0 | 3 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| shotcut | x86_64 | 454 | 24 | 58 | 0 | 39 | 136 | 19 | 47 | 0 | 95 | 12 | 0 | 11 | 0 | 13 | 0 | 0 | 0 |
+| blender | x86_64 | 445 | 310 | 3 | 0 | 8 | 104 | 1 | 8 | 0 | 6 | 3 | 0 | 1 | 0 | 1 | 0 | 0 | 0 |
+| iterm2 | x86_64 | 367 | 29 | 99 | 11 | 76 | 7 | 55 | 19 | 54 | 0 | 0 | 0 | 1 | 14 | 2 | 0 | 0 | 0 |
+| obs | x86_64 | 342 | 12 | 60 | 0 | 38 | 71 | 17 | 25 | 3 | 5 | 12 | 81 | 10 | 5 | 3 | 0 | 0 | 0 |
+| iina | x86_64 | 268 | 14 | 44 | 34 | 38 | 49 | 11 | 6 | 1 | 12 | 30 | 0 | 4 | 12 | 0 | 12 | 0 | 1 |
+| libreoffice | x86_64 | 238 | 121 | 6 | 0 | 41 | 1 | 29 | 23 | 0 | 0 | 4 | 4 | 8 | 0 | 1 | 0 | 0 | 0 |
+| musescore | x86_64 | 213 | 8 | 57 | 0 | 63 | 6 | 24 | 25 | 0 | 6 | 14 | 0 | 10 | 0 | 0 | 0 | 0 | 0 |
+| thunderbird | x86_64 | 212 | 23 | 25 | 0 | 51 | 16 | 49 | 38 | 0 | 2 | 3 | 0 | 3 | 0 | 2 | 0 | 0 | 0 |
+| monitorcontrol | x86_64 | 211 | 35 | 108 | 0 | 19 | 9 | 0 | 20 | 5 | 0 | 0 | 0 | 0 | 4 | 7 | 0 | 1 | 3 |
+| mos | x86_64 | 182 | 33 | 108 | 0 | 19 | 0 | 0 | 13 | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 |
+| firefox | x86_64 | 177 | 22 | 26 | 0 | 51 | 19 | 14 | 35 | 0 | 2 | 3 | 0 | 3 | 0 | 2 | 0 | 0 | 0 |
+| vlc | x86_64 | 168 | 22 | 15 | 0 | 40 | 14 | 32 | 0 | 2 | 32 | 0 | 0 | 7 | 1 | 3 | 0 | 0 | 0 |
+| gimp | x86_64 | 148 | 98 | 0 | 0 | 5 | 10 | 1 | 10 | 0 | 0 | 3 | 0 | 9 | 0 | 0 | 12 | 0 | 0 |
+| qbittorrent | x86_64 | 131 | 2 | 50 | 0 | 36 | 0 | 16 | 13 | 0 | 0 | 12 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| stats | x86_64 | 117 | 12 | 9 | 35 | 1 | 0 | 1 | 0 | 27 | 0 | 11 | 0 | 0 | 0 | 13 | 8 | 0 | 0 |
+| rectangle | x86_64 | 109 | 0 | 9 | 73 | 18 | 0 | 1 | 3 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 0 |
+| alt-tab | x86_64 | 81 | 9 | 14 | 0 | 19 | 0 | 4 | 13 | 2 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 17 | 0 |
+| transmission | x86_64 | 50 | 3 | 6 | 0 | 32 | 0 | 5 | 0 | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 |
+| macdown | x86_64 | 32 | 2 | 5 | 0 | 6 | 0 | 3 | 0 | 2 | 0 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 |
+| keepingyouawake | x86_64 | 11 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 |
 | hiddenbar | x86_64 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | element | x86_64 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 

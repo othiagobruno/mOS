@@ -3,10 +3,18 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Renata (BSD/Mach/XPC) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**10** símbolos distintos.
+**18** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
+| libSystem.B.dylib | `_semctl` | 9 | firefox, gimp, iina, krita |
+| libSystem.B.dylib | `_semget` | 9 | firefox, gimp, iina, krita |
+| libSystem.B.dylib | `_semop` | 9 | firefox, gimp, iina, krita |
+| libSystem.B.dylib | `_sem_unlink` | 8 | blender, gimp, inkscape, krita |
+| libSystem.B.dylib | `_shmat` | 7 | gimp, krita, libreoffice, musescore |
+| libSystem.B.dylib | `_shmctl` | 7 | gimp, krita, libreoffice, musescore |
+| libSystem.B.dylib | `_shmdt` | 7 | gimp, krita, libreoffice, musescore |
+| libSystem.B.dylib | `_shmget` | 6 | gimp, krita, libreoffice, musescore |
 | libSystem.B.dylib | `_os_activity_scope_enter` | 5 | krita, musescore, obs, qbittorrent |
 | libSystem.B.dylib | `_os_activity_scope_leave` | 5 | krita, musescore, obs, qbittorrent |
 | libSystem.B.dylib | `_mach_port_destroy` | 2 | shotcut, vlc |
