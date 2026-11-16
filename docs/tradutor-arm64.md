@@ -252,6 +252,11 @@ pega a pasta do kernel (file action chdir do posix_spawn) e o `chdir` avisa o ke
 binário arm64 real (`MOS_ARCH=arm64`), como o `-Real` do `.ps1`. Pelas regras do time a VM com imagem completa só roda
 no build final (`/home/thiago/OpenBot/Shared/mos-time/build-final.sh`); o Codex CLI arm64 fica para essa rodada.
 
+App arm64 real no machotest do Linux (15 nov.): o Codex CLI oficial 0.167.0 (`codex-aarch64-apple-darwin`, Rust)
+pelo tradutor, com `MOS_ARCH=arm64`: `codex --version` imprime `codex-cli 0.167.0` e sai 0, e `codex login status`
+imprime `Not logged in` (sai 1, como o x86_64). Os 12 apps da meta não ligam nenhum dos 34 frameworks que o carregador
+não reconhece pelo nome (lista do Bruno, comparada com o Darling); a varredura dos Mach-O da ESP achou 0.
+
 No Linux (sem VM): `tools/a64rt-testes.sh` compila o machotest, o `a64rt.mos`, o libSystem arm64
 (`tools/build-libsystem-arm64.sh`) e roda `tests-a64libsys/abi.mm` (critério: `libsys-abi: 0 falhas`, 40 verificações
 em 15 nov., interpretador e JIT) e `tests-a64rt` como informativo: o machotest do Linux não emula `alarm`, `fork`,
