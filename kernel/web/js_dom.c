@@ -48,6 +48,7 @@ struct js_page {
     struct { int op, arg; char url[1024]; } hops[8];   /* 1 push, 2 replace, 3 go */
     int nhops;
     int sbox;                   /* iframe sandbox: JS_SB_* (0 = sem sandbox) */
+    jsobj *fpol;                /* document.featurePolicy (Permissions Policy do atributo allow) */
     js_init_fn frame_init;      /* anfitrião: preparo das páginas dos iframes (WKUserScript em todos os quadros...) */
     void *frame_ctx;
     jsobj *xwin;                /* WindowProxy entre origens: só postMessage, location (escrita), frames, parent, top... */
@@ -88,6 +89,8 @@ typedef struct pmsg { struct pmsg *next; jsv val; char origin[256]; jsobj *sourc
 
 
 static js_page_t *cur_page(void) { return J.realm ? J.realm->page : NULL; }
+static jsobj *fpol_of(js_page_t *p);
+static bool policy_allows(js_page_t *p, const char *f, const char *o);
 static bool sb_denies(js_page_t *p, int allow) { return p && (p->sbox & JS_SB_ON) && !(p->sbox & allow); }
 
 /* ============================================================ console */
@@ -205,6 +208,7 @@ void js_mark_page(js_page_t *p) {
     gc_mark_ptr(p->hstates);
     gc_mark_ptr(p->xwin);
     gc_mark_ptr(p->hobj);
+    gc_mark_ptr(p->fpol);
     for (int i = 0; i < p->ntimers; i++) { gc_mark_val(p->timers[i].fn); gc_mark_ptr(p->timers[i].args); }
     for (int i = 0; i < p->nnets; i++) gc_mark_ptr(p->nets[i].target);
     for (int i = 0; i < p->nscripts; i++) gc_mark_val(p->scripts[i].job);
@@ -1427,6 +1431,120 @@ void js_page_run_frame_init(js_page_t *c, int phase) {
     if (t) t->frame_init(c, phase, t->frame_ctx);
 }
 
+/* ---------- Permissions Policy (atributo allow do iframe; allowfullscreen) */
+static const struct { const char *f; bool all; } pol_feats[] = {   /* all: lista padrão '*'; senão 'self' */
+    { "accelerometer", 0 }, { "ambient-light-sensor", 0 }, { "autoplay", 0 }, { "bluetooth", 0 }, { "camera", 0 },
+    { "clipboard-read", 0 }, { "clipboard-write", 0 }, { "display-capture", 0 }, { "document-domain", 1 },
+    { "encrypted-media", 0 }, { "fullscreen", 0 }, { "gamepad", 0 }, { "geolocation", 0 }, { "gyroscope", 0 },
+    { "hid", 0 }, { "idle-detection", 0 }, { "local-fonts", 0 }, { "magnetometer", 0 }, { "microphone", 0 },
+    { "midi", 0 }, { "payment", 0 }, { "picture-in-picture", 1 }, { "publickey-credentials-create", 0 },
+    { "publickey-credentials-get", 0 }, { "screen-wake-lock", 0 }, { "serial", 0 }, { "storage-access", 1 },
+    { "sync-xhr", 1 }, { "usb", 0 }, { "web-share", 0 }, { "window-management", 0 }, { "xr-spatial-tracking", 0 },
+};
+
+/* origem de um URL ("https://x.y[:porta]") */
+static void origin_of_url(const char *u, char *out, int cap) {
+    out[0] = 0;
+    const char *s = strstr(u, "://");
+    if (!s) return;
+    const char *e = s + 3;
+    while (*e && *e != '/' && *e != '?' && *e != '#') e++;
+    snprintf(out, (usize)cap, "%.*s", (int)(e - u), u);
+}
+
+/* a lista do atributo allow para o recurso f: 1 sim, 0 não, -1 não aparece. 'self' = origem do pai, 'src' (padrão) =
+ * a do iframe; origem = só ela */
+static int allow_attr(js_page_t *p, const char *f) {
+    const char *a = node_attr(p->frame_el, "allow");
+    if (!strcmp(f, "fullscreen") && node_attr(p->frame_el, "allowfullscreen")) return 1;
+    if (!a) return -1;
+    usize fl = strlen(f);
+    for (const char *d = a; *d;) {
+        while (*d == ' ' || *d == ';' || *d == '\t' || *d == '\n') d++;
+        const char *de = d;
+        while (*de && *de != ';') de++;
+        const char *e = d;
+        while (e < de && *e != ' ' && *e != '\t') e++;
+        if ((usize)(e - d) == fl && !strncasecmp(d, f, fl)) {
+            bool any = false;
+            for (const char *t = e; t < de;) {
+                while (t < de && (*t == ' ' || *t == '\t')) t++;
+                const char *te = t;
+                while (te < de && *te != ' ' && *te != '\t') te++;
+                if (te == t) break;
+                any = true;
+                int n = (int)(te - t);
+                if ((n == 1 && *t == '*') || (n == 5 && !strncmp(t, "'src'", 5))) return 1;
+                if (n == 6 && !strncmp(t, "'none'", 6)) return 0;
+                if (n == 6 && !strncmp(t, "'self'", 6)) { if (p->parent && !strcmp(p->origin, p->parent->origin)) return 1; }
+                else if ((int)strlen(p->origin) == n && !strncmp(t, p->origin, (usize)n)) return 1;
+                t = te;
+            }
+            return any ? 0 : 1;   /* sem lista: 'src' */
+        }
+        d = de;
+    }
+    return -1;
+}
+
+/* o recurso f vale na página p (para a origem o, se dada) */
+static bool policy_allows(js_page_t *p, const char *f, const char *o) {
+    int k = -1;
+    for (u32 i = 0; i < ARRAY_LEN(pol_feats); i++) if (!strcmp(pol_feats[i].f, f)) k = (int)i;
+    if (k < 0) return false;
+    if (o && *o && strcmp(o, p->origin) && !pol_feats[k].all) return false;   /* 'self' na própria página */
+    if (!p->parent || !p->frame_el) return true;
+    if (!policy_allows(p->parent, f, p->parent->origin)) return false;
+    int a = allow_attr(p, f);
+    if (a >= 0) return a == 1;
+    return pol_feats[k].all || same_origin(p, p->parent);
+}
+
+/* magic: 0 allowsFeature 1 features 2 allowedFeatures 3 getAllowlistForFeature */
+NATIVE(fpol_method) {
+    UNUSED_ARGS;
+    js_page_t *p = page_of_global(self->u.nat.data);
+    if (!p) return JS_UNDEF;
+    int m = self->u.nat.magic;
+    if (m == 1 || m == 2) {
+        jsobj *a = js_newarr(0);
+        for (u32 i = 0; i < ARRAY_LEN(pol_feats); i++)
+            if (m == 1 || policy_allows(p, pol_feats[i].f, NULL)) js_arr_push(a, jv_str(js_strz(pol_feats[i].f)));
+        return jv_obj(a);
+    }
+    jsstr *f = js_tostr(ARG(0));
+    if (!f) return JS_EXC;
+    if (m == 0) {
+        char o[256] = "";
+        if (argc > 1 && !jv_isnullish(argv[1])) {
+            jsstr *u = js_tostr(argv[1]);
+            if (!u) return JS_EXC;
+            origin_of_url(u->d, o, sizeof o);
+            if (!o[0]) snprintf(o, sizeof o, "%s", u->d);
+        }
+        return jv_bool(policy_allows(p, f->d, o[0] ? o : NULL));
+    }
+    jsobj *a = js_newarr(0);
+    int k = -1;
+    for (u32 i = 0; i < ARRAY_LEN(pol_feats); i++) if (!strcmp(pol_feats[i].f, f->d)) k = (int)i;
+    if (k >= 0 && policy_allows(p, f->d, NULL)) js_arr_push(a, jv_str(js_strz(pol_feats[k].all ? "*" : p->origin)));
+    return jv_obj(a);
+}
+
+static jsobj *fpol_of(js_page_t *p) {
+    if (p->fpol) return p->fpol;
+    jsobj *o = js_newobj(J.realm->p_object);
+    static const char *nm[] = { "allowsFeature", "features", "allowedFeatures", "getAllowlistForFeature" };
+    for (int i = 0; i < 4; i++) {
+        jsobj *f = js_newnative(fpol_method, nm[i], i == 0 || i == 3 ? 1 : 0, i);
+        f->u.nat.data = jv_obj(p->realm->global);
+        js_defprop(o, js_intern(nm[i], -1), jv_obj(f), PF_NOENUM);
+    }
+    js_defprop(o, A[A_sym_toStringTag], jv_str(js_intern("FeaturePolicy", -1)), PF_NOENUM | PF_RO);
+    p->fpol = o;
+    return o;
+}
+
 /* iframe sandbox: chamado antes dos scripts do filho */
 void js_page_set_sandbox(js_page_t *p, int flags) {
     if (!p) return;
@@ -1862,7 +1980,15 @@ static jsv node_get(jsobj *o, jsstr *k, bool *found) {
         if (keyis(k, "defaultView")) return jv_obj(p->realm->global);
         if (keyis(k, "cookie")) return jv_str(js_strz(p->cookie));
         if (keyis(k, "characterSet") || keyis(k, "charset")) return jv_str(js_strz("UTF-8"));
-        if (keyis(k, "referrer") || keyis(k, "domain")) return jv_str(A[A_empty]);
+        if (keyis(k, "referrer")) return jv_str(A[A_empty]);
+        if (keyis(k, "domain")) {
+            const char *o = strstr(p->origin, "://");
+            char h[256] = "";
+            if (o) { snprintf(h, sizeof h, "%s", o + 3); char *c = strchr(h, ':'); if (c) *c = 0; }
+            return jv_str(js_strz(h));
+        }
+        if (keyis(k, "featurePolicy") || keyis(k, "permissionsPolicy")) return jv_obj(fpol_of(p));
+        if (keyis(k, "fullscreenEnabled")) return jv_bool(policy_allows(p, "fullscreen", NULL));
         if (keyis(k, "currentScript")) return wrapv(p, p->cur_script);
         if (keyis(k, "activeElement")) return wrapv(p, p->focus ? p->focus : d->body);
         if (keyis(k, "children")) return children_array(p, n, true);
