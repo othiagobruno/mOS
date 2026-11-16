@@ -54,8 +54,13 @@ struct js_page {
     /* WKWebView (kernel/web/webview.c): window.webkit.messageHandlers.<nome>.postMessage(x) chama wk_post */
     void (*wk_post)(void *ctx, const char *name, const char *body, int len, int type);
     void *wk_ctx;
+    /* iframes: página do pai e o <iframe> dono; mensagens de postMessage a entregar */
+    struct js_page *parent;
+    node_t *frame_el;
+    struct pmsg *msgs, *msgs_tail;
     struct js_page *next;
 };
+typedef struct pmsg { struct pmsg *next; char *json; int len; char origin[256]; jsobj *source; } pmsg_t;
 
 static js_page_t *pages;
 
@@ -168,6 +173,7 @@ void js_mark_page(js_page_t *p) {
     for (int i = 0; i < p->ntimers; i++) { gc_mark_val(p->timers[i].fn); gc_mark_ptr(p->timers[i].args); }
     for (int i = 0; i < p->nnets; i++) gc_mark_ptr(p->nets[i].target);
     for (int i = 0; i < p->nscripts; i++) gc_mark_val(p->scripts[i].job);
+    for (pmsg_t *m = p->msgs; m; m = m->next) gc_mark_ptr(m->source);
 }
 
 void js_mark_pages(void) { for (js_page_t *p = pages; p; p = p->next) js_mark_page(p); }
@@ -268,6 +274,7 @@ static node_t *new_text(doc_t *d, const char *s, int len) {
 
 static void set_attr(js_page_t *p, node_t *n, const char *name, const char *val, int vlen) {
     doc_t *d = p->doc;
+    if (n->tag == T_IFRAME && (!strcmp(name, "src") || !strcmp(name, "srcdoc"))) frame_navigate(n, NULL);
     for (int i = 0; i < n->nattrs; i++) {
         if (!strcmp(n->attrs[i].name, name)) {
             if ((int)strlen(n->attrs[i].value) == vlen && !memcmp(n->attrs[i].value, val, (usize)vlen)) return;
@@ -1250,6 +1257,83 @@ static void fire_simple(js_page_t *p, node_t *target, const char *type, bool bub
     js_run_jobs();
 }
 
+/* ---------- iframes: postMessage entre janelas (clone por JSON) */
+static js_page_t *page_of_global(jsv g) {
+    if (!jv_isobj(g)) return NULL;
+    for (js_page_t *q = pages; q; q = q->next) if (q->realm && jv_obj(q->realm->global) == g) return q;
+    return NULL;
+}
+
+NATIVE(w_postmessage) {
+    UNUSED_ARGS;
+    js_page_t *src = cur_page();
+    js_page_t *dst = page_of_global(thisv);
+    if (!dst) dst = src;
+    if (!dst) return JS_UNDEF;
+    jsv t = ARG(1);
+    if (jv_isobj(t)) t = js_getn(t, "targetOrigin");
+    if (jv_isstr(t)) {
+        const char *to = jv_s(t)->d;
+        if (strcmp(to, "*") && strcmp(to, "/") && strncmp(to, dst->origin, strlen(dst->origin))) return JS_UNDEF;   /* origem errada: descarta */
+        if (!strcmp(to, "/") && src && strcmp(src->origin, dst->origin)) return JS_UNDEF;
+    }
+    jsv js = js_json_stringify(ARG(0), JS_UNDEF, JS_UNDEF);
+    if (js == JS_EXC) return JS_EXC;
+    pmsg_t *m = kcalloc(1, sizeof(pmsg_t));
+    if (!m) return JS_UNDEF;
+    if (jv_isstr(js)) { m->len = (int)jv_s(js)->len; m->json = kmalloc((usize)m->len + 1); if (m->json) { memcpy(m->json, jv_s(js)->d, (usize)m->len); m->json[m->len] = 0; } }
+    snprintf(m->origin, sizeof m->origin, "%s", src ? src->origin : "null");
+    m->source = src && src->realm ? src->realm->global : NULL;
+    if (dst->msgs_tail) dst->msgs_tail->next = m; else dst->msgs = m;
+    dst->msgs_tail = m;
+    return JS_UNDEF;
+}
+
+static void deliver_messages(js_page_t *p) {
+    while (p->msgs) {
+        pmsg_t *m = p->msgs;
+        p->msgs = m->next;
+        if (!p->msgs) p->msgs_tail = NULL;
+        jsobj *ev = new_event(p, js_intern("message", -1), false);
+        jsv data = JS_UNDEF;
+        if (m->json) { data = js_json_parse(js_strn(m->json, m->len), JS_UNDEF); if (data == JS_EXC) { J.exc = JS_UNDEF; data = JS_UNDEF; } }
+        js_defprop(ev, js_intern("data", -1), data, 0);
+        js_defprop(ev, js_intern("origin", -1), jv_str(js_strz(m->origin)), 0);
+        js_defprop(ev, js_intern("source", -1), m->source ? jv_obj(m->source) : JS_NULL, 0);
+        js_defprop(ev, js_intern("lastEventId", -1), jv_str(A[A_empty]), 0);
+        js_defprop(ev, js_intern("ports", -1), jv_obj(js_arr_from(NULL, 0)), 0);
+        kfree(m->json);
+        kfree(m);
+        dispatch(p, NULL, ev);
+        js_run_jobs();
+        p->dirty = true;
+    }
+}
+
+void js_page_fire(js_page_t *p, node_t *target, const char *type, bool bubbles) {
+    if (!p) return;
+    int frame;
+    js_enter(&frame);
+    jsrealm *saved = J.realm;
+    J.realm = p->realm;
+    fire_simple(p, target, type, bubbles);
+    J.realm = saved;
+    js_leave();
+}
+
+void js_page_link_frame(js_page_t *c, js_page_t *par, node_t *iframe) {
+    if (!c || !par || c == par) return;
+    c->parent = par;
+    c->frame_el = iframe;
+    if (!strncmp(c->url, "about:", 6) || !strncmp(c->url, "data:", 5)) snprintf(c->origin, sizeof c->origin, "%s", strncmp(c->url, "data:", 5) ? par->origin : "null");
+    js_page_t *top = par;
+    while (top->parent) top = top->parent;
+    jsobj *g = c->realm->global;
+    js_defn(g, "parent", jv_obj(par->realm->global), PF_NOENUM);
+    js_defn(g, "top", jv_obj(top->realm->global), PF_NOENUM);
+    js_defn(g, "frameElement", !strcmp(c->origin, par->origin) ? jv_obj(wrap(par, iframe)) : JS_NULL, PF_NOENUM);
+}
+
 /* executa scripts em ordem; devolve false se está esperando um download */
 static void net_start(js_page_t *p, const char *url, const char *method, const char *body, int blen, const char *ctype,
                       int kind, jsobj *target);
@@ -1467,6 +1551,13 @@ static jsv node_get(jsobj *o, jsstr *k, bool *found) {
     if (keyis(k, "previousSibling")) return wrapv(p, n->prev);
     if (keyis(k, "childNodes")) return children_array(p, n, false);
     if (keyis(k, "ownerDocument")) return n->type == N_DOC ? JS_NULL : jv_obj(p->document);
+    if (n->tag == T_IFRAME && keyis(k, "srcdoc")) return str_or_empty(node_attr(n, "srcdoc"));
+    if (n->tag == T_IFRAME && (keyis(k, "contentWindow") || keyis(k, "contentDocument"))) {
+        js_page_t *c = frame_page(n);
+        if (!c) return JS_NULL;
+        if (keyis(k, "contentWindow")) return jv_obj(c->realm->global);
+        return !strcmp(c->origin, p->origin) ? jv_obj(c->document) : JS_NULL;   /* mesma origem */
+    }
     if (keyis(k, "isConnected")) return jv_bool(is_connected(p, n));
     if (keyis(k, "textContent") || keyis(k, "innerText")) {
         if (n->type == N_DOC) return JS_NULL;
@@ -1674,6 +1765,7 @@ static int node_set(jsobj *o, jsstr *k, jsv v) {
         if (js_truthy(v)) set_attr(p, n, bool_attrs[i], "", 0); else remove_attr(p, n, bool_attrs[i]);
         return 1;
     }
+    if (n->tag == T_IFRAME && keyis(k, "srcdoc")) { jsstr *s = js_tostr(v); if (!s) return -1; set_attr(p, n, "srcdoc", s->d, (int)s->len); return 1; }
     if (keyis(k, "href") || keyis(k, "src") || keyis(k, "type") || keyis(k, "tabIndex")) {
         jsstr *s = js_tostr(v);
         if (!s) return -1;
@@ -2993,6 +3085,9 @@ void js_dom_init(jsrealm *r) {
     js_defn(g, "self", jv_obj(g), PF_NOENUM);
     js_defn(g, "top", jv_obj(g), PF_NOENUM);
     js_defn(g, "parent", jv_obj(g), PF_NOENUM);
+    js_defn(g, "frames", jv_obj(g), PF_NOENUM);
+    js_defn(g, "frameElement", JS_NULL, PF_NOENUM);
+    js_defnative(g, "postMessage", w_postmessage, 2, 0);
     p->document = wrap(p, p->doc->root);
     js_defn(g, "document", jv_obj(p->document), PF_NOENUM);
     p->location = mkhost(p, CL_LOCATION, js_newobj(op), NULL);
@@ -3138,6 +3233,8 @@ void js_page_free(js_page_t *p) {
     for (int i = 0; i < p->nscripts; i++) { if (p->scripts[i].req) http_free(p->scripts[i].req); kfree(p->scripts[i].text); }
     for (int i = 0; i < p->nnets; i++) { if (p->nets[i].req) http_free(p->nets[i].req); kfree(p->nets[i].body); }
     kfree(p->nets);
+    while (p->msgs) { pmsg_t *m = p->msgs; p->msgs = m->next; kfree(m->json); kfree(m); }
+    for (js_page_t *q = pages; q; q = q->next) if (q->parent == p) q->parent = NULL;
     kfree(p->scripts);
     kfree(p->timers);
     kfree(p->wkeys);
@@ -3158,6 +3255,7 @@ bool js_page_tick(js_page_t *p) {
     js_enter(&frame);
     jsrealm *saved = J.realm;
     J.realm = p->realm;
+    if (p->msgs) deliver_messages(p);
     if (p->spos < p->nscripts || p->mpos < p->nscripts) { if (pump_scripts(p)) maybe_load_events(p); }
     run_timers(p);
     if (p->nnets) pump_nets(p);

@@ -501,6 +501,7 @@ static void commit(webview_t *w, doc_t *d, const char *url, bool record, int scr
     if (url_changed) w->events |= MOS_WEB_EV_URL;
     if (strcmp(old_title, w->title)) w->events |= MOS_WEB_EV_TITLE;
     if (d && !(w->opts & MOS_WEB_OPT_NOJS)) w->js = js_page_new2(d, url, w->vw, w->vh, wv_page_init, w);
+    if (d) frames_set_owner_js(d, w->js);
 }
 
 static void fail(webview_t *w, const char *msg, int code) {
@@ -1032,6 +1033,23 @@ static void frame(webview_t *w) {
         else used = false;
         if (used) { u->key_used = true; u->key = 0; }
     }
+    /* iframes: rodinha e clique sob o ponteiro vão para o documento do iframe */
+    if (d && d->frames && (u->wheel || u->released || u->pressed) && !w->select_open) {
+        int ox, oy;
+        frame_t *fr = frame_at(d, u->mx, u->my + w->scroll, &ox, &oy);
+        if (fr) {
+            int fx = u->mx - ox, fy = u->my + w->scroll - oy;
+            if (u->wheel && frame_input(fr, FRAME_WHEEL, fx, fy, u->wheel, NULL, 0)) { u->wheel = 0; w->dirty = true; }
+            if (u->released) {
+                char out[1024];
+                frame_input(fr, FRAME_CLICK, fx, fy, 0, out, sizeof out);
+                if (out[0] == 1) { wv_strcpy(w->newwin_url, out + 1, sizeof w->newwin_url); w->events |= MOS_WEB_EV_NEWWIN; }
+                else if (out[0]) navigate(w, out, true, 0, NULL, 0, NULL, -1);
+                w->dirty = true;
+            }
+            if (u->pressed || u->released) { u->pressed = u->released = false; w->press_link = NULL; w->press_in = false; }
+        }
+    }
     if (u->wheel) { w->scroll += u->wheel; u->wheel = 0; }
     w->scroll = CLAMP(w->scroll, 0, max_scroll(w));
     node_t *hover = NULL;
@@ -1110,6 +1128,7 @@ static void pump(webview_t *w) {
     if (w->req) finish_request(w);
     if (css_pump(w)) w->dirty = true;
     if (pump_images(w)) w->dirty = true;
+    if (w->doc && frames_pump(w->doc)) w->dirty = true;
     if (w->js) {
         doc_t *d0 = w->doc;
         if (js_page_tick(w->js)) w->dirty = true;
@@ -1132,7 +1151,7 @@ static void pump(webview_t *w) {
     }
     if (w->doc && (w->doc->need_layout || w->doc->need_style || w->img_dirty)) w->dirty = true;
     if (w->dirty && w->vw > 0 && w->vh > 0) layout(w);
-    if (w->loading && w->committed && !w->req && !w->ncss && !images_loading(w) && !js_page_busy(w->js)) {
+    if (w->loading && w->committed && !w->req && !w->ncss && !images_loading(w) && !js_page_busy(w->js) && !frames_busy(w->doc)) {
         w->loading = false;
         w->last_progress = 1000;
         w->events |= MOS_WEB_EV_FINISH | MOS_WEB_EV_PROGRESS;
@@ -1438,6 +1457,7 @@ static i64 wv_dispatch(void *arg) {
         if (!w->js) {
             if (!w->doc || (w->opts & MOS_WEB_OPT_NOJS)) { kfree(src); sb_puts(&out, "JavaScript não está ativo nesta vista"); type = JS_WK_EXCEPTION; goto eval_out; }
             w->js = js_page_new2(w->doc, w->url, w->vw, w->vh, wv_page_init, w);
+            frames_set_owner_js(w->doc, w->js);
             if (!w->js) { kfree(src); sb_puts(&out, "sem memória para o JavaScript"); type = JS_WK_EXCEPTION; goto eval_out; }
         }
         {

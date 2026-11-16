@@ -40,8 +40,15 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    (10 casos; ASan/UBSan limpos com `XCFLAGS`).
    **Falta no SVG:** `<mask>`, `<pattern>`, `<marker>`, filtros, `<textPath>`, texto girado (só translação/escala),
    SMIL/animação e os filhos do `<svg>` inline no DOM do JavaScript (o motor guarda o SVG como fonte).
-4. **Iframes**: `<iframe src/srcdoc>` como caixa substituída com documento, rolagem e reino JS próprios;
-   `contentWindow`, `contentDocument` (mesma origem), `postMessage` entre janelas, eventos `load`.
+4. ✅ **Iframes** (parte 1) — `kernel/web/frame.c`: `<iframe src>` (http, file, data:, about:blank) e `srcdoc`,
+   documento com CSS externo, imagens e página JS próprios; pintura dentro da caixa (300×150 padrão, borda UA),
+   fundo transparente sem cor declarada; `parent`/`top`/`frameElement`, `contentWindow`/`contentDocument` (mesma
+   origem; about:/srcdoc herdam a origem), `postMessage` nos dois sentidos com `targetOrigin`, `event.source`/`origin`,
+   evento `load` no `<iframe>`, `src`/`srcdoc` trocados pelo JS, links navegam o iframe (`_top`/`_blank` vão ao
+   hospedeiro), rodinha rola o iframe, aninhamento até 4 níveis. Ligado ao WKWebView e ao Horizonte. `doc_hit_atom`
+   (declarado e nunca implementado) agora existe. Teste: `tools/web_host_iframe.c` (3 casos).
+   **Falta nos iframes:** controles de formulário dentro do iframe (foco, digitação, envio), cursor de link sobre o
+   iframe, `sandbox`/`allow`, `window.frames[i]`/`length`, `history` do iframe e o `WKFrameInfo` dos delegates.
 5. **Diálogos JS bloqueantes**: o script para em `alert/confirm/prompt` até o `completionHandler` do app
    (pilha própria do motor por vista, retomada quando o app responde).
 6. **Canvas 2D** (`<canvas>`, `getContext('2d')`, caminhos, texto, imagens, `getImageData`/`toDataURL`).
@@ -69,6 +76,7 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 ## Diário
 
 - 15 nov.: harness de host do motor (`tools/web_host.sh`, 5/5).
+- 16 nov.: iframes parte 1 (`iframe_src_pintura_js`, `iframe_clique_rodinha_src`, `iframe_aninhado_e_limites`): 188/188.
 - 15 nov.: SVG (`svg_formas`, `svg_path_comandos`, `svg_regras_e_traco`, `svg_viewbox_transform`, `svg_gradientes`,
   `svg_estilo_use_clip`, `svg_texto_imagem`, `svg_na_pagina`, `svg_sprite_da_pagina`, `svg_lixo`): 166/166.
 - 15 nov.: WebP e imagens responsivas (`tools/web_host.sh`: casos `webp_formatos`, `webp_lixo`, `img_srcset_picture`, `img_webp_na_pagina`).
