@@ -236,6 +236,7 @@ typedef struct jsrealm {
     jsobj *jobs;              /* fila de microtarefas: vetor [fn, a0, a1, kind, ...] */
     jsobj *p_abuf, *p_dview, *p_typed, *p_ta[11];   /* ArrayBuffer, DataView, %TypedArray% e um por tipo */
     /* Canvas 2D (canvas_js.c) e DOMException */
+    jsobj *p_img;             /* HTMLImageElement.prototype (= Image.prototype) */
     jsobj *p_domexc, *p_canvas, *p_ctx2d, *p_cgrad, *p_cpat, *p_path2d, *p_imgdata, *p_tmetrics, *p_dommatrix;
     u32 jobpos;
     struct js_page *page;

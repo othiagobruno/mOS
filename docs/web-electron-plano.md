@@ -78,6 +78,11 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    `ImageData`/`getImageData`/`putImageData`, `toDataURL` em PNG com deflate próprio, `DOMException`).
    Teste: `tools/web_host_canvas.c` (9 casos, 105 verificações; ASan/UBSan limpos). Falta: `toBlob` (sem `Blob`
    no motor), `createImageBitmap`, `OffscreenCanvas` e `filter`.
+6b. ✅ **HTMLImageElement no JS** (`js_dom.c`, `layout.c`): `new Image()`, imagem pedida pelo `src`/`srcset` mesmo
+   fora do documento, eventos load/error para cada elemento (propriedade, `addEventListener` e atributo), `complete`,
+   `naturalWidth/Height`, `width/height` (exibido, atributo ou natural), `currentSrc`, `srcset`/`sizes`/
+   `crossOrigin`/`decoding`/`loading`, `decode()`, `src=""` como imagem quebrada, e o `load` da janela esperando as
+   imagens do documento. Teste: `tools/web_host_img.c` (4 casos, 19 verificações).
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.
