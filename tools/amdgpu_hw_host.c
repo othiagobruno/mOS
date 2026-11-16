@@ -3,7 +3,7 @@
  * linhas a cada leitura da posição e conta quadros, a trava de atualização responde no bit de status, e o
  * endereço novo do plano só vale (EARLIEST_INUSE) no vblank depois de soltar a trava.
  * Rodar da raiz:
- *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c \
+ *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/engine.c \
  *       kernel/dev/amdgpu/amdgpu.c kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw && /tmp/amdgpu_hw */
 #include "amdgpu.h"
 #include "regs.h"
@@ -40,7 +40,103 @@ static void scan(u32 lines) {
     }
 }
 
+#define CARVE 0x3F0000000ull     /* MC_VM_FB_OFFSET do boot_state */
+/* ---------- motores simulados: SMU, MMHUB e SDMA que executa os pacotes ---------- */
+static bool smu_alive = true, smu_sdma_on, sdma_dead;
+static u32 ucode_words, ucode_bad, ucode_loaded_ver;
+static const u32 *ucode_ref; static u32 ucode_ref_dw;
+static u64 sdma_packets, sdma_faults;
+static u32 sim_fb_lo(void) { return regs[R_MC_VM_FB_LOCATION_BASE / 4]; }
+static u8 *mc_ptr(u64 mc, bool write) {
+    u64 fb0 = (u64)sim_fb_lo() << 24, fb1 = ((u64)regs[R_MC_VM_FB_LOCATION_TOP / 4] << 24) | 0xFFFFFF;
+    u64 lo = (u64)regs[R_MC_VM_SYS_APERTURE_LOW / 4] << 18, hi = ((u64)regs[R_MC_VM_SYS_APERTURE_HIGH / 4] << 18) | 0x3FFFF;
+    if (mc >= fb0 && mc <= fb1) {
+        if (mc < lo || mc > hi) { sdma_faults++; return NULL; }       /* fora da abertura do sistema */
+        return amd_host_phys(CARVE + (mc - fb0));
+    }
+    u64 gs = ((u64)regs[R_VM_CTX0_PT_START_HI / 4] << 44) | ((u64)regs[R_VM_CTX0_PT_START_LO / 4] << 12);
+    u64 ge = ((u64)regs[R_VM_CTX0_PT_END_HI / 4] << 44) | ((u64)regs[R_VM_CTX0_PT_END_LO / 4] << 12) | 0xFFF;
+    if (!(regs[R_VM_CONTEXT0_CNTL / 4] & CTX0_ENABLE) || mc < gs || mc > ge) { sdma_faults++; return NULL; }
+    u64 pt = ((u64)regs[R_VM_CTX0_PT_BASE_HI / 4] << 32) | regs[R_VM_CTX0_PT_BASE_LO / 4];
+    u64 *tbl = amd_host_phys(CARVE + (pt - fb0));
+    u64 pte = tbl[(mc - gs) >> 12];
+    if (!(pte & AMD_PTE_VALID) || !(pte & AMD_PTE_SYSTEM) || (write && !(pte & AMD_PTE_WRITE))) { sdma_faults++; return NULL; }
+    return (u8 *)(uintptr_t)((pte & AMD_PTE_ADDR_MASK) + (mc & 0xFFF));
+}
+static void mc_xfer(u64 dst, u64 src, u64 n, bool fill, u32 val) {
+    while (n) {
+        u64 step = 4096 - (dst & 0xFFF);
+        if (!fill && 4096 - (src & 0xFFF) < step) step = 4096 - (src & 0xFFF);
+        if (step > n) step = n;
+        u8 *d = mc_ptr(dst, true), *s = fill ? NULL : mc_ptr(src, false);
+        if (!d || (!fill && !s)) return;
+        if (fill) for (u64 i = 0; i < step; i += 4) memcpy(d + i, &val, 4);
+        else memmove(d, s, step);
+        dst += step; src += step; n -= step;
+    }
+}
+static void sdma_run(void) {
+    u32 rb = regs[R_SDMA_GFX_RB_CNTL / 4];
+    if (sdma_dead || !smu_sdma_on || (regs[R_SDMA_F32_CNTL / 4] & SDMA_F32_HALT) || !(rb & SDMA_RB_ENABLE) ||
+        !ucode_loaded_ver || ucode_bad) return;
+    u32 dw = 1u << ((rb & SDMA_RB_SIZE_MASK) >> SDMA_RB_SIZE_SHIFT);
+    u64 base = ((u64)regs[R_SDMA_GFX_RB_BASE_HI / 4] << 40) | ((u64)regs[R_SDMA_GFX_RB_BASE / 4] << 8);
+    u32 *ring = (u32 *)mc_ptr(base, false);
+    if (!ring) return;
+    u32 rp = regs[R_SDMA_GFX_RB_RPTR / 4] >> 2, wp = regs[R_SDMA_GFX_RB_WPTR / 4] >> 2;
+    #define RD(k) ring[(rp + (k)) & (dw - 1)]
+    while (rp != wp) {
+        u32 h = RD(0), op = h & 0xFF;
+        u32 len = 1;
+        if (op == SDMA_OP_NOP) len = 1;
+        else if (op == SDMA_OP_COPY) { mc_xfer(((u64)RD(6) << 32) | RD(5), ((u64)RD(4) << 32) | RD(3), (u64)RD(1) + 1, false, 0); len = 7; }
+        else if (op == SDMA_OP_CONST_FILL) { mc_xfer(((u64)RD(2) << 32) | RD(1), 0, (u64)RD(4) + 1, true, RD(3)); len = 5; }
+        else if (op == SDMA_OP_FENCE) { u8 *d = mc_ptr(((u64)RD(2) << 32) | RD(1), true); u32 v = RD(3); if (d) memcpy(d, &v, 4); len = 4; }
+        else if (op == SDMA_OP_WRITE) {
+            u32 cnt = RD(3) + 1; u64 a = ((u64)RD(2) << 32) | RD(1);
+            for (u32 k = 0; k < cnt; k++) { u8 *d = mc_ptr(a + 4 * k, true); u32 v = RD(4 + k); if (d) memcpy(d, &v, 4); }
+            len = 4 + cnt;
+        } else if (op == SDMA_OP_TRAP) len = 2;
+        else { printf("FALHOU: pacote SDMA desconhecido 0x%x\n", h); total++; break; }
+        sdma_packets++;
+        rp = (rp + len) & (dw - 1);
+    }
+    #undef RD
+    regs[R_SDMA_GFX_RB_RPTR / 4] = rp << 2;
+    if (rb & SDMA_RPTR_WB_ENABLE) {
+        u64 wa = ((u64)regs[R_SDMA_GFX_RB_RPTR_ADDR_HI / 4] << 32) | regs[R_SDMA_GFX_RB_RPTR_ADDR_LO / 4];
+        u8 *d = mc_ptr(wa, true); u32 v = rp << 2;
+        if (d) memcpy(d, &v, 4);
+    }
+}
+static bool engine_wreg(u32 off, u32 v) {
+    if (off == R_MP1_C2PMSG_66) {
+        if (!smu_alive) return true;
+        regs[R_MP1_C2PMSG_90 / 4] = SMU_RESP_OK;
+        if (v == SMU_MSG_GET_VERSION) regs[R_MP1_C2PMSG_82 / 4] = 0x41E4D;
+        else if (v == SMU_MSG_POWER_UP_SDMA) smu_sdma_on = true;
+        else if (v == SMU_MSG_POWER_DOWN_SDMA) smu_sdma_on = false;
+        else regs[R_MP1_C2PMSG_90 / 4] = 0xFF;                        /* mensagem desconhecida */
+        regs[R_MP1_C2PMSG_66 / 4] = v;
+        return true;
+    }
+    if (off == R_VM_INV_ENG17_REQ) { regs[off / 4] = v; regs[R_VM_INV_ENG17_ACK / 4] |= v & 0xFFFF; return true; }
+    if (off == R_SDMA_UCODE_ADDR) {
+        if (v == 0) { ucode_words = 0; ucode_bad = 0; ucode_loaded_ver = 0; }
+        else if (ucode_words == ucode_ref_dw) ucode_loaded_ver = v;
+        regs[off / 4] = v; return true;
+    }
+    if (off == R_SDMA_UCODE_DATA) {
+        if (ucode_words >= ucode_ref_dw || v != ucode_ref[ucode_words]) ucode_bad++;
+        ucode_words++; return true;
+    }
+    if (off == R_SDMA_GFX_RB_WPTR) { regs[off / 4] = v; sdma_run(); return true; }
+    if (off == R_SDMA_GFX_RB_RPTR) { regs[off / 4] = v; return true; }
+    return false;
+}
+
 u32 amd_host_rreg(u32 off) {
+    if (off == R_VM_INV_ENG17_SEM) return 1;
     if (off >= AMD_MMIO_SIZE) { printf("FALHOU: leitura fora do BAR5 0x%x\n", off); total++; return 0xFFFFFFFFu; }
     if (off == R_OTG_STATUS_POSITION(sim_otg)) { scan(7); return vline; }
     if (off == R_OTG_STATUS(sim_otg)) { scan(3); return vline >= vbs_of() ? OTG_V_BLANK : 0; }
@@ -52,6 +148,7 @@ u32 amd_host_rreg(u32 off) {
 
 void amd_host_wreg(u32 off, u32 v) {
     if (off >= AMD_MMIO_SIZE) { printf("FALHOU: escrita fora do BAR5 0x%x\n", off); total++; return; }
+    if (engine_wreg(off, v)) return;
     if (off == R_OTG_MASTER_UPDATE_LOCK(sim_otg)) { locked = v & OTG_UPDATE_LOCK; return; }
     regs[off / 4] = v;
     if (off == R_DCSURF_PRIMARY_ADDR(sim_otg)) {
@@ -77,11 +174,30 @@ u64 pci_bar_addr(pci_dev_t *d, int bar) {
 /* VRAM simulada: os 256 MiB do BAR0 (alocados sob demanda) */
 static u8 *vram;
 static u64 wc_lo, wc_len;
+/* VRAM pelo BAR0 (0xE0000000) ou pelo carve-out (MC_VM_FB_OFFSET = 0x3F0000000); o resto é RAM do teste */
+
 void *amd_host_phys(u64 phys) {
     if (!vram) vram = calloc(1, 256u << 20);
-    if (phys < 0xE0000000ull || phys >= 0xE0000000ull + (256ull << 20)) { printf("FALHOU: físico fora da VRAM 0x%llx\n", phys); total++; return vram; }
-    return vram + (phys - 0xE0000000ull);
+    if (phys >= 0xE0000000ull && phys < 0xE0000000ull + (256ull << 20)) return vram + (phys - 0xE0000000ull);
+    if (phys >= CARVE && phys < CARVE + (256ull << 20)) return vram + (phys - CARVE);
+    return (void *)(uintptr_t)phys;
 }
+const u8 *amd_host_fw(const char *name, u64 *len) {
+    static u8 *cache[8]; static char names[8][32]; static u64 lens[8];
+    for (int i = 0; i < 8; i++) if (cache[i] && !strcmp(names[i], name)) { *len = lens[i]; return cache[i]; }
+    char path[96];
+    snprintf(path, sizeof path, "firmware/amdgpu/%s", name);
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+    u8 *b = aligned_alloc(16, ((usize)n + 15) & ~(usize)15);
+    if (fread(b, 1, (usize)n, f) != (usize)n) { fclose(f); return NULL; }
+    fclose(f);
+    for (int i = 0; i < 8; i++) if (!cache[i]) { cache[i] = b; snprintf(names[i], 32, "%s", name); lens[i] = (u64)n; break; }
+    *len = (u64)n;
+    return b;
+}
+u64 amd_host_ram_page(void) { return (u64)(uintptr_t)aligned_alloc(4096, 4096); }
 void vmm_map_wc(u64 phys, u64 size) { wc_lo = phys; wc_len = size; }
 u64 timer_ticks(void) { return now_ms++; }
 void sleep_ms(u64 ms) {
@@ -121,6 +237,11 @@ static void boot_state(const edid_mode_t *m, u32 rev_id) {
     regs[R_HUBPRET_CONTROL(0) / 4] = 2u << XBAR_CB_B_SHIFT | 3u << XBAR_CR_R_SHIFT | 0x5;
     for (int i = 1; i < AMD_NUM_OTG; i++) regs[R_DCHUBP_CNTL(i) / 4] = HUBP_BLANK_EN;
     regs[R_DC_HPD_INT_STATUS(4) / 4] = DC_HPD_SENSE;  /* HDMI */
+    regs[R_MP1_C2PMSG_90 / 4] = SMU_RESP_OK;          /* a UEFI/o SMU deixam a última resposta (1) */
+    regs[R_SDMA_F32_CNTL / 4] = SDMA_F32_HALT;
+    regs[R_MC_VM_MX_L1_TLB_CNTL / 4] = 0x2501;        /* valores de reset da MMHUB 1.0 */
+    regs[R_VM_L2_CNTL / 4] = 0x00080602;
+    regs[R_VM_CONTEXT0_CNTL / 4] = 0x007FFE80;
 }
 
 static edid_mode_t mode_5120(void) {
@@ -335,12 +456,111 @@ static void test_present(void) {
     free(scr);
 }
 
+static amdgpu_t eng;      /* grande (bitmap da GART): fora da pilha */
+static bool engines_up(void) {
+    edid_mode_t m = mode_5120();
+    boot_state(&m, 1);
+    pci_dev_t d = {0};
+    d.vendor = 0x1002; d.device = 0x15D8;
+    if (!amdgpu_probe(&eng, &d, 0xE0000000ull, 5120, 1440, 5120)) return false;
+    u64 n;
+    const u8 *fw = amd_host_fw("picasso_sdma.bin", &n);
+    amd_ucode_t uc;
+    if (!fw || amd_ucode_parse(fw, (usize)n, UC_KIND_SDMA, &uc)) return false;
+    ucode_ref = uc.ucode; ucode_ref_dw = uc.ucode_dwords;
+    smu_sdma_on = false; ucode_loaded_ver = 0; sdma_faults = 0;
+    return amdgpu_engines_init(&eng);
+}
+static u8 *bar_ptr(u64 bar) { return amd_host_phys(bar); }
+
+static void test_engines(void) {
+    smu_alive = true; sdma_dead = false;
+    CHECK(engines_up(), "motores");
+    amdgpu_t *a = &eng;
+    CHECK(a->smu_ok && a->smu_version == 0x41E4D && smu_sdma_on, "SMU");
+    CHECK(a->gmc_ok && a->sdma_ok && ucode_loaded_ver == 0xA9 && !ucode_bad && ucode_words == ucode_ref_dw, "microcódigo %u/%u", ucode_words, ucode_ref_dw);
+    CHECK(regs[R_MC_VM_SYS_APERTURE_LOW / 4] == (u32)(FB_MC >> 18) && regs[R_MC_VM_SYS_APERTURE_HIGH / 4] == (u32)((FB_MC + (256ull << 20) - 1) >> 18), "abertura do sistema");
+    CHECK((regs[R_VM_CONTEXT0_CNTL / 4] & (CTX0_ENABLE | CTX0_DEPTH_MASK)) == CTX0_ENABLE, "contexto 0 com tabela plana");
+    CHECK((regs[R_MC_VM_MX_L1_TLB_CNTL / 4] & (L1_TLB_ENABLE | L1_TLB_SYS_APERTURE_UNMAPPED | L1_TLB_MTYPE_MASK)) == (L1_TLB_ENABLE | L1_TLB_MTYPE_UC), "TLB L1");
+    CHECK(a->gart_start == 0 && a->gart_size == (256ull << 20), "GART em MC 0");
+    CHECK((regs[R_SDMA_GFX_RB_CNTL / 4] & (SDMA_RB_ENABLE | SDMA_RPTR_WB_ENABLE)) == (SDMA_RB_ENABLE | SDMA_RPTR_WB_ENABLE) &&
+          ((regs[R_SDMA_GFX_RB_CNTL / 4] & SDMA_RB_SIZE_MASK) >> SDMA_RB_SIZE_SHIFT) == 14, "anel de 16 Ki dwords");
+    CHECK((regs[R_SDMA_GB_ADDR_CONFIG / 4] & 0x0018773F) == 2 && (regs[R_SDMA_POWER_CNTL / 4] & 0xFC3FFFFF) == 0x40000051, "golden");
+    CHECK(a->wb_cpu[8] == 0xDEADBEEF && sdma_faults == 0, "teste do anel");
+
+    /* preenchimento e cópia na VRAM (9 MiB: passa do limite de 4 MiB por pacote) */
+    u64 b1 = amdgpu_vram_alloc(a, 9u << 20), b2 = amdgpu_vram_alloc(a, 9u << 20);
+    u32 s = amdgpu_sdma_fill(a, amdgpu_vram_to_mc(a, b1), 0x5A5A1234u, 9u << 20);
+    CHECK(s && amdgpu_sdma_wait(a, s), "fill");
+    u32 *p1 = (u32 *)bar_ptr(b1);
+    CHECK(p1[0] == 0x5A5A1234u && p1[(9u << 18) - 1] == 0x5A5A1234u, "fill na VRAM");
+    for (u32 i = 0; i < (9u << 18); i += 977) p1[i] = i * 2654435761u;
+    s = amdgpu_sdma_copy(a, amdgpu_vram_to_mc(a, b2), amdgpu_vram_to_mc(a, b1), 9u << 20);
+    CHECK(s && amdgpu_sdma_wait(a, s) && !memcmp(bar_ptr(b1), bar_ptr(b2), 9u << 20), "cópia VRAM -> VRAM");
+
+    /* GART: RAM do sistema <-> VRAM */
+    u8 *ram = aligned_alloc(4096, 64 * 4096);
+    for (u32 i = 0; i < 64 * 4096; i++) ram[i] = (u8)(i * 7 + 3);
+    u64 g = amdgpu_gart_map(a, (u64)(uintptr_t)ram, 64, true);
+    CHECK(g == 0 && a->gart_cpu[0] && (a->gart_cpu[0] & AMD_PTE_ADDR_MASK) == (u64)(uintptr_t)ram, "GART map");
+    u64 g2 = amdgpu_gart_map(a, (u64)(uintptr_t)ram, 1, false);
+    CHECK(g2 == 64 * 4096ull, "segunda faixa logo depois");
+    s = amdgpu_sdma_copy(a, amdgpu_vram_to_mc(a, b1), g, 64 * 4096);
+    CHECK(s && amdgpu_sdma_wait(a, s) && !memcmp(bar_ptr(b1), ram, 64 * 4096), "RAM -> VRAM pela GART");
+    memset(bar_ptr(b2), 0xC3, 64 * 4096);
+    s = amdgpu_sdma_copy(a, g + 4096, amdgpu_vram_to_mc(a, b2), 8192);
+    CHECK(s && amdgpu_sdma_wait(a, s) && ram[4096] == 0xC3 && ram[3 * 4096 - 1] == 0xC3 && ram[4095] != 0xC3 && ram[3 * 4096] != 0xC3, "VRAM -> RAM");
+    u64 f0 = sdma_faults;
+    s = amdgpu_sdma_copy(a, g2, amdgpu_vram_to_mc(a, b2), 16);
+    CHECK(s && amdgpu_sdma_wait(a, s) && sdma_faults == f0 + 1, "página só de leitura recusa escrita");
+    amdgpu_gart_unmap(a, g, 64);
+    CHECK(a->gart_cpu[0] == 0 && a->gart_cpu[63] == 0 && a->gart_cpu[64], "unmap");
+    f0 = sdma_faults;
+    s = amdgpu_sdma_copy(a, amdgpu_vram_to_mc(a, b1), g, 4096);
+    CHECK(s && amdgpu_sdma_wait(a, s) && sdma_faults == f0 + 1, "página desligada dá falta");
+    CHECK(amdgpu_gart_map(a, (u64)(uintptr_t)ram, 64, true) == 0, "faixa reaproveitada");
+
+    /* retângulo: superfície do compositor (7680 px) -> buffer da tela (5120 px) */
+    u32 sw = 7680, rows = 300, rw = 1000, ox = 2560 + 37, oy = 11;
+    u32 *surf = aligned_alloc(4096, (usize)sw * 4 * 320);
+    for (u32 i = 0; i < sw * 320; i++) surf[i] = i ^ 0xA5A5A5A5u;
+    u32 sp = (u32)(((usize)sw * 4 * 320 + 4095) / 4096);
+    u64 gs = amdgpu_gart_map(a, (u64)(uintptr_t)surf, sp, false);
+    CHECK(gs, "GART da superfície");
+    s = amdgpu_sdma_copy_rect(a, amdgpu_vram_to_mc(a, b2) + (u64)oy * 5120 * 4 + 37 * 4, 5120 * 4,
+                              gs + (u64)oy * sw * 4 + ox * 4, sw * 4, rw * 4, rows);
+    CHECK(s && amdgpu_sdma_wait(a, s), "copy_rect");
+    bool ok = true;
+    u32 *dst = (u32 *)bar_ptr(b2);
+    for (u32 r = 0; r < rows && ok; r++) ok = !memcmp(dst + (usize)(oy + r) * 5120 + 37, surf + (usize)(oy + r) * sw + ox, rw * 4);
+    CHECK(ok && dst[(usize)oy * 5120 + 36] == 0xC3C3C3C3u, "retângulo no lugar certo");
+
+    /* volta do anel: 6000 pacotes (mais de 5 voltas de 16 Ki dwords) */
+    u32 last = 0;
+    for (u32 k = 0; k < 6000; k++) last = amdgpu_sdma_fill(a, amdgpu_vram_to_mc(a, b1) + (k % 1024) * 4, k, 4);
+    CHECK(last && amdgpu_sdma_wait(a, last) && amdgpu_sdma_done(a) == last && p1[5999 % 1024] == 5999 && a->sdma_timeouts == 0, "anel deu a volta");
+    CHECK(sdma_faults == 2, "só as duas faltas provocadas (%llu)", sdma_faults);
+    CHECK(!amdgpu_sdma_fill(a, amdgpu_vram_to_mc(a, b1) + 2, 0, 4) && !amdgpu_sdma_fill(a, amdgpu_vram_to_mc(a, b1), 0, 6), "fill desalinhado");
+    CHECK(!amdgpu_engines_init(a) || a->sdma_ok, "segunda chamada não refaz");
+
+    /* falhas: SMU mudo, SDMA morto */
+    smu_alive = false;
+    CHECK(!engines_up() && !eng.smu_ok && !eng.sdma_ok, "SMU mudo");
+    smu_alive = true; sdma_dead = true;
+    CHECK(!engines_up() && eng.gmc_ok && !eng.sdma_ok && (regs[R_SDMA_F32_CNTL / 4] & SDMA_F32_HALT), "SDMA morto fica parado");
+    CHECK(!amdgpu_sdma_copy(&eng, 0, 0, 4), "sem SDMA não envia");
+    sdma_dead = false;
+    free(ram); free(surf);
+}
+
 int main(int argc, char **argv) {
     verbose = argc > 1 && argv[1][0] == '-';
+    setvbuf(stdout, NULL, _IONBF, 0);
     test_otg_roundtrip();
     test_probe_and_vsync();
     test_flip_and_vram();
     test_present();
+    test_engines();
     printf("amdgpu-hw-host: %d/%d ok\n", pass, total);
     return pass == total ? 0 : 1;
 }

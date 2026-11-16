@@ -440,6 +440,12 @@ int gpu_kms_set(unsigned connector, unsigned w, unsigned h, unsigned stride, uns
     return -MOS_ENOENT;
 }
 
+/* depois do VFS: motores da AMD (SMU, GART, SDMA), que precisam do firmware em /Sistema/Firmware/amdgpu */
+void gpu_late_init(void) {
+    amdgpu_t *amd = amdgpu_main();
+    if (amd) amdgpu_engines_init(amd);
+}
+
 int gpu_count(void) { return ngpus; }
 const gpu_info_t *gpu_get(int i) { return i >= 0 && i < ngpus ? &gpus[i] : NULL; }
 const char *gpu_summary(void) { return summary; }

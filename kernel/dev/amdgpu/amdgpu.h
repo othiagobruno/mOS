@@ -40,6 +40,8 @@ typedef struct {
     bool rgba;                /* crossbar trocado: memória em R,G,B,A */
 } amd_plane_t;
 
+#define AMD_GART_PAGES       65536u          /* 256 MiB de janela da GART (tabela de 512 KiB na VRAM) */
+#define AMD_SDMA_RING_BYTES  (64u * 1024u)
 #define AMD_VRAM_CHUNK  (64u * 1024u)
 #define AMD_VRAM_CHUNKS 4096u            /* 256 MiB visíveis pela CPU */
 
@@ -74,6 +76,16 @@ typedef struct {
     int           scr_front;
     int           prev_x, prev_y, prev_w, prev_h;   /* área copiada no quadro anterior (coordenadas da saída) */
     u64           presents;
+    /* motores (engine.c), ligados depois do VFS por amdgpu_engines_init */
+    bool          engines_tried, smu_ok, gmc_ok, sdma_ok;
+    u32           smu_version, sdma_fw_version;
+    u64           gart_start, gart_size, gart_table, dummy_page;
+    u64          *gart_cpu;
+    u8            gart_used[AMD_GART_PAGES / 8];
+    u64           ring_phys, ring_mc, wb_phys, wb_mc;
+    volatile u32 *ring_cpu, *wb_cpu;      /* wb[0] = rptr (bytes), wb[4] = última fence, wb[8] = teste */
+    u32           ring_dw, ring_wptr, sdma_seq;
+    u64           sdma_timeouts, gmc_timeouts;
     /* VRAM livre: blocos de 64 KiB a partir do começo do BAR0 */
     u32           vram_lo, vram_hi;      /* faixa alocável, em blocos */
     u8            vram_used[AMD_VRAM_CHUNKS / 8];
@@ -112,6 +124,23 @@ u64        amdgpu_vram_alloc(amdgpu_t *a, u64 size);
 void       amdgpu_vram_free(amdgpu_t *a, u64 phys, u64 size);
 bool       amdgpu_vram_owns(const amdgpu_t *a, u64 phys, u64 size);
 u64        amdgpu_vram_free_bytes(const amdgpu_t *a);
+
+/* ------------------------------------------------------------ motores (engine.c) */
+/* SMU 10, GMC (aberturas e GART do contexto 0) e SDMA 4.1. Precisa do VFS (firmware em
+ * /Sistema/Firmware/amdgpu). true = SDMA no ar; o display continua de pé se algo falhar. */
+bool       amdgpu_engines_init(amdgpu_t *a);
+const u8  *amdgpu_fw_load(const char *name, u64 *len);
+int        amdgpu_smu_send(amdgpu_t *a, u32 msg, u32 arg, u32 *out);
+/* RAM -> janela da GART (páginas contíguas a partir de phys). Endereço MC ou 0. */
+u64        amdgpu_gart_map(amdgpu_t *a, u64 phys, u32 npages, bool writable);
+void       amdgpu_gart_unmap(amdgpu_t *a, u64 mc, u32 npages);
+u64        amdgpu_vram_to_mc(const amdgpu_t *a, u64 bar_phys);
+/* SDMA: devolvem o número da fence (0 = não enviou); amdgpu_sdma_wait espera por ela */
+u32        amdgpu_sdma_copy(amdgpu_t *a, u64 dst_mc, u64 src_mc, u64 bytes);
+u32        amdgpu_sdma_copy_rect(amdgpu_t *a, u64 dst_mc, u32 dst_pitch, u64 src_mc, u32 src_pitch, u32 row_bytes, u32 rows);
+u32        amdgpu_sdma_fill(amdgpu_t *a, u64 dst_mc, u32 value, u64 bytes);
+bool       amdgpu_sdma_wait(amdgpu_t *a, u32 seq);
+u32        amdgpu_sdma_done(amdgpu_t *a);
 
 /* MOS_GPU_FMT_* (mos_gpu.h) */
 #ifndef MOS_GPU_FMT_BGRA8

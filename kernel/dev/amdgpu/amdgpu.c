@@ -293,8 +293,11 @@ static void copy_rect(amdgpu_t *a, int buf, const u32 *px, int sw, int ox, int o
 static void scr_disable(amdgpu_t *a, const char *why) {
     if (a->scr_on && a->scr_front != 0) {                        /* o GOP está um quadro atrás: recebe a frente */
         u32 rows = a->otg[a->pipe].vactive, bytes = (u32)a->otg[a->pipe].hactive * 4;
-        for (u32 j = 0; j < rows; j++)
-            memcpy(PHYS_PTR(a->scr_phys[0]) + (usize)j * a->scr_stride, PHYS_PTR(a->scr_phys[1]) + (usize)j * a->scr_stride, bytes);
+        u32 seq = amdgpu_sdma_copy_rect(a, amdgpu_vram_to_mc(a, a->scr_phys[0]), a->scr_stride,
+                                        amdgpu_vram_to_mc(a, a->scr_phys[1]), a->scr_stride, bytes, rows);
+        if (!seq || !amdgpu_sdma_wait(a, seq))                   /* sem SDMA: a CPU copia */
+            for (u32 j = 0; j < rows; j++)
+                memcpy(PHYS_PTR(a->scr_phys[0]) + (usize)j * a->scr_stride, PHYS_PTR(a->scr_phys[1]) + (usize)j * a->scr_stride, bytes);
         amdgpu_flip(a, 0, 0, 0, 0, MOS_GPU_FMT_BGRA8, true);
         a->scr_front = 0;
     }

@@ -36,12 +36,12 @@ Legenda: ✅ pronto com teste de host · 🔶 escrito, sem teste no hardware · 
 | F0b | MMIO do BAR5, rev_id do NBIO, variante e RLC no hardware, faixa da VRAM na MMHUB (`amdgpu.c`) | ✅ escrito e testado no host | `tools/amdgpu_hw_host.c` (Picasso simulado) |
 | F1 | EDID 1.3/1.4, CTA-861 (DTD, SVD/VIC, HDMI VSDB e VICs HDMI, HF-VSDB/HF-SCDB, Y420 VDB/CMDB, FreeSync), DisplayID 1.x tipo I e 2.x tipo VII, DMT, CVT 1.2 e CVT-RB (`edid.c`) | ✅ parte lógica | `tools/amdgpu_host.c`: 34 modos do monitor real, preferido 5120x1440@60 como no Linux; CVT igual ao `cvt` do X. Leitura do EDID pelo DDC/AUX fica na F4 |
 | F2 | VBIOS: VFCT do ACPI ou ROM do BAR, tabelas ATOM (master data/command), interpretador ATOM | ⬜ | VBIOS real (precisa de um dump com root) |
-| F3 | SMU10 (MP1): caixa de mensagens, PowerUpGfx/Sdma, dispclk/dppclk/dcfclk/socclk mínimos | ⬜ | simulador de mailbox |
+| F3 | SMU 10 (MP1): caixa de mensagens (C2PMSG 66/82/90), GetSmuVersion, PowerUpSdma (`engine.c`) | ✅ escrito e testado no host | `tools/amdgpu_hw_host.c`. Falta: PowerUpGfx/GFXOFF (com a F8), relógios mínimos de display (com a F4b) |
 | F4a | Display sem trocar o modo: leitura do timing de cada OTG e do plano de cada HUBP deixados pela UEFI, conferência com o framebuffer do GOP, vsync pelo OTG (vblank, posição, contador, taxa medida), troca de superfície no vblank (BGRA/RGBA linear, trava do OTG, confirmação por EARLIEST_INUSE), buffer duplo da tela do compositor na VRAM (WC), HPD, alocador de VRAM | ✅ escrito e testado no host | `tools/amdgpu_hw_host.c`: 190/190 (timing de 25+ modos ida e volta, 40 quadros com áreas sujas aleatórias iguais à superfície, travamento da troca volta ao GOP) |
 | F4b | Troca de modo e outras saídas: DDC/I2C e AUX por hardware (EDID ao vivo), DCCG/PLL, DIG + PHY por ATOM, HDMI (AVI, SCDC), DP (treino de link), DPP/MPC/OPP, watermarks, várias saídas | ⬜ | — |
-| F5 | Alocador de VRAM e BOs da ABI na VRAM: ✅ (F4a). Falta a GMC v9: gfxhub + mmhub, GART do sistema, VMID 1..15 com tabelas de 4 níveis, GTT | ⬜ | host |
+| F5 | GMC da MMHUB 1.0: abertura do sistema na VRAM, AGP desligado, TLB L1, cache L2, contexto 0 com GART plana de 256 MiB (PTE sistema/snoop/UC), invalidação pelo motor 17 com semáforo; alocador de VRAM e BOs da ABI na VRAM (`engine.c`, `amdgpu.c`) | ✅ escrito e testado no host | `tools/amdgpu_hw_host.c` (o SDMA simulado traduz pela tabela que o driver montou; página desligada ou só de leitura dá falta). Falta: GFXHUB (com a F8) e VMIDs 1..15 com tabelas de 4 níveis por processo (com a F9) |
 | F6 | IH (OSSSYS 4.1): anel de interrupções, MSI, fontes vblank/pageflip/HPD/EOP/SDMA | ⬜ | host |
-| F7 | SDMA 4.1: microcódigo, anel, copy/fill linear, fences; cópia do compositor pela GPU | ⬜ | host |
+| F7 | SDMA 4.1: golden da família 4.1 e da variante, microcódigo direto, anel GFX de 64 KiB na VRAM com writeback do rptr, WPTR por registrador, teste do anel, COPY_LINEAR (até 4 MiB por pacote), cópia de retângulo, CONST_FILL, fences por polling (`engine.c`) | ✅ escrito e testado no host | `tools/amdgpu_hw_host.c`: 221/221 (microcódigo real conferido palavra por palavra, 9 MiB VRAM→VRAM, RAM↔VRAM pela GART, retângulo 1000x300, 6000 pacotes dando 5 voltas no anel, SMU mudo e SDMA morto). Falta: interrupção de fence (F6) e power gating do SDMA |
 | F8 | GFX9: RLC, CP (PFP/CE/ME/MEC), golden registers do Picasso/Raven2, CSB, anel GFX, IBs, fences EOP, fila de compute (HQD) | ⬜ | host |
 | F9 | 3D para Metal/OpenGL: contexto AMD na ABI (`docs/gpu-abi.md`), IB PM4 do usuário com VM por processo, biblioteca PM4 no userland, backend GCN (GFX9) para os shaders do Otavio | ⬜ | host + combinar com o Otavio |
 | F10 | Integração: `gpu_present`/`gpu_vsync_wait`/`gpu_kms_set` na AMD, Sobre/Monitores, build final | ⬜ | build final |
@@ -58,6 +58,15 @@ zerados, mapeados no processo em WC por `gpu_user_map_io` do Gustavo (sem refcou
 devolvem VRAM ao PMM) e podem ir para a tela por `MOS_GPU_KMS_SET` quando o compositor não está com o buffer
 duplo. Falta na ABI (não é só da AMD): liberar os BOs de um processo que sai sem `BO_DESTROY`; hoje ficam
 presos até o boot seguinte, na RAM e na VRAM.
+
+`gpu_late_init` (main.c, depois do `bt_init`, com o VFS montado) → `amdgpu_engines_init`: SMU, GMC e SDMA.
+Se o SMU não responder ou o anel não rodar, os motores ficam desligados e a tela segue como antes. Quando o
+buffer duplo desliga, a cópia da frente para o GOP passa pelo SDMA.
+
+Suspensão (combinado com a Larissa, `kernel/dev/pm.c`): o driver ainda não chama `pm_register`. Sem isso o
+sistema usa s2idle e a tela fica acesa; S3 só quando o resume refizer firmware, anéis e modo (depende da F4b).
+IOMMU: a GART só aponta para RAM do mapa UEFI, que o AMD-Vi deixa em identidade. Um `IO_PAGE_FAULT` do 03:00.0
+no serial vai para a Larissa.
 
 ## Ordem de bring-up no boot
 
