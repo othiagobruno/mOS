@@ -432,6 +432,10 @@ fi
 if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
     MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-foundation-objc.sh" || echo "aviso: Foundation Swift não compilou; continua o stub" >&2
 fi
+# overlay Swift do UIKit do Catalyst (/System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib): importa o Foundation acima
+if [ -e "$ROOT/build/swift/objc/overlays/Foundation.swiftmodule" ]; then
+    MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-uikit-objc.sh" || echo "aviso: libswiftUIKit não compilou" >&2
+fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"
 elif [ -d "$ROOT/build/swift/objc/dylib" ]; then
