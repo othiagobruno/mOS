@@ -211,12 +211,6 @@ int host_write_ppm(const char *path, const u32 *px, int w, int h, int stride) {
     return 0;
 }
 
-/* CSPRNG do kernel (kernel/crypto): no host, o getrandom do Linux */
-#include <sys/random.h>
-void crypto_random(void *buf, size_t len) {
-    u8 *p = buf;
-    while (len) { ssize_t r = getrandom(p, len, 0); if (r <= 0) abort(); p += r; len -= (size_t)r; }
-}
 void net_poll(void) {}
 /* pausa real (temporizadores de JS que dependem do relógio) */
 #include <unistd.h>

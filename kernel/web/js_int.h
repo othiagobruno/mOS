@@ -237,6 +237,7 @@ typedef struct jsrealm {
     jsobj *p_abuf, *p_dview, *p_typed, *p_ta[11];   /* ArrayBuffer, DataView, %TypedArray% e um por tipo */
     /* Canvas 2D (canvas_js.c) e DOMException */
     jsobj *p_img;             /* HTMLImageElement.prototype (= Image.prototype) */
+    jsobj *p_msgport, *p_msgchannel, *p_msgevent, *p_cryptokey;   /* web_plat.c, web_crypto.c */
     jsobj *p_headers, *p_formdata, *p_request, *p_abortsig, *p_abortctl, *p_xhrup;   /* web_fetch.c */
     jsobj *p_blob, *p_file, *p_freader, *p_progress, *p_url, *p_usp, *p_imgbitmap;   /* web_blob.c, web_url.c */
     jsobj *p_domexc, *p_canvas, *p_ctx2d, *p_cgrad, *p_cpat, *p_path2d, *p_imgdata, *p_tmetrics, *p_dommatrix;
@@ -587,6 +588,10 @@ void   js_abort_signal(jsobj *sig, jsv reason);
 void   js_abort_follow(jsobj *own, jsv parent);
 bool   js_form_entries(jsv form, jsv submitter, jsobj *list);
 jsv    js_dom_parse_document(const char *url, jsstr *src, const char *mime);
+/* structuredClone, MessageChannel, crypto (web_plat.c, web_crypto.c) */
+void   js_plat_init(jsrealm *r);
+jsobj *js_subtle_init(jsrealm *r);
+jsv    js_structured_clone(jsv v);
 void   js_mark_page(struct js_page *p);
 extern void (*js_host_finalize_hook)(jsobj *o);
 extern int  (*js_host_delete_hook)(jsobj *o, jsstr *k);
