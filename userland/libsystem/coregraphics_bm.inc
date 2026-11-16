@@ -179,7 +179,7 @@ int cx_bm_shadow_begin(const void *c) { return shadow_begin(as_kind(c, CGK_BM));
 void cx_bm_shadow_end(const void *c, int on) { shadow_end(as_kind(c, CGK_BM), on); }
 
 /* ---------------------------------------------------------------- path no espaço do dispositivo */
-static double dev_tol(cgobj_t *o) { (void)o; return 0.2; }
+static double dev_tol(cgobj_t *o) { return o && o->pdf ? 0.01 : 0.2; }   /* PDF: curvas quase exatas (o zoom do leitor aparece) */
 static cgobj_t *bm(const void *c) { return as_kind(c, CGK_BM); }
 static void dpt(cgobj_t *o, double x, double y, double *dx, double *dy) { ctm_of(o, x, y, dx, dy); }
 
@@ -259,7 +259,9 @@ static void paint_row(void *ctx, int y, int x0, int x1, const uint8_t *cov) {
         blend_at(p->o, x, y, scale_px(p->use_solid ? p->solid : fill_src(p->o, x, y), k));
     }
 }
+static int pw_fill(cgobj_t *o, const cgr_poly *poly, int eo, u32 solid, int use_solid);
 static void fill_poly(cgobj_t *o, const cgr_poly *poly, int eo, u32 solid, int use_solid) {
+    if (o->pdf && pw_fill(o, poly, eo, solid, use_solid)) return;
     paint_t pt = {o, solid, use_solid};
     int sh = shadow_begin(o);
     cgr_fill(poly, eo, o->cl, o->ct, o->cr, o->cbt, paint_row, &pt);
@@ -292,7 +294,7 @@ static int stroke_outline(cgobj_t *o, const cgr_poly *path, cgr_poly *out) {
     st.width = g->lw; st.miter = g->miter; st.phase = g->phase;
     st.dash = g->ndash ? g->dash : 0; st.ndash = g->ndash;
     st.cap = g->cap; st.join = g->join;
-    st.tol = 0.2 / (scale > 1e-9 ? scale : 1);
+    st.tol = dev_tol(o) / (scale > 1e-9 ? scale : 1);
     if (st.width * scale < 1) st.width = 1 / (scale > 1e-9 ? scale : 1);   /* traço fininho: um pixel, como o macOS */
     cgr_stroke(&user, &st, out);
     cgr_free(&user);
@@ -372,8 +374,10 @@ static void mask_row(void *ctx, int y, int x0, int x1, const uint8_t *cov) {
     maskrow_t *r = ctx;
     memcpy(r->m + (size_t)y * r->w + x0, cov, (size_t)(x1 - x0));
 }
+static void pw_clip(cgobj_t *o, const cgr_poly *poly, int eo);
 static void clip_with(cgobj_t *o, const cgr_poly *poly, int eo) {
     cg_bmx_t *g = o->gx;
+    if (o->pdf) pw_clip(o, poly, eo);
     size_t n = (size_t)o->w * o->h;
     u8 *m = calloc(n ? n : 1, 1);
     if (!m) return;
@@ -662,12 +666,20 @@ void *CGGradientRetain(void *g) { return g ? (void *)objc_retain((id)g) : 0; }
 void CGGradientRelease(void *g) { if (g) objc_release((id)g); }
 u64 CGGradientGetTypeID(void) { return 0x2A5; }
 
+static int pw_shading(cgobj_t *o, const u32 *lut, double d0, double d1, int radial, CGPoint p0, double r0, CGPoint p1, double r1, int e0, int e1);
+static int pw_layer_begin(cgobj_t *o);
+static void pw_layer_end(cgobj_t *o);
 static void draw_gradient(void *c, const cggrad_t *gr, int radial, CGPoint p0, double r0, CGPoint p1, double r1, u32 opts) {
     cgobj_t *o = bm(c);
     if (!o || !o->data || !gr) return;
     double ia, ib, ic, id, itx, ity;
     if (!ctm_inverse(o, &ia, &ib, &ic, &id, &itx, &ity)) return;
     cgr_grad g = {gr->n, gr->loc, gr->rgba};
+    if (o->pdf) {
+        u32 lut[256];
+        for (int i = 0; i < 256; i++) lut[i] = cgr_grad_at(&g, i / 255.0);
+        if (pw_shading(o, lut, 0, 1, radial, p0, r0, p1, r1, opts & 1, opts & 2)) return;
+    }
     double ga = o->gx ? o->gx->galpha : 1;
     u32 k = (u32)(ga * 255 + 0.5);
     int sh = shadow_begin(o);
@@ -689,6 +701,7 @@ void CGContextDrawRadialGradient(void *c, void *g, CGPoint c0, double r0, CGPoin
 void CGContextBeginTransparencyLayerWithRect(void *c, CGRect r, id aux) {
     (void)r; (void)aux;
     cgobj_t *o = bm(c); cg_bmx_t *g = bmx(o);
+    if (o && o->pdf) { pw_layer_begin(o); return; }   /* PDF: grupo de transparência (form XObject) */
     if (!g || !o->data || g->nlayer >= 4) return;
     size_t n = (size_t)o->w * 4 * o->h;
     u8 *fresh = calloc(n ? n : 1, 1);
@@ -712,6 +725,7 @@ static int shadow_begin(cgobj_t *o);
 static void shadow_end(cgobj_t *o, int on);
 void CGContextEndTransparencyLayer(void *c) {
     cgobj_t *o = bm(c); cg_bmx_t *g = o ? o->gx : 0;
+    if (o && o->pdf) { pw_layer_end(o); return; }
     if (!g || !g->nlayer) return;
     cx_bm_restore(c);
     int L = --g->nlayer;
