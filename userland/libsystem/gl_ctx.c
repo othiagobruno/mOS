@@ -261,6 +261,8 @@ gl_ctx_t *gl_ctx_create(gl_ctx_t *share, int core, int major, int minor, int w, 
     set_bit(C, cap_bit(C, GL_DITHER), 1);
     set_bit(C, cap_bit(C, GL_MULTISAMPLE), 1);
     C->patch_vertices = 3;
+    for (int i = 0; i < 4; i++) C->patch_outer[i] = 1;
+    C->patch_inner[0] = C->patch_inner[1] = 1;
     C->render_mode = GL_RENDER;
     gl_ffp_init(C);
     return C;
@@ -454,7 +456,12 @@ void glProvokingVertex(GLenum m) { GLC(); if (m != GL_FIRST_VERTEX_CONVENTION &&
 void glProvokingVertexEXT(GLenum m) { glProvokingVertex(m); }
 void glPrimitiveRestartIndex(GLuint i) { GLC(); C->restart_idx = i; }
 void glPatchParameteri(GLenum p, GLint v) { GLC(); if (p != GL_PATCH_VERTICES) GLERR(GL_INVALID_ENUM, ); if (v <= 0 || v > 32) GLERR(GL_INVALID_VALUE, ); C->patch_vertices = (u32)v; }
-void glPatchParameterfv(GLenum p, const GLfloat *v) { (void)p; (void)v; }
+void glPatchParameterfv(GLenum p, const GLfloat *v) {
+    GLC();
+    if (p == GL_PATCH_DEFAULT_OUTER_LEVEL) { for (int i = 0; i < 4; i++) C->patch_outer[i] = v[i]; return; }
+    if (p == GL_PATCH_DEFAULT_INNER_LEVEL) { for (int i = 0; i < 2; i++) C->patch_inner[i] = v[i]; return; }
+    GLERR(GL_INVALID_ENUM, );
+}
 void glHint(GLenum t, GLenum m) {
     GLC();
     if (m != GL_FASTEST && m != GL_NICEST && m != GL_DONT_CARE) GLERR(GL_INVALID_ENUM, );
@@ -743,6 +750,15 @@ static int get_any(gl_ctx_t *C, GLenum p, gv_t *g) {
     case GL_MAX_PIXEL_MAP_TABLE: I1(256); return 1;
     case GL_MAX_TESS_GEN_LEVEL: I1(64); return 1;
     case GL_MAX_PATCH_VERTICES: I1(32); return 1;
+    case GL_PATCH_DEFAULT_OUTER_LEVEL: gfv(g, 4, C->patch_outer); return 1;
+    case GL_PATCH_DEFAULT_INNER_LEVEL: gfv(g, 2, C->patch_inner); return 1;
+    case GL_MAX_TESS_CONTROL_INPUT_COMPONENTS: case GL_MAX_TESS_CONTROL_OUTPUT_COMPONENTS: case GL_MAX_TESS_EVALUATION_INPUT_COMPONENTS:
+    case GL_MAX_TESS_EVALUATION_OUTPUT_COMPONENTS: I1(128); return 1;
+    case GL_MAX_TESS_CONTROL_TOTAL_OUTPUT_COMPONENTS: I1(4096); return 1;
+    case GL_MAX_TESS_PATCH_COMPONENTS: I1(120); return 1;
+    case GL_MAX_TESS_CONTROL_TEXTURE_IMAGE_UNITS: case GL_MAX_TESS_EVALUATION_TEXTURE_IMAGE_UNITS: I1(16); return 1;
+    case GL_MAX_TESS_CONTROL_UNIFORM_BLOCKS: case GL_MAX_TESS_EVALUATION_UNIFORM_BLOCKS: I1(12); return 1;
+    case GL_MAX_TESS_CONTROL_UNIFORM_COMPONENTS: case GL_MAX_TESS_EVALUATION_UNIFORM_COMPONENTS: I1(4096); return 1;
     case GL_SUBPIXEL_BITS: I1(8); return 1;
     case GL_ALIASED_LINE_WIDTH_RANGE: case GL_SMOOTH_LINE_WIDTH_RANGE: { float f[2] = {1, 64}; gfv(g, 2, f); return 1; }
     case GL_ALIASED_POINT_SIZE_RANGE: case GL_SMOOTH_POINT_SIZE_RANGE: { float f[2] = {1, 1024}; gfv(g, 2, f); return 1; }

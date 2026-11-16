@@ -355,6 +355,18 @@ static void builtins(sb_t *b, int stage, int compat) {
                 "float4 gl_Position; float gl_PointSize; float gl_ClipDistance[8]; int gl_PrimitiveID; int gl_Layer; int gl_ViewportIndex;\n"
                 "void EmitVertex(); void EndPrimitive();\n"
                 "void EmitStreamVertex(int s) { EmitVertex(); }\nvoid EndStreamPrimitive(int s) { EndPrimitive(); }\n");
+    } else if (stage == 3) {
+        /* controle de tesselação: as invocações (gl_InvocationID) rodam juntas e barrier() espera todas */
+        sb_s(b, "struct gl_PerVertexIn { float4 gl_Position; float gl_PointSize; float gl_ClipDistance[8]; };\n"
+                "gl_PerVertexIn gl_in[32]; gl_PerVertexIn gl_out[32]; int gl_PatchVerticesIn; int gl_PrimitiveID; int gl_InvocationID;\n"
+                "float gl_TessLevelOuter[4]; float gl_TessLevelInner[2];\n"
+                "void barrier() { threadgroup_barrier(mem_flags::mem_threadgroup); }\n");
+    } else if (stage == 4) {
+        /* avaliação de tesselação: um vértice por coordenada gerada (gl_TessCoord) */
+        sb_s(b, "struct gl_PerVertexIn { float4 gl_Position; float gl_PointSize; float gl_ClipDistance[8]; };\n"
+                "gl_PerVertexIn gl_in[32]; int gl_PatchVerticesIn; int gl_PrimitiveID; float3 gl_TessCoord;\n"
+                "float gl_TessLevelOuter[4]; float gl_TessLevelInner[2];\n"
+                "float4 gl_Position; float gl_PointSize; float gl_ClipDistance[8];\n");
     } else {
         sb_s(b, "float4 gl_FragCoord; bool gl_FrontFacing; float2 gl_PointCoord; float gl_FragDepth; int gl_PrimitiveID;\n"
                 "float4 gl_FragColor; float4 gl_FragData[8]; int gl_SampleID; float2 gl_SamplePosition; float gl_ClipDistance[8];\n"
@@ -387,7 +399,7 @@ static void builtins(sb_t *b, int stage, int compat) {
 }
 /* prelúdio do estágio (0 vértice, 1 fragmento); o texto vive até o fim do processo */
 const char *gl_glsl_prelude(int stage, int compat, u64 *len) {
-    static sb_t cache[3][2];
+    static sb_t cache[5][2];
     sb_t *b = &cache[stage][compat];
     if (!b->p) {
         types(b);

@@ -26,6 +26,7 @@ int gl_unit_on(gl_ctx_t *C, int unit, GLenum cap);
 /* ================================================================ estado de um programa ligado */
 typedef struct { const char *name; int off, size; ty_t *t; } gv_t;   /* global de um estágio */
 typedef struct { char *name; int loc, n, off; ty_t *t; int base; GLenum gltype; int builtin; } pa_t;
+#define NST 5                  /* estágios: 0 vértice, 1 fragmento, 2 geometria, 3 controle e 4 avaliação de tesselação */
 typedef struct { char *name; int off[2], size, slot, nslots, interp, aux; } pv_t;
 typedef struct { char *name; int loc, index, off, n; ty_t *t; int isint; } po_t;
 typedef struct {
@@ -33,20 +34,21 @@ typedef struct {
     GLenum gltype;
     ty_t *t;                   /* tipo do elemento */
     int arr, loc;
-    int off[2], stride;        /* deslocamento no gmem por estágio (-1 = ausente) */
+    int off[NST], stride;      /* deslocamento no gmem por estágio (-1 = ausente) */
     int sampler, target;       /* sampler: índice do alvo (gl_tgt_index) */
     int *units;
     int block, boff, bastride, bmstride;
     gl_buf_t *bbuf;            /* EXT_bindable_uniform */
 } pu_t;
-typedef struct { char *name; char *inst; ty_t *t; int off[2], size140, binding, arr, rowmajor; int *mem; int nmem; } pb_t;
+typedef struct { char *name; char *inst; ty_t *t; int off[NST], size140, binding, arr, rowmajor; int *mem; int nmem; } pb_t;
 typedef struct { int stage, off, comps, skip; } px_t;
+typedef struct { int src, dst, esize, arr; } tcopy_t;   /* saída do controle -> entrada da avaliação (arr: por vértice) */
 typedef struct {
-    msl_lib_t *lib[2];
-    msl_fn_t *main[2];
-    gl_shinfo_t info[2];
-    u8 *init[2];
-    gv_t *plain[2]; int nplain[2];
+    msl_lib_t *lib[NST];
+    msl_fn_t *main[NST];
+    gl_shinfo_t info[NST];
+    u8 *init[NST];
+    gv_t *plain[NST]; int nplain[NST];
     int compat;
     /* embutidas */
     int b_pos, b_psize, b_clip, b_vid, b_iid, b_clipvert;
@@ -62,12 +64,20 @@ typedef struct {
     px_t xfb[64]; int nxfb, xfb_inter, xfb_comps[64], nxfb_groups;
     msl_samp_t *sstore; int nsstore;
     int needs_compat_uniforms;
-    char *vsrc_user, *fsrc_user;   /* texto traduzido (sem prelúdio), para achar o que o shader usa */
+    char *src_user[NST];       /* texto traduzido (sem prelúdio), para achar o que o shader usa */
     /* geometry shader */
-    msl_lib_t *glib; msl_fn_t *gmain; gl_shinfo_t ginfo; u8 *ginit; gv_t *gplain; int ngplain; char *gsrc_user;
     pv_t gvar[GLX_VAR]; int ngvar;          /* vértice -> geometria: off[0] no VS, off[1] = base do array no GS */
     int gs_n, gs_cut, gs_pos, gs_psize, gs_pidout, gs_in_arr, gs_pidin, gs_invid, gs_max, gs_inv;
     GLenum gs_inp, gs_outp;
+    /* tesselação */
+    int ost;                   /* último estágio de vértice: 0 (VS) ou 4 (avaliação de tesselação) */
+    int tess, tcs_n, tcw, tpoint;
+    GLenum tmode, tspacing;
+    int v_pos, v_psize, v_clip, vw_psize, vw_clip;   /* saídas do VS quando ele alimenta a tesselação */
+    pv_t pvar[GLX_VAR]; int npvar;          /* VS -> controle (ou avaliação): off[0] no VS, off[1] = base do array de 32 */
+    tcopy_t tcp[64]; int ntcp;             /* controle -> avaliação */
+    int c_in_arr, c_out_arr, c_pvi, c_pid, c_inv, c_outer, c_inner;
+    int e_in_arr, e_pvi, e_pid, e_coord, e_outer, e_inner;
 } pg_t;
 
 /* ================================================================ nomes compartilhados */
@@ -260,13 +270,10 @@ void glCompileShader(GLuint n) {
     gl_shader_t *s = sh_get(C, n);
     if (!s) GLERR(obj_get(C, n) ? GL_INVALID_OPERATION : GL_INVALID_VALUE, );
     s->compiled = 0;
-    if (s->type != GL_VERTEX_SHADER && s->type != GL_FRAGMENT_SHADER && s->type != GL_GEOMETRY_SHADER) {
-        set_log(&s->log, "ERROR: 0:0: shaders de tesselação ainda não são executados pelo OpenGL por software do mOS\n");
-        return;
-    }
     gl_shinfo_t I;
     char *user = 0;
-    msl_lib_t *L = compile_stage(C, s->type == GL_FRAGMENT_SHADER ? 1 : s->type == GL_GEOMETRY_SHADER ? 2 : 0, s->src ? s->src : "", &I, &user, &s->log);
+    int st = s->type == GL_FRAGMENT_SHADER ? 1 : s->type == GL_GEOMETRY_SHADER ? 2 : s->type == GL_TESS_CONTROL_SHADER ? 3 : s->type == GL_TESS_EVALUATION_SHADER ? 4 : 0;
+    msl_lib_t *L = compile_stage(C, st, s->src ? s->src : "", &I, &user, &s->log);
     if (L) { s->compiled = 1; msl_lib_free(L); }
     for (int i = 0; i < I.ndecl; i++) { free(I.decl[i].name); free(I.decl[i].block); free(I.decl[i].type); free(I.decl[i].dims); }
     free(I.decl);
@@ -317,10 +324,11 @@ GLuint glCreateProgram(void) {
 }
 static void pg_free(pg_t *g) {
     if (!g) return;
-    for (int s = 0; s < 2; s++) {
+    for (int s = 0; s < NST; s++) {
         msl_lib_free(g->lib[s]);
         free(g->init[s]);
         free(g->plain[s]);
+        free(g->src_user[s]);
         for (int i = 0; i < g->info[s].ndecl; i++) { free(g->info[s].decl[i].name); free(g->info[s].decl[i].block); free(g->info[s].decl[i].type); free(g->info[s].decl[i].dims); }
         free(g->info[s].decl);
     }
@@ -331,15 +339,8 @@ static void pg_free(pg_t *g) {
     free(g->uni);
     for (int i = 0; i < g->nblk; i++) { free(g->blk[i].name); free(g->blk[i].inst); free(g->blk[i].mem); }
     free(g->sstore);
-    free(g->vsrc_user);
-    free(g->fsrc_user);
-    msl_lib_free(g->glib);
-    free(g->ginit);
-    free(g->gplain);
-    for (int i = 0; i < g->ginfo.ndecl; i++) { free(g->ginfo.decl[i].name); free(g->ginfo.decl[i].block); free(g->ginfo.decl[i].type); free(g->ginfo.decl[i].dims); }
-    free(g->ginfo.decl);
     for (int i = 0; i < g->ngvar; i++) free(g->gvar[i].name);
-    free(g->gsrc_user);
+    for (int i = 0; i < g->npvar; i++) free(g->pvar[i].name);
     free(g);
 }
 void gl_prog_unref(gl_ctx_t *C, gl_prog_t *p) {
@@ -577,7 +578,7 @@ static void uni_leaf(pg_t *g, int stage, const char *name, ty_t *t, int off, int
         u->t = t;
         u->arr = arr;
         u->stride = stride;
-        u->off[0] = u->off[1] = -1;
+        for (int st = 0; st < NST; st++) u->off[st] = -1;
         u->loc = -1;
         u->block = block;
         u->boff = boff;
@@ -644,16 +645,18 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
     pg_t *g = calloc(1, sizeof *g);
     if (!g) return 0;
     /* fontes por estágio (vários shaders do mesmo estágio são concatenados; só um #version vale) */
-    char *src[3] = {0, 0, 0};
-    int has[3] = {0, 0, 0};
+    char *src[NST] = {0};
+    int has[NST] = {0};
+    char *log = 0;
+#define LFAIL(...) do { plog(p, __VA_ARGS__); free(log); for (int k_ = 0; k_ < NST; k_++) free(src[k_]); pg_free(g); return 0; } while (0)
     for (int i = 0; i < p->nsh; i++) {
         gl_shader_t *s = p->sh[i];
-        int st = s->type == GL_FRAGMENT_SHADER ? 1 : s->type == GL_VERTEX_SHADER ? 0 : s->type == GL_GEOMETRY_SHADER ? 2 : -1;
-        if (st < 0) { plog(p, "ERROR: shaders de tesselação ainda não são executados\n", 0); pg_free(g); free(src[0]); free(src[1]); free(src[2]); return 0; }
-        if (!s->compiled) { plog(p, "ERROR: shader anexado não compilou\n", 0); pg_free(g); free(src[0]); free(src[1]); free(src[2]); return 0; }
+        int st = s->type == GL_FRAGMENT_SHADER ? 1 : s->type == GL_VERTEX_SHADER ? 0 : s->type == GL_GEOMETRY_SHADER ? 2 :
+                 s->type == GL_TESS_CONTROL_SHADER ? 3 : 4;
+        if (!s->compiled) LFAIL("ERROR: shader anexado não compilou\n", 0);
         u64 a = src[st] ? strlen(src[st]) : 0, b = s->src ? strlen(s->src) : 0;
         char *n = realloc(src[st], a + b + 2);
-        if (!n) { pg_free(g); free(src[0]); free(src[1]); return 0; }
+        if (!n) LFAIL("ERROR: sem memória\n", 0);
         memcpy(n + a, s->src ? s->src : "", b);
         n[a + b] = '\n';
         n[a + b + 1] = 0;
@@ -664,53 +667,119 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
         src[st] = n;
         has[st] = 1;
     }
-    if (!has[0] && !has[1]) { plog(p, "ERROR: nenhum shader anexado\n", 0); pg_free(g); return 0; }
+    if (!has[0] && !has[1]) LFAIL("ERROR: nenhum shader anexado\n", 0);
+    if (has[3] && !has[4]) LFAIL("ERROR: tessellation control shader sem tessellation evaluation shader\n", 0);
+    if ((has[3] || has[4]) && !has[0]) LFAIL("ERROR: a tesselação precisa de um vertex shader\n", 0);
     /* sem vertex shader, o fixed function faz o vértice: o mOS exige os dois estágios no GLSL */
     if (!has[0]) src[0] = strdup("#version 120\nvoid main() { gl_Position = ftransform(); gl_FrontColor = gl_Color; gl_FrontSecondaryColor = gl_SecondaryColor;"
                                  " for (int i = 0; i < 8; i++) gl_TexCoord[i] = gl_TextureMatrix[i] * (i == 0 ? gl_MultiTexCoord0 : i == 1 ? gl_MultiTexCoord1 :"
                                  " i == 2 ? gl_MultiTexCoord2 : i == 3 ? gl_MultiTexCoord3 : i == 4 ? gl_MultiTexCoord4 : i == 5 ? gl_MultiTexCoord5 :"
                                  " i == 6 ? gl_MultiTexCoord6 : gl_MultiTexCoord7); gl_FogFragCoord = abs((gl_ModelViewMatrix * gl_Vertex).z); }\n");
     if (!has[1]) src[1] = strdup("#version 120\nvoid main() { gl_FragColor = gl_Color; }\n");
-    char *log = 0;
-    for (int st = 0; st < 2; st++) {
+    has[0] = has[1] = 1;
+    for (int st = 0; st < NST; st++) {
+        if (!has[st]) continue;
         char *user = 0;
         g->lib[st] = compile_stage(C, st, src[st], &g->info[st], &user, &log);
-        if (!g->lib[st]) { plog(p, "%s", log); free(log); free(src[0]); free(src[1]); pg_free(g); return 0; }
-        if (st == 0) g->vsrc_user = user; else g->fsrc_user = user;
+        if (!g->lib[st]) LFAIL("%s", log);
+        g->src_user[st] = user;
         g->main[st] = msl_find(g->lib[st], "main");
         g->init[st] = malloc((size_t)(g->lib[st]->gsize ? g->lib[st]->gsize : 1));
         if (g->init[st]) memcpy(g->init[st], g->lib[st]->gmem, (size_t)g->lib[st]->gsize);
     }
-    if (has[2]) {
-        char *user = 0;
-        g->glib = compile_stage(C, 2, src[2], &g->ginfo, &user, &log);
-        if (!g->glib) { plog(p, "%s", log); free(log); free(src[0]); free(src[1]); free(src[2]); pg_free(g); return 0; }
-        g->gsrc_user = user;
-        g->gmain = msl_find(g->glib, "main");
-        g->ginit = malloc((size_t)(g->glib->gsize ? g->glib->gsize : 1));
-        if (g->ginit) memcpy(g->ginit, g->glib->gmem, (size_t)g->glib->gsize);
-        g->gplain = calloc((size_t)(g->ginfo.ndecl + 1), sizeof(gv_t));
-        for (int i = 0; i < g->ginfo.ndecl; i++)
-            if (g->ginfo.decl[i].storage == GS_PLAIN) { gv_t v = find_glob(g->glib, g->ginfo.decl[i].name); if (v.off >= 0) g->gplain[g->ngplain++] = v; }
-        g->gs_n = g_off(g->glib, "__gs_n"); g->gs_cut = g_off(g->glib, "__gs_cut"); g->gs_pos = g_off(g->glib, "__gs_pos");
-        g->gs_psize = g_off(g->glib, "__gs_psize"); g->gs_pidout = g_off(g->glib, "__gs_pid"); g->gs_in_arr = g_off(g->glib, "gl_in");
-        g->gs_pidin = g_off(g->glib, "gl_PrimitiveIDIn"); g->gs_invid = g_off(g->glib, "gl_InvocationID");
-        g->gs_max = g->ginfo.gs_max;
-        g->gs_inv = g->ginfo.gs_inv > 0 ? g->ginfo.gs_inv : 1;
-        g->gs_inp = g->ginfo.gs_in;
-        g->gs_outp = g->ginfo.gs_out;
-        /* vértice -> geometria: cada entrada do GS é um array de 6 com o tipo da saída do VS */
-        int gslot = 0;
-        for (int i = 0; i < g->ginfo.ndecl; i++) {
-            gl_decl_t *d = &g->ginfo.decl[i];
-            if (d->storage != GS_IN) continue;
+    /* último estágio que produz vértices antes do GS/raster: a avaliação de tesselação ou o vertex shader */
+    int ost = has[4] ? 4 : 0;
+    g->ost = ost;
+    if (has[4]) {
+        gl_shinfo_t *CI = has[3] ? &g->info[3] : 0, *EI = &g->info[4];
+        if (!EI->tes_set) LFAIL("ERROR: o tessellation evaluation shader precisa de layout(triangles|quads|isolines) in\n", 0);
+        if (CI && (CI->tcs_vertices <= 0 || CI->tcs_vertices > 32)) LFAIL("ERROR: o tessellation control shader precisa de layout(vertices = N) out com N em 1..32\n", 0);
+        g->tess = 1;
+        g->tcs_n = CI ? CI->tcs_vertices : 0;
+        g->tmode = EI->tes_mode;
+        g->tspacing = EI->tes_spacing ? EI->tes_spacing : GL_EQUAL;
+        g->tcw = EI->tes_cw;
+        g->tpoint = EI->tes_point;
+        msl_lib_t *VLs = g->lib[0];
+        g->v_pos = g_off(VLs, "gl_Position"); g->v_psize = g_off(VLs, "gl_PointSize"); g->v_clip = g_off(VLs, "gl_ClipDistance");
+        int cst = has[3] ? 3 : 4;   /* quem lê as saídas do VS: o controle (ou a avaliação, sem controle) */
+        msl_lib_t *CL = g->lib[cst];
+        /* vértice -> primeiro estágio da tesselação: cada entrada por vértice é um array de 32 com o tipo da saída do VS */
+        int pslot = 0;
+        for (int i = 0; i < g->info[cst].ndecl; i++) {
+            gl_decl_t *d = &g->info[cst].decl[i];
+            if (d->storage != GS_IN || d->patch) continue;
             gl_decl_t *vd = d->block ? decl_find(&g->info[0], GS_OUT, d->block, 1) : decl_find(&g->info[0], GS_OUT, d->name, 0);
-            if (!vd) { plog(p, "ERROR: o geometry shader lê '%s', que o vertex shader não escreve\n", d->block ? d->block : d->name); free(log); free(src[0]); free(src[1]); free(src[2]); pg_free(g); return 0; }
-            gv_t vv = find_glob(g->lib[0], vd->name), gg = find_glob(g->glib, d->name);
-            if (vv.off < 0 || gg.off < 0) continue;
-            if (gg.t->k != K_ARRAY || gg.t->e->size != vv.size) { plog(p, "ERROR: tipos diferentes na entrada '%s' do geometry shader\n", d->name); free(log); free(src[0]); free(src[1]); free(src[2]); pg_free(g); return 0; }
+            if (!vd) LFAIL("ERROR: a tesselação lê '%s', que o vertex shader não escreve\n", d->block ? d->block : d->name);
+            gv_t vv = find_glob(g->lib[0], vd->name), cg = find_glob(CL, d->name);
+            if (vv.off < 0 || cg.off < 0) continue;
+            if (cg.t->k != K_ARRAY || cg.t->e->size != vv.size) LFAIL("ERROR: tipos diferentes na entrada '%s' da tesselação\n", d->name);
             int ns = (vv.size + 15) / 16;
-            if (gslot + ns > GLX_VAR) { plog(p, "ERROR: varyings demais\n", 0); free(log); free(src[0]); free(src[1]); free(src[2]); pg_free(g); return 0; }
+            if (pslot + ns > GLX_VAR) LFAIL("ERROR: varyings demais\n", 0);
+            pv_t *pv = &g->pvar[g->npvar++];
+            pv->name = strdup(d->block ? d->block : d->name);
+            pv->off[0] = vv.off;
+            pv->off[1] = cg.off;
+            pv->size = vv.size;
+            pv->slot = pslot;
+            pv->nslots = ns;
+            pslot += ns;
+        }
+        g->c_in_arr = g_off(CL, "gl_in");
+        if (has[3]) {
+            msl_lib_t *TL = g->lib[3];
+            g->c_out_arr = g_off(TL, "gl_out"); g->c_pvi = g_off(TL, "gl_PatchVerticesIn"); g->c_pid = g_off(TL, "gl_PrimitiveID");
+            g->c_inv = g_off(TL, "gl_InvocationID"); g->c_outer = g_off(TL, "gl_TessLevelOuter"); g->c_inner = g_off(TL, "gl_TessLevelInner");
+            g->e_in_arr = g_off(g->lib[4], "gl_in");
+            /* controle -> avaliação: saídas por vértice (arrays) e por patch, pelo nome */
+            for (int i = 0; i < EI->ndecl; i++) {
+                gl_decl_t *d = &EI->decl[i];
+                if (d->storage != GS_IN) continue;
+                gl_decl_t *cd = d->block ? decl_find(CI, GS_OUT, d->block, 1) : decl_find(CI, GS_OUT, d->name, 0);
+                if (!cd) LFAIL("ERROR: o tessellation evaluation shader lê '%s', que o control shader não escreve\n", d->block ? d->block : d->name);
+                if (cd->patch != d->patch) LFAIL("ERROR: '%s' é patch num estágio e por vértice no outro\n", d->name);
+                gv_t cv = find_glob(TL, cd->name), ev = find_glob(g->lib[4], d->name);
+                if (cv.off < 0 || ev.off < 0) continue;
+                if (g->ntcp >= 64) LFAIL("ERROR: saídas de tesselação demais\n", 0);
+                tcopy_t *tc = &g->tcp[g->ntcp++];
+                tc->src = cv.off;
+                tc->dst = ev.off;
+                if (d->patch) {
+                    if (cv.size != ev.size) LFAIL("ERROR: tipos diferentes no patch '%s'\n", d->name);
+                    tc->esize = cv.size;
+                    tc->arr = 0;
+                } else {
+                    if (cv.t->k != K_ARRAY || ev.t->k != K_ARRAY || cv.t->e->size != ev.t->e->size) LFAIL("ERROR: tipos diferentes na saída '%s' do control shader\n", d->name);
+                    tc->esize = cv.t->e->size;
+                    tc->arr = 1;
+                }
+            }
+        }
+        msl_lib_t *EL = g->lib[4];
+        g->e_pvi = g_off(EL, "gl_PatchVerticesIn"); g->e_pid = g_off(EL, "gl_PrimitiveID"); g->e_coord = g_off(EL, "gl_TessCoord");
+        g->e_outer = g_off(EL, "gl_TessLevelOuter"); g->e_inner = g_off(EL, "gl_TessLevelInner");
+        if (!has[3]) g->e_in_arr = g->c_in_arr;
+    }
+    if (has[2]) {
+        g->gs_n = g_off(g->lib[2], "__gs_n"); g->gs_cut = g_off(g->lib[2], "__gs_cut"); g->gs_pos = g_off(g->lib[2], "__gs_pos");
+        g->gs_psize = g_off(g->lib[2], "__gs_psize"); g->gs_pidout = g_off(g->lib[2], "__gs_pid"); g->gs_in_arr = g_off(g->lib[2], "gl_in");
+        g->gs_pidin = g_off(g->lib[2], "gl_PrimitiveIDIn"); g->gs_invid = g_off(g->lib[2], "gl_InvocationID");
+        g->gs_max = g->info[2].gs_max;
+        g->gs_inv = g->info[2].gs_inv > 0 ? g->info[2].gs_inv : 1;
+        g->gs_inp = g->info[2].gs_in;
+        g->gs_outp = g->info[2].gs_out;
+        /* vértice (ou avaliação de tesselação) -> geometria: cada entrada do GS é um array de 6 com o tipo da saída */
+        int gslot = 0;
+        for (int i = 0; i < g->info[2].ndecl; i++) {
+            gl_decl_t *d = &g->info[2].decl[i];
+            if (d->storage != GS_IN) continue;
+            gl_decl_t *vd = d->block ? decl_find(&g->info[ost], GS_OUT, d->block, 1) : decl_find(&g->info[ost], GS_OUT, d->name, 0);
+            if (!vd) LFAIL("ERROR: o geometry shader lê '%s', que o estágio anterior não escreve\n", d->block ? d->block : d->name);
+            gv_t vv = find_glob(g->lib[ost], vd->name), gg = find_glob(g->lib[2], d->name);
+            if (vv.off < 0 || gg.off < 0) continue;
+            if (gg.t->k != K_ARRAY || gg.t->e->size != vv.size) LFAIL("ERROR: tipos diferentes na entrada '%s' do geometry shader\n", d->name);
+            int ns = (vv.size + 15) / 16;
+            if (gslot + ns > GLX_VAR) LFAIL("ERROR: varyings demais\n", 0);
             pv_t *pv = &g->gvar[g->ngvar++];
             pv->name = strdup(d->block ? d->block : d->name);
             pv->off[0] = vv.off;
@@ -720,57 +789,67 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
             pv->nslots = ns;
             gslot += ns;
         }
+        if (g->tess) {
+            /* o primitivo de entrada do GS tem de ser o que a tesselação gera */
+            GLenum want = g->tpoint ? GL_POINTS : g->tmode == GL_ISOLINES ? GL_LINES : GL_TRIANGLES;
+            if (g->gs_inp != want) LFAIL("ERROR: o geometry shader não recebe o primitivo que a tesselação gera\n", 0);
+        }
     }
+#undef LFAIL
     free(log);
-    free(src[0]);
-    free(src[1]);
-    free(src[2]);
+    for (int k = 0; k < NST; k++) free(src[k]);
     g->compat = g->info[0].compat || g->info[1].compat;
-    msl_lib_t *VL = g->lib[0], *FL = g->lib[1];
+    msl_lib_t *VL = g->lib[0], *FL = g->lib[1], *OL = g->lib[g->ost];
     /* globais comuns que voltam ao valor inicial */
-    for (int st = 0; st < 2; st++) {
+    for (int st = 0; st < NST; st++) {
+        if (!g->lib[st]) continue;
         gl_shinfo_t *I = &g->info[st];
         g->plain[st] = calloc((size_t)(I->ndecl + 1), sizeof(gv_t));
         for (int i = 0; i < I->ndecl; i++)
             if (I->decl[i].storage == GS_PLAIN) { gv_t v = find_glob(g->lib[st], I->decl[i].name); if (v.off >= 0) g->plain[st][g->nplain[st]++] = v; }
     }
     /* embutidas */
-    g->b_pos = g_off(VL, "gl_Position"); g->b_psize = g_off(VL, "gl_PointSize"); g->b_clip = g_off(VL, "gl_ClipDistance");
-    g->b_vid = g_off(VL, "gl_VertexID"); g->b_iid = g_off(VL, "gl_InstanceID"); g->b_clipvert = g_off(VL, "gl_ClipVertex");
+    /* posição, tamanho de ponto e recorte vêm do último estágio de vértice (VS ou avaliação de tesselação) */
+    g->b_pos = g_off(OL, "gl_Position"); g->b_psize = g_off(OL, "gl_PointSize"); g->b_clip = g_off(OL, "gl_ClipDistance");
+    g->b_vid = g_off(VL, "gl_VertexID"); g->b_iid = g_off(VL, "gl_InstanceID"); g->b_clipvert = g_off(OL, "gl_ClipVertex");
     g->b_coord = g_off(FL, "gl_FragCoord"); g->b_front = g_off(FL, "gl_FrontFacing"); g->b_pcoord = g_off(FL, "gl_PointCoord");
     g->b_depth = g_off(FL, "gl_FragDepth"); g->b_pid = g_off(FL, "gl_PrimitiveID"); g->b_fcolor = g_off(FL, "gl_FragColor");
     g->b_fdata = g_off(FL, "gl_FragData");
     g->b_sid = g_off(FL, "gl_SampleID"); g->b_spos = g_off(FL, "gl_SamplePosition");
     g->b_smaskin = g_off(FL, "gl_SampleMaskIn"); g->b_smask = g_off(FL, "gl_SampleMask");
-    g->w_smask = uses(g->fsrc_user, "gl_SampleMask");
-    g->per_sample = uses(g->fsrc_user, "gl_SampleID") || uses(g->fsrc_user, "gl_SamplePosition");
-    g->w_psize = uses(g->vsrc_user, "gl_PointSize");
-    g->w_clip = uses(g->vsrc_user, "gl_ClipDistance");
-    g->w_clipvert = uses(g->vsrc_user, "gl_ClipVertex");
-    g->w_depth = uses(g->fsrc_user, "gl_FragDepth");
-    g->w_fcolor = uses(g->fsrc_user, "gl_FragColor");
-    g->w_fdata = uses(g->fsrc_user, "gl_FragData");
-    g->discards = uses(g->fsrc_user, "discard_fragment");
+    g->w_smask = uses(g->src_user[1], "gl_SampleMask");
+    g->per_sample = uses(g->src_user[1], "gl_SampleID") || uses(g->src_user[1], "gl_SamplePosition");
+    g->w_psize = uses(g->src_user[g->ost], "gl_PointSize");
+    g->w_clip = uses(g->src_user[g->ost], "gl_ClipDistance");
+    g->w_clipvert = uses(g->src_user[g->ost], "gl_ClipVertex");
+    if (g->tess) {
+        g->vw_psize = uses(g->src_user[0], "gl_PointSize");
+        g->vw_clip = uses(g->src_user[0], "gl_ClipDistance");
+    }
+    g->w_depth = uses(g->src_user[1], "gl_FragDepth");
+    g->w_fcolor = uses(g->src_user[1], "gl_FragColor");
+    g->w_fdata = uses(g->src_user[1], "gl_FragData");
+    g->discards = uses(g->src_user[1], "discard_fragment");
     static const char *cattr[6] = {"gl_Vertex", "gl_Normal", "gl_Color", "gl_SecondaryColor", "gl_FogCoord", 0};
     int *cdst[5] = {&g->c_vertex, &g->c_normal, &g->c_color, &g->c_scolor, &g->c_fog};
-    for (int i = 0; i < 5; i++) *cdst[i] = g->compat && uses(g->vsrc_user, cattr[i]) ? g_off(VL, cattr[i]) : -1;
-    for (int i = 0; i < 8; i++) { char nm[32]; snprintf(nm, sizeof nm, "gl_MultiTexCoord%d", i); g->c_mtc[i] = g->compat && uses(g->vsrc_user, nm) ? g_off(VL, nm) : -1; }
-    if (uses(g->vsrc_user, "ftransform")) g->c_vertex = g_off(VL, "gl_Vertex");
+    for (int i = 0; i < 5; i++) *cdst[i] = g->compat && uses(g->src_user[0], cattr[i]) ? g_off(VL, cattr[i]) : -1;
+    for (int i = 0; i < 8; i++) { char nm[32]; snprintf(nm, sizeof nm, "gl_MultiTexCoord%d", i); g->c_mtc[i] = g->compat && uses(g->src_user[0], nm) ? g_off(VL, nm) : -1; }
+    if (uses(g->src_user[0], "ftransform")) g->c_vertex = g_off(VL, "gl_Vertex");
     /* varyings do compat em slots fixos */
     for (int i = 0; i < 13; i++) g->c_out[i] = g->c_in[i] = -1;
     if (g->compat) {
-        for (int i = 0; i < 4; i++) if (uses(g->vsrc_user, COMPAT_VS_OUT[i])) g->c_out[i] = g_off(VL, COMPAT_VS_OUT[i]);
-        int tc = uses(g->vsrc_user, "gl_TexCoord") ? g_off(VL, "gl_TexCoord") : -1;
+        for (int i = 0; i < 4; i++) if (uses(g->src_user[0], COMPAT_VS_OUT[i])) g->c_out[i] = g_off(VL, COMPAT_VS_OUT[i]);
+        int tc = uses(g->src_user[0], "gl_TexCoord") ? g_off(VL, "gl_TexCoord") : -1;
         for (int i = 0; i < 8; i++) g->c_out[4 + i] = tc >= 0 ? tc + 16 * i : -1;
-        if (uses(g->vsrc_user, "gl_FogFragCoord")) g->c_out[12] = g_off(VL, "gl_FogFragCoord");
-        if (uses(g->fsrc_user, "gl_Color")) g->c_in[0] = g_off(FL, "gl_Color");
-        if (uses(g->fsrc_user, "gl_SecondaryColor")) g->c_in[1] = g_off(FL, "gl_SecondaryColor");
-        int ftc = uses(g->fsrc_user, "gl_TexCoord") ? g_off(FL, "gl_TexCoord") : -1;
+        if (uses(g->src_user[0], "gl_FogFragCoord")) g->c_out[12] = g_off(VL, "gl_FogFragCoord");
+        if (uses(g->src_user[1], "gl_Color")) g->c_in[0] = g_off(FL, "gl_Color");
+        if (uses(g->src_user[1], "gl_SecondaryColor")) g->c_in[1] = g_off(FL, "gl_SecondaryColor");
+        int ftc = uses(g->src_user[1], "gl_TexCoord") ? g_off(FL, "gl_TexCoord") : -1;
         for (int i = 0; i < 8; i++) g->c_in[4 + i] = ftc >= 0 ? ftc + 16 * i : -1;
-        if (uses(g->fsrc_user, "gl_FogFragCoord")) g->c_in[12] = g_off(FL, "gl_FogFragCoord");
+        if (uses(g->src_user[1], "gl_FogFragCoord")) g->c_in[12] = g_off(FL, "gl_FogFragCoord");
         g->slot0 = 13;
     }
-    if (g->glib) for (int i = 0; i < 13; i++) g->c_out[i] = g->c_in[i] = -1;   /* com GS os slots são todos do usuário */
+    if (g->lib[2] || g->tess) for (int i = 0; i < 13; i++) g->c_out[i] = g->c_in[i] = -1;   /* com GS ou tesselação os slots são todos do usuário */
     /* atributos */
     u32 used = 0;
     gl_shinfo_t *VI = &g->info[0], *FI = &g->info[1];
@@ -805,21 +884,21 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
             if (arr > 1) a->gltype = num_gltype(t);
         }
     /* varyings */
-    int slot = g->glib ? 0 : g->slot0;
-    gl_shinfo_t *PI = g->glib ? &g->ginfo : VI;   /* estágio anterior ao fragmento */
+    int slot = g->lib[2] || g->tess ? 0 : g->slot0;
+    gl_shinfo_t *PI = g->lib[2] ? &g->info[2] : &g->info[g->ost];   /* estágio anterior ao fragmento */
     for (int i = 0; i < FI->ndecl; i++) {
         gl_decl_t *d = &FI->decl[i];
         if (d->storage != GS_IN) continue;
         gl_decl_t *vd = d->block ? decl_find(PI, GS_OUT, d->block, 1) : decl_find(PI, GS_OUT, d->name, 0);
         if (!vd) { plog(p, "ERROR: o fragment shader lê '%s', que o estágio anterior não escreve\n", d->block ? d->block : d->name); pg_free(g); return 0; }
         gv_t vv, fv = find_glob(FL, d->name);
-        if (g->glib) {
+        if (g->lib[2]) {
             /* do array de saída do GS: o elemento é do tipo da saída */
             char bn[160];
             snprintf(bn, sizeof bn, "__gs_%s", vd->name);
-            vv = find_glob(g->glib, bn);
+            vv = find_glob(g->lib[2], bn);
             if (vv.off >= 0 && vv.t->k == K_ARRAY) vv.size = vv.t->e->size;
-        } else vv = find_glob(VL, vd->name);
+        } else vv = find_glob(OL, vd->name);
         if (vv.off < 0 || fv.off < 0) continue;
         if (vv.size != fv.size) { plog(p, "ERROR: tipos diferentes no varying '%s'\n", d->name); pg_free(g); return 0; }
         int ns = (fv.size + 15) / 16;
@@ -864,8 +943,9 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
             o->t = t;
             o->isint = IS_INTK(ty_scal(t)) && ty_scal(t) != K_BOOL;
         }
-    /* uniforms e blocos */
-    for (int st = 0; st < 2; st++) {
+    /* uniforms e blocos (de todos os estágios) */
+    for (int st = 0; st < NST; st++) {
+        if (!g->lib[st]) continue;
         gl_shinfo_t *I = &g->info[st];
         for (int i = 0; i < I->ndecl; i++) {
             gl_decl_t *d = &I->decl[i];
@@ -883,7 +963,7 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
                     b->name = strdup(d->block);
                     b->inst = strdup(d->name);
                     b->t = v.t->k == K_ARRAY ? v.t->e : v.t;
-                    b->off[0] = b->off[1] = -1;
+                    for (int st = 0; st < NST; st++) b->off[st] = -1;
                     b->size140 = s140_size(b->t);
                     b->rowmajor = d->rowmajor;
                     b->arr = d->arr;
@@ -937,7 +1017,7 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
         snprintf(base, sizeof base, "%s", nm);
         char *br = strchr(base, '[');
         if (br) { el = (int)strtol(br + 1, 0, 10); *br = 0; }
-        gv_t v = find_glob(VL, base);
+        gv_t v = find_glob(OL, base);
         if (v.off < 0) { plog(p, "ERROR: varying de transform feedback desconhecido: %s\n", nm); pg_free(g); return 0; }
         ty_t *t = v.t;
         int off = v.off;
@@ -996,12 +1076,15 @@ void glGetProgramiv(GLuint pn, GLenum q, GLint *v) {
     case GL_PROGRAM_SEPARABLE: *v = p->separable; return;
     case GL_PROGRAM_BINARY_LENGTH: *v = 0; return;
     case GL_PROGRAM_BINARY_RETRIEVABLE_HINT: *v = 0; return;
-    case GL_GEOMETRY_VERTICES_OUT: if (!g || !g->glib) GLERR(GL_INVALID_OPERATION, ); *v = g->gs_max; return;
-    case GL_GEOMETRY_INPUT_TYPE: if (!g || !g->glib) GLERR(GL_INVALID_OPERATION, ); *v = (GLint)g->gs_inp; return;
-    case GL_GEOMETRY_OUTPUT_TYPE: if (!g || !g->glib) GLERR(GL_INVALID_OPERATION, ); *v = (GLint)g->gs_outp; return;
-    case GL_GEOMETRY_SHADER_INVOCATIONS: if (!g || !g->glib) GLERR(GL_INVALID_OPERATION, ); *v = g->gs_inv; return;
-    case GL_TESS_CONTROL_OUTPUT_VERTICES: case GL_TESS_GEN_MODE: case GL_TESS_GEN_SPACING: case GL_TESS_GEN_VERTEX_ORDER: case GL_TESS_GEN_POINT_MODE:
-        GLERR(GL_INVALID_OPERATION, );
+    case GL_GEOMETRY_VERTICES_OUT: if (!g || !g->lib[2]) GLERR(GL_INVALID_OPERATION, ); *v = g->gs_max; return;
+    case GL_GEOMETRY_INPUT_TYPE: if (!g || !g->lib[2]) GLERR(GL_INVALID_OPERATION, ); *v = (GLint)g->gs_inp; return;
+    case GL_GEOMETRY_OUTPUT_TYPE: if (!g || !g->lib[2]) GLERR(GL_INVALID_OPERATION, ); *v = (GLint)g->gs_outp; return;
+    case GL_GEOMETRY_SHADER_INVOCATIONS: if (!g || !g->lib[2]) GLERR(GL_INVALID_OPERATION, ); *v = g->gs_inv; return;
+    case GL_TESS_CONTROL_OUTPUT_VERTICES: if (!g || !g->lib[3]) GLERR(GL_INVALID_OPERATION, ); *v = g->tcs_n; return;
+    case GL_TESS_GEN_MODE: if (!g || !g->tess) GLERR(GL_INVALID_OPERATION, ); *v = (GLint)g->tmode; return;
+    case GL_TESS_GEN_SPACING: if (!g || !g->tess) GLERR(GL_INVALID_OPERATION, ); *v = (GLint)g->tspacing; return;
+    case GL_TESS_GEN_VERTEX_ORDER: if (!g || !g->tess) GLERR(GL_INVALID_OPERATION, ); *v = g->tcw ? GL_CW : GL_CCW; return;
+    case GL_TESS_GEN_POINT_MODE: if (!g || !g->tess) GLERR(GL_INVALID_OPERATION, ); *v = g->tpoint; return;
     }
     GLERR(GL_INVALID_ENUM, );
 }
@@ -1073,7 +1156,7 @@ void glGetTransformFeedbackVarying(GLuint pn, GLuint idx, GLsizei bs, GLsizei *l
     if (type) {
         *type = GL_FLOAT;
         if (g) {
-            gv_t v = find_glob(g->lib[0], p->xfb_names[idx]);
+            gv_t v = find_glob(g->lib[g->ost], p->xfb_names[idx]);
             if (v.t) { ty_t *t = v.t->k == K_ARRAY ? v.t->e : v.t; *type = num_gltype(t); if (size && v.t->k == K_ARRAY) *size = v.t->n; }
         }
     }
@@ -1158,7 +1241,7 @@ static void uni_write(gl_ctx_t *C, gl_prog_t *p, int loc, int count, int kind, i
             u->units[el + n] = (int)iv[0];
             continue;
         }
-        for (int st = 0; st < 2; st++) {
+        for (int st = 0; st < NST; st++) {
             if (u->off[st] < 0) continue;
             u8 *dst = g->lib[st]->gmem + u->off[st] + (i64)(el + n) * u->stride;
             int sk = ty_scal(t), es = scal_size(sk), cs = t->k == K_MAT ? t->e->size : 0;
@@ -1243,7 +1326,8 @@ static int uni_read(gl_ctx_t *C, GLuint pn, GLint loc, double *dv, i64 *iv, GLsi
     pu_t *u = uni_at(g, loc, &el);
     if (!u) { gl_err(C, GL_INVALID_OPERATION); return 0; }
     if (u->sampler) { dv[0] = iv[0] = u->units[el]; return 1; }
-    int st = u->off[0] >= 0 ? 0 : 1;
+    int st = 0;
+    while (st < NST - 1 && u->off[st] < 0) st++;
     ty_t *t = u->t;
     int cols = t->k == K_MAT ? t->n : 1, rows = t->k == K_MAT ? t->e->n : t->k == K_VEC ? t->n : 1;
     int sk = ty_scal(t), es = scal_size(sk), cs = t->k == K_MAT ? t->e->size : 0;
@@ -1350,7 +1434,9 @@ void glGetActiveUniformBlockiv(GLuint pn, GLuint b, GLenum q, GLint *v) {
     case GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES: for (int i = 0; i < B->nmem; i++) v[i] = B->mem[i]; return;
     case GL_UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER: *v = B->off[0] >= 0; return;
     case GL_UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER: *v = B->off[1] >= 0; return;
-    case GL_UNIFORM_BLOCK_REFERENCED_BY_GEOMETRY_SHADER: *v = 0; return;
+    case GL_UNIFORM_BLOCK_REFERENCED_BY_GEOMETRY_SHADER: *v = B->off[2] >= 0; return;
+    case GL_UNIFORM_BLOCK_REFERENCED_BY_TESS_CONTROL_SHADER: *v = B->off[3] >= 0; return;
+    case GL_UNIFORM_BLOCK_REFERENCED_BY_TESS_EVALUATION_SHADER: *v = B->off[4] >= 0; return;
     }
     GLERR(GL_INVALID_ENUM, );
 }
@@ -1549,6 +1635,7 @@ static void put_vec(u8 *dst, ty_t *t, const float *f, const i32 *iv) {
 }
 static void put_f4(msl_lib_t *L, int off, const float *v, int n) { if (off >= 0) memcpy(L->gmem + off, v, (size_t)n * 4); }
 typedef struct { gl_prog_t *p; pg_t *g; } run_t;
+static void vtx_out(gl_ctx_t *C, pg_t *g, msl_lib_t *L, gl_vtx_t *o);
 static run_t g_run;   /* programa do draw atual (o raster é síncrono) */
 static void glsl_vs(gl_ctx_t *C, u32 e, u32 iid, gl_vtx_t *o) {
     pg_t *g = g_run.g;
@@ -1587,6 +1674,21 @@ static void glsl_vs(gl_ctx_t *C, u32 e, u32 iid, gl_vtx_t *o) {
     ctx.iid = iid;
     u8 dummy[64];
     msl_run(g->main[0], &ctx, dummy);
+    if (g->tess) {
+        /* o VS alimenta a tesselação: posição, tamanho de ponto e recorte crus, e as saídas nos slots do patch */
+        memcpy(o->clip, L->gmem + g->v_pos, 16);
+        o->psize = C->point_s;
+        if (g->vw_psize && g->v_psize >= 0) memcpy(&o->psize, L->gmem + g->v_psize, 4);
+        for (int i = 0; i < GLX_CLIP; i++) o->cd[i] = 1;
+        if (g->vw_clip && g->v_clip >= 0) memcpy(o->cd, L->gmem + g->v_clip, 4 * GLX_CLIP);
+        for (int i = 0; i < g->npvar; i++) { pv_t *v = &g->pvar[i]; memcpy(o->v[v->slot], L->gmem + v->off[0], (size_t)v->size); }
+        o->nxfb = 0;
+        return;
+    }
+    vtx_out(C, g, L, o);
+}
+/* saídas do último estágio de vértice (VS ou avaliação de tesselação) para o gl_vtx_t do raster/GS */
+static void vtx_out(gl_ctx_t *C, pg_t *g, msl_lib_t *L, gl_vtx_t *o) {
     memcpy(o->clip, L->gmem + g->b_pos, 16);
     o->psize = C->point_s;
     if (g->w_psize && (gl_is_on(C, GL_PROGRAM_POINT_SIZE) || gl_is_on(C, GL_VERTEX_PROGRAM_POINT_SIZE))) memcpy(&o->psize, L->gmem + g->b_psize, 4);
@@ -1598,7 +1700,7 @@ static void glsl_vs(gl_ctx_t *C, u32 e, u32 iid, gl_vtx_t *o) {
         for (int i = 0; i < GLX_CLIP; i++) o->cd[i] = (float)(C->clip_plane[i][0] * cv[0] + C->clip_plane[i][1] * cv[1] + C->clip_plane[i][2] * cv[2] + C->clip_plane[i][3] * cv[3]);
     }
     for (int i = 0; i < 13; i++) if (g->c_out[i] >= 0) memcpy(o->v[i], L->gmem + g->c_out[i], i == 12 ? 4 : 16);
-    if (g->glib) for (int i = 0; i < g->ngvar; i++) { pv_t *v = &g->gvar[i]; memcpy(o->v[v->slot], L->gmem + v->off[0], (size_t)v->size); }
+    if (g->lib[2]) for (int i = 0; i < g->ngvar; i++) { pv_t *v = &g->gvar[i]; memcpy(o->v[v->slot], L->gmem + v->off[0], (size_t)v->size); }
     else for (int i = 0; i < g->nvar; i++) {
         pv_t *v = &g->var[i];
         memcpy(o->v[v->slot], L->gmem + v->off[0], (size_t)v->size);
@@ -1698,12 +1800,104 @@ static void glsl_fs(gl_ctx_t *C, gl_frag_t *f) {
     if (g->w_depth) memcpy(&f->depth, L->gmem + g->b_depth, 4);
     if (g->w_smask && g->b_smask >= 0) memcpy(&f->mask_out, L->gmem + g->b_smask, 4);
 }
+/* ---- tesselação: controle (por patch, as invocações juntas), gerador de primitivos e avaliação (por coordenada) */
+typedef struct { float u, v, w; } tess_pt_t;
+int gl_tess_gen(GLenum mode, GLenum sp, int cw, int point, const float outer[4], const float inner[2],
+                tess_pt_t **pts, int *npts, u32 **ix, int *nix, int *pv);
+void gl_raster_tess_emit(gl_ctx_t *C, int pv, gl_vtx_t *v, const u32 *ix, int nix);
+/* gl_in[i] (gl_PerVertexIn: gl_Position, gl_PointSize, gl_ClipDistance) a partir de um vértice */
+static void pervtx_put(msl_lib_t *L, int i, const gl_vtx_t *v) {
+    gv_t gi = find_glob(L, "gl_in");
+    if (gi.off < 0 || gi.t->k != K_ARRAY || gi.t->e->k != K_STRUCT) return;
+    ty_t *st = gi.t->e;
+    u8 *b = L->gmem + gi.off + (i64)i * st->size;
+    for (int f = 0; f < st->nf; f++) {
+        const char *n = st->f[f].name;
+        if (!strcmp(n, "gl_Position")) memcpy(b + st->f[f].off, v->clip, 16);
+        else if (!strcmp(n, "gl_PointSize")) memcpy(b + st->f[f].off, &v->psize, 4);
+        else if (!strcmp(n, "gl_ClipDistance")) memcpy(b + st->f[f].off, v->cd, 4 * GLX_CLIP);
+    }
+}
+static void reset_plain(pg_t *g, int st) {
+    msl_lib_t *L = g->lib[st];
+    for (int i = 0; i < g->nplain[st]; i++) memcpy(L->gmem + g->plain[st][i].off, g->init[st] + g->plain[st][i].off, (size_t)g->plain[st][i].size);
+}
+static void glsl_tess(gl_ctx_t *C, gl_vtx_t **in, int n, u32 prim) {
+    pg_t *g = g_run.g;
+    msl_lib_t *EL = g->lib[4], *TL = g->lib[3];
+    float outer[4], inner[2];
+    int N;
+    /* entradas do primeiro estágio: gl_in[] e as saídas do VS nos arrays de 32 */
+    msl_lib_t *CL = TL ? TL : EL;
+    for (int i = 0; i < n && i < 32; i++) {
+        pervtx_put(CL, i, in[i]);
+        for (int k = 0; k < g->npvar; k++) { pv_t *v = &g->pvar[k]; memcpy(CL->gmem + v->off[1] + (i64)i * v->size, in[i]->v[v->slot], (size_t)v->size); }
+    }
+    if (TL) {
+        reset_plain(g, 3);
+        i32 pvi = n, pid = (i32)prim;
+        if (g->c_pvi >= 0) memcpy(TL->gmem + g->c_pvi, &pvi, 4);
+        if (g->c_pid >= 0) memcpy(TL->gmem + g->c_pid, &pid, 4);
+        /* os níveis começam indefinidos; zero descarta o patch se o shader não escrever */
+        if (g->c_outer >= 0) memset(TL->gmem + g->c_outer, 0, 16);
+        if (g->c_inner >= 0) memset(TL->gmem + g->c_inner, 0, 8);
+        msl_ctx_t ctx;
+        memset(&ctx, 0, sizeof ctx);
+        ctx.tid_out = g->c_inv >= 0 ? (u32 *)(TL->gmem + g->c_inv) : 0;
+        ctx.primitive_id = prim;
+        u32 tg[3] = {0, 0, 0}, tp[3] = {(u32)g->tcs_n, 1, 1};
+        msl_run_group(g->main[3], &ctx, tg, tp, tp, 0);
+        N = g->tcs_n;
+        if (g->c_outer >= 0) memcpy(outer, TL->gmem + g->c_outer, 16); else for (int i = 0; i < 4; i++) outer[i] = 0;
+        if (g->c_inner >= 0) memcpy(inner, TL->gmem + g->c_inner, 8); else inner[0] = inner[1] = 0;
+        /* controle -> avaliação */
+        for (int k = 0; k < g->ntcp; k++) {
+            tcopy_t *t = &g->tcp[k];
+            if (t->arr) memcpy(EL->gmem + t->dst, TL->gmem + t->src, (size_t)t->esize * (size_t)N);
+            else memcpy(EL->gmem + t->dst, TL->gmem + t->src, (size_t)t->esize);
+        }
+        gv_t go = find_glob(TL, "gl_out");
+        if (go.off >= 0 && g->e_in_arr >= 0 && go.t->k == K_ARRAY) memcpy(EL->gmem + g->e_in_arr, TL->gmem + go.off, (size_t)go.t->e->size * (size_t)N);
+    } else {
+        N = n;
+        memcpy(outer, C->patch_outer, 16);
+        memcpy(inner, C->patch_inner, 8);
+    }
+    i32 pvi = N, pid = (i32)prim;
+    if (g->e_pvi >= 0) memcpy(EL->gmem + g->e_pvi, &pvi, 4);
+    if (g->e_pid >= 0) memcpy(EL->gmem + g->e_pid, &pid, 4);
+    if (g->e_outer >= 0) memcpy(EL->gmem + g->e_outer, outer, 16);
+    if (g->e_inner >= 0) memcpy(EL->gmem + g->e_inner, inner, 8);
+    tess_pt_t *pts = 0;
+    u32 *ix = 0;
+    int np = 0, ni = 0, pv = 0;
+    if (!gl_tess_gen(g->tmode, g->tspacing, g->tcw, g->tpoint, outer, inner, &pts, &np, &ix, &ni, &pv)) return;
+    gl_vtx_t *out = np ? malloc(sizeof *out * (size_t)np) : 0;
+    if (np && !out) { free(pts); free(ix); return; }
+    for (int k = 0; k < np; k++) {
+        reset_plain(g, 4);
+        float tc[3] = {pts[k].u, pts[k].v, pts[k].w};
+        if (g->e_coord >= 0) memcpy(EL->gmem + g->e_coord, tc, 12);
+        msl_ctx_t ctx;
+        memset(&ctx, 0, sizeof ctx);
+        ctx.primitive_id = prim;
+        u8 dummy[64];
+        msl_run(g->main[4], &ctx, dummy);
+        out[k].edge = 1;
+        out[k].nxfb = 0;
+        vtx_out(C, g, EL, &out[k]);
+    }
+    gl_raster_tess_emit(C, pv, out, ix, ni);
+    free(out);
+    free(pts);
+    free(ix);
+}
 /* geometry shader: roda sobre um primitivo de entrada e manda as saídas ao raster */
 void gl_raster_gs_emit(gl_ctx_t *C, GLenum outprim, gl_vtx_t *v, const u8 *cut, int n);
 static void glsl_gs(gl_ctx_t *C, gl_vtx_t **in, int n, u32 prim) {
     pg_t *g = g_run.g;
-    msl_lib_t *L = g->glib;
-    for (int i = 0; i < g->ngplain; i++) memcpy(L->gmem + g->gplain[i].off, g->ginit + g->gplain[i].off, (size_t)g->gplain[i].size);
+    msl_lib_t *L = g->lib[2];
+    for (int i = 0; i < g->nplain[2]; i++) memcpy(L->gmem + g->plain[2][i].off, g->init[2] + g->plain[2][i].off, (size_t)g->plain[2][i].size);
     gv_t gin = find_glob(L, "gl_in");
     int es = gin.t && gin.t->k == K_ARRAY ? gin.t->e->size : 0;
     ty_t *pvt = gin.t && gin.t->k == K_ARRAY ? gin.t->e : 0;
@@ -1731,7 +1925,7 @@ static void glsl_gs(gl_ctx_t *C, gl_vtx_t **in, int n, u32 prim) {
         msl_ctx_t ctx;
         memset(&ctx, 0, sizeof ctx);
         u8 dummy[64];
-        msl_run(g->gmain, &ctx, dummy);
+        msl_run(g->main[2], &ctx, dummy);
         i32 cnt = 0;
         memcpy(&cnt, L->gmem + g->gs_n, 4);
         if (cnt > M) cnt = M;
@@ -1758,7 +1952,8 @@ static void glsl_gs(gl_ctx_t *C, gl_vtx_t **in, int n, u32 prim) {
 }
 /* embutidas uniformes do compat */
 static void set_glob(pg_t *g, const char *name, int idx, const float *v, int n) {
-    for (int st = 0; st < 2; st++) {
+    for (int st = 0; st < NST; st++) {
+        if (!g->lib[st]) continue;
         gv_t x = find_glob(g->lib[st], name);
         if (x.off < 0) continue;
         int es = x.t->k == K_ARRAY ? x.t->e->size : x.t->size;
@@ -1771,7 +1966,8 @@ static void set_glob(pg_t *g, const char *name, int idx, const float *v, int n) 
     }
 }
 static void set_field(pg_t *g, const char *name, int idx, const char *field, const float *v, int n) {
-    for (int st = 0; st < 2; st++) {
+    for (int st = 0; st < NST; st++) {
+        if (!g->lib[st]) continue;
         gv_t x = find_glob(g->lib[st], name);
         if (x.off < 0) continue;
         ty_t *t = x.t->k == K_ARRAY ? x.t->e : x.t;
@@ -1782,8 +1978,8 @@ static void set_field(pg_t *g, const char *name, int idx, const char *field, con
 }
 static void transp(float *o, const float *m) { for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) o[i * 4 + j] = m[j * 4 + i]; }
 static void compat_uniforms(gl_ctx_t *C, pg_t *g) {
-    const char *u = g->vsrc_user, *fu = g->fsrc_user;
-#define USED(n) (uses(u, n) || uses(fu, n) || (uses(u, "ftransform") && !strcmp(n, "gl_ModelViewProjectionMatrix")))
+    const char *u = g->src_user[0], *fu = g->src_user[1], *gu = g->src_user[2], *cu = g->src_user[3], *eu = g->src_user[4];
+#define USED(n) (uses(u, n) || uses(fu, n) || uses(gu, n) || uses(cu, n) || uses(eu, n) || (uses(u, "ftransform") && !strcmp(n, "gl_ModelViewProjectionMatrix")))
     float dr[3] = {(float)C->dr[0], (float)C->dr[1], (float)(C->dr[1] - C->dr[0])};
     if (USED("gl_DepthRange")) { set_field(g, "gl_DepthRange", 0, "near", &dr[0], 1); set_field(g, "gl_DepthRange", 0, "far", &dr[1], 1); set_field(g, "gl_DepthRange", 0, "diff", &dr[2], 1); }
     if (!g->compat) return;
@@ -1909,7 +2105,7 @@ void gl_glsl_stage(gl_ctx_t *C) {
             msl_samp_t *ss = &g->sstore[si];
             gl_tex_sampler(C, t, C->samp[unit], ss);
             void *ptrs[2] = {mt, ss};
-            for (int st = 0; st < 2; st++) if (u->off[st] >= 0) memcpy(g->lib[st]->gmem + u->off[st] + (i64)k * u->stride, ptrs, 16);
+            for (int st = 0; st < NST; st++) if (u->off[st] >= 0) memcpy(g->lib[st]->gmem + u->off[st] + (i64)k * u->stride, ptrs, 16);
         }
     }
     /* blocos de uniform a partir dos buffers ligados */
@@ -1919,7 +2115,7 @@ void gl_glsl_stage(gl_ctx_t *C) {
         if (!b || !b->data) continue;
         i64 off = C->ubo_off[B->binding], avail = b->size - off;
         if (C->ubo_size[B->binding] && C->ubo_size[B->binding] < avail) avail = C->ubo_size[B->binding];
-        for (int st = 0; st < 2; st++) if (B->off[st] >= 0) copy140(B->t, b->data + off, avail, g->lib[st]->gmem + B->off[st], B->rowmajor);
+        for (int st = 0; st < NST; st++) if (B->off[st] >= 0) copy140(B->t, b->data + off, avail, g->lib[st]->gmem + B->off[st], B->rowmajor);
     }
     /* EXT_bindable_uniform: o buffer já está no layout do gmem (glGetUniformOffsetEXT) */
     for (int i = 0; i < g->nuni; i++) {
@@ -1927,7 +2123,7 @@ void gl_glsl_stage(gl_ctx_t *C) {
         if (!u->bbuf || !u->bbuf->data) continue;
         i64 n = (i64)u->stride * u->arr;
         if (n > u->bbuf->size) n = u->bbuf->size;
-        for (int st = 0; st < 2; st++) if (u->off[st] >= 0) memcpy(g->lib[st]->gmem + u->off[st], u->bbuf->data, (size_t)n);
+        for (int st = 0; st < NST; st++) if (u->off[st] >= 0) memcpy(g->lib[st]->gmem + u->off[st], u->bbuf->data, (size_t)n);
     }
     compat_uniforms(C, g);
     S->nvar = g->nslots;
@@ -1939,9 +2135,9 @@ void gl_glsl_stage(gl_ctx_t *C) {
     S->per_sample = g->per_sample;
     S->writes_mask = g->w_smask;
     /* derivadas: o shader pede dFdx/dFdy/fwidth ou amostra textura com mipmap / filtros min e mag diferentes */
-    g_need_deriv = uses(g->fsrc_user, "dFdx") || uses(g->fsrc_user, "dFdy") || uses(g->fsrc_user, "fwidth") ||
-                   uses(g->fsrc_user, "dFdxFine") || uses(g->fsrc_user, "dFdyFine") || uses(g->fsrc_user, "dFdxCoarse") ||
-                   uses(g->fsrc_user, "dFdyCoarse") || uses(g->fsrc_user, "fwidthFine") || uses(g->fsrc_user, "fwidthCoarse");
+    g_need_deriv = uses(g->src_user[1], "dFdx") || uses(g->src_user[1], "dFdy") || uses(g->src_user[1], "fwidth") ||
+                   uses(g->src_user[1], "dFdxFine") || uses(g->src_user[1], "dFdyFine") || uses(g->src_user[1], "dFdxCoarse") ||
+                   uses(g->src_user[1], "dFdyCoarse") || uses(g->src_user[1], "fwidthFine") || uses(g->src_user[1], "fwidthCoarse");
     for (int i = 0, k = 0; i < g->nuni && !g_need_deriv; i++) {
         pu_t *u = &g->uni[i];
         if (!u->sampler) continue;
@@ -1953,7 +2149,8 @@ void gl_glsl_stage(gl_ctx_t *C) {
     }
     if (g_need_deriv) S->dmask = g->nslots >= 32 ? 0xffffffffu : (1u << g->nslots) - 1;
     S->nclip = GLX_CLIP;
-    if (g->glib) { S->gs = glsl_gs; S->gs_in = g->gs_inp; }
+    if (g->lib[2]) { S->gs = glsl_gs; S->gs_in = g->gs_inp; }
+    if (g->tess) { S->tess = glsl_tess; S->tess_out = g->tpoint ? GL_POINTS : g->tmode == GL_ISOLINES ? GL_LINES : GL_TRIANGLES; }
     S->vs = glsl_vs;
     S->fs = glsl_fs;
     S->writes_depth = g->w_depth;

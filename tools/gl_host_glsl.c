@@ -504,6 +504,178 @@ static void t_msaa_glsl(void) {
     gl_ctx_destroy(C);
 }
 
+
+/* tesselação: contagem de primitivos por domínio/nível, espaçamento fracionário, barrier() no controle, patch out,
+ * níveis padrão sem controle, point_mode, isolinhas, GS depois da avaliação e os erros de draw */
+typedef struct { float u, v, w; } tess_pt_t;
+int gl_tess_gen(GLenum mode, GLenum sp, int cw, int point, const float outer[4], const float inner[2],
+                tess_pt_t **pts, int *npts, u32 **ix, int *nix, int *pv);
+void free(void *);
+static GLuint progN(const char **src, const GLenum *ty, int n, char *log, int nlog) {
+    GLuint p = glCreateProgram();
+    for (int i = 0; i < n; i++) {
+        GLuint s = glCreateShader(ty[i]);
+        glShaderSource(s, 1, &src[i], 0);
+        glCompileShader(s);
+        GLint ok;
+        glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+        if (!ok) { glGetShaderInfoLog(s, nlog, 0, log); printf("shader %d: %s\n", i, log); return 0; }
+        glAttachShader(p, s);
+        glDeleteShader(s);
+    }
+    glBindAttribLocation(p, 0, "pos");
+    glLinkProgram(p);
+    GLint ok;
+    glGetProgramiv(p, GL_LINK_STATUS, &ok);
+    if (!ok) { glGetProgramInfoLog(p, nlog, 0, log); printf("link: %s\n", log); return 0; }
+    return p;
+}
+static int tess_count(GLuint p, int nverts) {
+    GLuint q;
+    glGenQueries(1, &q);
+    glBeginQuery(GL_PRIMITIVES_GENERATED, q);
+    glUseProgram(p);
+    glDrawArrays(GL_PATCHES, 0, nverts);
+    glEndQuery(GL_PRIMITIVES_GENERATED);
+    GLuint n = 0;
+    glGetQueryObjectuiv(q, GL_QUERY_RESULT, &n);
+    glDeleteQueries(1, &q);
+    return (int)n;
+}
+static void t_tess(void) {
+    /* gerador: subdivisão fracionária de uma aresta (isolinhas: outer[1] = segmentos) */
+    {
+        tess_pt_t *pt; u32 *ix; int np, ni, pv;
+        float o[4] = {1, 3, 0, 0}, in[2] = {0, 0};
+        int ok = gl_tess_gen(GL_ISOLINES, GL_FRACTIONAL_EVEN, 0, 0, o, in, &pt, &np, &ix, &ni, &pv);
+        float want[5] = {0, 1.0f / 3, 0.5f, 2.0f / 3, 1};
+        int good = ok && np == 5 && ni == 8 && pv == 2;
+        for (int i = 0; good && i < 5; i++) if (pt[i].u < want[i] - 1e-5f || pt[i].u > want[i] + 1e-5f) good = 0;
+        CHECK(good, "fractional_even 3 -> 4 segmentos (dois curtos no meio): np %d ni %d", np, ni);
+        free(pt); free(ix);
+        o[1] = 2;
+        ok = gl_tess_gen(GL_ISOLINES, GL_FRACTIONAL_ODD, 0, 0, o, in, &pt, &np, &ix, &ni, &pv);
+        float w2[4] = {0, 0.25f, 0.75f, 1};
+        good = ok && np == 4;
+        for (int i = 0; good && i < 4; i++) if (pt[i].u < w2[i] - 1e-5f || pt[i].u > w2[i] + 1e-5f) good = 0;
+        CHECK(good, "fractional_odd 2 -> 3 segmentos (curto, longo, curto): np %d", np);
+        free(pt); free(ix);
+        o[0] = 0; o[1] = 4;
+        CHECK(!gl_tess_gen(GL_ISOLINES, GL_EQUAL, 0, 0, o, in, &pt, &np, &ix, &ni, &pv), "nível externo 0 descarta o patch");
+        /* triângulos com cw: área negativa no plano (u, v) */
+        float t3[4] = {3, 3, 3, 0}, i3[2] = {3, 0};
+        ok = gl_tess_gen(GL_TRIANGLES, GL_EQUAL, 1, 0, t3, i3, &pt, &np, &ix, &ni, &pv);
+        int allcw = ok && ni == 13 * 3;
+        for (int i = 0; allcw && i + 2 < ni; i += 3) {
+            tess_pt_t *a = &pt[ix[i]], *b = &pt[ix[i + 1]], *c = &pt[ix[i + 2]];
+            if ((b->u - a->u) * (c->v - a->v) - (c->u - a->u) * (b->v - a->v) >= 0) allcw = 0;
+        }
+        CHECK(allcw, "triângulos nível 3: 13 em sentido horário (%d índices)", ni);
+        int sumok = 1;
+        for (int i = 0; ok && i < np; i++) { float s = pt[i].u + pt[i].v + pt[i].w; if (s < 0.9999f || s > 1.0001f) sumok = 0; }
+        CHECK(sumok, "u + v + w = 1 em todos os pontos do triângulo");
+        free(pt); free(ix);
+    }
+    gl_ctx_t *C = gl_ctx_create(0, 1, 4, 1, 8, 8, 1, 1, 1, 1);
+    gl_ctx_make_current(C);
+    char log[1024];
+    const char *vs = "#version 410 core\nlayout(location = 0) in vec2 pos;\nout vec2 vp;\nvoid main() { vp = pos; gl_Position = vec4(pos, 0.0, 1.0); }\n";
+    const char *tcs = "#version 410 core\nlayout(vertices = 4) out;\nin vec2 vp[];\nout vec2 cp[];\nout float tv[];\npatch out float pk;\nuniform float lvl;\n"
+                      "void main() {\n  cp[gl_InvocationID] = vp[gl_InvocationID]; tv[gl_InvocationID] = float(gl_InvocationID + 1);\n"
+                      "  gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;\n  barrier();\n"
+                      "  if (gl_InvocationID == 0) {\n    float l = lvl > 0.0 ? lvl : tv[3] - 2.0;\n"
+                      "    gl_TessLevelOuter[0] = l; gl_TessLevelOuter[1] = l; gl_TessLevelOuter[2] = l; gl_TessLevelOuter[3] = l;\n"
+                      "    gl_TessLevelInner[0] = l; gl_TessLevelInner[1] = l; pk = (tv[1] + tv[2] + tv[3]) / 10.0; }\n}\n";
+    const char *tes = "#version 410 core\nlayout(quads, equal_spacing, ccw) in;\nin vec2 cp[];\npatch in float pk;\nout vec3 col;\nuniform float zoff;\n"
+                      "void main() { vec2 a = mix(cp[0], cp[1], gl_TessCoord.x), b = mix(cp[3], cp[2], gl_TessCoord.x);\n"
+                      "  gl_Position = vec4(mix(a, b, gl_TessCoord.y), zoff, 1.0); col = vec3(gl_TessCoord.xy, pk); }\n";
+    const char *fs = "#version 410 core\nin vec3 col;\nout vec4 c;\nvoid main() { c = vec4(col, 1.0); }\n";
+    const char *s4[4] = {vs, tcs, tes, fs};
+    GLenum t4[4] = {GL_VERTEX_SHADER, GL_TESS_CONTROL_SHADER, GL_TESS_EVALUATION_SHADER, GL_FRAGMENT_SHADER};
+    GLuint p = progN(s4, t4, 4, log, sizeof log);
+    CHECK(p != 0, "programa com tesselação liga");
+    if (!p) { gl_ctx_destroy(C); return; }
+    GLint v = 0;
+    glGetProgramiv(p, GL_TESS_GEN_MODE, &v);
+    CHECK(v == GL_QUADS, "GL_TESS_GEN_MODE %x", v);
+    glGetProgramiv(p, GL_TESS_CONTROL_OUTPUT_VERTICES, &v);
+    CHECK(v == 4, "GL_TESS_CONTROL_OUTPUT_VERTICES %d", v);
+    GLuint vao, vbo;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    float quad[] = {-1, -1, 1, -1, 1, 1, -1, 1};
+    glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glEnableVertexAttribArray(0);
+    glPatchParameteri(GL_PATCH_VERTICES, 4);
+    glUseProgram(p);
+    GLint ll = glGetUniformLocation(p, "lvl");
+    CHECK(ll >= 0 && glGetUniformLocation(p, "zoff") >= 0, "uniforms do controle e da avaliação");
+    /* barrier(): o nível vem de tv[3] (escrito pela invocação 3) - 2 = 2: quads 2/2 -> 8 triângulos */
+    glUniform1f(ll, 0);
+    CHECK(tess_count(p, 4) == 8, "barrier() no controle: quads nível 2 = 8 triângulos (%d)", tess_count(p, 4));
+    glUniform1f(ll, 1);
+    CHECK(tess_count(p, 4) == 2, "quads nível 1 = 2 triângulos");
+    glUniform1f(ll, 3);
+    CHECK(tess_count(p, 4) == 18, "quads nível 3 = 18 triângulos (%d)", tess_count(p, 4));
+    glUniform1f(ll, 0);
+    CHECK(tess_count(p, 8) == 16, "dois patches = 16 triângulos");
+    /* desenho: gl_TessCoord interpolado na tela e o patch out */
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDrawArrays(GL_PATCHES, 0, 4);
+    u8 o[4];
+    px(1, 1, o);
+    CHECK(near(o[0], 48, 3) && near(o[1], 48, 3) && near(o[2], 230, 2), "cor em (1,1): %d %d %d", o[0], o[1], o[2]);
+    px(6, 2, o);
+    CHECK(near(o[0], 207, 3) && near(o[1], 80, 3), "cor em (6,2): %d %d %d", o[0], o[1], o[2]);
+    /* erros */
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    CHECK(glGetError() == GL_INVALID_OPERATION, "GL_TRIANGLES com tesselação: erro");
+    /* sem controle: níveis padrão de glPatchParameterfv; triângulos com point_mode e isolinhas */
+    const char *tes_t = "#version 410 core\nlayout(triangles, fractional_odd_spacing, point_mode) in;\nin vec2 vp[];\n"
+                        "void main() { gl_Position = vec4(vp[0] * gl_TessCoord.x + vp[1] * gl_TessCoord.y + vp[2] * gl_TessCoord.z, 0.0, 1.0); gl_PointSize = 1.0; }\n";
+    const char *fs1 = "#version 410 core\nout vec4 c;\nvoid main() { c = vec4(1.0); }\n";
+    const char *s3[3] = {vs, tes_t, fs1};
+    GLenum t3[3] = {GL_VERTEX_SHADER, GL_TESS_EVALUATION_SHADER, GL_FRAGMENT_SHADER};
+    GLuint p2 = progN(s3, t3, 3, log, sizeof log);
+    CHECK(p2 != 0, "avaliação sem controle liga");
+    glPatchParameteri(GL_PATCH_VERTICES, 3);
+    float ol[4] = {2, 2, 2, 2}, il[2] = {2, 2};
+    glPatchParameterfv(GL_PATCH_DEFAULT_OUTER_LEVEL, ol);
+    glPatchParameterfv(GL_PATCH_DEFAULT_INNER_LEVEL, il);
+    float got[4] = {0};
+    glGetFloatv(GL_PATCH_DEFAULT_OUTER_LEVEL, got);
+    CHECK(got[0] == 2 && got[3] == 2, "GL_PATCH_DEFAULT_OUTER_LEVEL");
+    /* fractional_odd 2 -> 3 segmentos por aresta: 9 pontos na borda + 3 do anel interno = 12 pontos */
+    if (p2) CHECK(tess_count(p2, 3) == 12, "point_mode: 12 pontos (%d)", tess_count(p2, 3));
+    const char *tes_i = "#version 410 core\nlayout(isolines) in;\nin vec2 vp[];\n"
+                        "void main() { gl_Position = vec4(mix(vp[0], vp[1], gl_TessCoord.x), gl_TessCoord.y, 1.0); }\n";
+    const char *si[3] = {vs, tes_i, fs1};
+    GLuint p3 = progN(si, t3, 3, log, sizeof log);
+    float oi[4] = {3, 4, 0, 0};
+    glPatchParameterfv(GL_PATCH_DEFAULT_OUTER_LEVEL, oi);
+    glPatchParameteri(GL_PATCH_VERTICES, 2);
+    if (p3) CHECK(tess_count(p3, 2) == 12, "isolinhas 3 x 4 = 12 segmentos (%d)", tess_count(p3, 2));
+    /* GS depois da avaliação: recebe triângulos */
+    const char *tes_g = "#version 410 core\nlayout(triangles) in;\nin vec2 vp[];\n"
+                        "void main() { gl_Position = vec4(vp[0] * gl_TessCoord.x + vp[1] * gl_TessCoord.y + vp[2] * gl_TessCoord.z, 0.0, 1.0); }\n";
+    const char *gs = "#version 410 core\nlayout(triangles) in;\nlayout(points, max_vertices = 1) out;\nvoid main() { gl_Position = gl_in[0].gl_Position; EmitVertex(); EndPrimitive(); }\n";
+    const char *sg[4] = {vs, tes_g, gs, fs1};
+    GLenum tg[4] = {GL_VERTEX_SHADER, GL_TESS_EVALUATION_SHADER, GL_GEOMETRY_SHADER, GL_FRAGMENT_SHADER};
+    GLuint p4 = progN(sg, tg, 4, log, sizeof log);
+    CHECK(p4 != 0, "tesselação + geometry shader liga");
+    glPatchParameterfv(GL_PATCH_DEFAULT_OUTER_LEVEL, ol);
+    glPatchParameteri(GL_PATCH_VERTICES, 3);
+    if (p4) CHECK(tess_count(p4, 3) == 6, "GS recebe os 6 triângulos de nível 2 (%d)", tess_count(p4, 3));
+    glUseProgram(0);
+    glDrawArrays(GL_PATCHES, 0, 3);
+    CHECK(glGetError() == GL_INVALID_OPERATION, "GL_PATCHES sem tesselação: erro");
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks) {
     F = fails;
     K = checks;
@@ -515,4 +687,5 @@ void gl_glsl_host_tests(int *fails, int *checks) {
     t_derivatives();
     t_geometry();
     t_msaa_glsl();
+    t_tess();
 }

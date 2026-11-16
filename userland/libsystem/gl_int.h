@@ -263,6 +263,8 @@ typedef struct {
     int per_sample;            /* o fragment shader lê gl_SampleID/gl_SamplePosition: roda uma vez por amostra */
     int writes_mask;           /* o fragment shader escreve gl_SampleMask */
     u32 centroid;              /* slots com interpolação centroid */
+    void (*tess)(struct gl_ctx *C, gl_vtx_t **in, int n, u32 prim);   /* tesselação (0 = não há): um patch */
+    GLenum tess_out;           /* primitivo que a tesselação gera: GL_TRIANGLES, GL_LINES ou GL_POINTS */
 } gl_stage_t;
 
 /* ---- contexto */
@@ -320,6 +322,7 @@ typedef struct gl_ctx {
     int up_align, up_row, up_skrow, up_skpix, up_imgh, up_skimg, up_swap, up_lsb;
     float min_sample_shading;
     u32 patch_vertices;
+    float patch_outer[4], patch_inner[2];   /* GL_PATCH_DEFAULT_OUTER/INNER_LEVEL (sem tessellation control shader) */
     /* fixed function */
     GLenum mmode;
     mstack_t mv, proj, texm[8], colm;

@@ -94,7 +94,7 @@ typedef struct {
     char *arrn[256]; int arrv[256]; int narr;          /* tamanhos de array conhecidos (x.length()) */
     char *bmem[256]; char *bmap[256]; int nbmem;       /* membro de bloco sem instância -> "inst.membro" */
     int anon;
-    int unsized6;              /* geometry shader: "in T x[]" vira [6] */
+    int unsized;               /* "T x[]" de entrada/saída vira [N]: 6 no geometry shader, 32 na tesselação */
 } tr_t;
 static int is_type_tok(tr_t *R, const gt_t *t) {
     if (t->k != 'i') return 0;
@@ -151,7 +151,7 @@ static void body(tr_t *R, int a, int b) {
             ob_tok(&R->o, &d);
             continue;
         } else {
-            if (R->unsized6 && teq(t, "[") && i + 1 < b && teq(&T[i + 1], "]")) { gt_t d = *t; d.p = "[6]"; d.n = 3; ob_tok(&R->o, &d); i++; continue; }
+            if (R->unsized && teq(t, "[") && i + 1 < b && teq(&T[i + 1], "]")) { char us[8]; snprintf(us, sizeof us, "[%d]", R->unsized); gt_t d = *t; d.p = us; d.n = (int)strlen(us); ob_tok(&R->o, &d); i++; continue; }
             if (teq(t, "^^")) { gt_t d = *t; d.p = "!="; ob_tok(&R->o, &d); continue; }
             if (teq(t, "(")) pd++;
             if (teq(t, ")")) {
@@ -163,7 +163,7 @@ static void body(tr_t *R, int a, int b) {
     }
 }
 /* qualificadores de uma declaração; devolve o índice do primeiro token depois deles */
-typedef struct { int storage, loc, index, interp, rowmajor, centroid, origin_ul, pixel_int, isconst, maxv, inv, hasprim; GLenum prim; } qual_t;
+typedef struct { int storage, loc, index, interp, rowmajor, centroid, origin_ul, pixel_int, isconst, maxv, inv, hasprim, patch, verts, cw, ccw, point, tes; GLenum prim, spacing; } qual_t;
 static int quals(tr_t *R, int i, int e, qual_t *q) {
     gt_t *T = R->T.v;
     memset(q, 0, sizeof *q);
@@ -187,6 +187,16 @@ static int quals(tr_t *R, int i, int e, qual_t *q) {
                 for (int g = 0; GP[g].n; g++) if (teq(&T[j], GP[g].n)) { q->prim = GP[g].p; q->hasprim = 1; }
                 if (teq(&T[j], "max_vertices") && j + 2 < e && teq(&T[j + 1], "=")) q->maxv = (int)strtol(T[j + 2].p, 0, 0);
                 if (teq(&T[j], "invocations") && j + 2 < e && teq(&T[j + 1], "=")) q->inv = (int)strtol(T[j + 2].p, 0, 0);
+                /* tesselação */
+                if (teq(&T[j], "vertices") && j + 2 < e && teq(&T[j + 1], "=")) q->verts = (int)strtol(T[j + 2].p, 0, 0);
+                if (teq(&T[j], "quads")) { q->prim = GL_QUADS; q->hasprim = 1; }
+                if (teq(&T[j], "isolines")) { q->prim = GL_ISOLINES; q->hasprim = 1; }
+                if (teq(&T[j], "equal_spacing")) { q->spacing = GL_EQUAL; q->tes = 1; }
+                if (teq(&T[j], "fractional_even_spacing")) { q->spacing = GL_FRACTIONAL_EVEN; q->tes = 1; }
+                if (teq(&T[j], "fractional_odd_spacing")) { q->spacing = GL_FRACTIONAL_ODD; q->tes = 1; }
+                if (teq(&T[j], "cw")) { q->cw = 1; q->tes = 1; }
+                if (teq(&T[j], "ccw")) { q->ccw = 1; q->tes = 1; }
+                if (teq(&T[j], "point_mode")) { q->point = 1; q->tes = 1; }
                 j++;
             }
             i = j;
@@ -202,6 +212,7 @@ static int quals(tr_t *R, int i, int e, qual_t *q) {
         if (teq(t, "centroid")) { if (!q->centroid) q->centroid = 1; continue; }
         if (teq(t, "sample")) { q->centroid = 2; continue; }
         if (teq(t, "const")) { q->isconst = 1; continue; }
+        if (teq(t, "patch")) { q->patch = 1; continue; }
         if (in_list(t, QUALS)) continue;
         break;
     }
@@ -218,8 +229,17 @@ static gl_decl_t *decl_new(tr_t *R, const gt_t *name, const qual_t *q) {
     d->index = q->index;
     d->interp = q->interp;
     d->aux = q->centroid;
+    d->patch = q->patch;
     d->rowmajor = q->rowmajor;
     return d;
+}
+/* tamanho de "T x[]": entradas do GS (6), entradas e saídas por vértice da tesselação (gl_MaxPatchVertices = 32) */
+static int unsized_of(tr_t *R, const qual_t *q) {
+    int st = R->I->stage;
+    if (st == 2 && q->storage == GS_IN) return 6;
+    if (st == 3 && (q->storage == GS_IN || q->storage == GS_OUT) && !q->patch) return 32;
+    if (st == 4 && q->storage == GS_IN && !q->patch) return 32;
+    return 0;
 }
 /* declaração de topo (sem o ';'): tokens [a, e) */
 static void top_decl(tr_t *R, int a, int e) {
@@ -235,6 +255,21 @@ static void top_decl(tr_t *R, int a, int e) {
     qual_t q;
     int i = quals(R, a, e, &q);
     if (i >= e) {
+        /* tesselação: "layout(vertices = 4) out;" e "layout(quads, fractional_odd_spacing, cw, point_mode) in;" */
+        if (R->I->stage == 3 && q.storage == GS_OUT && q.verts) {
+            R->I->tcs_vertices = q.verts;
+            gt_t g = {'i', "gl_out", 6, 0};
+            arr_note(R, &g, q.verts);
+            return;
+        }
+        if (R->I->stage == 4 && q.storage == GS_IN && (q.hasprim || q.tes)) {
+            if (q.hasprim) { R->I->tes_mode = q.prim; R->I->tes_set = 1; }
+            if (q.spacing) R->I->tes_spacing = q.spacing;
+            if (q.cw) R->I->tes_cw = 1;
+            if (q.ccw) R->I->tes_cw = 0;
+            if (q.point) R->I->tes_point = 1;
+            return;
+        }
         /* "layout(triangles) in;" / "layout(triangle_strip, max_vertices = 3) out;" */
         if (q.storage == GS_IN && q.hasprim) {
             R->I->gs_in = q.prim;
@@ -309,10 +344,10 @@ static void top_decl(tr_t *R, int a, int e) {
         ob_s(&R->o, iname);
         int arr = 0;
         if (has_inst && j + 1 < e && teq(&T[j + 1], "[")) {
-            arr = j + 2 < e && T[j + 2].k == 'n' ? (int)strtol(T[j + 2].p, 0, 0) : (R->I->stage == 2 && q.storage == GS_IN ? 6 : 0);
-            R->unsized6 = R->I->stage == 2 && q.storage == GS_IN;
+            arr = j + 2 < e && T[j + 2].k == 'n' ? (int)strtol(T[j + 2].p, 0, 0) : unsized_of(R, &q);
+            R->unsized = unsized_of(R, &q);
             body(R, j + 1, e);
-            R->unsized6 = 0;
+            R->unsized = 0;
         }
         ob_s(&R->o, ";");
         gt_t nm = {'i', iname, (int)strlen(iname), 0};
@@ -329,9 +364,9 @@ static void top_decl(tr_t *R, int a, int e) {
     int ti = i;
     if (!is_type_tok(R, &T[ti])) { body(R, i, e); ob_s(&R->o, ";"); return; }
     for (int k = ti + 1; k < e; k++) if (T[k].n > 3 && !memcmp(T[k].p, "gl_", 3) && T[k].k == 'i') return;   /* "out vec4 gl_FragColor;" */
-    R->unsized6 = R->I->stage == 2 && q.storage == GS_IN;
+    R->unsized = unsized_of(R, &q);
     body(R, i, e);
-    R->unsized6 = 0;
+    R->unsized = 0;
     ob_s(&R->o, ";");
     int depth = 0;
     for (int k = ti + 1; k < e; k++) {
@@ -349,13 +384,14 @@ static void top_decl(tr_t *R, int a, int e) {
                 char dm[32] = "";
                 int m = k + 1;
                 while (m < e && !teq(&T[m], ",") && !teq(&T[m], "=") && (int)strlen(dm) + T[m].n + 2 < (int)sizeof dm) {
-                    if (teq(&T[m], "]") && teq(&T[m - 1], "[")) strcat(dm, "6");
+                    if (teq(&T[m], "]") && teq(&T[m - 1], "[")) { char us[8]; snprintf(us, sizeof us, "%d", unsized_of(R, &q)); strcat(dm, us); }
                     strncat(dm, T[m].p, (size_t)T[m].n);
                     m++;
                 }
                 dd->dims = strdup(dm);
             }
             if (k + 3 < e && teq(&T[k + 1], "[") && T[k + 2].k == 'n') arr_note(R, &T[k], (int)strtol(T[k + 2].p, 0, 0));
+            else if (k + 2 < e && teq(&T[k + 1], "[") && teq(&T[k + 2], "]") && unsized_of(R, &q)) arr_note(R, &T[k], unsized_of(R, &q));
         }
     }
 }
@@ -413,6 +449,7 @@ char *gl_glsl_translate(const char *pp_text, gl_shinfo_t *I) {
     R->I = I;
     R->o.line = 1;
     glex(pp_text, &R->T);
+    if (I->stage == 3 || I->stage == 4) { gt_t g = {'i', "gl_in", 5, 0}; arr_note(R, &g, 32); }   /* gl_in[gl_MaxPatchVertices] */
     gt_t *T = R->T.v;
     int n = R->T.n, i = 0;
     while (i < n) {

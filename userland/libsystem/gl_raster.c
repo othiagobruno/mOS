@@ -40,6 +40,7 @@ typedef struct {
     double dzx, dzy;                /* gradiente da profundidade do primitivo (z em cada amostra) */
     int lq;                         /* linha larga como retângulo (multiamostra): pontilhado pelo eixo maior */
     int lq_xmajor, lq_dir; double lq_s0; u32 lq_base;
+    int capture;                    /* transform feedback grava os primitivos (sem GS) */
 } rs_t;
 
 /* ================================================================ testes e escrita de pixel */
@@ -912,11 +913,35 @@ void gl_raster_gs_emit(gl_ctx_t *C, GLenum outprim, gl_vtx_t *v, const u8 *cut, 
         start = i;
     }
 }
+/* ---- tesselação: os primitivos gerados vão ao GS (se houver) ou ao raster */
+void gl_raster_tess_emit(gl_ctx_t *C, int pv, gl_vtx_t *v, const u32 *ix, int nix) {
+    rs_t *R = g_rs;
+    if (!R) return;
+    for (int i = 0; i + pv <= nix; i += pv) {
+        gl_vtx_t *p[3];
+        for (int k = 0; k < pv; k++) p[k] = &v[ix[i + k]];
+        if (R->S->gs) { R->S->gs(C, p, pv, R->prim++); continue; }
+        if (R->capture) xfb_write(C, p, pv);
+        if (R->sel < 0) { C->prims_generated++; continue; }
+        if (pv == 3) emit_tri(R, p[0], p[1], p[2], R->flat_last ? p[2] : p[0]);
+        else if (pv == 2) { R->ls_cnt = 0; emit_line(R, p[0], p[1], R->flat_last ? p[1] : p[0], 0); }
+        else emit_point(R, p[0]);
+    }
+}
+static void tess_assemble(asm_t *A, const u32 *e, i64 n) {
+    u32 pvn = A->R->C->patch_vertices;
+    gl_vtx_t vs[32];
+    gl_vtx_t *pv[32];
+    for (i64 i = 0; i + pvn <= (u32)n; i += pvn) {
+        for (u32 k = 0; k < pvn; k++) { vs[k] = *vtx(A, e[i + k]); pv[k] = &vs[k]; }
+        A->R->S->tess(A->R->C, pv, (int)pvn, A->R->prim++);
+    }
+}
 static void gs_prim(asm_t *A, const u32 *e, int k) {
     gl_vtx_t vs[6];
     gl_vtx_t *pv[6];
     for (int i = 0; i < k; i++) { vs[i] = *vtx(A, e[i]); pv[i] = &vs[i]; }
-    A->R->C->prims_generated++;
+    /* GL_PRIMITIVES_GENERATED conta o que o GS emite (emit_* no gl_raster_gs_emit) */
     A->R->S->gs(A->R->C, pv, k, A->R->prim++);
 }
 static void gs_assemble(asm_t *A, const u32 *e, i64 n) {
@@ -961,6 +986,7 @@ static void gs_assemble(asm_t *A, const u32 *e, i64 n) {
 /* percorre a sequência de elementos (já sem os índices de reinício) */
 static void assemble(asm_t *A, const u32 *e, i64 n) {
     rs_t *R = A->R;
+    if (R->S->tess) { tess_assemble(A, e, n); return; }
     if (R->S->gs) { gs_assemble(A, e, n); return; }
     int last = R->flat_last;
     R->ls_cnt = 0; /* início do primitivo (glBegin, draw ou reinício) */
@@ -1040,13 +1066,15 @@ void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const
     if (!mode_ok(mode)) { gl_err(C, GL_INVALID_ENUM); return; }
     if (count < 0 || inst < 0 || first < 0) { gl_err(C, GL_INVALID_VALUE); return; }
     if (C->in_begin) { gl_err(C, GL_INVALID_OPERATION); return; }
-    if (mode == GL_PATCHES) { gl_err(C, GL_INVALID_OPERATION); return; }   /* sem shader de tesselação ligado */
-    if (C->xfb->active && !C->xfb->paused && xfb_base(mode) != C->xfb->prim) { gl_err(C, GL_INVALID_OPERATION); return; }
+    if (C->xfb->active && !C->xfb->paused && mode != GL_PATCHES && xfb_base(mode) != C->xfb->prim) { gl_err(C, GL_INVALID_OPERATION); return; }
     if (!count || !inst) return;
     { extern int gl_cond_skip(void); if (gl_cond_skip()) return; }
     if (!gl_resolve_target(C, 1, &C->tgt)) { gl_err(C, GL_INVALID_FRAMEBUFFER_OPERATION); return; }
     if (!gl_stage_setup(C)) return;
-    if (C->st.gs) {
+    /* tesselação: só GL_PATCHES, e GL_PATCHES só com tesselação */
+    if ((mode == GL_PATCHES) != (C->st.tess != 0)) { gl_err(C, GL_INVALID_OPERATION); return; }
+    if (C->st.tess && C->xfb->active && !C->xfb->paused && !C->st.gs && xfb_base(C->st.tess_out) != C->xfb->prim) { gl_err(C, GL_INVALID_OPERATION); return; }
+    if (C->st.gs && !C->st.tess) {
         /* o modo do draw tem de ser da família do primitivo de entrada do GS */
         GLenum fam = mode == GL_POINTS ? GL_POINTS : mode == GL_LINES || mode == GL_LINE_STRIP || mode == GL_LINE_LOOP ? GL_LINES :
                      mode == GL_LINES_ADJACENCY || mode == GL_LINE_STRIP_ADJACENCY ? GL_LINES_ADJACENCY :
@@ -1102,7 +1130,8 @@ void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const
     vc_t *cache = calloc(VCACHE, sizeof *cache);
     u32 *seq = malloc(sizeof(u32) * (size_t)(count > 4096 ? 4096 : count) + 64);
     if (!cache || !seq) { free(cache); free(seq); gl_err(C, GL_OUT_OF_MEMORY); return; }
-    asm_t A = {&R, cache, 0, mode, xfb_base(mode), C->xfb->active && !C->xfb->paused && !C->st.gs};
+    asm_t A = {&R, cache, 0, mode, xfb_base(mode), C->xfb->active && !C->xfb->paused && !C->st.gs && !C->st.tess};
+    R.capture = C->xfb->active && !C->xfb->paused && !C->st.gs;
     rs_t *prev_rs = g_rs;
     g_rs = &R;
     int restart = itype && gl_is_on(C, GL_PRIMITIVE_RESTART);
@@ -1112,10 +1141,11 @@ void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const
         for (int i = 0; i < VCACHE; i++) cache[i].ok = 0;
         R.prim = 0;
         /* a sequência vai em blocos; strips/fans/loops/polígonos precisam dela inteira entre reinícios */
-        int whole = mode != GL_POINTS && mode != GL_LINES && mode != GL_TRIANGLES && mode != GL_QUADS && mode != GL_LINES_ADJACENCY && mode != GL_TRIANGLES_ADJACENCY;
+        int whole = mode != GL_POINTS && mode != GL_LINES && mode != GL_TRIANGLES && mode != GL_QUADS && mode != GL_LINES_ADJACENCY && mode != GL_TRIANGLES_ADJACENCY && mode != GL_PATCHES;
         u32 *buf = seq;
         i64 cap = count > 4096 ? 4096 : count, n = 0;
-        int unit = mode == GL_LINES ? 2 : mode == GL_TRIANGLES ? 3 : mode == GL_QUADS || mode == GL_LINES_ADJACENCY ? 4 : mode == GL_TRIANGLES_ADJACENCY ? 6 : 1;
+        int unit = mode == GL_LINES ? 2 : mode == GL_TRIANGLES ? 3 : mode == GL_QUADS || mode == GL_LINES_ADJACENCY ? 4 : mode == GL_TRIANGLES_ADJACENCY ? 6 :
+                   mode == GL_PATCHES ? (int)C->patch_vertices : 1;
         for (i64 i = 0; i < count; i++) {
             u32 e;
             if (ip) {
