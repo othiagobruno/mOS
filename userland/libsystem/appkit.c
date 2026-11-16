@@ -103,6 +103,7 @@ typedef struct {
     BOOL has_anchor, last_typing;
     id undo, redo;
     BOOL no_tamic;                 /* translatesAutoresizingMaskIntoConstraints = NO */
+    double scroll_x;               /* NSScrollView: deslocamento horizontal do documento */
     id identifier;                 /* NSUserInterfaceItemIdentifier (retido) */
     id next_responder;             /* nextResponder explícito; senão a superview (fraco) */
     id header_view;                /* NSTableHeaderView real, quando o nib traz um (retido) */
@@ -1851,7 +1852,7 @@ static BOOL tree_needs(id v) {
 
 /* ================================================================ NSEvent */
 typedef struct { u64 type; double x, y; u64 mods; u16 keycode; id chars; i64 clicks; id window; double dy;
-                 double ts; i64 wnum, d1, d2; short subtype; } evstate_t;
+                 double ts; i64 wnum, d1, d2; short subtype; double dx; } evstate_t;
 static evstate_t *evs(id e) { return ST(e); }
 /* o Chromium lê estes em todo evento de teclado/mouse (ui/events/cocoa); os que devolvem double/float não podem cair no
  * "ainda não implementado" (que só zera rax: xmm0 voltaria com lixo) */
@@ -1892,6 +1893,7 @@ static i64 ev_clicks(id self, SEL c) { (void)c; return evs(self)->clicks; }
 static id ev_window(id self, SEL c) { (void)c; return evs(self)->window; }
 static double ev_dy(id self, SEL c) { (void)c; return evs(self)->dy; }
 static double ev_zero(id self, SEL c) { (void)self; (void)c; return 0; }
+static double ev_dx(id self, SEL c) { (void)c; return evs(self)->dx; }
 static u64 g_mods;
 static u64 g_last_flags;
 static u64 ev_cmods(id cls, SEL c) { (void)cls; (void)c; return g_mods; }
@@ -1942,6 +1944,8 @@ static id make_event(u64 type, id win, double px, double py, gui_event_t *g) {
     s->mods = mac_mods(g->mods);
     s->clicks = g->clicks;
     s->dy = -g->w;
+    s->dx = -g->h;   /* GEV_SCROLL: h > 0 = para a direita; no Cocoa deltaX > 0 rola para a esquerda (mesmo sinal do dy) */
+    if (g->type == GEV_SCROLL && !g->h && (s->mods & (1u << 17))) { s->dx = s->dy; s->dy = 0; }   /* ⇧ + roda = horizontal, como no Mac */
     s->ts = (double)mach_absolute_time() / 1e9;
     if (type == 10 || type == 11 || type == 12) {          /* keyDown / keyUp / flagsChanged */
         s->keycode = type == 12 ? mac_mod_keycode(g->key) : mac_keycode(g->key);
@@ -3798,7 +3802,11 @@ static void layout_scroll(id v) {
     if (maxs < 0) maxs = 0;
     if (s->scroll_y > maxs) s->scroll_y = maxs;
     if (s->scroll_y < 0) s->scroll_y = 0;
-    d->frame.o.x = 0;
+    double maxx = d->frame.s.w - s->frame.s.w;   /* documento mais largo que a área: rola na horizontal */
+    if (maxx < 0) maxx = 0;
+    if (s->scroll_x > maxx) s->scroll_x = maxx;
+    if (s->scroll_x < 0) s->scroll_x = 0;
+    d->frame.o.x = -s->scroll_x;
     d->frame.o.y = s->frame.s.h - d->frame.s.h + s->scroll_y;   /* topo do documento alinhado ao topo visível */
     if (d->kind == K_TABLE) tv_layout_views(s->doc);
 }
@@ -3806,6 +3814,7 @@ static void sv_scroll(id self, SEL c, id e) {
     (void)c;
     vstate_t *s = vs(self);
     s->scroll_y += -evs(e)->dy * 40;
+    s->scroll_x += -evs(e)->dx * 40;
     layout_scroll(self);
     mark(self);
 }
@@ -5334,8 +5343,8 @@ void cx_appkit_init(void) {
     CM(NSEvent, "modifierFlags", ev_cmods); CM(NSEvent, "pressedMouseButtons", ev_pressed_buttons); CM(NSEvent, "mouseLocation", ev_mouse_location);
     M(NSEvent, "type", ev_type); M(NSEvent, "locationInWindow", ev_loc); M(NSEvent, "modifierFlags", ev_mods); M(NSEvent, "keyCode", ev_keycode);
     M(NSEvent, "characters", ev_chars); M(NSEvent, "charactersIgnoringModifiers", ev_chars); M(NSEvent, "clickCount", ev_clicks);
-    M(NSEvent, "window", ev_window); M(NSEvent, "scrollingDeltaY", ev_dy); M(NSEvent, "deltaY", ev_dy); M(NSEvent, "deltaX", ev_zero);
-    M(NSEvent, "scrollingDeltaX", ev_zero); M(NSEvent, "isARepeat", no_m);
+    M(NSEvent, "window", ev_window); M(NSEvent, "scrollingDeltaY", ev_dy); M(NSEvent, "deltaY", ev_dy); M(NSEvent, "deltaX", ev_dx);
+    M(NSEvent, "scrollingDeltaX", ev_dx); M(NSEvent, "isARepeat", no_m);
     CM(NSEvent, "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:", ev_other);
     M(NSEvent, "timestamp", ev_ts); M(NSEvent, "windowNumber", ev_wnum); M(NSEvent, "subtype", ev_subtype);
     M(NSEvent, "data1", ev_data1); M(NSEvent, "data2", ev_data2); M(NSEvent, "buttonNumber", ev_button);
