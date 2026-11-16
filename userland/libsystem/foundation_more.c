@@ -19,7 +19,7 @@ extern id cx_plist_parse(const u8 *b, u64 n);
 XCLASS(NSObject) XCLASS(NSString) XCLASS(NSMutableString) XCLASS(NSNumber) XCLASS(NSArray) XCLASS(NSMutableArray)
 XCLASS(NSDictionary) XCLASS(NSMutableDictionary) XCLASS(NSData) XCLASS(NSDate) XCLASS(NSNull) XCLASS(NSError) XMETA(NSError)
 XCLASS(NSSet) XCLASS(NSMutableSet) XCLASS(NSValue) XCLASS(NSCharacterSet)
-XCLASS(NSAttributedString) XCLASS(NSIndexSet)
+XCLASS(NSAttributedString)
 extern cx_class_t NSConstantString_c __asm__("__CFConstantStringClassReference");
 char *strcasestr(const char *h, const char *n);
 extern id NSHomeDirectory(void);
@@ -37,7 +37,7 @@ CLASS(NSItemProvider) CLASS(NSJSONSerialization)
 CLASS(NSKeyedArchiver) CLASS(NSKeyedUnarchiver) CLASS(NSLinguisticTagger) CLASS(NSLock)
 CLASS(NSMachBootstrapServer) CLASS(NSMachPort) CLASS(NSMapTable) 
 CLASS(NSMetadataItem) CLASS(NSMetadataQuery) CLASS(NSMutableAttributedString) CLASS(NSMutableCharacterSet)
-CLASS(NSMutableIndexSet) CLASS(NSMutableURLRequest) CLASS(NSNetService) CLASS(NSNetServiceBrowser)
+CLASS(NSMutableURLRequest) CLASS(NSNetService) CLASS(NSNetServiceBrowser)
 
 CLASS(NSPipe) CLASS(NSPointerArray) CLASS(NSPredicate) CLASS(NSProgress) CLASS(NSPropertyListSerialization)
 CLASS(NSProxy) CLASS(NSPurgeableData) CLASS(NSRecursiveLock) CLASS(NSRegularExpression)
@@ -1872,40 +1872,7 @@ static id ip_add(id s, SEL c, u64 i) {
     return ip_with_n((id)s->isa, c, d, n + 1);
 }
 
-typedef struct { u64 *v; u32 n, cap; } iset_t;
-static iset_t *iset(id s) { if (!BOX(s)->p) BOX(s)->p = calloc(1, sizeof(iset_t)); return BOX(s)->p; }
-static void iset_add(id s, SEL c, u64 i) {
-    (void)c;
-    iset_t *t = iset(s);
-    for (u32 k = 0; k < t->n; k++) if (t->v[k] == i) return;
-    if (t->n == t->cap) { t->cap = t->cap ? t->cap * 2 : 8; t->v = realloc(t->v, t->cap * sizeof(u64)); }
-    t->v[t->n++] = i;
-}
-static void iset_addrange(id s, SEL c, rng_t r) { (void)c; for (u64 i = 0; i < r.length; i++) iset_add(s, c, r.location + i); }
-static void iset_remove(id s, SEL c, u64 i) {
-    (void)c;
-    iset_t *t = iset(s);
-    for (u32 k = 0; k < t->n; k++) if (t->v[k] == i) { t->v[k] = t->v[--t->n]; return; }
-}
-static BOOL iset_has(id s, SEL c, u64 i) { (void)c; iset_t *t = iset(s); for (u32 k = 0; k < t->n; k++) if (t->v[k] == i) return YES; return NO; }
-static u64 iset_count(id s, SEL c) { (void)c; return iset(s)->n; }
-static u64 iset_first(id s, SEL c) {
-    (void)c;
-    iset_t *t = iset(s);
-    if (!t->n) return (u64)NSNotFound;
-    u64 m = t->v[0];
-    for (u32 k = 1; k < t->n; k++) if (t->v[k] < m) m = t->v[k];
-    return m;
-}
-static u64 iset_last(id s, SEL c) {
-    (void)c;
-    iset_t *t = iset(s);
-    if (!t->n) return (u64)NSNotFound;
-    u64 m = t->v[0];
-    for (u32 k = 1; k < t->n; k++) if (t->v[k] > m) m = t->v[k];
-    return m;
-}
-
+/* NSIndexSet/NSMutableIndexSet: fdn_indexset.c */
 
 static id ht_alloc(id cls, SEL c) { (void)c; box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls); cxmap_t *m = map_new(); m->magic = HASH_MAGIC; o->p = m; return (id)o; }
 static void ht_add(id s, SEL c, id o) { (void)c; NSHashInsertKnownAbsent(BOX(s)->p, o); retain(o); }
@@ -2414,11 +2381,6 @@ void cx_foundation_more_init(void) {
     DEF(&NSIndexPath_c, &NSIndexPath_m, "NSIndexPath", ob, BEX);
     CM(NSIndexPath, "indexPathWithIndex:", ip_with); CM(NSIndexPath, "indexPathWithIndexes:length:", ip_with_n);
     M(NSIndexPath, "length", ip_len); M(NSIndexPath, "indexAtPosition:", ip_at); M(NSIndexPath, "indexPathByAddingIndex:", ip_add);
-    DEF(&NSMutableIndexSet_c, &NSMutableIndexSet_m, "NSMutableIndexSet", &NSIndexSet_c, BEX);
-    CM(NSMutableIndexSet, "indexSet", lock_alloc); CM(NSMutableIndexSet, "alloc", lock_alloc);
-    M(NSMutableIndexSet, "addIndex:", iset_add); M(NSMutableIndexSet, "addIndexesInRange:", iset_addrange);
-    M(NSMutableIndexSet, "removeIndex:", iset_remove); M(NSMutableIndexSet, "containsIndex:", iset_has);
-    M(NSMutableIndexSet, "count", iset_count); M(NSMutableIndexSet, "firstIndex", iset_first); M(NSMutableIndexSet, "lastIndex", iset_last);
     /* NSCountedSet: fdn_set.c */
     DEF(&NSHashTable_c, &NSHashTable_m, "NSHashTable", ob, BEX);
     CM(NSHashTable, "weakObjectsHashTable", ht_alloc); CM(NSHashTable, "alloc", ht_alloc);

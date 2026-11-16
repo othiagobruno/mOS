@@ -13,6 +13,9 @@ if [ -d "$ZIG_INC" ]; then
     gcc -O1 -w -fno-builtin -nostdinc -isystem "$ZIG_INC" -I"$ROOT/userland/libsystem" -I"$ROOT/userland/libsystem/kshim" \
         "$ROOT/tools/fdn_set_test.c" -o "$OUT/fdn_set_test"
     "$OUT/fdn_set_test"
+    gcc -O1 -w -fno-builtin -nostdinc -isystem "$ZIG_INC" -I"$ROOT/userland/libsystem" -I"$ROOT/userland/libsystem/kshim" \
+        "$ROOT/tools/fdn_indexset_test.c" -o "$OUT/fdn_indexset_test"
+    "$OUT/fdn_indexset_test"
 fi
 "$OUT/fdn_dec_test"
 if ! compgen -G "/usr/lib/x86_64-linux-gnu/libicui18n.so.*" >/dev/null && ! compgen -G "/usr/lib64/libicui18n.so.*" >/dev/null \

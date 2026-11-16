@@ -31,7 +31,7 @@ CLASS(NSColor) CLASS(NSFont) CLASS(NSBezierPath) CLASS(NSEvent) CLASS(NSMenu) CL
 CLASS(NSScreen) CLASS(NSGraphicsContext) CLASS(NSCursor) CLASS(NSWorkspace) CLASS(NSImage) CLASS(NSAttributedString)
 CLASS(NSRunningApplication) CLASS(NSSound) CLASS(NSPanel) CLASS(NSScrollView) CLASS(NSTextView) CLASS(NSClipView)
 CLASS(NSWindowTab)
-CLASS(NSVisualEffectView) CLASS(NSLayoutConstraint) CLASS(NSColorWell) CLASS(NSTableView) CLASS(NSTableColumn) CLASS(NSTableCellView) CLASS(NSIndexSet)
+CLASS(NSVisualEffectView) CLASS(NSLayoutConstraint) CLASS(NSColorWell) CLASS(NSTableView) CLASS(NSTableColumn) CLASS(NSTableCellView)
 
 extern cx_class_t NSObject_c __asm__("OBJC_CLASS_$_NSObject");
 extern cx_class_t NSString_c __asm__("OBJC_CLASS_$_NSString");
@@ -4374,9 +4374,7 @@ static void tv_scroll_row(id self, SEL c, i64 r) {
         mark(self);
     }
 }
-typedef struct { cx_class_t *isa; i64 first; } nsindexset_t;
-static id ixs_with_index(id cls, SEL c, u64 i) { (void)c; nsindexset_t *o = (nsindexset_t *)cx_alloc_instance((cx_class_t *)cls); o->first = (i64)i; return (id)o; }
-static i64 ixs_first(id self, SEL c) { (void)c; return ((nsindexset_t *)self)->first; }
+/* NSIndexSet: Foundation (fdn_indexset.c) */
 static void select_row(id t, i64 r, BOOL notify) {
     vstate_t *s = vs(t);
     if (s->selected == r) return;
@@ -4385,7 +4383,7 @@ static void select_row(id t, i64 r, BOOL notify) {
     if (notify && s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableViewSelectionDidChange:")))
         MSG(void, s->delegate, "tableViewSelectionDidChange:", objc_autorelease(cx_note(cx_str("NSTableViewSelectionDidChangeNotification"), t, 0)));
 }
-static void tv_select(id self, SEL c, id ixs, BOOL ext) { (void)c; (void)ext; select_row(self, ixs ? ((nsindexset_t *)ixs)->first : -1, NO); }
+static void tv_select(id self, SEL c, id ixs, BOOL ext) { (void)c; (void)ext; select_row(self, ixs && MSG0(u64, ixs, "count") ? (i64)MSG0(u64, ixs, "firstIndex") : -1, NO); }
 static void tv_deselect_all(id self, SEL c, id s) { (void)c; (void)s; select_row(self, -1, NO); }
 /* texto da célula cell-based. A view-based não passa por aqui: o layout pergunta viewFor e as subviews se desenham. */
 static id cell_text(id t, id col, i64 row) {
@@ -5631,8 +5629,6 @@ void cx_appkit_init(void) {
     M(NSTableColumn, "setMinWidth:", noop1_m); M(NSTableColumn, "setEditable:", noop1_m);
     DEF(NSTableCellView, NSView);
     M(NSTableCellView, "setTextField:", tcv_set_tf); M(NSTableCellView, "textField", tcv_tf);
-    DEF(NSIndexSet, NSObject);
-    CM(NSIndexSet, "indexSetWithIndex:", ixs_with_index); M(NSIndexSet, "firstIndex", ixs_first);
     { extern cx_class_t NSData_x __asm__("OBJC_CLASS_$_NSData");
       cx_add_cmethod(&NSData_x, "dataWithContentsOfFile:", (void *)dt_with_file); cx_add_cmethod(&NSData_x, "dataWithBytes:length:", (void *)dt_with_bytes);
       cx_add_method(&NSData_x, "initWithContentsOfFile:", (void *)dt_init_file); cx_add_method(&NSData_x, "initWithBytes:length:", (void *)dt_init_bytes);
