@@ -98,10 +98,12 @@ typedef struct webview {
     node_t *hover, *press_link;
     bool press_in;
     ctrl_t *js_clicked;
-    struct { ctrl_t *c; int type; } jsq[16];
+    doc_t *js_clicked_doc;
+    struct { ctrl_t *c; int type; doc_t *d; } jsq[16];
     int njsq;
     node_t *submit_form;
     ctrl_t *submitter;
+    doc_t *submit_doc;           /* documento do formulário (o principal ou o de um iframe) */
     ctrl_t *select_open;         /* <select> com a lista aberta (desenhada pela vista: ui_popup pede uma janela) */
     rect_t select_r;
     char newwin_url[1024];
@@ -745,57 +747,28 @@ static bool images_loading(webview_t *w) {
     return false;
 }
 
-static void submit_form(webview_t *w, node_t *form, ctrl_t *submitter) {
-    doc_t *d = w->doc;
+/* envio de formulário do documento d (o principal ou o de um iframe, que navega só o iframe) */
+static void submit_form_in(webview_t *w, doc_t *d, node_t *form, ctrl_t *submitter) {
     if (!d || !form) return;
-    const char *action = node_attr(form, "action");
-    const char *method = node_attr(form, "method");
-    bool post = method && !strcasecmp(method, "post");
     char url[1024];
-    url_resolve(d->base, action && *action ? action : d->url, url, sizeof url);
-    sbuf_t q = {0};
-    for (int i = 0; i < d->nctrls; i++) {
-        ctrl_t *c = d->ctrls[i];
-        if (c->form != form) continue;
-        const char *name = node_attr(c->node, "name");
-        if (!name || !*name) continue;
-        const char *val = NULL;
-        switch (c->kind) {
-        case C_TEXT: case C_PASSWORD: case C_HIDDEN: case C_TEXTAREA: val = c->buf; break;
-        case C_CHECK: case C_RADIO: if (c->checked) val = c->buf && c->buf[0] ? c->buf : "on"; break;
-        case C_SELECT: if (c->nopts) val = c->vals[CLAMP(c->sel, 0, c->nopts - 1)]; break;
-        case C_SUBMIT: if (c == submitter) { const char *v = node_attr(c->node, "value"); val = v ? v : c->label; } break;
-        case C_IMAGE:
-            if (c == submitter) {
-                if (q.len) sb_putc(&q, '&');
-                sb_urlenc(&q, name); sb_puts(&q, ".x=1&"); sb_urlenc(&q, name); sb_puts(&q, ".y=1");
-            }
-            break;
-        default: break;
-        }
-        if (!val) continue;
-        if (q.len) sb_putc(&q, '&');
-        sb_urlenc(&q, name);
-        sb_putc(&q, '=');
-        sb_urlenc(&q, val);
-    }
-    if (post && !strncmp(url, "http", 4)) {
-        navigate(w, url, true, 1, q.p ? q.p : "", q.len, "application/x-www-form-urlencoded", -1);
-    } else {
-        char *qm = strchr(url, '?');
-        if (qm) *qm = 0;
-        char *hm = strchr(url, '#');
-        if (hm) *hm = 0;
-        char full[1024];
-        snprintf(full, sizeof full, "%s?%s", url, q.p ? q.p : "");
-        navigate(w, full, true, 1, NULL, 0, NULL, -1);
-    }
-    sb_free(&q);
+    sbuf_t body = {0};
+    bool post = form_build(d, form, submitter, url, sizeof url, &body);
+    if (d != w->doc) {
+        frame_t *f = frames_frame_of(w->doc, d);
+        if (f) frame_load(f, url, post ? (body.p ? body.p : "") : NULL, body.len, NULL);
+    } else if (post) navigate(w, url, true, 1, body.p ? body.p : "", body.len, "application/x-www-form-urlencoded", -1);
+    else navigate(w, url, true, 1, NULL, 0, NULL, -1);
+    sb_free(&body);
 }
+static void submit_form(webview_t *w, node_t *form, ctrl_t *submitter) { submit_form_in(w, w->doc, form, submitter); }
+
+/* página JS dona do documento d */
+static js_page_t *page_for(webview_t *w, doc_t *d) { return !d || d == w->doc ? w->js : frames_page_of(w->doc, d); }
 
 /* ============================================================ controles de formulário */
+static doc_t *g_paint_doc;   /* documento do controle sendo pintado (o principal ou o de um iframe) */
 static void js_queue(webview_t *w, ctrl_t *c, int type) {
-    if (w->njsq < (int)ARRAY_LEN(w->jsq)) { w->jsq[w->njsq].c = c; w->jsq[w->njsq].type = type; w->njsq++; }
+    if (w->njsq < (int)ARRAY_LEN(w->jsq)) { w->jsq[w->njsq].c = c; w->jsq[w->njsq].type = type; w->jsq[w->njsq].d = g_paint_doc; w->njsq++; }
 }
 
 static u32 buf_sum(const char *s) { u32 h = 5381; for (; s && *s; s++) h = h * 33 + (u8)*s; return h; }
@@ -888,6 +861,7 @@ static void draw_select_list(webview_t *w, ui_t *u) {
 static void wv_paint_control(ui_t *u, doc_t *d, ctrl_t *c, rect_t r) {
     webview_t *w = g_cur;
     if (!w) return;
+    g_paint_doc = d;
     u32 sum0 = c->buf ? buf_sum(c->buf) : 0;
     bool chk0 = c->checked;
     int sel0 = c->sel;
@@ -908,19 +882,21 @@ static void wv_paint_control(ui_t *u, doc_t *d, ctrl_t *c, rect_t r) {
             break;
         }
         if (ui_textfield(u, c->id, r, c->buf, c->cap, ph ? ph : "")) {
-            if (c->form) { w->submit_form = c->form; w->submitter = NULL; }
+            if (c->form) { w->submit_form = c->form; w->submitter = NULL; w->submit_doc = d; }
         }
         break;
     }
     case C_SUBMIT: case C_IMAGE:
         if (ui_button(u, c->id, r, c->label, false)) {
             w->js_clicked = c;
-            if (c->form) { w->submit_form = c->form; w->submitter = c; }
+            w->js_clicked_doc = d;
+            if (c->form) { w->submit_form = c->form; w->submitter = c; w->submit_doc = d; }
         }
         break;
     case C_RESET:
         if (ui_button(u, c->id, r, c->label[0] ? c->label : " ", false)) {
             w->js_clicked = c;
+            w->js_clicked_doc = d;
             for (int i = 0; i < d->nctrls; i++) {
                 ctrl_t *o = d->ctrls[i];
                 if (o->form != c->form) continue;
@@ -932,7 +908,7 @@ static void wv_paint_control(ui_t *u, doc_t *d, ctrl_t *c, rect_t r) {
         }
         break;
     case C_BUTTON:
-        if (ui_button(u, c->id, r, c->label[0] ? c->label : " ", false)) w->js_clicked = c;
+        if (ui_button(u, c->id, r, c->label[0] ? c->label : " ", false)) { w->js_clicked = c; w->js_clicked_doc = d; }
         break;
     case C_CHECK: ui_checkbox(u, c->id, r.x, r.y, NULL, &c->checked); break;
     case C_RADIO:
@@ -1013,10 +989,14 @@ static void frame(webview_t *w) {
     w->scroll = CLAMP(w->scroll, 0, max_scroll(w));
     if (w->js) js_page_viewport(w->js, w->vw, w->vh, w->scroll);
     /* keydown para o JavaScript (controle em foco ou corpo) */
-    if (w->js && d && u->key && !u->key_used) {
+    if (d && u->key && !u->key_used) {
         node_t *tg = d->body;
+        js_page_t *kp = w->js;
         for (int i = 0; i < d->nctrls; i++) if ((u32)d->ctrls[i]->id == u->focus) { tg = d->ctrls[i]->node; break; }
-        if (js_page_event(w->js, tg, JSE_KEYDOWN, u->key, u->mods)) { u->key = 0; u->text[0] = 0; u->key_used = true; }
+        doc_t *fd = NULL;
+        ctrl_t *fc = u->focus ? frames_ctrl_by_id(d, u->focus, &fd) : NULL;
+        if (fc) { tg = fc->node; kp = frames_page_of(d, fd); }
+        if (kp && js_page_event(kp, tg, JSE_KEYDOWN, u->key, u->mods)) { u->key = 0; u->text[0] = 0; u->key_used = true; }
         d = w->doc;
     }
     /* rolagem pelo teclado (sem campo em foco) */
@@ -1034,20 +1014,23 @@ static void frame(webview_t *w) {
         if (used) { u->key_used = true; u->key = 0; }
     }
     /* iframes: rodinha e clique sob o ponteiro vão para o documento do iframe */
+    bool over_frame = false, frame_prevented = false;
     if (d && d->frames && (u->wheel || u->released || u->pressed) && !w->select_open) {
         int ox, oy;
         frame_t *fr = frame_at(d, u->mx, u->my + w->scroll, &ox, &oy);
         if (fr) {
             int fx = u->mx - ox, fy = u->my + w->scroll - oy;
             if (u->wheel && frame_input(fr, FRAME_WHEEL, fx, fy, u->wheel, NULL, 0)) { u->wheel = 0; w->dirty = true; }
+            over_frame = true;
             if (u->released) {
                 char out[1024];
-                frame_input(fr, FRAME_CLICK, fx, fy, 0, out, sizeof out);
+                frame_prevented = frame_input(fr, FRAME_CLICK, fx, fy, 0, out, sizeof out) == FRAME_PREVENTED;
                 if (out[0] == 1) { wv_strcpy(w->newwin_url, out + 1, sizeof w->newwin_url); w->events |= MOS_WEB_EV_NEWWIN; }
                 else if (out[0]) navigate(w, out, true, 0, NULL, 0, NULL, -1);
                 w->dirty = true;
             }
-            if (u->pressed || u->released) { u->pressed = u->released = false; w->press_link = NULL; w->press_in = false; }
+            w->press_link = NULL;
+            w->press_in = false;
         }
     }
     if (u->wheel) { w->scroll += u->wheel; u->wheel = 0; }
@@ -1070,12 +1053,12 @@ static void frame(webview_t *w) {
     else gfx_fill(s, 0, 0, w->vw, w->vh, RGB(255, 255, 255));
     draw_select_list(w, u);
     if (hover && u->cursor == CURSOR_ARROW && !w->select_open) u->cursor = CURSOR_HAND;
-    if (u->pressed && !w->select_open) { w->press_link = hover; w->press_in = true; }
+    if (u->pressed && !w->select_open && !over_frame) { w->press_link = hover; w->press_in = true; }
     /* eventos dos controles e cliques para o JavaScript */
     bool prevented = false;
-    if (w->js && d) {
-        for (int i = 0; i < w->njsq; i++) js_page_event(w->js, w->jsq[i].c->node, w->jsq[i].type, 0, u->mods);
-        if (u->released && w->press_in) {
+    if (d) {
+        for (int i = 0; i < w->njsq; i++) { js_page_t *jp = page_for(w, w->jsq[i].d); if (jp) js_page_event(jp, w->jsq[i].c->node, w->jsq[i].type, 0, u->mods); }
+        if (w->js && u->released && w->press_in) {
             node_t *tg = w->js_clicked ? w->js_clicked->node : js_hit_node(d, u->mx, u->my + w->scroll);
             if (tg && js_page_event(w->js, tg, JSE_CLICK, 0, u->mods)) {
                 prevented = true;
@@ -1109,9 +1092,14 @@ static void frame(webview_t *w) {
     if (w->submit_form && w->doc == d) {
         node_t *f = w->submit_form;
         ctrl_t *sb = w->submitter;
+        doc_t *sd = w->submit_doc ? w->submit_doc : d;
         w->submit_form = NULL;
         w->submitter = NULL;
-        if (!(w->js && js_page_event(w->js, f, JSE_SUBMIT, 0, 0))) submit_form(w, f, sb);
+        w->submit_doc = NULL;
+        /* no iframe, o clique em "enviar" com preventDefault cancela o envio, como no documento principal */
+        bool cancel = sd != d && frame_prevented && sb;
+        js_page_t *sp = page_for(w, sd);
+        if (!cancel && !(sp && js_page_event(sp, f, JSE_SUBMIT, 0, 0))) submit_form_in(w, sd, f, sb);
     }
     g_cur = NULL;
     bool transient = u->clicked_any || u->key_used || u->released || u->pressed || u->key;

@@ -122,3 +122,53 @@ WEB_HOST_CASE(iframe_aninhado_e_limites) {
     close_page(&g);
     CHECK(true, "sobreviveu");
 }
+
+WEB_HOST_CASE(iframe_formularios) {
+    pg_t g = open_page("<html><body style='margin:0'><form><input name=a></form>"
+                       "<iframe id=f src='form.html' width=200 height=100 style='border:0;display:block'></iframe></body></html>", 300, 200);
+    int ox, oy;
+    frame_t *f = NULL;
+    for (int y = 0; y < 200 && !f; y += 5) f = frame_at(g.d, 10, y, &ox, &oy);
+    CHECK(f != NULL, "iframe com formulário");
+    if (!f) { close_page(&g); return; }
+    doc_t *cd = frame_document(f);
+    CHECK(cd && cd->nctrls >= 4 && g.d->nctrls >= 1, "controles: pai %d, filho %d", g.d->nctrls, cd ? cd->nctrls : -1);
+    if (!cd || cd->nctrls < 4) { close_page(&g); return; }
+    /* ids únicos entre o pai e o iframe; achar o controle do iframe pelo id */
+    CHECK(g.d->ctrls[0]->id != cd->ctrls[0]->id, "ids iguais: %d", cd->ctrls[0]->id);
+    doc_t *own = NULL;
+    ctrl_t *c = frames_ctrl_by_id(g.d, (u32)cd->ctrls[0]->id, &own);
+    CHECK(c == cd->ctrls[0] && own == cd, "frames_ctrl_by_id");
+    CHECK(frames_page_of(g.d, cd) != NULL && frames_frame_of(g.d, cd) == f, "página e frame do documento do iframe");
+    /* envio GET montado com os valores dos controles do iframe */
+    node_t *form = cd->ctrls[0]->form;
+    char url[1024];
+    sbuf_t body = { 0 };
+    bool post = form_build(cd, form, cd->ctrls[2], url, sizeof url, &body);
+    CHECK(!post && !strcmp(url, "http://teste/iframe/recebe.html?q=ola+mundo&c=on"), "GET: %s", url);
+    sb_free(&body);
+    frame_load(f, url, NULL, 0, NULL);
+    tick(&g, 20);
+    CHECK(!strncmp(frame_url(f), "http://teste/iframe/recebe.html?q=", 34), "iframe navegou com o GET: %s", frame_url(f));
+    CHECK(px(&g, 150, 50) == 0x00FFFF, "página recebida pintada no iframe: %06x", px(&g, 150, 50));
+    /* POST: corpo codificado */
+    frame_load(f, "form.html", NULL, 0, NULL);
+    tick(&g, 20);
+    cd = frame_document(f);
+    node_t *fp = NULL;
+    for (int i = 0; i < cd->nctrls; i++) if (cd->ctrls[i]->form && node_attr(cd->ctrls[i]->form, "method") && !strcmp(node_attr(cd->ctrls[i]->form, "method"), "post")) fp = cd->ctrls[i]->form;
+    CHECK(fp != NULL, "form POST");
+    if (fp) {
+        sbuf_t b2 = { 0 };
+        post = form_build(cd, fp, NULL, url, sizeof url, &b2);
+        CHECK(post && !strcmp(url, "http://teste/iframe/recebe.html") && b2.len == 7 && !memcmp(b2.p, "u=x%26y", 7), "POST: %s [%.*s]", url, b2.len, b2.p ? b2.p : "");
+        sb_free(&b2);
+    }
+    /* form.submit() pelo JS do filho navega o próprio iframe */
+    sbuf_t o = { 0 };
+    js_page_eval_value(frames_page_of(g.d, cd), "document.getElementById('fm').submit()", 38, &o);
+    sb_free(&o);
+    tick(&g, 20);
+    CHECK(!strncmp(frame_url(f), "http://teste/iframe/recebe.html?q=ola+mundo", 42), "form.submit() no filho: %s", frame_url(f));
+    close_page(&g);
+}
