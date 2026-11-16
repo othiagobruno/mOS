@@ -259,7 +259,7 @@ static id combo_desc(id v) { return !v ? cx_str("") : cx_is_str(v) ? v : respond
 static void combo_notify(id self) {
     id nc = MSG0(id, (id)cl("NSNotificationCenter"), "defaultCenter");
     id d = responds(self, "delegate") ? MSG0(id, self, "delegate") : 0;
-    id n = MSG(id, (id)cl("NSNotification"), "notificationWithName:object:", cx_str("NSComboBoxSelectionDidChangeNotification"), self);
+    id n = MSG(id, (id)cl("NSNotification"), "notificationWithName:object:userInfo:", cx_str("NSComboBoxSelectionDidChangeNotification"), self, (id)0);
     if (responds(d, "comboBoxSelectionDidChange:")) MSG(void, d, "comboBoxSelectionDidChange:", n);
     if (nc) MSG(void, nc, "postNotification:", n);
 }
@@ -354,7 +354,7 @@ static void combo_mouse(id self, SEL c, id e) {
     id nc = MSG0(id, (id)cl("NSNotificationCenter"), "defaultCenter");
     if (nc) MSG(void, nc, "postNotificationName:object:", cx_str("NSComboBoxWillPopUpNotification"), self);
     id d = responds(self, "delegate") ? MSG0(id, self, "delegate") : 0;
-    id note = MSG(id, (id)cl("NSNotification"), "notificationWithName:object:", cx_str("NSComboBoxWillPopUpNotification"), self);
+    id note = MSG(id, (id)cl("NSNotification"), "notificationWithName:object:userInfo:", cx_str("NSComboBoxWillPopUpNotification"), self, (id)0);
     if (responds(d, "comboBoxWillPopUp:")) MSG(void, d, "comboBoxWillPopUp:", note);
     id menu = MSG(id, MSG0(id, (id)cl("NSMenu"), "alloc"), "initWithTitle:", cx_str(""));
     MSG(void, menu, "setAutoenablesItems:", (BOOL)NO);
