@@ -148,6 +148,34 @@ static void fa_stdin(mos_spawn_fa_t *a, const char *path) {
     scopy(a->path, path, sizeof a->path);
 }
 
+/* login item que é um .app (SMLoginItemSetEnabled, LSSharedFileList, SMAppService mainApp): o executável é
+ * Contents/MacOS/<CFBundleExecutable> do Info.plist (o spawn não abre diretório) */
+static int app_exec(const char *app, char *out, usize cap) {
+    static char info[600], ibuf[32768];
+    cat2(info, sizeof info, app, "/Contents/Info.plist");
+    i64 len = read_file(info, ibuf, sizeof ibuf - 1);
+    const char *exe = 0;
+    pnode_t *root = 0;
+    if (len > 0) {
+        ibuf[len] = 0;
+        root = plist_parse(ibuf, (usize)len);
+        exe = root && root->type == PN_DICT ? plist_str(root, "CFBundleExecutable") : 0;
+    }
+    char base[160];
+    if (!exe || !exe[0]) {
+        const char *b = strrchr(app, '/');
+        scopy(base, b ? b + 1 : app, sizeof base);
+        usize n = strlen(base);
+        if (n > 4 && !strcmp(base + n - 4, ".app")) base[n - 4] = 0;
+        exe = base;
+    }
+    static char mid[600];
+    cat2(mid, sizeof mid, app, "/Contents/MacOS/");
+    cat2(out, cap, mid, exe);
+    if (root) plist_free(root);
+    return file_size(out) >= 0 ? 0 : -1;
+}
+
 static void start(job_t *j) {
     j->last_start = time_ms();
     j->restart_at = 0;
@@ -210,8 +238,14 @@ static void start(job_t *j) {
             scopy(acts[na].path, j->wd, sizeof acts[na].path);
             na++;
         }
-        mos_spawn_vec_t v = { (u64)argv, (u64)envp, (u64)acts, (unsigned)na, 0 };
         const char *path = j->prog[0] ? j->prog : j->argv[0];
+        static char appexe[600];
+        if (ends(path, ".app")) {
+            if (app_exec(path, appexe, sizeof appexe)) { print("launchd: %s: o app %s não tem executável\n", j->label, path); j->pid = 0; j->last_status = 78; return; }
+            path = appexe;
+            argv[0] = appexe;
+        }
+        mos_spawn_vec_t v = { (u64)argv, (u64)envp, (u64)acts, (unsigned)na, 0 };
         j->pid = (int)sys3(SYS_SPAWNVEC, (u64)path, (u64)&v, 0);
     }
     if (j->pid > 0) print("launchd: %s iniciado (pid %d)\n", j->label, (i64)j->pid);

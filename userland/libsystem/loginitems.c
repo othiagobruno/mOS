@@ -58,3 +58,15 @@ id cx_login_snapshot(unsigned *seed) {
     }
     return a;
 }
+
+/* o caminho está na lista de login items? (SMAppService status) */
+int cx_login_has(const char *path) {
+    char file[512], text[LI_TEXT];
+    char paths[LI_MAX][LI_PATH];
+    if (!path || li_pref_path(file, (int)sizeof file)) return 0;
+    text[0] = 0;
+    li_file_read(file, text, LI_TEXT);
+    int n = li_parse(text, paths, LI_MAX);
+    for (int i = 0; i < n; i++) if (li_eq(paths[i], path)) return 1;
+    return 0;
+}
