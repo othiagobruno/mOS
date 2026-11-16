@@ -13,6 +13,8 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -85,13 +87,25 @@ def compile_machocheck() -> Path:
     return out
 
 
+def sete_zip() -> str:
+    """7z do sistema, ou o 7zz oficial (7-zip.org, LGPL) em ~/.tools/7zip quando o Ubuntu não tem p7zip."""
+    for nome in ("7z", "7zz"):
+        achado = shutil.which(nome)
+        if achado:
+            return achado
+    local = Path.home() / ".tools" / "7zip" / "7zz"
+    if local.is_file():
+        return str(local)
+    raise SystemExit("falta o 7z: instale p7zip-full ou ponha o 7zz em ~/.tools/7zip")
+
+
 def extrai_7z(archive: Path, dest: Path) -> None:
     """O 7z do Ubuntu devolve 2 quando o DMG tem um alias para /Applications.
 
     Esse aviso não apaga o .app. Outro status, ou um 2 com erro diferente, continua falha.
     """
     proc = subprocess.run(
-        ["7z", "x", "-y", f"-o{dest}", str(archive)],
+        [sete_zip(), "x", "-y", f"-o{dest}", str(archive)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
@@ -116,8 +130,11 @@ def extract(archive: Path, dest: Path) -> None:
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     name = archive.name.lower()
-    if name.endswith(".pkg"):
-        raise SystemExit(f"{archive.name}: pacote .pkg fora do corpus")
+    if name.endswith(".baixado"):
+        name += detecta_formato(archive)
+    if name.endswith(".pkg") or name.endswith(".mpkg"):
+        extrai_pkg(archive, dest)
+        return
     if name.endswith(".zip") or name.endswith(".dmg") or name.endswith(".tar.bz2") or name.endswith(".tbz"):
         extrai_7z(archive, dest)
         return
@@ -130,6 +147,27 @@ def extract(archive: Path, dest: Path) -> None:
             tf.extractall(dest)
         return
     raise SystemExit(f"arquivo não suportado: {archive.name}")
+
+
+def extrai_pkg(archive: Path, dest: Path) -> None:
+    """Pacote do instalador: xar com um ou mais Payload (cpio com gzip). Cada Payload vira uma pasta ao lado dele.
+
+    O instalador do mOS (kernel/apps/pkgextract.c) é outro caminho; aqui só interessa chegar ao .app para medir.
+    Payload em pbzx (pacotes da Apple) não é aberto pelo 7z e fica sem .app, o que a varredura registra.
+    """
+    extrai_7z(archive, dest)
+    for _volta in range(3):
+        pendentes = [p for p in dest.rglob("*") if p.is_file() and (p.name in ("Payload", "Payload~") or p.suffix == ".cpio")]
+        if not pendentes:
+            break
+        for payload in pendentes:
+            alvo = payload.parent / (payload.name.rstrip("~") + ".d")
+            alvo.mkdir(exist_ok=True)
+            proc = subprocess.run([sete_zip(), "x", "-y", f"-o{alvo}", str(payload)],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            payload.unlink()
+            if proc.returncode not in (0, 2):
+                print(f"7z: {payload.relative_to(dest)} não abriu ({proc.returncode})", flush=True)
 
 
 def find_app(root: Path) -> Path | None:
@@ -153,11 +191,42 @@ def find_app(root: Path) -> Path | None:
     return apps[0]
 
 
+def nome_do_arquivo(app: dict, url: str) -> str:
+    """Nome local do download. URLs como .../stable ou download?plataforma=... não terminam em extensão."""
+    base = url.rstrip("/").split("/")[-1].split("?")[0] or app["id"]
+    if not any(base.lower().endswith(x) for x in (".dmg", ".zip", ".pkg", ".mpkg", ".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tbz")):
+        base = app["id"] + "." + {"pkg": "pkg"}.get(app.get("tipo", ""), "baixado")
+    return base
+
+
+def detecta_formato(archive: Path) -> str:
+    """Extensão de um download sem extensão conhecida, pelo cabeçalho (zip, xar, gzip, xz, bzip2; o resto é dmg)."""
+    with archive.open("rb") as f:
+        cab = f.read(8)
+    if cab[:2] == b"PK":
+        return ".zip"
+    if cab[:4] == b"xar!":
+        return ".pkg"
+    if cab[:2] == b"\x1f\x8b":
+        return ".tar.gz"
+    if cab[:6] == b"\xfd7zXZ\x00":
+        return ".tar.xz"
+    if cab[:3] == b"BZh":
+        return ".tar.bz2"
+    return ".dmg"
+
+
 def fetch_one(app: dict) -> Path:
     dest_dir = CACHE / app["id"]
     dest_dir.mkdir(parents=True, exist_ok=True)
-    filename = app["url"].rstrip("/").split("/")[-1].split("?")[0]
-    archive = dest_dir / filename
+    archive = dest_dir / nome_do_arquivo(app, app["url"])
+    if app.get("sha256") is None:
+        # cask com sha256 no_check: o primeiro download fixa o hash; scan --fixar grava no manifesto
+        if not archive.is_file():
+            print(f"baixando {app['id']} (hash a fixar)", flush=True)
+            download(app["url"], archive)
+        app["sha256"] = sha256_file(archive)
+        app["sha256_fixado_em"] = time.strftime("%Y-%m-%d")
     digest = ""
     for tentativa in range(1, 4):
         if not archive.is_file() or sha256_file(archive) != app["sha256"]:
@@ -172,24 +241,45 @@ def fetch_one(app: dict) -> Path:
         raise SystemExit(f"{app['id']}: sha256 {digest} != {app['sha256']} depois de 3 tentativas")
     extracted = dest_dir / "extracted"
     marker = dest_dir / "extracted.ok"
-    if not marker.is_file():
+    if not marker.is_file() or marker.read_text(encoding="utf-8") != digest:
         extract(archive, extracted)
         marker.write_text(digest, encoding="utf-8")
     return extracted
 
 
-def run_one(mc: Path, lib: Path, disco: Path, app: dict) -> Path:
+def imagens_no_log(texto: str) -> int:
+    for line in texto.splitlines():
+        if line.startswith("Imagens Mach-O"):
+            return int(line.split(":")[1].split("(")[0].strip())
+    return 0
+
+
+def roda_machocheck(mc: Path, lib: Path, discos: list[Path], bundle: Path, report: Path, arch: str) -> str:
+    cmd = [str(mc), "--arch", arch]
+    for d in discos:
+        cmd += ["--disco", str(d)]
+    cmd += [str(lib), str(bundle), str(report)]
+    proc = subprocess.run(cmd, text=True, capture_output=True)
+    if proc.returncode != 0:
+        raise SystemExit(f"machocheck saiu {proc.returncode}\n{proc.stderr[-500:]}")
+    return proc.stdout + proc.stderr
+
+
+def run_one(mc: Path, lib: Path, disco, app: dict, lib_arm64: Path | None = None, discos_arm64=None) -> Path:
+    """Mede a fatia x86_64; um app só-arm64 (0 imagens x86_64) é medido na fatia arm64 com o libSystem arm64."""
+    discos = disco if isinstance(disco, list) else [disco]
     extracted = fetch_one(app)
     bundle = find_app(extracted)
     if bundle is None:
         raise SystemExit(f"{app['id']}: nenhum .app no arquivo")
     report = CACHE / app["id"] / "relatorio.txt"
     log = CACHE / app["id"] / "machocheck.txt"
-    cmd = [str(mc), "--disco", str(disco), str(lib), str(bundle), str(report)]
-    proc = subprocess.run(cmd, text=True, capture_output=True)
-    log.write_text(proc.stdout + proc.stderr, encoding="utf-8")
-    if proc.returncode != 0:
-        raise SystemExit(f"{app['id']}: machocheck saiu {proc.returncode}\n{proc.stderr[-500:]}")
+    texto = roda_machocheck(mc, lib, discos, bundle, report, "x86_64")
+    arch = "x86_64"
+    if imagens_no_log(texto) == 0 and lib_arm64 is not None and lib_arm64.is_file():
+        texto = roda_machocheck(mc, lib_arm64, discos_arm64 or [], bundle, report, "arm64")
+        arch = "arm64"
+    log.write_text(f"# arch {arch} bundle {bundle.relative_to(extracted)}\n" + texto, encoding="utf-8")
     return log
 
 
@@ -225,6 +315,22 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         print("ok", app["id"], flush=True)
 
 
+def grava_manifesto(man: dict) -> None:
+    MANIFEST.write_text(json.dumps(man, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def limpa_binarios(app_id: str) -> None:
+    """Apaga o download e a extração; ficam machocheck.txt e relatorio.txt (o que o relatório de lacunas lê)."""
+    d = CACHE / app_id
+    for p in d.iterdir() if d.is_dir() else []:
+        if p.name in ("machocheck.txt", "relatorio.txt", "medido.sha256"):
+            continue
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            p.unlink()
+
+
 def cmd_scan(args: argparse.Namespace) -> None:
     man = load_manifest()
     apps = man["apps"]
@@ -234,17 +340,55 @@ def cmd_scan(args: argparse.Namespace) -> None:
     elif args.gate:
         want = set(man["gate_ids"])
         apps = [a for a in apps if a["id"] in want]
-    zig = ensure_zig()
-    lib, disco = build_libsystem(zig)
+    if args.lib:
+        # libSystem já compilado (REGRAS do time: o build do projeto só roda na fila final)
+        lib = Path(args.lib)
+        discos = [Path(d) for d in (args.disco or [])]
+        if not lib.is_file():
+            raise SystemExit(f"--lib {lib} não existe")
+    else:
+        zig = ensure_zig()
+        lib, d0 = build_libsystem(zig)
+        discos = [d0]
+    lib_a = Path(args.lib_arm64) if getattr(args, "lib_arm64", None) else None
+    discos_a = [Path(d) for d in (getattr(args, "disco_arm64", None) or [])]
     mc = compile_machocheck()
     summary = {}
+    arq_falhas = CACHE / "falhas.json"
+    falhas = json.loads(arq_falhas.read_text(encoding="utf-8")) if arq_falhas.is_file() else {}
     for app in apps:
-        log = run_one(mc, lib, disco, app)
-        summary[app["id"]] = parse_summary(log.read_text(encoding="utf-8"))
+        falhas.pop(app["id"], None)
+        medido = CACHE / app["id"] / "medido.sha256"
+        if getattr(args, "continuar", False) and app.get("sha256") and medido.is_file() \
+                and medido.read_text().strip() == app["sha256"] and (CACHE / app["id"] / "machocheck.txt").is_file():
+            log = CACHE / app["id"] / "machocheck.txt"
+        else:
+            try:
+                log = run_one(mc, lib, discos, app, lib_a, discos_a)
+                medido.write_text(app["sha256"] + "\n")
+            except (SystemExit, OSError, urllib.error.URLError, tarfile.TarError, ValueError) as e:
+                if not getattr(args, "tolerante", False):
+                    raise
+                falhas[app["id"]] = str(e).splitlines()[0][:300] if str(e) else type(e).__name__
+                print("FALHA", app["id"], falhas[app["id"]], flush=True)
+                if getattr(args, "limpar", False):
+                    limpa_binarios(app["id"])
+                continue
+            finally:
+                if getattr(args, "fixar", False):
+                    grava_manifesto(man)
+        texto = log.read_text(encoding="utf-8")
+        summary[app["id"]] = parse_summary(texto)
+        summary[app["id"]]["arch"] = texto.split()[2] if texto.startswith("# arch") else "x86_64"
+        summary[app["id"]]["imagens"] = imagens_no_log(texto)
         print(app["id"], summary[app["id"]], flush=True)
+        if getattr(args, "limpar", False):
+            limpa_binarios(app["id"])
     out = Path(args.summary) if args.summary else CACHE / "summary.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    arq_falhas.write_text(json.dumps(falhas, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"medidos {len(summary)}, falhas {len(falhas)}", flush=True)
 
 
 def framework_de(lib: str) -> str:
@@ -360,12 +504,12 @@ def contas_que_subiram(baseline: dict, atual: dict, ids: list[str]) -> list[str]
     return subiu
 
 
-def cmd_gate(_: argparse.Namespace) -> None:
+def cmd_gate(args: argparse.Namespace) -> None:
     man = load_manifest()
     baseline_path = Path(__file__).resolve().parent / "baseline.json"
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     summary_path = CACHE / "gate-summary.json"
-    ns = argparse.Namespace(ids=None, gate=True, summary=str(summary_path))
+    ns = argparse.Namespace(ids=None, gate=True, summary=str(summary_path), lib=args.lib, disco=args.disco)
     cmd_scan(ns)
     got = json.loads(summary_path.read_text(encoding="utf-8"))
     subiu = contas_que_subiram(baseline, got, man["gate_ids"])
@@ -475,9 +619,19 @@ def main() -> None:
     s = sub.add_parser("scan")
     s.add_argument("--gate", action="store_true")
     s.add_argument("--summary")
+    s.add_argument("--lib", help="libSystem.mos já compilado (não roda tools/build.sh)")
+    s.add_argument("--disco", action="append", help="libc++/libswift*/libunwind/libz/libcurl do build (repetível)")
+    s.add_argument("--lib-arm64", help="libSystem-arm64.mos para apps sem fatia x86_64")
+    s.add_argument("--disco-arm64", action="append")
+    s.add_argument("--fixar", action="store_true", help="grava no manifesto o sha256 dos casks no_check")
+    s.add_argument("--limpar", action="store_true", help="apaga download e extração depois de medir")
+    s.add_argument("--continuar", action="store_true", help="pula o app já medido com o mesmo sha256")
+    s.add_argument("--tolerante", action="store_true", help="registra a falha do app em falhas.json e segue")
     s.add_argument("ids", nargs="*")
     s.set_defaults(func=cmd_scan)
     g = sub.add_parser("gate")
+    g.add_argument("--lib")
+    g.add_argument("--disco", action="append")
     g.set_defaults(func=cmd_gate)
     gaps = sub.add_parser("gaps")
     gaps.add_argument("--out", default=str(ROOT / "docs" / "compat-gaps.md"))
