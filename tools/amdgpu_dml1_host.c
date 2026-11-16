@@ -1,5 +1,5 @@
 /* mOS — teste de host do DML1 (kernel/dev/amdgpu/dml1.c) contra registradores lidos no Picasso do Thiago
- * (tools/testdata/amdgpu/dcn-live-5120x1440.json: 5120x1440 em dois pipes de 2560, superfície 64KB_R_X).
+ * (tools/testdata/amdgpu/dcn-live-5120x1440.json: 5120x1440 em dois pipes de 2560, superfície 64KB_S_X).
  * Rodar da raiz:
  *   gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu tools/amdgpu_dml1_host.c kernel/dev/amdgpu/dml1.c -o /tmp/dml1 && /tmp/dml1 */
 #include "dml1.h"

@@ -51,6 +51,9 @@ static void scan(u32 lines) {
 #define CARVE 0x3F0000000ull     /* MC_VM_FB_OFFSET do boot_state */
 /* ---------- motores simulados: SMU, MMHUB e SDMA que executa os pacotes ---------- */
 static bool smu_alive = true, smu_sdma_on, sdma_dead;
+static u64 smu_dram;
+static u32 smu_tables;
+static bool smu_table_empty;
 static bool gfxoff_allowed; static u64 gfxoff_enables, gc_off_writes;
 /* registradores do GC: segmento 0 até o começo do DCN e o segmento 1 inteiro */
 static bool is_gc_reg(u32 off) { u32 dw = off / 4; return (dw >= 0x2000 && dw < 0x34C0) || (dw >= 0xA000 && dw < 0x10000); }
@@ -510,6 +513,22 @@ static bool engine_wreg(u32 off, u32 v) {
         else if (v == SMU_MSG_POWER_UP_GFX) smu_gfx_on = true;
         else if (v == SMU_MSG_DISABLE_GFXOFF) { gfxoff_off = true; gfxoff_allowed = false; }
         else if (v == SMU_MSG_ENABLE_GFXOFF) { gfxoff_allowed = true; gfxoff_enables++; }
+        else if (v == SMU_MSG_SET_DRIVER_DRAM_HI) smu_dram = (smu_dram & 0xFFFFFFFFull) | (u64)regs[R_MP1_C2PMSG_82 / 4] << 32;
+        else if (v == SMU_MSG_SET_DRIVER_DRAM_LO) smu_dram = (smu_dram & ~0xFFFFFFFFull) | regs[R_MP1_C2PMSG_82 / 4];
+        else if (v == SMU_MSG_TRANSFER_SMU2DRAM && regs[R_MP1_C2PMSG_82 / 4] == SMU10_TABLE_DPMCLOCKS) {
+            u8 *t = mc_ptr_h(0, smu_dram, true);       /* o MP1 escreve pela MMHUB */
+            if (!t) { regs[R_MP1_C2PMSG_90 / 4] = 0xFF; return true; }
+            /* DpmClocks_t do Picasso: Dcef[4], Soc[8], F[4], Mem[4] de {Freq MHz, Vol mV x4} */
+            static const u32 dcef[4] = {300, 600, 626, 655}, soc[8] = {200, 309, 400, 533, 600, 678, 757, 800},
+                             fck[4] = {400, 933, 1200, 1333}, mem[4] = {400, 933, 1200, 1333};
+            u32 tbl[40] = {0};
+            for (int i = 0; i < 4; i++) { tbl[i * 2] = smu_table_empty ? 0 : dcef[i]; tbl[i * 2 + 1] = 3400 + i * 200; }
+            for (int i = 0; i < 8; i++) { tbl[8 + i * 2] = soc[i]; tbl[8 + i * 2 + 1] = 3400; }
+            for (int i = 0; i < 4; i++) { tbl[24 + i * 2] = fck[i]; tbl[24 + i * 2 + 1] = 3400; }
+            for (int i = 0; i < 4; i++) { tbl[32 + i * 2] = mem[i]; tbl[32 + i * 2 + 1] = 3400; }
+            memcpy(t, tbl, sizeof tbl);
+            smu_tables++;
+        }
         else regs[R_MP1_C2PMSG_90 / 4] = 0xFF;                        /* mensagem desconhecida */
         regs[R_MP1_C2PMSG_66 / 4] = v;
         return true;
@@ -925,6 +944,23 @@ static void test_engines(void) {
     CHECK(engines_up(), "motores");
     amdgpu_t *a = &eng;
     CHECK(a->smu_ok && a->smu_version == 0x41E4D && smu_sdma_on, "SMU");
+    CHECK(smu_tables == 1 && a->dpm_clocks_ok && a->bw_soc.nfclk == 4 && a->bw_soc.fclk_mhz[3] == 1333 && a->bw_soc.ndcfclk == 4 &&
+          a->bw_soc.dcfclk_mhz[0] == 300 && a->bw_soc.dcfclk_mhz[3] == 655 && a->bw_soc.num_pipes == 4 && !a->bw_soc.dcn101,
+          "tabela de relógios do SMU (TABLE_DPMCLOCKS) no modelo de banda");
+    CHECK(smu_dram == amdgpu_vram_to_mc(a, a->smu_table), "tabela pela VRAM, endereço MC");
+    smu_table_empty = true;
+    CHECK(amdgpu_smu_dpm_clocks(a) == 0 && !a->dpm_clocks_ok && a->bw_soc.nfclk == 0 && a->bw_soc.ndcfclk == 0 && smu_tables == 2,
+          "tabela com nível zerado: padrões do DCN 1.0");
+    smu_table_empty = false;
+    CHECK(amdgpu_smu_dpm_clocks(a) == 0 && a->dpm_clocks_ok, "tabela de novo");
+    {
+        amd_dcnbw_stream_t st = { .h_total = 5400, .h_active = 5120, .h_front_porch = 88, .h_sync_width = 44,
+            .v_total = 1485, .v_active = 1440, .v_front_porch = 3, .v_sync_width = 5, .pixel_clock_mhz = 481.14,
+            .hdmi = true, .bpc = 8, .has_plane = true, .bytes_per_pixel = 4, .sw_mode = 25, .src_width = 5120, .src_height = 1440 };
+        amd_dcnbw_out_t bo;
+        CHECK(amd_dcnbw_validate(&a->bw_soc, &st, 1, &bo) == 0 && bo.s[0].vstartup_start == 13 && amd_dcnbw_wm_cycles(bo.wm[0].urgent_ns, a->bw_soc.refclk_khz) == 592,
+              "modelo de banda com a tabela do SMU: vstartup %u, urgente %u", bo.s[0].vstartup_start, amd_dcnbw_wm_cycles(bo.wm[0].urgent_ns, a->bw_soc.refclk_khz));
+    }
     CHECK(a->gmc_ok && a->sdma_ok && ucode_loaded_ver == 0xA9 && !ucode_bad && ucode_words == ucode_ref_dw, "microcódigo %u/%u", ucode_words, ucode_ref_dw);
     CHECK(regs[R_MC_VM_SYS_APERTURE_LOW / 4] == (u32)(FB_MC >> 18) && regs[R_MC_VM_SYS_APERTURE_HIGH / 4] == (u32)((FB_MC + (256ull << 20) - 1) >> 18), "abertura do sistema");
     CHECK((regs[R_VM_CONTEXT0_CNTL / 4] & (CTX0_ENABLE | CTX0_DEPTH_MASK)) == CTX0_ENABLE, "contexto 0 com tabela plana");

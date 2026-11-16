@@ -16,6 +16,8 @@
 #include "edid.h"
 #include "regs.h"
 #include "atom.h"
+#include "dcnbw.h"
+#include "dcn.h"
 
 #ifdef MOS_HOST_TEST
 #include "amdgpu_shim.h"      /* tools/: pci_dev_t e as funções do kernel que o teste simula */
@@ -57,6 +59,7 @@ typedef struct {
 } amd_conn_t;
 typedef struct {
     u32        dispclk_khz, dce_refclk_khz, i2c_refclk_khz, fw_revision;
+    u32        mem_type, mem_channels;   /* integratedsysteminfo v1.11+: tipo (26 = DDR4) e canais da memória do APU */
     u32        nconn;
     amd_conn_t conn[AMD_MAX_CONN];
 } amd_vbios_info_t;
@@ -71,7 +74,7 @@ typedef struct {
     u64           pages;
 } amd_vm_t;
 
-typedef struct {
+typedef struct amdgpu {
     bool          ready;
     pci_dev_t    *pci;
     volatile u8  *mmio;
@@ -106,6 +109,7 @@ typedef struct {
     /* motores (engine.c), ligados depois do VFS por amdgpu_engines_init */
     bool          engines_tried, smu_ok, gmc_ok, sdma_ok;
     u32           smu_version, sdma_fw_version;
+    u64           smu_table;             /* página da VRAM para as tabelas do SMU (BAR0) */
     u64           gart_start, gart_size, gart_table, gart_scratch, dummy_page;
     u64          *gart_cpu;
     u8            gart_used[AMD_GART_PAGES / 8];
@@ -151,6 +155,12 @@ typedef struct {
     bool             vbios_ok;
     amd_atom_t       atom;
     amd_vbios_info_t vbios;
+    /* limites do SoC para o modelo de banda do DCN (dcnbw.c): tabela de relógios do SMU + canais da VBIOS */
+    amd_dcnbw_soc_t  bw_soc;
+    bool             dpm_clocks_ok;
+    /* caminho de pixels (dcn.c) */
+    int              dcn_pipe_owner[4];   /* OTG que usa o pipe; -1 = livre */
+    u32              dcn_timeouts;
     /* DDC (ddc.c): EDID ao vivo por linha e contadores do motor de I2C */
     u8            ddc_edid[AMD_NUM_DDC][512];
     u32           ddc_edid_len[AMD_NUM_DDC];
@@ -211,6 +221,8 @@ u64        amdgpu_vram_free_bytes(const amdgpu_t *a);
 bool       amdgpu_engines_init(amdgpu_t *a);
 const u8  *amdgpu_fw_load(const char *name, u64 *len);
 int        amdgpu_smu_send(amdgpu_t *a, u32 msg, u32 arg, u32 *out);
+/* tabela de relógios do SMU 10 (TABLE_DPMCLOCKS) em a->bw_soc; 0 ou -MOS_*. Precisa da GMC (a tabela vem pela VRAM). */
+int        amdgpu_smu_dpm_clocks(amdgpu_t *a);
 /* RAM -> janela da GART (páginas contíguas a partir de phys). Endereço MC ou 0. */
 u64        amdgpu_gart_map(amdgpu_t *a, u64 phys, u32 npages, bool writable);
 void       amdgpu_gart_unmap(amdgpu_t *a, u64 mc, u32 npages);

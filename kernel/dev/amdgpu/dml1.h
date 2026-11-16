@@ -49,6 +49,8 @@ typedef struct {
     /* TTU */
     u32 refcyc_per_req_delivery_pre_l, refcyc_per_req_delivery_l, qos_level_low_wm, qos_level_high_wm;
     u32 qos_level_flip, qos_level_fixed_l, min_ttu_vblank;
+    /* croma de um plano RGB: o DCN 1.0 repete o luma (DCC 4:2:0 não existe) e o vratio de prefetch fica em 1.0 */
+    u32 vratio_prefetch_c, dst_y_per_meta_row_nom_c, refcyc_per_meta_chunk_vblank_c, qos_level_fixed_c;
 } amd_dml1_dlg_t;
 
 void amd_dml1_dlg(const amd_dml1_dlg_in_t *in, const amd_dml1_rq_t *rq, u32 bytes_per_pixel, amd_dml1_dlg_t *o);

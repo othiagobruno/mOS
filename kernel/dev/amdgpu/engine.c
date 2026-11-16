@@ -76,6 +76,47 @@ static bool smu_init(amdgpu_t *a) {
     return true;
 }
 
+/* Tabela de relógios (smu10_populate_clock_table + dcn10_resource_construct): DcefClocks e FClocks viram os limites
+ * do modelo de banda do DCN. Um nível zerado invalida a tabela inteira (verify_clock_values), e então ficam os
+ * padrões do dcn10_soc_defaults. Raven2 (DCN 1.01) tem 3 pipes; os canais vêm da VBIOS. */
+int amdgpu_smu_dpm_clocks(amdgpu_t *a) {
+    amd_dcnbw_soc_defaults(&a->bw_soc);
+    a->bw_soc.dcn101 = a->variant == AMD_RAVEN2;
+    a->bw_soc.num_pipes = a->variant == AMD_RAVEN2 ? 3 : 4;
+    a->bw_soc.channels = a->vbios.mem_channels ? a->vbios.mem_channels : 2;
+    if (a->vbios.dce_refclk_khz) a->bw_soc.refclk_khz = a->vbios.dce_refclk_khz;
+    a->dpm_clocks_ok = false;
+    if (!a->smu_ok || !a->gmc_ok) return -MOS_ENXIO;
+    if (!a->smu_table) {
+        a->smu_table = amdgpu_vram_alloc(a, 4096);
+        if (!a->smu_table) return -MOS_ENOMEM;
+    }
+    u8 *t = vram_cpu(a, a->smu_table);
+    memset(t, 0, SMU10_DPMCLOCKS_BYTES);
+    WMB();
+    u64 mc = vram_mc(a, a->smu_table);
+    int r = amdgpu_smu_send(a, SMU_MSG_SET_DRIVER_DRAM_HI, (u32)(mc >> 32), NULL);
+    if (!r) r = amdgpu_smu_send(a, SMU_MSG_SET_DRIVER_DRAM_LO, (u32)mc, NULL);
+    if (!r) r = amdgpu_smu_send(a, SMU_MSG_TRANSFER_SMU2DRAM, SMU10_TABLE_DPMCLOCKS, NULL);
+    if (r) return r;
+    u32 dcef[4], fclk[4];
+    bool ok = true;
+    for (u32 i = 0; i < 4; i++) {
+        u32 dv, fv;
+        memcpy(&dv, t + i * 8, 4);                      /* DcefClocks[i].Freq */
+        memcpy(&fv, t + (4 + 8 + i) * 8, 4);            /* FClocks[i].Freq */
+        dcef[i] = dv; fclk[i] = fv;
+        if (!dv || !fv) ok = false;
+    }
+    if (!ok) { kprintf("amdgpu: tabela de relógios do SMU vazia; padrões do DCN 1.0\n"); return 0; }
+    memcpy(a->bw_soc.dcfclk_mhz, dcef, sizeof dcef); a->bw_soc.ndcfclk = 4;
+    memcpy(a->bw_soc.fclk_mhz, fclk, sizeof fclk); a->bw_soc.nfclk = 4;
+    a->dpm_clocks_ok = true;
+    kprintf("amdgpu: fclk %u/%u/%u/%u MHz, dcfclk %u/%u/%u/%u MHz, %u canais\n", fclk[0], fclk[1], fclk[2], fclk[3],
+            dcef[0], dcef[1], dcef[2], dcef[3], a->bw_soc.channels);
+    return 0;
+}
+
 /* ------------------------------------------------------------ GMC (MMHUB 1.0) */
 /* As duas hubs (MMHUB: display, SDMA, IH; GFXHUB: CP e shaders) têm o mesmo conjunto de registradores em
  * lugares diferentes. hub 0 = MMHUB, 1 = GFXHUB. */
@@ -536,6 +577,7 @@ bool amdgpu_engines_init(amdgpu_t *a) {
     if (!a->smu_ok) { kprintf("amdgpu: sem SMU; motores da GPU ficam desligados\n"); return false; }
     a->gmc_ok = gmc_init(a);
     if (!a->gmc_ok) return false;
+    amdgpu_smu_dpm_clocks(a);
     if (!amdgpu_ih_init(a)) kprintf("amdgpu: sem IH; fences seguem por polling\n");
     bool sdma = sdma_init(a);
     a->gfx_ok = amdgpu_gfx_init(a);          /* motor 3D: independe do SDMA */

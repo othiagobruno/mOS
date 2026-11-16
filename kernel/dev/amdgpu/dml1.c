@@ -210,5 +210,9 @@ void amd_dml1_dlg(const amd_dml1_dlg_in_t *in, const amd_dml1_rq_t *rq, u32 bpe,
     o->qos_level_flip = 14;
     o->qos_level_fixed_l = 8;
     o->min_ttu_vblank = (u32)(min_ttu_vblank * refclk);
+    o->vratio_prefetch_c = 1u << 19;
+    o->dst_y_per_meta_row_nom_c = o->dst_y_per_meta_row_nom_l;
+    o->refcyc_per_meta_chunk_vblank_c = o->refcyc_per_meta_chunk_vblank_l;
+    o->qos_level_fixed_c = 8;
     (void)dceil;
 }

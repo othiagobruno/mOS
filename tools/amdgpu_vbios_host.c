@@ -105,6 +105,7 @@ int main(void) {
     CHECK(amdgpu_vbios_init(&a, vf, len) && a.vbios_ok, "VBIOS sintético");
     check_thiago(&a.vbios, "sintético");
     CHECK(a.vbios.fw_revision == 0x00120203 && a.vbios.conn[4].type == 0, "revisão do firmware e o mux fica de fora");
+    CHECK(a.vbios.mem_type == 26 && a.vbios.mem_channels == 2, "integratedsysteminfo: DDR4 em 2 canais (%u %u)", a.vbios.mem_type, a.vbios.mem_channels);
     /* registro sem terminador e lut sem o pino: sem DDC/HPD, sem estourar */
     w8(0x600 + 0x58 + 8, 0x07);
     w8(0x504 + 6, 0x77);

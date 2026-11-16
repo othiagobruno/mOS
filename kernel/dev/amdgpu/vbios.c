@@ -59,6 +59,13 @@ int amd_vbios_parse(amd_atom_t *at, amd_vbios_info_t *v) {
     }
     if (amd_atom_data_header(at, ATOM_DATA_FIRMWARE_INFO, &size, &frev, &crev, &start) && frev == 3)
         v->fw_revision = amd_atom_u32(at, start + 4u);
+    /* atom_integrated_system_info_v1_11/12: memorytype no byte 42, umachannelnumber no 43
+     * (amdgpu_atomfirmware_get_vram_info: 0 canais vale 1) */
+    if (amd_atom_data_header(at, ATOM_DATA_INTEGRATED_SYS_INFO, &size, &frev, &crev, &start) && frev == 1 && crev >= 11 && size >= 44) {
+        v->mem_type = amd_atom_u8(at, start + 42u);
+        v->mem_channels = amd_atom_u8(at, start + 43u);
+        if (!v->mem_channels) v->mem_channels = 1;
+    }
     if (!amd_atom_data_header(at, ATOM_DATA_DISPLAY_OBJECT_INFO, &size, &frev, &crev, &start)) return -1;
     if (frev != 1 || crev < 4) return -2;                       /* só o formato v1.4/1.5 do atomfirmware */
     u32 n = amd_atom_u8(at, start + 6u);
