@@ -18,6 +18,16 @@ for a in json.load(open('tools/corpus/manifest.json'))['apps']:
         print(a['id'])")
 fi
 echo "varrer-tudo: ${#ids[@]} apps a medir"
+# libSystem: o da main compilado pelo CI (harness.py libsystem-ci), senão o build/ local já copiado
+python3 "$H" libsystem-ci >/dev/null 2>&1 || true
+if [ -f build/ci-lib/libSystem.mos ]; then
+    LIBS=(--lib build/ci-lib/libSystem.mos --disco build/ci-lib/disco-x86 --disco build/disco-x86)
+    [ -f build/ci-lib/libSystem-arm64.mos ] && LIBS+=(--lib-arm64 build/ci-lib/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
+    echo "varrer-tudo: libSystem da main $(cat build/ci-lib/commit.txt 2>/dev/null | cut -c1-10)"
+else
+    LIBS=(--lib build/libSystem.mos --disco build/disco-x86 --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
+    echo "varrer-tudo: libSystem local ($(cat build/libSystem.origem 2>/dev/null))"
+fi
 pre=""
 for i in "${!ids[@]}"; do
     id=${ids[$i]}
@@ -35,7 +45,7 @@ for i in "${!ids[@]}"; do
     trava=(flock /tmp/mos-pesado.lock)
     [ "${tam:-999}" -lt 200 ] && trava=()
     "${trava[@]}" nice -n 10 timeout 1800 python3 "$H" scan --tolerante --limpar --fixar --continuar \
-        --lib build/libSystem.mos --disco build/disco-x86 --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/disco-arm64 \
+        "${LIBS[@]}" \
         --summary "build/corpus/$id.summary.json" "$id" 2>&1 | grep -v '^baixando' | tail -2
 done
 [ -n "$pre" ] && wait "$pre"
