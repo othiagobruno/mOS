@@ -141,6 +141,54 @@ o `IOSurface` de software do libSystem; quem precisa dos dois associa o
 (`bo` 0 mantém o framebuffer do firmware). É troca de framebuffer e de modo,
 sem aceleração 3D. Conector sem hardware devolve `-MOS_ENOENT`.
 
+## Revisão 3 (proposta, GPU AMD nativa): combinada entre Thais e Otavio
+
+Ainda não está em `mos_gpu.h` nem no kernel: entra junto com o código (GFX9 e VM por processo,
+`docs/gpu-amd.md` F8/F9). Até lá `MOS_GPU_ABI` continua 2. Tudo abaixo só acrescenta campos no fim e
+valores novos. Nenhum campo da revisão 2 muda de sentido.
+
+Decisões:
+
+1. **Submit em PM4 montado no userland.** O libSystem grava os IBs (pacotes PM4 do GFX9) em BOs e envia
+   uma lista de IBs. O kernel valida cada IB e o envia pelo anel do kernel com o VMID do contexto. Ele
+   mesmo põe o preâmbulo (CONTEXT_CONTROL, CLEAR_STATE, troca de VMID) e a fence (RELEASE_MEM/EOP com o
+   `seq`, IRQ pelo IH). A fence é a mesma da revisão 2: `MOS_GPU_FENCE_WAIT` em cima do `seq`.
+2. **Memória com VA da GPU.** Cada contexto AMD tem um espaço de endereços próprio (VMID 1..15, tabelas
+   de 4 níveis, 48 bits). `BO_CREATE` devolve `gpu_va`, fixo enquanto o BO existir e igual em todos os
+   contextos do processo. `MOS_GPU_BO_GPU` põe o BO na VRAM (carve-out). Sem ele, o BO fica na GTT (RAM do
+   sistema, com snoop). Os dois tipos se mapeiam no processo como hoje, por `BO_MAP`.
+3. **Blocos que o kernel liga:** RLC, PFP/ME/CE (anel GFX), MEC1 pipe 0 com uma fila de compute do
+   kernel (HQD) e SDMA (já na main). Compute vai pelo mesmo submit, escolhendo o anel. Não há filas de
+   usuário nem MEC2.
+4. **Shaders:** o compilador GCN/GFX9 é do Otavio. O código vai num BO com `MOS_GPU_BO_EXEC`; só esses
+   BOs recebem o bit de execução no PTE.
+
+Campos e valores novos:
+
+| Onde | Novo | Sentido |
+|---|---|---|
+| `mos_gpu_info_t.caps` | `MOS_GPU_CAP_AMD` (1u << 4) | GFX9 nativo disponível |
+| fim de `mos_gpu_info_t` | `unsigned amd_family` (9), `unsigned num_cu`, `unsigned long long vram_bytes`, `unsigned long long gtt_bytes` | o que o gerador de PM4 precisa |
+| `mos_gpu_ctx_t.kind` | `MOS_GPU_CTX_AMD` (3) | contexto com VMID próprio |
+| `mos_gpu_bo_t.flags` | `MOS_GPU_BO_EXEC` (1u << 4) | código de shader |
+| fim de `mos_gpu_bo_t` | `unsigned long long gpu_va` (saída do CREATE e do IMPORT) | 0 = BO sem VA (contexto que não é AMD) |
+| `mos_gpu_submit_t.flags` | `MOS_GPU_SUBMIT_AMD` (1u << 1) | `cmds` aponta para o lote abaixo |
+
+Lote AMD (`cmd_bytes` até 4096, little-endian):
+
+1. Cabeçalho de 16 bytes: `version` = 1, `nib` (1..16), `nbo` (0..256), `pad` = 0.
+2. `nib` vezes `{ u32 bo; u32 ring; u32 offset_dw; u32 size_dw; }`. `ring`: 0 = GFX, 1 = compute. O IB
+   precisa caber no BO. Todos os IBs do lote vão para o mesmo anel.
+3. `nbo` handles `u32`: os BOs que os IBs usam. O kernel os mantém residentes até a fence passar.
+   Destruir um BO que está num lote em voo devolve `-MOS_EBUSY`.
+
+Validação do kernel: só passam pacotes de desenho, dispatch, `SET_SH_REG`, `SET_CONTEXT_REG` e
+`SET_UCONFIG_REG` nas faixas de usuário, `WRITE_DATA`/`COPY_DATA` com destino em memória,
+`INDIRECT_BUFFER` para BOs da lista, `EVENT_WRITE`, `ACQUIRE_MEM` e `NOP`. Registrador privilegiado,
+`WRITE_DATA` para registrador ou VA fora dos BOs do processo dão `-MOS_EINVAL`, e a fence não sinaliza.
+Uma falha de página da GPU no VMID do contexto o marca como perdido: os submits seguintes devolvem
+`-MOS_EIO`.
+
 ## O que esta revisão não fixa
 
 Codificação interna do virtio-gpu, endereços de registrador Intel ou AMD, e

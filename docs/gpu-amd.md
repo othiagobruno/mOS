@@ -43,7 +43,7 @@ Legenda: ✅ pronto com teste de host · 🔶 escrito, sem teste no hardware · 
 | F6 | IH (OSSSYS 4.1): anel de interrupções, MSI, fontes vblank/pageflip/HPD/EOP/SDMA | ⬜ | host |
 | F7 | SDMA 4.1: golden da família 4.1 e da variante, microcódigo direto, anel GFX de 64 KiB na VRAM com writeback do rptr, WPTR por registrador, teste do anel, COPY_LINEAR (até 4 MiB por pacote), cópia de retângulo, CONST_FILL, fences por polling (`engine.c`) | ✅ escrito e testado no host | `tools/amdgpu_hw_host.c`: 221/221 (microcódigo real conferido palavra por palavra, 9 MiB VRAM→VRAM, RAM↔VRAM pela GART, retângulo 1000x300, 6000 pacotes dando 5 voltas no anel, SMU mudo e SDMA morto). Falta: interrupção de fence (F6) e power gating do SDMA |
 | F8 | GFX9: RLC, CP (PFP/CE/ME/MEC), golden registers do Picasso/Raven2, CSB, anel GFX, IBs, fences EOP, fila de compute (HQD) | ⬜ | host |
-| F9 | 3D para Metal/OpenGL: contexto AMD na ABI (`docs/gpu-abi.md`), IB PM4 do usuário com VM por processo, biblioteca PM4 no userland, backend GCN (GFX9) para os shaders do Otavio | ⬜ | host + combinar com o Otavio |
+| F9 | 3D para Metal/OpenGL: ABI revisão 3 combinada com o Otavio (`docs/gpu-abi.md`: PM4 no userland, IB validado pelo kernel, VA por contexto, `BO_EXEC`); o kernel faz VMID 1..15, validação e submit; o gerador de PM4 e o compilador GFX9 são do Otavio | ⬜ | host + combinar com o Otavio |
 | F10 | Integração: `gpu_present`/`gpu_vsync_wait`/`gpu_kms_set` na AMD, Sobre/Monitores, build final | ⬜ | build final |
 
 ## O que já roda no boot (sem build ainda: confere no build final)
