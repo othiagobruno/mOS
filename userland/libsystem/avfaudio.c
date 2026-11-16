@@ -7,8 +7,8 @@
  *  - AVAudioPlayer (arquivo ou NSData; play/pause/stop, volume, pan, rate, laços, currentTime, medidores, delegate);
  *  - AVAudioSession (Catalyst/iOS: categoria, modo, ativação, rota, latência);
  *  - NSSound (AppKit) e AVPlayer/AVPlayerItem/AVURLAsset/AVAsset para arquivos de áudio locais.
- * O motor renderiza a 48 kHz (a taxa do mixer do sistema). MP3 e ALAC de 16 bits passam pelo CoreAudio
- * (audiodec.c) e tocam como áudio. AAC e Opus continuam AVErrorFileFormatNotRecognized. O AVPlayer não
+ * O motor renderiza a 48 kHz (a taxa do mixer do sistema). MP3, ALAC de 16 bits, AAC (FDK) e Opus (libopus)
+ * passam pelo CoreAudio (audiodec.c) e tocam como áudio, em MP4/M4A/MOV, CAF, ADTS e Ogg. O AVPlayer não
  * produz quadro de vídeo. A permissão de gravação consulta cx_tcc_request("kTCCServiceMicrophone").
  */
 #include "foundation.h"

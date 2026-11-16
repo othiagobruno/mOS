@@ -1,5 +1,8 @@
 #pragma once
 #include "stddef.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 void *malloc(size_t n);
 void *calloc(size_t n, size_t z);
 void *realloc(void *p, size_t n);
@@ -12,3 +15,6 @@ char *getenv(const char *n);
 long strtol(const char *s, char **end, int base);
 unsigned long strtoul(const char *s, char **end, int base);
 double strtod(const char *s, char **end);
+#ifdef __cplusplus
+}
+#endif

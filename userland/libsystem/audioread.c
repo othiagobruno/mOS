@@ -1,6 +1,6 @@
 #include "audioread.h"
 /* Leitor de WAV/AIFF/CAF/LPCM. O mesmo cx_audio_open_path que AVURLAsset e AVAudioPlayer chamam.
- * Compila no libSystem e no teste de host. AAC e Opus continuam em cx_audiodec (não mexer). */
+ * Compila no libSystem e no teste de host. MP3, ALAC, AAC e Opus viram LPCM em cx_audiodec (audiodec.c). */
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -241,7 +241,7 @@ static OSStatus decode_parse(adecode_t *d) {
     } else if (n >= 3 && (!memcmp(b, "ID3", 3) || (b[0] == 0xFF && (b[1] & 0xE0) == 0xE0))) {
         return kAudioFileUnsupportedDataFormatError;   /* MP3 que o decodificador não aceitou */
     } else if (n >= 12 && !memcmp(b + 4, "ftyp", 4)) {
-        return kAudioFileUnsupportedDataFormatError;   /* M4A que não é ALAC de 16 bits (AAC fica aqui) */
+        return kAudioFileUnsupportedDataFormatError;   /* MP4 sem faixa de áudio que o cx_audiodec decodifique */
     } else return kAudioFileUnsupportedFileTypeError;
 lpcm_tail:
     if (!lpcm_ok(&d->fmt)) return kAudioFileUnsupportedDataFormatError;

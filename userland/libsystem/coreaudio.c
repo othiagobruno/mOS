@@ -10,9 +10,9 @@
  *    AudioOutputUnitStart/Stop; o barramento de entrada (elemento != 0) lê o microfone se o TCC conceder;
  *  - AudioQueue de saída (LPCM) e de entrada (microfone, mesma condição de TCC);
  *  - AudioConverter LPCM -> LPCM (formato, canais e taxa);
- *  - AudioFile/ExtAudioFile: WAV, AIFF/AIFC, CAF em LPCM, e MP3/ALAC de 16 bits (audiodec.c);
+ *  - AudioFile/ExtAudioFile: WAV, AIFF/AIFC, CAF em LPCM, e MP3, ALAC de 16 bits, AAC e Opus (audiodec.c);
  *  - AudioServices: sons de sistema a partir de arquivos (WAV/AIFF/CAF), o alerta e a conclusão.
- * AAC e Opus são reconhecidos e devolvem kAudioFileUnsupportedDataFormatError. Sem concessão de
+ * AAC e Opus viram LPCM ao abrir (o arquivo inteiro é decodificado). Sem concessão de
  * kTCCServiceMicrophone (cx_tcc_request, frente de TCC) a entrada devolve erro e não captura.
  * O motor de saída comum (cae_*) também serve ao AVAudioEngine/AVAudioPlayer (avfaudio.c).
  */

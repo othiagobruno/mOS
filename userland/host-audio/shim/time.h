@@ -1,5 +1,8 @@
 #pragma once
 #include "stddef.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 typedef long time_t;
 typedef long clock_t;
 struct tm {
@@ -12,3 +15,6 @@ time_t mktime(struct tm *t);
 size_t strftime(char *s, unsigned long n, const char *fmt, const struct tm *t);
 clock_t clock(void);
 #define CLOCKS_PER_SEC 1000000
+#ifdef __cplusplus
+}
+#endif
