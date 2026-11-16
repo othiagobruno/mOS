@@ -1564,6 +1564,14 @@ int tls_recv(tls_conn_t *c, void *buf, int max) {
     return c->closed ? -1 : 0;
 }
 
+/* 1 se o próximo tls_recv entrega dados sem precisar de mais bytes do TCP: texto já decifrado ou um registro
+ * inteiro guardado (quem espera o socket ficar legível pergunta isto antes, para não dormir com dados prontos). */
+int tls_pending(const tls_conn_t *c) {
+    if (!c || c->hs != HS_DONE) return 0;
+    if (c->alen > c->aoff) return 1;
+    return c->rlen >= 5 && c->rlen >= 5u + be16(c->rbuf + 3);
+}
+
 /* Cadeia já validada, para o SecTrust do userspace. buf nulo devolve o tamanho.
  * Formato: u32 quantidade, depois (u32 tamanho + DER) por certificado. */
 int tls_copy_peer_chain(const tls_conn_t *c, u8 *buf, u32 cap) {
