@@ -583,6 +583,23 @@ bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
 mkdir -p "$ESP/mOS/usr/lib"
 cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
 
+# Processo arm64 do tradutor (docs/runtime-arm64-plano.md): o processo é inteiro arm64, então cada dylib de /usr/lib
+# vai universal (x86_64 + arm64) e o carregador escolhe a fatia. As fatias arm64 saem dos mesmos scripts com
+# MOS_ARCH=arm64; a libc++ arm64 já sai do build-libcxx.sh (build/libcxx-arm64).
+echo "==> /usr/lib universal (x86_64 + arm64)"
+MOS_ZIG="$ZIG" MOS_ARCH=arm64 sh "$ROOT/tools/build-libz.sh"
+MOS_ZIG="$ZIG" MOS_ARCH=arm64 sh "$ROOT/tools/build-sqlite.sh"
+MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-libcurl.sh"
+LIPO=(python3 -I "$ROOT/tools/lipo-mos.py")
+"${LIPO[@]}" -o "$ESP/mOS/usr/lib/libc++.1.dylib" "$ROOT/build/libcxx/libc++.1.dylib" "$ROOT/build/libcxx-arm64/libc++.1.dylib"
+"${LIPO[@]}" -o "$ESP/mOS/usr/lib/libz.1.dylib" "$ROOT/build/zlib-x86_64/libz.1.dylib" "$ROOT/build/zlib-arm64/libz.1.dylib"
+"${LIPO[@]}" -o "$ESP/mOS/usr/lib/libsqlite3.dylib" "$ROOT/build/sqlite/libsqlite3.dylib" "$ROOT/build/sqlite-arm64/libsqlite3.dylib"
+"${LIPO[@]}" -o "$ESP/mOS/usr/lib/libcurl.4.dylib" "$ROOT/build/curl-x86_64/libcurl.4.dylib" "$ROOT/build/curl-arm64/libcurl.4.dylib"
+if [ -f "$ESP/mOS/usr/lib/libxml2.2.dylib" ]; then
+    MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-libxml2.sh" "$ROOT/build/libxml2-arm64/libxml2.2.dylib"
+    "${LIPO[@]}" -o "$ESP/mOS/usr/lib/libxml2.2.dylib" "$ROOT/build/libxml2/libxml2.2.dylib" "$ROOT/build/libxml2-arm64/libxml2.2.dylib"
+fi
+
 KEY=${MOS_CHAVE_ATUALIZACAO:-$ROOT/tools/chave-atualizacao.semente}
 REV=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo local)
 VER="0.1-$(date +%Y%m%d.%H%M)-$REV"
