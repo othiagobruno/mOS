@@ -344,3 +344,19 @@ Testes: `tools/ct_layout_host.c` (com e sem ICU), `tools/coretext_host.c` 32/32 
 estilo, tabulação, truncagem, run delegate, nomes/idiomas de uma fonte real registrada), e os antigos
 `ctrun_host`/`ctapps_host` seguem verdes. Limite: o texto de ruby é guardado mas não desenhado.
 
+
+### Passo 8 — CGPath booleanas e CGImageMetadata/XMP (PR de 16 nov. 2026)
+
+- `cg_pathbool.c`: `CGPathCreateCopyByUnioningPath`, `…IntersectingPath`, `…SubtractingPath`,
+  `…SymmetricDifferenceOfPath`, `…NormalizingPath`, `CGPathIntersectsPath`, `…ByFlattening`, `CGPathCreateCopyOf
+  LineBy…` e `CGPathCopySeparateComponents`, com as regras par/ímpar e não-zero. Curvas achatadas, arestas
+  classificadas por região (dentro/fora de cada caminho) e o contorno remontado. Teste:
+  `tools/cg_pathbool_host.c` 17/17 (rasterização contra a operação feita pixel a pixel, 0,000% de diferença).
+- `iio_xmp.c` (C puro): pacote XMP (RDF/XML) lido para uma árvore (simples, arrays, texto alternativo com `xml:lang`,
+  estrutura, qualificadores), gravado de volta, achado no arquivo e embutido no contêiner certo (JPEG APP1, PNG iTXt,
+  TIFF tag 700, GIF "XMP DataXMP"). `imageio_meta.inc`: `CGImageMetadata`/`CGImageMetadataTag` completos (criar,
+  copiar, caminhos `dc:subject[0]`/`exif:Flash.Fired`, valores, remoção, namespaces próprios, enumeração recursiva,
+  ponte com as propriedades EXIF/TIFF/GPS/IPTC), `CGImageSourceCopyMetadataAtIndex` (XMP do arquivo e EXIF/TIFF/GPS/
+  IPTC como no macOS), `CGImageDestinationAddImageAndMetadata` e `CGImageDestinationCopyImageSource` (mesmo formato,
+  sem recomprimir, troca ou mescla, data e orientação). Testes: `tools/iio_xmp_host.py` (pacotes no estilo exiftool,
+  relidos pelo PIL) e as seções 7–8 do `tools/imageio_cf_host.c` (ida e volta em JPEG/PNG/TIFF/GIF).
