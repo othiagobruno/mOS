@@ -379,6 +379,14 @@ def fetch_one(app: dict) -> Path:
     extracted = dest_dir / "extracted"
     marker = dest_dir / "extracted.ok"
     if not marker.is_file() or marker.read_text(encoding="utf-8") != digest:
+        # a extração ocupa umas 2,5x o arquivo (pkg: xar + Payload + cpio aberto); o disco do PC é dividido com o time
+        tam = archive.stat().st_size
+        precisa = tam * 5 // 2 + (4 << 30)
+        livre = shutil.disk_usage(dest_dir).free
+        if livre < precisa:
+            archive.unlink()
+            raise SystemExit(f"{app['id']}: sem espaço em disco para extrair ({tam >> 20} MiB; precisa de "
+                             f"{precisa >> 30} GiB livres, há {livre >> 30} GiB)")
         extract(archive, extracted)
         marker.write_text(digest, encoding="utf-8")
     return extracted
