@@ -27,8 +27,8 @@
  *    Store). As confianças do SecureTransport (securetransport.c), já validadas pelo kernel, avaliam como válidas.
  *  - SecIdentityCreateWithCertificate acha um item kSecClassIdentity ("idnt") cujo segredo é o DER do
  *    certificado. SecItemAdd dessa classe grava o DER e, em kSecAttrGeneric, os bytes da chave privada.
- *    SecIdentityCopyPrivateKey devolve esses bytes num CFData. SecKey (assinar, cifrar) continua
- *    errSecUnimplemented. PKCS12 e transforms também. O SecureTransport é real: securetransport.c.
+ *    SecIdentityCopyPrivateKey devolve esses bytes como SecKey (seckey.c). SecKey é real em seckey.c (RSA e EC).
+ *    PKCS12 e transforms de assinatura: fase 2 de docs/servicos-seguranca-plano.md. O SecureTransport é real: securetransport.c.
  *  - Authorization: criar/liberar funciona; pedir direitos = errAuthorizationDenied.
  * Os stubs antigos de chrome.c/mach.c/darwin.c que este arquivo substitui foram tirados de lá.
  */
@@ -867,7 +867,7 @@ u64 SecAccessControlGetTypeID(void) { return 0x5EC0A; }
 #define TID_SEC_IDENTITY 0x5EC04
 u64 SecCertificateGetTypeID(void) { return TID_SEC_CERT; }
 u64 SecPolicyGetTypeID(void) { return TID_SEC_POLICY; }
-u64 SecKeyGetTypeID(void) { return TID_SEC_KEY; }
+u64 SecKeyGetTypeID(void) { return TID_SEC_KEY; }   /* objetos em seckey.c */
 u64 SecIdentityGetTypeID(void) { return TID_SEC_IDENTITY; }
 
 /* o certificado é o próprio DER (CFData) */
@@ -881,7 +881,6 @@ id_ SecCertificateCreateWithData(void *alloc, id_ der) {
 id_ SecCertificateCopyData(id_ cert) { return cert ? cx_data_new(CFDataGetBytePtr(cert), (u64)CFDataGetLength(cert)) : 0; }
 id_ SecCertificateCopySubjectSummary(id_ cert) { (void)cert; return 0; }
 OSStatus SecCertificateCopyCommonName(id_ cert, id_ *cn) { (void)cert; if (cn) *cn = 0; return errSecUnimplemented; }
-id_ SecCertificateCopyKey(id_ cert) { (void)cert; return 0; }
 id_ SecCertificateCopyNormalizedIssuerSequence(id_ cert) { (void)cert; return 0; }
 id_ SecCertificateCopySerialNumberData(id_ cert, id_ *err) { (void)cert; if (err) *err = 0; return 0; }
 id_ SecCertificateCopyValues(id_ cert, id_ keys, id_ *err) { (void)cert; (void)keys; if (err) *err = 0; return 0; }
@@ -917,7 +916,6 @@ id_ SecTrustCopyCertificateChain(id_ trust) {
     for (long i = 0; i < CFArrayGetCount(trust); i++) CFArrayAppendValue(arr, CFArrayGetValueAtIndex(trust, i));
     return arr;
 }
-id_ SecTrustCopyKey(id_ trust) { (void)trust; return 0; }
 id_ SecTrustCopyResult(id_ trust) { (void)trust; return 0; }
 OSStatus SecTrustSetPolicies(id_ trust, id_ p) { (void)trust; (void)p; return errSecSuccess; }
 OSStatus SecTrustSetAnchorCertificates(id_ trust, id_ a) { (void)trust; (void)a; return errSecSuccess; }
@@ -1020,23 +1018,7 @@ OSStatus SecTrustEvaluateAsync(id_ trust, void *queue, void *block) { (void)trus
 OSStatus SecTrustEvaluateAsyncWithError(id_ trust, void *queue, void *block) { (void)trust; (void)queue; (void)block; return errSecUnimplemented; }
 
 /* ================================================================ chaves, identidades, PKCS#12, transforms */
-id_ SecKeyCreateRandomKey(id_ params, id_ *err) { (void)params; if (err) *err = 0; return 0; }
-OSStatus SecKeyGeneratePair(id_ params, id_ *pub, id_ *priv) { (void)params; if (pub) *pub = 0; if (priv) *priv = 0; return errSecUnimplemented; }
-id_ SecKeyCreateWithData(id_ data, id_ attrs, id_ *err) { (void)data; (void)attrs; if (err) *err = 0; return 0; }
-id_ SecKeyCopyPublicKey(id_ key) { (void)key; return 0; }
-id_ SecKeyCopyAttributes(id_ key) { (void)key; return 0; }
-id_ SecKeyCopyExternalRepresentation(id_ key, id_ *err) { (void)key; if (err) *err = 0; return 0; }
-id_ SecKeyCreateSignature(id_ key, id_ alg, id_ data, id_ *err) { (void)key; (void)alg; (void)data; if (err) *err = 0; return 0; }
-Boolean SecKeyVerifySignature(id_ key, id_ alg, id_ data, id_ sig, id_ *err) { (void)key; (void)alg; (void)data; (void)sig; if (err) *err = 0; return 0; }
-id_ SecKeyCreateEncryptedData(id_ key, id_ alg, id_ data, id_ *err) { (void)key; (void)alg; (void)data; if (err) *err = 0; return 0; }
-id_ SecKeyCreateDecryptedData(id_ key, id_ alg, id_ data, id_ *err) { (void)key; (void)alg; (void)data; if (err) *err = 0; return 0; }
-id_ SecKeyCopyKeyExchangeResult(id_ key, id_ alg, id_ pub, id_ params, id_ *err) { (void)key; (void)alg; (void)pub; (void)params; if (err) *err = 0; return 0; }
-Boolean SecKeyIsAlgorithmSupported(id_ key, long op, id_ alg) { (void)key; (void)op; (void)alg; return 0; }
-size_t SecKeyGetBlockSize(id_ key) { (void)key; return 0; }
-OSStatus SecKeyRawSign(id_ k, u32 pad, const u8 *d, size_t dl, u8 *sig, size_t *sl) { (void)k; (void)pad; (void)d; (void)dl; (void)sig; if (sl) *sl = 0; return errSecUnimplemented; }
-OSStatus SecKeyRawVerify(id_ k, u32 pad, const u8 *d, size_t dl, const u8 *sig, size_t sl) { (void)k; (void)pad; (void)d; (void)dl; (void)sig; (void)sl; return errSecUnimplemented; }
-OSStatus SecKeyEncrypt(id_ k, u32 pad, const u8 *p, size_t pl, u8 *c, size_t *cl) { (void)k; (void)pad; (void)p; (void)pl; (void)c; if (cl) *cl = 0; return errSecUnimplemented; }
-OSStatus SecKeyDecrypt(id_ k, u32 pad, const u8 *c, size_t cl, u8 *p, size_t *pl) { (void)k; (void)pad; (void)c; (void)cl; (void)p; if (pl) *pl = 0; return errSecUnimplemented; }
+/* SecKey*: seckey.c (núcleo em seckey_core.inc) */
 static kitem_t *identity_from_ref(id_ ref) {
     kitem_t *it = item_from_ref(ref);
     return it && is_identity_class(it->cls) ? it : 0;
@@ -1074,18 +1056,26 @@ OSStatus SecIdentityCopyCertificate(id_ ident, id_ *cert) {
     else CFRelease(c);
     return errSecSuccess;
 }
-/* A chave é o CFData de kSecAttrGeneric. Não é um SecKey: SecKeyCreateSignature continua sem implementação. */
+/* A chave privada são os bytes de kSecAttrGeneric (PKCS#1, PKCS#8, SEC1 ou X9.63); vira um SecKey de seckey.c. */
+id_ cx_seckey_import(const u8 *der, u32 n, int priv);
+#define errSecInvalidKeyRef (-67712)
 OSStatus SecIdentityCopyPrivateKey(id_ ident, id_ *key) {
     if (key) *key = 0;
     lock(); load();
     kitem_t *it = identity_from_ref(ident);
     int has = it && it->f[F_GENA] && it->fl[F_GENA];
-    id_ k = has ? cx_data_new(it->f[F_GENA], it->fl[F_GENA]) : 0;
+    u32 n = has ? it->fl[F_GENA] : 0;
+    u8 *copy = has ? malloc(n) : 0;
+    if (copy) memcpy(copy, it->f[F_GENA], n);
     unlock();
     if (!it) return errSecParam;
-    if (!k) return errSecItemNotFound;
+    if (!copy) return errSecItemNotFound;
+    id_ k = cx_seckey_import(copy, n, 1);
+    for (u32 i = 0; i < n; i++) copy[i] = 0;
+    free(copy);
+    if (!k) return errSecInvalidKeyRef;
     if (key) *key = k;
-    else CFRelease(k);
+    else objc_release(k);
     return errSecSuccess;
 }
 id_ SecIdentityCopyPreferred(id_ name, id_ usage, id_ names) { (void)name; (void)usage; (void)names; return 0; }
