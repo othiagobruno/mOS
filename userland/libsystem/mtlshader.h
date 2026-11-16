@@ -17,6 +17,8 @@ enum {
     A_RT_INDEX, A_SIMD_LANE, A_SIMD_GROUP, A_SIMD_SIZE, A_SAMPLE_MASK, A_PRIMITIVE_ID, A_VIEWPORT_INDEX,
 };
 enum { MSL_INTERP_PERSP = 0, MSL_INTERP_FLAT = 1, MSL_INTERP_NOPERSP = 2 };
+/* bits extras do msl_field_t.interp: [[centroid_*]] e [[sample_*]] (multiamostra); o modo fica em interp & 0xF */
+enum { MSL_INTERP_CENTROID = 0x10, MSL_INTERP_SAMPLE = 0x20 };
 
 typedef struct {
     const char *name;          /* nome do membro */
@@ -82,6 +84,7 @@ typedef struct msl_ctx {
     float fragpos[4];
     int front_facing;
     u32 sample_id, primitive_id;
+    u32 sample_mask;           /* [[sample_mask]] de entrada: amostras cobertas (0 = 1) */
     float point_coord[2];
     u32 tpig[3], tpitg[3], tgpig[3], tptg[3], tpg[3], tgpg[3], tiitg;
     int discarded;
@@ -104,6 +107,7 @@ int msl_fn_stagein(msl_fn_t *f, const msl_field_t **fields, int *size);
 u32 msl_fn_tgstatic(msl_fn_t *f);          /* memória threadgroup estática do kernel */
 int msl_fn_barrier(msl_fn_t *f);            /* usa threadgroup_barrier */
 int msl_fn_discards(msl_fn_t *f);           /* pode chamar discard_fragment */
+int msl_fn_has_param(msl_fn_t *f, int attr); /* tem um parâmetro com o atributo (A_SAMPLE_ID...) */
 /* SPIR-V da função, se a tradução coube. words aponta para o módulo; nwords é a contagem.
  * Devolve 1 quando há módulo. A nota explica o que ficou de fora (pode ser vazia). */
 int msl_fn_spirv(msl_fn_t *f, const u32 **words, u32 *nwords);

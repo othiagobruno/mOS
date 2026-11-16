@@ -44,6 +44,9 @@ void mx_tex_layout(mtex_t *m, u64 bpr0) {
     t->swizzle = m->swizzle == 0x05040302u ? 0 : m->swizzle;
     int faces = m->type == MSL_TEX_CUBE || m->type == MSL_TEX_CUBE_ARRAY ? 6 : 1;
     t->slices = (m->arrlen ? m->arrlen : 1) * faces;
+    /* multiamostra: uma fatia por amostra (camada*N + amostra, mtlshader.h) */
+    t->samples = (m->type == MSL_TEX_2D_MS || m->type == MSL_TEX_2D_MS_ARRAY) && m->samples > 1 ? m->samples : 0;
+    if (t->samples) t->slices *= t->samples;
     u64 off = 0;
     for (int l = 0; l < m->levels && l < 16; l++) {
         u64 w = m->w >> l, h = m->h >> l, d = m->d >> l;
@@ -169,6 +172,13 @@ typedef struct {
     double vx, vy, vw, vh, zn, zf;
     int early;                /* teste de profundidade antes do shader */
     u32 prim_id;
+    /* multiamostra */
+    int ns;                   /* amostras por pixel dos anexos */
+    u32 full;
+    float spos[8][2];
+    double dzx, dzy;          /* gradiente da profundidade do triângulo (z em cada amostra) */
+    int cen_ok;               /* centro fora do triângulo: entradas centroid usam cen_l */
+    double cen_l[3];
 } rctx_t;
 
 static int cmpf(int f, double a, double b) {
@@ -225,33 +235,49 @@ static double bop(int op, double s, double fs, double d, double fd) {
     }
 }
 
-/* um fragmento: l[] = baricêntricas na tela, v[] = vértices */
-static void fragment(rctx_t *R, int px, int py, const double l[3], sv_t *const v[3], int front, const float *pcoord) {
+/* estêncil e profundidade de uma amostra (fatia slice*N + k) */
+#define SSL(R, base, k) ((base) * (R)->ns + (k))
+static void st_op(rctx_t *R, int px, int py, int k, stencil_t *sd, int op, u32 scur, u32 sref) {
+    u32 nv = stencil_op(op, scur, sref);
+    st_set(R->stt, px, py, SSL(R, R->ss, k), R->sl, (scur & ~sd->wmask) | (nv & sd->wmask));
+}
+/* um fragmento: l[] = baricêntricas no ponto avaliado, v[] = vértices. cov: amostras cobertas (bit por amostra);
+ * smp: 0 = avaliado no centro do pixel, k+1 = avaliado na amostra k (sombreamento por amostra) */
+static void fragment(rctx_t *R, int px, int py, const double l[3], sv_t *const v[3], int front, const float *pcoord, u32 cov, int smp) {
     mrpipe_t *pp = R->pp;
     rstate_t *st = R->st;
     double z = l[0] * v[0]->z + l[1] * v[1]->z + l[2] * v[2]->z + st->dbias;
     if (st->dclip) z = z < 0 ? 0 : z > 1 ? 1 : z;
     double iw = l[0] * v[0]->iw + l[1] * v[1]->iw + l[2] * v[2]->iw;
-    mdss_t *dss = st->dss;
-    int dtest = R->dt && dss && (dss->dcmp != 7 || dss->dwrite);
-    double dcur = 0;
-    if (R->dt) { double t[4]; msl_tex_load(R->dt, px, py, 0, R->ds, R->dl, t); dcur = t[0]; }
-    /* estêncil */
-    int stest = R->stt && dss && dss->stencil_on;
-    stencil_t *sd = dss ? (front ? &dss->front : &dss->back) : 0;
-    u32 sref = front ? st->sref_f : st->sref_b, scur = 0;
-    if (stest) {
-        scur = st_get(R->stt, px, py, R->ss, R->sl);
-        if (!cmpf(sd->cmp, (double)(sref & sd->rmask), (double)(scur & sd->rmask))) {
-            u32 nv = stencil_op(sd->fail, scur, sref);
-            st_set(R->stt, px, py, R->ss, R->sl, (scur & ~sd->wmask) | (nv & sd->wmask));
-            return;
+    double zs[8];
+    for (int k = 0; k < R->ns; k++) {
+        zs[k] = z;
+        if (R->ns > 1 && !smp) {
+            zs[k] = z + R->dzx * (R->spos[k][0] - 0.5) + R->dzy * (R->spos[k][1] - 0.5);
+            if (st->dclip) zs[k] = zs[k] < 0 ? 0 : zs[k] > 1 ? 1 : zs[k];
         }
     }
-    if (R->early && dtest && !cmpf(dss->dcmp, z, dcur)) {
-        if (stest) { u32 nv = stencil_op(sd->dfail, scur, sref); st_set(R->stt, px, py, R->ss, R->sl, (scur & ~sd->wmask) | (nv & sd->wmask)); }
-        return;
+    mdss_t *dss = st->dss;
+    int dtest = R->dt && dss && (dss->dcmp != 7 || dss->dwrite);
+    int stest = R->stt && dss && dss->stencil_on;
+    stencil_t *sd = dss ? (front ? &dss->front : &dss->back) : 0;
+    u32 sref = front ? st->sref_f : st->sref_b;
+    double dcur[8] = {0};
+    u32 scur[8] = {0};
+    /* antes do shader: estêncil sempre, profundidade se o teste é cedo */
+    for (int k = 0; k < R->ns; k++) {
+        if (!(cov >> k & 1)) continue;
+        if (R->dt) { double t[4]; msl_tex_load(R->dt, px, py, 0, SSL(R, R->ds, k), R->dl, t); dcur[k] = t[0]; }
+        if (stest) {
+            scur[k] = st_get(R->stt, px, py, SSL(R, R->ss, k), R->sl);
+            if (!cmpf(sd->cmp, (double)(sref & sd->rmask), (double)(scur[k] & sd->rmask))) { st_op(R, px, py, k, sd, sd->fail, scur[k], sref); cov &= ~(1u << k); continue; }
+        }
+        if (R->early && dtest && !cmpf(dss->dcmp, zs[k], dcur[k])) {
+            if (stest) st_op(R, px, py, k, sd, sd->dfail, scur[k], sref);
+            cov &= ~(1u << k);
+        }
     }
+    if (!cov) return;
     /* stage_in do fragmento */
     msl_fn_t *ff = pp->ffn;
     if (ff) {
@@ -265,7 +291,7 @@ static void fragment(rctx_t *R, int px, int py, const double l[3], sv_t *const v
             u8 *dst = R->fin + fi->off;
             double out[16] = {0};
             if (m == -2) {
-                out[0] = px + 0.5; out[1] = py + 0.5; out[2] = z; out[3] = iw;
+                out[0] = smp ? px + R->spos[smp - 1][0] : px + 0.5; out[1] = smp ? py + R->spos[smp - 1][1] : py + 0.5; out[2] = z; out[3] = iw;
             } else if (m >= 0) {
                 const msl_field_t *vo = &pp->vout[m];
                 int n = vo->n < fi->n ? vo->n : fi->n;
@@ -284,10 +310,19 @@ static void fragment(rctx_t *R, int px, int py, const double l[3], sv_t *const v
                 int interp = pp->finterp[i];
                 int isint = vo->scal != MSL_FLOAT && vo->scal != MSL_HALF;
                 int cnt = vo->n > 4 ? vo->size / (vo->scal == MSL_HALF ? 2 : 4) : n;
+                const double *ll = l, *ww = w;
+                double lc[3], wc[3];
+                if (R->cen_ok && (pp->centroid >> i & 1)) {
+                    /* centroid_*: o centro está fora do primitivo; usa a primeira amostra coberta */
+                    for (int q = 0; q < 3; q++) lc[q] = R->cen_l[q];
+                    double ic = lc[0] * v[0]->iw + lc[1] * v[1]->iw + lc[2] * v[2]->iw, pc = ic != 0 ? 1 / ic : 0;
+                    for (int q = 0; q < 3; q++) wc[q] = lc[q] * v[q]->iw * pc;
+                    ll = lc; ww = wc;
+                }
                 for (int k = 0; k < cnt && k < 16; k++) {
                     if (interp == MSL_INTERP_FLAT || isint) out[k] = a[k];
-                    else if (interp == MSL_INTERP_NOPERSP) out[k] = l[0] * a[k] + l[1] * b[k] + l[2] * c[k];
-                    else out[k] = w[0] * a[k] + w[1] * b[k] + w[2] * c[k];
+                    else if (interp == MSL_INTERP_NOPERSP) out[k] = ll[0] * a[k] + ll[1] * b[k] + ll[2] * c[k];
+                    else out[k] = ww[0] * a[k] + ww[1] * b[k] + ww[2] * c[k];
                 }
                 if (vo->n > 4) { put_field(dst, fi->scal, cnt < fi->size / 4 ? cnt : fi->size / (fi->scal == MSL_HALF ? 2 : 4), out); continue; }
                 put_field(dst, fi->scal, n, out);
@@ -297,13 +332,15 @@ static void fragment(rctx_t *R, int px, int py, const double l[3], sv_t *const v
         }
         msl_ctx_t *c = &R->fc;
         c->stage_in = R->fin;
-        c->fragpos[0] = (float)(px + 0.5);
-        c->fragpos[1] = (float)(py + 0.5);
+        c->fragpos[0] = (float)(smp ? px + R->spos[smp - 1][0] : px + 0.5);
+        c->fragpos[1] = (float)(smp ? py + R->spos[smp - 1][1] : py + 0.5);
         c->fragpos[2] = (float)z;
         c->fragpos[3] = (float)iw;
         c->front_facing = front;
         c->discarded = 0;
         c->primitive_id = R->prim_id;
+        c->sample_id = smp ? (u32)(smp - 1) : 0;
+        c->sample_mask = cov;
         if (pcoord) { c->point_coord[0] = pcoord[0]; c->point_coord[1] = pcoord[1]; }
         memset(R->fout, 0, pp->fout_size + 16);
         msl_run(ff, c, R->fout);
@@ -311,43 +348,61 @@ static void fragment(rctx_t *R, int px, int py, const double l[3], sv_t *const v
         if (pp->fdepth >= 0) {
             double dv;
             get_field(R->fout + pp->fout[pp->fdepth].off, pp->fout[pp->fdepth].scal, 1, &dv);
-            z = dv;
+            for (int k = 0; k < R->ns; k++) zs[k] = dv;
+        }
+        if (R->ns > 1) {
+            /* cobertura depois do shader: alfa -> cobertura e [[sample_mask]] */
+            if (pp->a2c && pp->fcolor[0] >= 0) {
+                double s0[4] = {0, 0, 0, 1};
+                const msl_field_t *fo = &pp->fout[pp->fcolor[0]];
+                get_field(R->fout + fo->off, fo->scal, fo->n > 4 ? 4 : fo->n, s0);
+                int kk = (int)(mx_cl01(s0[3]) * R->ns + 0.5);
+                cov &= kk >= 32 ? ~0u : (1u << kk) - 1;
+            }
+            if (pp->fmask >= 0) { double mv; get_field(R->fout + pp->fout[pp->fmask].off, pp->fout[pp->fmask].scal, 1, &mv); cov &= (u32)(i64)mv; }
+            if (!cov) return;
         }
     }
-    if (!R->early && dtest && !cmpf(dss->dcmp, z, dcur)) {
-        if (stest) { u32 nv = stencil_op(sd->dfail, scur, sref); st_set(R->stt, px, py, R->ss, R->sl, (scur & ~sd->wmask) | (nv & sd->wmask)); }
-        return;
-    }
-    if (stest) { u32 nv = stencil_op(sd->pass, scur, sref); st_set(R->stt, px, py, R->ss, R->sl, (scur & ~sd->wmask) | (nv & sd->wmask)); }
-    if (R->dt && dss && dss->dwrite) { double t[4] = {z, 0, 0, 0}; msl_tex_store(R->dt, px, py, 0, R->ds, R->dl, t); }
-    if (!ff) return;
-    for (int i = 0; i < 8; i++) {
-        if (!R->ct[i] || pp->fcolor[i] < 0) continue;
-        cattach_t *ca = &pp->ca[i];
-        if (!ca->wmask) continue;
-        const msl_field_t *fo = &pp->fout[pp->fcolor[i]];
-        double s[4] = {0, 0, 0, 1};
-        get_field(R->fout + fo->off, fo->scal, fo->n > 4 ? 4 : fo->n, s);
-        msl_tex_t *t = R->ct[i];
-        int isint = msl_fmt_isint(t->fmt);
-        double d[4];
-        int needd = (ca->blend && !isint) || ca->wmask != 0xF;
-        if (needd) msl_tex_load(t, px, py, R->cz[i], R->cs[i], R->cl[i], d);
-        if (ca->blend && !isint) {
-            int fl = t->fmt != 115 && t->fmt != 125 && t->fmt != 25 && t->fmt != 65 && t->fmt != 55 && t->fmt != 105 && t->fmt != 92;
-            if (fl) for (int k = 0; k < 4; k++) s[k] = mx_cl01(s[k]);
-            double o[4];
-            for (int k = 0; k < 3; k++) o[k] = bop(ca->rgbop, s[k], bfac(ca->srgb, k, s, d, st->bc), d[k], bfac(ca->drgb, k, s, d, st->bc));
-            o[3] = bop(ca->aop, s[3], bfac(ca->sa, 3, s, d, st->bc), d[3], bfac(ca->da, 3, s, d, st->bc));
-            for (int k = 0; k < 4; k++) s[k] = o[k];
+    /* depois do shader, em cada amostra: profundidade (se não foi cedo), estêncil, escrita */
+    for (int k = 0; k < R->ns; k++) {
+        if (!(cov >> k & 1)) continue;
+        if (!R->early && dtest && !cmpf(dss->dcmp, zs[k], dcur[k])) {
+            if (stest) st_op(R, px, py, k, sd, sd->dfail, scur[k], sref);
+            continue;
         }
-        if (ca->wmask != 0xF) {
-            if (!(ca->wmask & 8)) s[0] = d[0];
-            if (!(ca->wmask & 4)) s[1] = d[1];
-            if (!(ca->wmask & 2)) s[2] = d[2];
-            if (!(ca->wmask & 1)) s[3] = d[3];
+        if (stest) st_op(R, px, py, k, sd, sd->pass, scur[k], sref);
+        if (R->dt && dss && dss->dwrite) { double t[4] = {zs[k], 0, 0, 0}; msl_tex_store(R->dt, px, py, 0, SSL(R, R->ds, k), R->dl, t); }
+        if (!ff) continue;
+        for (int i = 0; i < 8; i++) {
+            if (!R->ct[i] || pp->fcolor[i] < 0) continue;
+            cattach_t *ca = &pp->ca[i];
+            if (!ca->wmask) continue;
+            const msl_field_t *fo = &pp->fout[pp->fcolor[i]];
+            double s[4] = {0, 0, 0, 1};
+            get_field(R->fout + fo->off, fo->scal, fo->n > 4 ? 4 : fo->n, s);
+            if (R->ns > 1 && pp->a2one) s[3] = 1;
+            msl_tex_t *t = R->ct[i];
+            int isint = msl_fmt_isint(t->fmt);
+            int sl = SSL(R, R->cs[i], k);
+            double d[4];
+            int needd = (ca->blend && !isint) || ca->wmask != 0xF;
+            if (needd) msl_tex_load(t, px, py, R->cz[i], sl, R->cl[i], d);
+            if (ca->blend && !isint) {
+                int fl = t->fmt != 115 && t->fmt != 125 && t->fmt != 25 && t->fmt != 65 && t->fmt != 55 && t->fmt != 105 && t->fmt != 92;
+                if (fl) for (int q = 0; q < 4; q++) s[q] = mx_cl01(s[q]);
+                double o[4];
+                for (int q = 0; q < 3; q++) o[q] = bop(ca->rgbop, s[q], bfac(ca->srgb, q, s, d, st->bc), d[q], bfac(ca->drgb, q, s, d, st->bc));
+                o[3] = bop(ca->aop, s[3], bfac(ca->sa, 3, s, d, st->bc), d[3], bfac(ca->da, 3, s, d, st->bc));
+                for (int q = 0; q < 4; q++) s[q] = o[q];
+            }
+            if (ca->wmask != 0xF) {
+                if (!(ca->wmask & 8)) s[0] = d[0];
+                if (!(ca->wmask & 4)) s[1] = d[1];
+                if (!(ca->wmask & 2)) s[2] = d[2];
+                if (!(ca->wmask & 1)) s[3] = d[3];
+            }
+            msl_tex_store(t, px, py, R->cz[i], sl, R->cl[i], s);
         }
-        msl_tex_store(t, px, py, R->cz[i], R->cs[i], R->cl[i], s);
     }
 }
 
@@ -374,7 +429,7 @@ static void raster_line(rctx_t *R, sv_t *a, sv_t *b) {
         if (i == steps && steps > 1) break;  /* último pixel fica para o segmento seguinte */
         if (px < R->x0 || py < R->y0 || px >= R->x1 || py >= R->y1) continue;
         double l[3] = {1 - t, t, 0};
-        fragment(R, px, py, l, vv, 1, 0);
+        fragment(R, px, py, l, vv, 1, 0, R->full, 0);   /* linhas: todas as amostras do pixel */
     }
 }
 
@@ -413,25 +468,54 @@ static void raster_tri(rctx_t *R, sv_t *v0, sv_t *v1, sv_t *v2) {
     }
     double inv = 1 / area;
     sv_t *vo[3] = {v0, v1, v2};
+    /* baricêntricas de (x, y), na ordem original dos vértices (o flat usa o primeiro); 0 se fora */
+#define BARY(x_, y_, lo_) ({ double l_[3]; int in_ = 1; \
+        for (int i_ = 0; i_ < 3; i_++) { sv_t *a_ = v[(i_ + 1) % 3]; double e_ = ex[i_] * ((y_) - a_->y) - ey[i_] * ((x_) - a_->x); \
+            if (e_ < 0 || (e_ == 0 && !own[i_])) in_ = 0; l_[i_] = e_ * inv; } \
+        if (v[1] == v0 || v[1] == v1) { (lo_)[0] = l_[0]; (lo_)[1] = l_[1]; (lo_)[2] = l_[2]; } else { (lo_)[0] = l_[0]; (lo_)[1] = l_[2]; (lo_)[2] = l_[1]; } \
+        in_; })
+    R->dzx = R->dzy = 0;
+    if (R->ns > 1) {
+        /* z(x, y) é afim na tela: gradiente pelas baricêntricas em (0,0), (1,0) e (0,1) */
+        double a0[3], a1[3], a2[3];
+        BARY(0.0, 0.0, a0); BARY(1.0, 0.0, a1); BARY(0.0, 1.0, a2);
+        double z0 = a0[0] * v0->z + a0[1] * v1->z + a0[2] * v2->z;
+        R->dzx = a1[0] * v0->z + a1[1] * v1->z + a1[2] * v2->z - z0;
+        R->dzy = a2[0] * v0->z + a2[1] * v1->z + a2[2] * v2->z - z0;
+    }
     for (int py = y0; py < y1; py++) {
         double cy = py + 0.5;
         for (int px = x0; px < x1; px++) {
-            double cx = px + 0.5, l[3];
-            int in = 1;
-            for (int i = 0; i < 3; i++) {
-                sv_t *a = v[(i + 1) % 3];
-                double e = ex[i] * (cy - a->y) - ey[i] * (cx - a->x);
-                if (e < 0 || (e == 0 && !own[i])) { in = 0; break; }
-                l[i] = e * inv;
+            double cx = px + 0.5, lo[3];
+            int cin = BARY(cx, cy, lo);
+            u32 cov = R->full;
+            if (R->ns > 1) {
+                cov = 0;
+                for (int k = 0; k < R->ns; k++) { double ls[3]; if (BARY(px + R->spos[k][0], py + R->spos[k][1], ls)) cov |= 1u << k; }
+                if (!cov) continue;
+            } else if (!cin) continue;
+            if (R->ns > 1 && R->pp->per_sample) {
+                /* sombreamento por amostra: o shader roda em cada amostra coberta, na posição dela */
+                for (int k = 0; k < R->ns; k++) {
+                    if (!(cov >> k & 1)) continue;
+                    double ls[3];
+                    BARY(px + R->spos[k][0], py + R->spos[k][1], ls);
+                    fragment(R, px, py, ls, vo, front, 0, 1u << k, k + 1);
+                }
+                continue;
             }
-            if (!in) continue;
-            /* volta para a ordem original dos vértices (o flat usa o primeiro) */
-            double lo[3];
-            if (v[1] == v0 || v[1] == v1) { lo[0] = l[0]; lo[1] = l[1]; lo[2] = l[2]; }
-            else { lo[0] = l[0]; lo[1] = l[2]; lo[2] = l[1]; }
-            fragment(R, px, py, lo, vo, front, 0);
+            R->cen_ok = 0;
+            if (!cin && R->pp->centroid) {
+                int k = 0;
+                while (!(cov >> k & 1)) k++;
+                BARY(px + R->spos[k][0], py + R->spos[k][1], R->cen_l);
+                R->cen_ok = 1;
+            }
+            fragment(R, px, py, lo, vo, front, 0, cov, 0);
+            R->cen_ok = 0;
         }
     }
+#undef BARY
 }
 
 /* recorte de um polígono contra um plano: d = a·(x,y,z,w) */
@@ -536,10 +620,11 @@ static void begin_pass(rpass_t *rp) {
         u8 px[16];
         mx_srgb_init();
         mx_encode(mx_pf(t->fmt), px, cc);
-        for (int y = 0; y < h; y++) {
-            u8 *row = mx_texel(t, 0, y, a->plane, a->slice, a->level);
-            for (int x = 0; x < w; x++) memcpy(row + x * bpp, px, bpp);
-        }
+        for (int k = 0; k < mx_nsamp(t); k++)
+            for (int y = 0; y < h; y++) {
+                u8 *row = mx_texel(t, 0, y, a->plane, a->slice * mx_nsamp(t) + k, a->level);
+                for (int x = 0; x < w; x++) memcpy(row + x * bpp, px, bpp);
+            }
     }
     if (rp->d.tex && rp->d.load == 2) {
         msl_tex_t *t = &rp->d.tex->t;
@@ -547,23 +632,62 @@ static void begin_pass(rpass_t *rp) {
         if (w < 1) w = 1;
         if (h < 1) h = 1;
         double cd[4] = {rp->d.cd, 0, 0, 0};
-        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) msl_tex_store(t, x, y, 0, rp->d.slice, rp->d.level, cd);
+        for (int k = 0; k < mx_nsamp(t); k++)
+            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) msl_tex_store(t, x, y, 0, rp->d.slice * mx_nsamp(t) + k, rp->d.level, cd);
     }
     if (rp->s.tex && rp->s.load == 2 && mx_hasstencil(rp->s.tex->fmt)) {
         msl_tex_t *t = &rp->s.tex->t;
         int w = t->w >> rp->s.level, h = t->h >> rp->s.level;
         if (w < 1) w = 1;
         if (h < 1) h = 1;
-        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) st_set(t, x, y, rp->s.slice, rp->s.level, rp->s.cs);
+        for (int k = 0; k < mx_nsamp(t); k++)
+            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) st_set(t, x, y, rp->s.slice * mx_nsamp(t) + k, rp->s.level, rp->s.cs);
     }
 }
 static void copy_level(mtex_t *s, int sl, int ss, mtex_t *d, int dl, int ds);
+/* storeAction multisampleResolve (2) / storeAndMultisampleResolve (3): média das amostras na cor; na profundidade
+ * a amostra 0, a menor ou a maior (depthResolveFilter); no estêncil a amostra 0 ou a escolhida pela profundidade */
+static void resolve_att(attach_t *a, int kind, attach_t *dep) {
+    if (!a->tex || !a->resolve || (a->store != 2 && a->store != 3) || a->resolve == a->tex) return;
+    msl_tex_t *s = &a->tex->t, *d = &a->resolve->t;
+    int n = mx_nsamp(s);
+    if (n <= 1) { copy_level(a->tex, a->level, a->slice, a->resolve, a->rlevel, a->rslice); return; }
+    int w = s->w >> a->level, h = s->h >> a->level, dw = d->w >> a->rlevel, dh = d->h >> a->rlevel;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    if (dw < w) w = dw;
+    if (dh < h) h = dh;
+    mx_srgb_init();
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            int pick = 0;
+            if (kind == 1 && a->rfilter) {
+                double best = 0;
+                for (int k = 0; k < n; k++) {
+                    double t[4];
+                    msl_tex_load(s, x, y, 0, a->slice * n + k, a->level, t);
+                    if (!k || (a->rfilter == 1 ? t[0] < best : t[0] > best)) { best = t[0]; pick = k; }
+                }
+            } else if (kind == 2 && a->rfilter == 1 && dep && dep->tex && mx_nsamp(&dep->tex->t) == n) {
+                /* depthResolvedSample: a amostra que o filtro da profundidade escolheu */
+                double best = 0;
+                for (int k = 0; k < n; k++) {
+                    double t[4];
+                    msl_tex_load(&dep->tex->t, x, y, 0, dep->slice * n + k, dep->level, t);
+                    if (!k || (dep->rfilter == 1 ? t[0] < best : dep->rfilter == 2 ? t[0] > best : 0)) { best = t[0]; pick = k; }
+                }
+            }
+            if (kind == 2) { st_set(d, x, y, a->rslice, a->rlevel, st_get(s, x, y, a->slice * n + pick, a->level)); continue; }
+            double v[4];
+            if (kind == 1) msl_tex_load(s, x, y, 0, a->slice * n + pick, a->level, v);
+            else mx_resolve_texel(s, x, y, a->slice, v);   /* nível 0: texturas multisample só têm um */
+            msl_tex_store(d, x, y, a->rplane, a->rslice, a->rlevel, v);
+        }
+}
 static void end_pass(rpass_t *rp) {
-    for (int i = 0; i < 8; i++) {
-        attach_t *a = &rp->c[i];
-        if (a->tex && a->resolve && (a->store == 2 || a->store == 3) && a->resolve != a->tex)
-            copy_level(a->tex, a->level, a->slice, a->resolve, a->rlevel, a->rslice);
-    }
+    for (int i = 0; i < 8; i++) resolve_att(&rp->c[i], 0, 0);
+    if (rp->d.tex && mx_isdepth(rp->d.tex->fmt)) resolve_att(&rp->d, 1, 0);
+    if (rp->s.tex && mx_hasstencil(rp->s.tex->fmt)) resolve_att(&rp->s, 2, &rp->d);
 }
 
 static rpass_t *g_rp;           /* passada de render corrente (entre C_RBEGIN e C_REND) */
@@ -604,6 +728,14 @@ static void draw(cmd_t *c) {
     if (H == 0x7fffffff) H = 1;
     R.W = W;
     R.H = H;
+    /* multiamostra: todos os anexos com o mesmo número de amostras (rasterSampleCount) */
+    R.ns = 1;
+    for (int i = 0; i < 8; i++) if (R.ct[i]) R.ns = mx_nsamp(R.ct[i]);
+    if (R.dt) R.ns = mx_nsamp(R.dt);
+    if (R.stt) R.ns = mx_nsamp(R.stt);
+    if (R.ns > 8) R.ns = 8;
+    R.full = (1u << R.ns) - 1;
+    for (int k = 0; k < R.ns; k++) mx_sample_pos(R.ns, k, R.spos[k]);
     if (st->vp_set) { R.vx = st->vp.x; R.vy = st->vp.y; R.vw = st->vp.w; R.vh = st->vp.h; R.zn = st->vp.zn; R.zf = st->vp.zf; }
     else { R.vw = W; R.vh = H; R.zn = 0; R.zf = 1; }
     R.x0 = 0; R.y0 = 0; R.x1 = W; R.y1 = H;
@@ -614,7 +746,7 @@ static void draw(cmd_t *c) {
         if ((int)(st->sc.y + st->sc.h) < R.y1) R.y1 = (int)(st->sc.y + st->sc.h);
     }
     if (R.x0 >= R.x1 || R.y0 >= R.y1 || !pp->raster) return;
-    R.early = pp->fdepth < 0 && !pp->discards;
+    R.early = pp->fdepth < 0 && !pp->discards && !(R.ns > 1 && (pp->a2c || pp->fmask >= 0));
     /* contexto do fragmento */
     for (int i = 0; i < 31; i++) R.fc.buf[i] = bind_ptr(&st->fb[i]);
     for (int i = 0; i < 32; i++) R.fc.tex[i] = st->ft[i] ? &st->ft[i]->t : 0;
@@ -738,7 +870,7 @@ static void draw(cmd_t *c) {
                         for (int x = px0; x < px0 + n; x++) {
                             if (x < R.x0 || y < R.y0 || x >= R.x1 || y >= R.y1) continue;
                             float pc[2] = {(float)((x + 0.5 - (a.x - size / 2)) / size), (float)((y + 0.5 - (a.y - size / 2)) / size)};
-                            fragment(&R, x, y, l, vv, 1, pc);
+                            fragment(&R, x, y, l, vv, 1, pc, R.full, 0);   /* pontos: todas as amostras do pixel */
                         }
                     R.prim_id++;
                 }
@@ -803,24 +935,28 @@ static void blit_tt(cmd_t *c) {
         for (int l = 0; l < nl; l++) for (int sl = 0; sl < ns; sl++) copy_level(s, l, sl, d, l, sl);
         return;
     }
+    int ns = mx_nsamp(&s->t) < mx_nsamp(&d->t) ? mx_nsamp(&s->t) : mx_nsamp(&d->t);   /* cópia amostra a amostra */
     if (c->tt.nlevels) {
         for (u64 l = 0; l < c->tt.nlevels; l++)
-            for (u64 sl = 0; sl < c->tt.nslices; sl++) copy_level(s, (int)(c->tt.sl + l), (int)(c->tt.ss + sl), d, (int)(c->tt.dl + l), (int)(c->tt.ds + sl));
+            for (u64 sl = 0; sl < c->tt.nslices; sl++)
+                for (int k = 0; k < ns; k++)
+                    copy_level(s, (int)(c->tt.sl + l), (int)(c->tt.ss + sl) * ns + k, d, (int)(c->tt.dl + l), (int)(c->tt.ds + sl) * ns + k);
         return;
     }
     int sb = mx_bpp(s->fmt), db = mx_bpp(d->fmt);
+    for (int k = 0; k < ns; k++)
     for (u64 z = 0; z < c->tt.sz.d; z++)
         for (u64 y = 0; y < c->tt.sz.h; y++) {
             int sy = (int)(c->tt.so.y + y), dy = (int)(c->tt.dorg.y + y), sz = (int)(c->tt.so.z + z), dz = (int)(c->tt.dorg.z + z);
             if (sy >= (s->t.h >> c->tt.sl) && s->t.h > 1) break;
             if (sb == db) {
-                memcpy(mx_texel(&d->t, (int)c->tt.dorg.x, dy, dz, (int)c->tt.ds, (int)c->tt.dl),
-                       mx_texel(&s->t, (int)c->tt.so.x, sy, sz, (int)c->tt.ss, (int)c->tt.sl), c->tt.sz.w * sb);
+                memcpy(mx_texel(&d->t, (int)c->tt.dorg.x, dy, dz, (int)c->tt.ds * ns + k, (int)c->tt.dl),
+                       mx_texel(&s->t, (int)c->tt.so.x, sy, sz, (int)c->tt.ss * ns + k, (int)c->tt.sl), c->tt.sz.w * sb);
             } else
                 for (u64 x = 0; x < c->tt.sz.w; x++) {
                     double v[4];
-                    msl_tex_load(&s->t, (int)(c->tt.so.x + x), sy, sz, (int)c->tt.ss, (int)c->tt.sl, v);
-                    msl_tex_store(&d->t, (int)(c->tt.dorg.x + x), dy, dz, (int)c->tt.ds, (int)c->tt.dl, v);
+                    msl_tex_load(&s->t, (int)(c->tt.so.x + x), sy, sz, (int)c->tt.ss * ns + k, (int)c->tt.sl, v);
+                    msl_tex_store(&d->t, (int)(c->tt.dorg.x + x), dy, dz, (int)c->tt.ds * ns + k, (int)c->tt.dl, v);
                 }
         }
 }

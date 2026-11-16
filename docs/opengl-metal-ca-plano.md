@@ -55,8 +55,13 @@ Cada passo tem teste de host em `tools/` e entra por PR na `main`. Build complet
 | #449 | Lacunas do corpus: `NSOpenGLGetOption`/`SetOption`/`GetVersion`, `CVOpenGLTextureCache`, CoreVideo planar e anexos, descritores de raytracing do Metal, `setVertexBuffers` do overlay Swift | `nsopengl_host` 0 falhas, `mtl_vbufs_test` ok |
 | #450 | Pontilhado de linha e de polígono | `gl_host` 106/106 |
 | #454 | `KHR_debug`, `EXT_debug_label`, `EXT_debug_marker` completos | `gl_host` 126/126 |
-| (este) | Anisotropia (GL e Metal) | `gl_host` 132/132 |
+| #456 | Anisotropia (GL e Metal) | `gl_host` 132/132 |
+| #492 | MSAA no GL: renderbuffers/texturas/framebuffer padrão (CGL) multisample, cobertura, profundidade e estêncil por amostra, `GL_SAMPLE_COVERAGE`/`GL_SAMPLE_MASK`, alfa para cobertura, sombreamento por amostra, centroid, `gl_SampleMask`, blit com resolve | `gl_host` 170/170, `nsopengl_host` 0 falhas |
+| (este) | MSAA no Metal: texturas `sampleCount` 2/4/8, raster por amostra, `[[sample_id]]`, `[[sample_mask]]`, `alphaToCoverage`/`alphaToOne`, `centroid_*`/`sample_*`, resolve de cor e de profundidade/estêncil com filtro, cópia multisample, `getDefaultSamplePositions` | `metal_msaa_host` |
+
+Formato de multiamostra (GL e Metal): `msl_tex_t.samples = N` e a amostra `s` da camada `l` na fatia `l*N + s`;
+posições padrão D3D/Metal em `mtltex.c` (`mx_sample_pos`) e resolve em `mx_resolve_texel`.
 
 ## Próximo (OpenGL)
 
-MSAA com amostras; tesselação; teste com app real na VM.
+Tesselação; teste com app real na VM.
