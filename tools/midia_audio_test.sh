@@ -60,5 +60,8 @@ for c in "a.m4a" "a.m4a 0 esds" "m.m4a" "a_opus.mp4" "mp3.mp4" "alac.m4a" "a.m4a
     n=$((n+1)); r=$("$T/act" "$T/$f" "$@"); echo "audioconverter $c: $r"
     case "$r" in "ac ok"*) ok=$((ok+1));; esac
 done
+# AUGraph e AUMultiChannelMixer (o mesmo coreaudio.c)
+gcc -O1 -w -c "$R/tools/augraph_test.c" -o "$T/agt.o" && g++ "$T/agt.o" "$T/ca.o" "$T/stubs.o" "$T"/o/*.o -lm -lpthread -o "$T/agt" || exit 1
+n=$((n+1)); "$T/agt" && ok=$((ok+1))
 echo "midia-audio: $ok/$n ok"
 [ "$ok" = "$n" ]
