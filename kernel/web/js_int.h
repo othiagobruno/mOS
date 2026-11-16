@@ -68,7 +68,8 @@ u32    js_utf8_get(const char *s, int len, int *i); /* decodifica um code point 
 /* ============================================================ objetos */
 enum {
     CL_OBJECT, CL_ARRAY, CL_FUNCTION, CL_NATIVE, CL_BOUND, CL_ERROR, CL_DATE, CL_REGEXP, CL_BOOLEAN, CL_NUMBER,
-    CL_STRING, CL_SYMBOL, CL_ARGUMENTS, CL_PROMISE, CL_MAP, CL_SET, CL_ITER, CL_GEN, CL_BIGINT, CL_MODULE, CL_NODE, CL_STYLE, CL_CLASSLIST,
+    CL_STRING, CL_SYMBOL, CL_ARGUMENTS, CL_PROMISE, CL_MAP, CL_SET, CL_ITER, CL_GEN, CL_BIGINT, CL_MODULE,
+    CL_ARRAYBUFFER, CL_TYPED, CL_DATAVIEW, CL_NODE, CL_STYLE, CL_CLASSLIST,
     CL_EVENT, CL_STORAGE, CL_LOCATION, CL_DATASET, CL_HOST, CL_COUNT
 };
 enum { PF_ACCESSOR = 1, PF_NOENUM = 2, PF_RO = 4, PF_NOCONF = 8 };
@@ -113,6 +114,10 @@ typedef struct jsobj {
         struct { struct js_page *page; node_t *node; jsv extra; } host;
         struct { struct jscoro *co; } gen;      /* gerador / função async em execução */
         struct jsmodule *mod;                   /* registro de módulo ES */
+        /* ArrayBuffer: bytes próprios (kmalloc) ou externos com o desalocador de quem os deu (JSC NoCopy) */
+        struct { u8 *data; u32 len; bool detached; void (*dealloc)(void *bytes, void *ctx); void *dctx; } buf;
+        /* TypedArray e DataView: janela num ArrayBuffer (len em elementos; no DataView, em bytes) */
+        struct { struct jsobj *buffer; u32 off, len; u8 kind; bool tracking; } ta;
         double date;
         jsv prim;
     } u;
@@ -229,6 +234,7 @@ typedef struct jsrealm {
     jsobj *c_object, *c_array, *c_function, *c_promise, *c_regexp, *c_symbol, *c_string, *c_number;
     jsobj *p_node, *p_elem, *p_doc, *p_text, *p_event, *p_style, *p_classlist, *p_storage, *p_location, *p_response, *p_xhr;
     jsobj *jobs;              /* fila de microtarefas: vetor [fn, a0, a1, kind, ...] */
+    jsobj *p_abuf, *p_dview, *p_typed, *p_ta[11];   /* ArrayBuffer, DataView, %TypedArray% e um por tipo */
     u32 jobpos;
     struct js_page *page;
     struct jsrealm *next;
@@ -427,6 +433,19 @@ bool   m_isfinite(double x);
 bool   m_isnan(double x);
 #define JS_INF (__builtin_inf())
 
+/* ============================================================ ArrayBuffer, typed arrays, DataView (js_typed.c) */
+enum { TA_INT8, TA_UINT8, TA_UINT8C, TA_INT16, TA_UINT16, TA_INT32, TA_UINT32, TA_FLOAT32, TA_FLOAT64,
+       TA_BIGINT64, TA_BIGUINT64, TA_COUNT };
+void   js_typed_init(jsrealm *r);
+jsv    js_typed_get(jsobj *ta, u32 i);              /* JS_UNDEF fora do intervalo */
+int    js_typed_set(jsobj *ta, u32 i, jsv v);       /* 0 ok, -1 exceção; fora do intervalo é ignorado */
+u32    js_typed_length(jsobj *ta);                  /* 0 se o buffer foi destacado */
+jsobj *js_abuf_new(u32 len);                        /* bytes zerados */
+jsobj *js_abuf_external(void *bytes, u32 len, void (*dealloc)(void *, void *), void *ctx);
+jsobj *js_typed_new(int kind, jsobj *buffer, u32 off, u32 len);
+int    js_typed_elsize(int kind);
+jsobj *js_new_arr_iter(jsv target, int kind);       /* iterador de vetor (0 valores, 1 chaves, 2 pares) */
+
 /* ============================================================ BigInt (js_bigint.c) */
 jsbig *js_big_from_double(double d);              /* d inteiro */
 jsbig *js_big_parse(const char *s, int len, int radix, bool *ok);   /* radix 0 = aceita prefixos 0x/0o/0b */
@@ -438,6 +457,8 @@ jsv    js_big_binop(int op, jsbig *a, jsbig *b);   /* JS_EXC em erro */
 jsv    js_big_neg(jsbig *a);
 jsv    js_big_add_small(jsbig *a, int k);
 jsv    js_big_from_str_value(jsstr *s);            /* StringToBigInt; JS_UNDEF se inválida */
+jsv    js_big_from_u64(u64 m, bool neg);           /* magnitude m com sinal */
+u64    js_big_to_u64(jsbig *b);                    /* módulo 2^64, complemento de dois */
 void   js_bigint_init(jsrealm *r);
 
 /* ============================================================ módulos ES (js_module.c) */

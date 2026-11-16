@@ -380,3 +380,15 @@ void js_bigint_init(jsrealm *r) {
     js_defnative(bp, "toLocaleString", bigp_tostring, 0, 2);
     js_defprop(bp, A[A_sym_toStringTag], jv_str(js_intern("BigInt", -1)), PF_NOENUM | PF_RO);
 }
+
+/* BigInt de 64 bits (typed arrays BigInt64/BigUint64, JSC) */
+jsv js_big_from_u64(u64 m, bool neg) {
+    u32 d[2] = {(u32)m, (u32)(m >> 32)};
+    return jv_big(mk(d, 2, neg));
+}
+/* valor módulo 2^64 (complemento de dois) */
+u64 js_big_to_u64(jsbig *b) {
+    u64 m = b->n ? b->d[0] : 0;
+    if (b->n > 1) m |= (u64)b->d[1] << 32;
+    return b->neg ? (u64)(0 - m) : m;
+}
