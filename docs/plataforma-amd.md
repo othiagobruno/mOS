@@ -34,14 +34,42 @@ Legenda: ✅ pronto com teste de host · 🔧 em andamento · ⬜ não começou.
 | A7 | Térmica: Tctl do Zen pelo SMN 0x59800; crítico = zona em `_CRT` ou Tctl > 105 °C; passivo pela fórmula `_TC1/_TC2/_PSV` a cada `_TSP`, baixando o teto de P-state | ✅ código; ⬜ hardware | `_TMP/_CRT/_PSV/_TC1/_TC2/_TSP` avaliados no harness |
 | A8 | P-states `kernel/dev/cpufreq.c`: `_PSS/_PCT/_PPC` (FFixedHW → MSR 0xC0010062 por núcleo; APs no tique do LAPIC), carga por MPERF/TSC, sobe ≥ 70 %, desce ≤ 30 %. Sem `_PSS`, lê 0xC0010064.. O R2544 não tem `_CPC` (CPPC) | ✅ código; ⬜ hardware | harness: `_PCT[0]` = FFixedHW 64 bits 0xC0010062 e controle = índice; MSRs lidos no PC: P0 FID 0x86/DID 8 = 3350, P1 2000, P2 1600 MHz |
 | A9 | `_PRT` em modo PIC (`kernel/dev/acpi_prt.c`, `acpi_pci_irq()`): ponte raiz, `_PRT` das pontes ou rotação, link devices com `_CRS`/`_PRS`/`_SRS` e penalidade das IRQs legadas, conferência do `_SRS`. IOAPIC: **não** entra — o mOS usa MSI direto no LAPIC para os dispositivos e o 8259 para o legado (decisão do núcleo, frente do Gustavo) | ✅ | harness com o DSDT real: 00:14.0 INTA → IRQ 5 (LNKA), 03:00.6 INTC → IRQ 10 (LNKG); achou bug da BIOS: `LNKE._SRS` lê `PIRE` em vez do argumento, rota recusada |
-| U1 | xHCI 15e0/15e1: interrupções MSI, USB 3.x, quirks AMD, suspensão/retomada | ⬜ | |
+| U1 | xHCI 15e0/15e1: enumeração USB 2/3 por consulta (o laço principal chama `usb_poll`; interrupções MSI ficam de fora de propósito: o teclado é lido a cada volta do laço e o s2idle consulta a cada 20 ms); suspensão S3 com Save/Restore State e, com SRE, reset + reenumeração; S3 recusado com pendrive ligado | ✅ código; ⬜ hardware | só sintaxe |
 | U2 | Hubs: USB 2 (Genesys 05e3:0610) já funcionava; SuperSpeed (05e3:0626) novo — descritor 0x2A, SET_HUB_DEPTH, bits de porta USB 3, warm reset (BH) para link Inactive/Compliance | ✅ código; ⬜ hardware | só sintaxe |
 | U3 | HID: teclado boot (Satechi interface 0) e mouse Sunplus (report id 1, X/Y 12 bits, roda) já funcionavam; teclas de mídia novas — `kernel/dev/hid_cc.c` (Consumer/System Control, array ou variável), `KEY_VOL_UP..KEY_LAUNCHPAD`, volume/mudo e botão de energia tratados no kernel; PS/2 E0 multimídia também | ✅ | `tools/hidcc_host.c` com os descritores reais do Satechi e do mouse (`tools/hidcc/*.rd`): `hidcc: ok` |
 | S1 | AHCI 7901: NCQ (já na main), TRIM por DATA SET MANAGEMENT (IDENTIFY 169/105/69), `blkdev_t.discard` + `blk_discard()` através das partições, com a política de escrita; FLUSH CACHE EXT | ✅ código; ⬜ hardware | `tools/disktest.c` (empacotamento das faixas, 48 bits, 64 por bloco): `disktest: ok` |
 | H1 | HDA: 15e3 com ALC269VC (fone 0x15 com HP+EAPD, microfone 0x18; snoop do FCH no reg. 0x42) + 15de HDMI/DP em `kernel/dev/hda_hdmi.c` (controlador próprio sem snoop, `clflush`, pin sense, ELD, conversor digital, espelho da mesma mistura) | ✅ código; ⬜ hardware | só sintaxe; codecs conferidos no `/proc/asound` do PC (ALC269VC, ATI aa01, monitor PG-CFCFS49U com LPCM 2 canais) |
-| H2 | ACP 15e2 (co-processador de áudio; DMIC) | ⬜ | |
+| H2 | ACP 15e2 `kernel/dev/acp.c`: rev 0x00 (ACP3x). No firmware do PC o nó `\_SB.PCI0.GP17.ACP` só tem `_ADR` (nenhum codec I2S nem microfone PDM) e o Linux também não cria placa de som para ele; o driver confere isso no namespace e põe o ACP em D3hot (refaz depois do S3). Com codec descrito, fica em D0 e o log diz qual | ✅ | harness com o DSDT real: `ACP _ADR 0x5, 0 dispositivos filhos` |
 | R1 | RTC: século pelo índice da FADT (0x32), 12 h corrigido, escrita (`rtc_set_utc`), alarme (`rtc_alarm_set_utc`) | ✅ código; ⬜ hardware | só sintaxe (`zig cc -fsyntax-only`) |
 | I1 | IOMMU AMD-Vi `kernel/dev/iommu.c` + `iommu_pt.c`: IVRS (IVHD 0x40/0x11/0x10, faixas, apelidos, especiais), DTE de todos os requisitantes num domínio com tabela identidade de 2 MiB só sobre a memória do mapa UEFI (MMIO e BARs bloqueados), buffer de comandos com COMPLETION_WAIT/INVALIDATE_ALL, log de eventos (IO_PAGE_FAULT) no `acpi_poll`, interrupções sem remapear; desliga sozinho se o hardware não confirmar | ✅ código; ⬜ hardware | `tools/iommu_host.c` com a IVRS real: IVHD 0x40 em 0xFEB80000, EFR 0x004F77EF22294ADA, requisitantes de 00:01.0 a FF:1F.7 + 00A0/00A4; tabela: RAM e UMA mapeadas, MMIO/MSI/além da RAM bloqueados: `iommu: ok` |
 
-Ordem: A1 → A2 → A3 → A4 → A9 → A7 → A8 → S1 → H1 → U1..U3 → R1 → I1 → A5/A6 → H2.
-Build completo só no fim, pela fila `build-final.sh`.
+## Ventoinha
+
+O firmware do PC não tem `_FAN`, `PNP0C0B` nem controle de PWM no EC (a `ERAM` do `EC0` não tem campos), e o Linux
+desta máquina também não expõe sensor de ventoinha (`hwmon`: só `acpitz`, `k10temp`, `amdgpu`). A ventoinha é do SMU/
+firmware. O mOS cuida do lado que é dele: P-state pela carga, teto passivo pela zona térmica e desligamento crítico.
+
+## Testes de host (rodam no Linux, sem build)
+
+```bash
+# interpretador AML: autoteste e as tabelas reais (a pasta das tabelas fica fora do repositório)
+gcc -O1 -g -fsanitize=address,undefined -DAML_HOST -Ikernel/include tools/aml_host.c kernel/dev/aml.c kernel/dev/acpi_prt.c -o /tmp/aml
+iasl -p /tmp/teste tools/aml_tests/teste.asl && /tmp/aml --teste /tmp/teste.aml      # aml-teste: ok
+/tmp/aml -q DSDT.dat SSDT1.dat ... SSDT6.dat                                         # aml-real: ok
+# IOMMU (tabela de páginas e a IVRS real)
+gcc -O1 -fsanitize=address,undefined -DMOS_HOST_TEST -Ikernel/include tools/iommu_host.c kernel/dev/iommu_pt.c -o /tmp/iommu && /tmp/iommu IVRS.dat
+# teclas de mídia com os descritores reais
+gcc -O1 -fsanitize=address,undefined -DMOS_HOST_TEST -Ikernel/include tools/hidcc_host.c kernel/dev/hid_cc.c -o /tmp/hidcc && /tmp/hidcc tools/hidcc
+# TRIM (faixas do DATA SET MANAGEMENT) e NCQ
+gcc -O1 -fsanitize=address,undefined -DMOS_HOST_TEST -Ikernel/include tools/disktest.c kernel/dev/ahci_ncq.c kernel/dev/nvme_xfer.c -o /tmp/disk && /tmp/disk
+```
+
+As tabelas ACPI foram lidas de `/sys/firmware/acpi/tables` nesta máquina (sem a MSDM, que guarda a licença do Windows).
+
+## O que só o hardware responde
+
+No log serial do primeiro boot no PC: `ACPI: 7 tabelas AML ... 0 erros; SCI 9 ... S3 ok, S5 ok, reset ok 0xcf9`,
+`cpufreq: 3 P-states (3350/2000/1600 MHz) por MSR`, `IOMMU: AMD-Vi em 0xfeb80000 ... requisitantes` (e nenhuma linha
+`IO_PAGE_FAULT`), `ahci: porta N: TRIM`, `HDMI: pino 0x05 (monitor presente)` com o nome do monitor, `HDA: ... pino 0x15 fone`,
+`USB HID: teclas de mídia na interface 1`, `ACP: rev 00 ... em D3hot`. Depois: volume pelas teclas do Satechi, botão de energia
+abrindo o diálogo, desligar e reiniciar, repouso e volta (hoje s2idle até os ganchos de CPU, vídeo e rede existirem).
