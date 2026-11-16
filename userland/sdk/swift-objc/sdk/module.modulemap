@@ -69,6 +69,13 @@ module UIKit [system] [extern_c] {
     export *
 }
 
+// PhotosUI do Mac Catalyst (docs/photosui.md): PHPicker* para o overlay Swift (libswiftPhotosUI.dylib); as classes estão
+// no PhotosUI.framework do mOS
+module PhotosUI [system] [extern_c] {
+    header "PhotosUI/PhotosUI.h"
+    export *
+}
+
 // UniformTypeIdentifiers (fase 5): a classe UTType do libSystem, para o overlay Swift (libswiftUniformTypeIdentifiers)
 module UniformTypeIdentifiers [system] [extern_c] {
     header "UniformTypeIdentifiers/UniformTypeIdentifiers.h"
