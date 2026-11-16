@@ -34,6 +34,12 @@ i128 __modti3(i128 a, i128 b) {
     return a < 0 ? -(i128)r : (i128)r;
 }
 
+/* deslocamentos de 128 bits (compiler-rt): count em 0..127. O código do runtime os importa quando o alvo não
+ * liga o compiler-rt do zig (x86_64 freestanding os resolve pelo próprio libSystem). */
+i128 __ashlti3(i128 a, int b) { return (i128)((u128)a << b); }
+u128 __lshrti3(u128 a, int b) { return a >> b; }
+i128 __ashrti3(i128 a, int b) { return a >> b; }
+
 /* libm (long double, float): musl em userland/third_party/musl */
 double ceil(double), floor(double), cos(double), sin(double), exp(double), exp2(double), log(double), log2(double), log10(double),
        fmod(double, double), remainder(double, double), nearbyint(double), rint(double), round(double), trunc(double), fma(double, double, double),

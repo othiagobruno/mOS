@@ -721,8 +721,6 @@ void $ss8DurationV10FoundationE15TimeFormatStyleV7PatternVMa(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleVAC0dE0ACMc(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleVMa(void) {}
 void $ss8DurationV10FoundationE9formattedy12FormatOutputQzxAC0D5StyleRzAB0D5InputRtzlF(void) {}
-void NXGetArchInfoFromCpuType(void) {}
-void NXGetLocalArchInfo(void) {}
 void *OBJC_CLASS_$_NSOutputStream;
 void *OBJC_CLASS_$_NSStream;
 void *OBJC_CLASS_$_SwiftNativeNSObject;
@@ -731,18 +729,10 @@ void *OBJC_METACLASS_$_SwiftNativeNSObject;
 void *OBJC_METACLASS_$__TtCs12_SwiftObject;
 void SecTaskCopyTeamIdentifier(void) {}
 void SecTaskCreateWithAuditToken(void) {}
-void __ashlti3(void) {}
 void __invert_f3(void) {}
-void __lshrti3(void) {}
-void __pthread_workqueue_setkill(void) {}
-void __syscall_logger(void) {}
 void _nw_content_context_default_message(void) {}
-void backtrace_async(void) {}
-void backtrace_from_fp(void) {}
 void endfsent(void) {}
-void flsl(void) {}
 void getfsent(void) {}
-void initstate(void) {}
 void *kCFNetworkProxiesExceptionsList;
 void *kCFNetworkProxiesHTTPEnable;
 void *kCFNetworkProxiesHTTPPort;
@@ -762,11 +752,9 @@ void *kCFStreamPropertySOCKSVersion;
 void *kCFStreamPropertyShouldCloseNativeSocket;
 void *kCFStreamPropertySocketNativeHandle;
 void *kCFStreamSocketSOCKSVersion5;
-void lldiv(void) {}
 void mach_port_guard(void) {}
 void mach_port_set_mscount(void) {}
 void mach_port_unguard(void) {}
-void malloc_logger(void) {}
 void matrix_identity_double3x3(void) {}
 void matrix_identity_float4x4(void) {}
 void nftw$INODE64(void) {}
@@ -795,23 +783,9 @@ void nw_path_is_constrained(void) {}
 void nw_path_is_expensive(void) {}
 void nw_path_uses_interface_type(void) {}
 void nw_tcp_options_set_no_delay(void) {}
-void open_dprotected_np(void) {}
 void os_signpost_id_generate(void) {}
 void os_signpost_id_make_with_pointer(void) {}
-void posix_spawnattr_setexceptionports_np(void) {}
-void pthread_fchdir_np(void) {}
-void pthread_from_mach_thread_np(void) {}
-void pthread_get_qos_class_np(void) {}
-void pthread_introspection_hook_install(void) {}
 void setfsent(void) {}
-void setstate(void) {}
-void strtoll_l(void) {}
-void strtoull_l(void) {}
-void sys_nerr(void) {}
-void syscall(void) {}
-void timingsafe_bcmp(void) {}
-void vasprintf_l(void) {}
 void vm_read(void) {}
-void xattr_name_with_flags(void) {}
 void xpc_dictionary_get_audit_token(void) {}
 void xpc_pipe_simpleroutine(void) {}

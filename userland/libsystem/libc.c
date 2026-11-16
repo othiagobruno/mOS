@@ -780,8 +780,6 @@ void *bsearch(const void *key, const void *base, size_t n, size_t sz, int (*cmp)
 static u64 rng_state = 1;
 void srand(unsigned s) { rng_state = s ? s : 1; }
 int rand(void) { rng_state = rng_state * 1103515245 + 12345; return (int)((rng_state >> 16) & 0x7FFFFFFF); }
-void srandom(unsigned s) { srand(s); }
-long random(void) { return rand(); }
 static u64 xs = 0x9E3779B97F4A7C15ULL;
 u32 arc4random(void) {
     if (xs == 0x9E3779B97F4A7C15ULL) xs ^= (u64)SYS0(SYS_TIME) * 0x2545F4914F6CDD1DULL + (u64)SYS0(SYS_UNIXTIME);

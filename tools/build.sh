@@ -348,6 +348,8 @@ echo "==> libm (musl 1.2.5, MIT; teste de host contra a glibc)"
 bash "$ROOT/tools/build-libm-musl.sh" "$ZIG" x86_64 "$OUT/libm-x86" "$JOBS"
 mapfile -t LIBM_OBJS < "$OUT/libm-x86/objs.txt"
 ZIG="$ZIG" bash "$ROOT/tools/libm_hosttest.sh" "$OUT/libm-hosttest" "$OUT/libm-x86"
+echo "==> libc_bsd (random BSD, ffs/fls, lldiv, NXArchInfo, backtrace; teste de host)"
+ZIG="$ZIG" bash "$ROOT/tools/libc_bsd_hosttest.sh" "$OUT/libc-bsd-hosttest"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
