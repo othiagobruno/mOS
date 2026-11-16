@@ -30,7 +30,7 @@ typedef unsigned short unichar;
 
 NS_ASSUME_NONNULL_BEGIN
 
-@class NSString, NSArray<ObjectType>, NSDictionary<KeyType, ObjectType>, NSData, NSError, NSURL, NSEnumerator<ObjectType>;
+@class NSString, NSCharacterSet, NSArray<ObjectType>, NSDictionary<KeyType, ObjectType>, NSData, NSError, NSURL, NSEnumerator<ObjectType>;
 
 typedef struct _NSRange {
     NSUInteger location;
@@ -38,11 +38,14 @@ typedef struct _NSRange {
 } NSRange;
 typedef NSRange *NSRangePointer;
 
+/* NSZone.h: no Swift, NSZone * vira o NSZone do módulo ObjectiveC */
+typedef struct _NSZone NSZone;
+
 @protocol NSCopying
-- (id)copyWithZone:(nullable struct _NSZone *)zone;
+- (id)copyWithZone:(nullable NSZone *)zone;
 @end
 @protocol NSMutableCopying
-- (id)mutableCopyWithZone:(nullable struct _NSZone *)zone;
+- (id)mutableCopyWithZone:(nullable NSZone *)zone;
 @end
 @protocol NSSecureCoding
 @end
@@ -353,8 +356,8 @@ NS_SWIFT_NAME(URLSession)
  * fdn_operation.c), com os nomes Swift da Apple */
 typedef double NSTimeInterval;
 typedef NSString *NSRunLoopMode NS_TYPED_EXTENSIBLE_ENUM NS_SWIFT_NAME(RunLoop.Mode);
-FOUNDATION_EXPORT NSRunLoopMode const NSDefaultRunLoopMode;
-FOUNDATION_EXPORT NSRunLoopMode const NSRunLoopCommonModes;
+FOUNDATION_EXPORT NSRunLoopMode const NSDefaultRunLoopMode NS_SWIFT_NAME(RunLoop.Mode.default);
+FOUNDATION_EXPORT NSRunLoopMode const NSRunLoopCommonModes NS_SWIFT_NAME(RunLoop.Mode.common);
 
 NS_SWIFT_NAME(Timer)
 @interface NSTimer : NSObject
@@ -379,8 +382,8 @@ NS_SWIFT_NAME(RunLoop)
 @property (nullable, readonly, copy) NSRunLoopMode currentMode;
 - (void)addTimer:(NSTimer *)timer forMode:(NSRunLoopMode)mode;
 - (void)run;
-- (void)runUntilDate:(NSDate *)limitDate;
-- (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)limitDate;
+- (void)runUntilDate:(NSDate *)limitDate NS_SWIFT_NAME(run(until:));
+- (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)limitDate NS_SWIFT_NAME(run(mode:before:));
 - (void)performBlock:(void (^)(void))block;
 - (void)performInModes:(NSArray<NSRunLoopMode> *)modes block:(void (^)(void))block;
 @end
@@ -513,14 +516,36 @@ typedef NS_OPTIONS(NSUInteger, NSFileManagerItemReplacementOptions) {
 @property (readonly) BOOL canUndo;
 @end
 
-/* ---- NSScanner do libSystem (foundation_more.c): a posição é em bytes UTF-8 da string */
+/* ---- NSScanner do libSystem (fdn_scanner.c): scanLocation em UTF-16, como no macOS */
 __attribute__((swift_name("Scanner")))
-@interface NSScanner : NSObject
+@interface NSScanner : NSObject <NSCopying>
 + (instancetype)scannerWithString:(NSString *)string;
++ (id)localizedScannerWithString:(NSString *)string;
 - (instancetype)initWithString:(NSString *)string;
 @property (readonly, copy) NSString *string;
 @property NSUInteger scanLocation;
+@property (nullable, copy) NSCharacterSet *charactersToBeSkipped NS_REFINED_FOR_SWIFT;
+@property BOOL caseSensitive;
+@property (nullable, retain) id locale;
 @property (readonly, getter=isAtEnd) BOOL atEnd;
+- (BOOL)scanInt:(nullable int *)result NS_SWIFT_NAME(scanInt32(_:));
+- (BOOL)scanInteger:(nullable NSInteger *)result NS_SWIFT_NAME(scanInt(_:));
+- (BOOL)scanLongLong:(nullable long long *)result NS_SWIFT_NAME(scanInt64(_:));
+- (BOOL)scanUnsignedLongLong:(nullable unsigned long long *)result NS_SWIFT_NAME(scanUnsignedLongLong(_:));
+- (BOOL)scanFloat:(nullable float *)result;
+- (BOOL)scanDouble:(nullable double *)result;
+- (BOOL)scanHexInt:(nullable unsigned *)result NS_SWIFT_NAME(scanHexInt32(_:));
+- (BOOL)scanHexLongLong:(nullable unsigned long long *)result NS_SWIFT_NAME(scanHexInt64(_:));
+- (BOOL)scanHexFloat:(nullable float *)result;
+- (BOOL)scanHexDouble:(nullable double *)result;
+/* NSDecimal *: o Decimal do Swift tem o mesmo layout (Scanner.swift expõe scanDecimal(_:)) */
+- (BOOL)scanDecimal:(nullable void *)dcm NS_REFINED_FOR_SWIFT;
+- (BOOL)scanString:(NSString *)string intoString:(NSString * _Nullable * _Nullable)result NS_SWIFT_NAME(scanString(_:into:));
+- (BOOL)scanCharactersFromSet:(NSCharacterSet *)set intoString:(NSString * _Nullable * _Nullable)result NS_SWIFT_NAME(scanCharacters(from:into:));
+- (BOOL)scanUpToString:(NSString *)string intoString:(NSString * _Nullable * _Nullable)result NS_SWIFT_NAME(scanUpTo(_:into:));
+- (BOOL)scanUpToCharactersFromSet:(NSCharacterSet *)set intoString:(NSString * _Nullable * _Nullable)result NS_SWIFT_NAME(scanUpToCharacters(from:into:));
+/* do mOS (o Scanner.swift usa): posição depois de pular charactersToBeSkipped, sem mover */
+- (NSUInteger)_mos_skippedLocation;
 @end
 
 /* ---- classes do libSystem para as pontes de URLComponents, URLQueryItem, Calendar e CharacterSet */
@@ -535,14 +560,42 @@ __attribute__((swift_name("Scanner")))
 @property (nullable, copy) NSString *string;
 @end
 
+typedef NS_OPTIONS(NSUInteger, NSCalendarUnit) {
+    NSCalendarUnitEra = (1UL << 1),
+    NSCalendarUnitYear = (1UL << 2),
+    NSCalendarUnitMonth = (1UL << 3),
+    NSCalendarUnitDay = (1UL << 4),
+    NSCalendarUnitHour = (1UL << 5),
+    NSCalendarUnitMinute = (1UL << 6),
+    NSCalendarUnitSecond = (1UL << 7),
+    NSCalendarUnitWeekday = (1UL << 9),
+    NSCalendarUnitWeekdayOrdinal = (1UL << 10),
+    NSCalendarUnitQuarter = (1UL << 11),
+    NSCalendarUnitWeekOfMonth = (1UL << 12),
+    NSCalendarUnitWeekOfYear = (1UL << 13),
+    NSCalendarUnitYearForWeekOfYear = (1UL << 14),
+    NSCalendarUnitNanosecond = (1UL << 15),
+    NSCalendarUnitDayOfYear = (1UL << 16),
+    NSCalendarUnitCalendar = (1UL << 20),
+    NSCalendarUnitTimeZone = (1UL << 21),
+} NS_SWIFT_NAME(NSCalendar.Unit);
+
 @interface NSCalendar : NSObject <NSCopying, NSSecureCoding>
+@property (class, readonly, copy) NSCalendar *currentCalendar;
+@property (class, readonly, strong) NSCalendar *autoupdatingCurrentCalendar;
++ (nullable NSCalendar *)calendarWithIdentifier:(NSString *)calendarIdentifierConstant;
 - (nullable instancetype)initWithCalendarIdentifier:(NSString *)ident;
 @property (readonly, copy) NSString *calendarIdentifier;
 @property (copy) NSTimeZone *timeZone;
 @end
 
+typedef unsigned int UTF32Char;
 @interface NSCharacterSet : NSObject <NSCopying, NSMutableCopying, NSSecureCoding>
++ (instancetype)characterSetWithBitmapRepresentation:(NSData *)data;
+@property (class, readonly, copy) NSCharacterSet *whitespaceAndNewlineCharacterSet;
 - (BOOL)characterIsMember:(unichar)aCharacter;
+- (BOOL)longCharacterIsMember:(UTF32Char)theLongChar;
+@property (readonly, copy) NSData *bitmapRepresentation;
 @end
 
 /* ---- NSPathUtilities: funções C do libSystem (foundation.c, foundation_more.c) */

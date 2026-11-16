@@ -15,7 +15,7 @@ func check(_ c: Bool, _ what: String) {
 func postar(_ n: Notification.Name, _ o: AnyObject?) {
     NotificationCenter.default.post(Notification(name: n, object: o)._bridgeToObjectiveC())
 }
-func girar(_ s: Double) { _ = RunLoop.current.runMode(RunLoop.Mode.defaultRunLoopMode, before: Date().addingTimeInterval(s)._bridgeToObjectiveC()) }
+func girar(_ s: Double) { _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(s)._bridgeToObjectiveC()) }
 func girarAte(_ limite: Double, _ cond: () -> Bool) {
     let fim = Date().addingTimeInterval(limite)
     while !cond() && Date() < fim { girar(0.02) }
@@ -41,7 +41,7 @@ check(recebidas.count == 2, "NotificationCenter.Publisher: cancelar tira o obser
 
 // Timer.publish
 var ticks = 0
-let pub = Timer.publish(every: 0.05, on: .current, in: RunLoop.Mode.defaultRunLoopMode)
+let pub = Timer.publish(every: 0.05, on: .current, in: .default)
 pub.sink { _ in ticks += 1 }.store(in: &bag)
 girar(0.12)
 check(ticks == 0, "TimerPublisher: nada antes do connect")
@@ -53,7 +53,7 @@ let parado = ticks
 girar(0.2)
 check(ticks == parado, "TimerPublisher: cancelar a conexão para o timer")
 var auto = 0
-Timer.publish(every: 0.03, on: .main, in: RunLoop.Mode.commonModes).autoconnect().prefix(2).sink { _ in auto += 1 }.store(in: &bag)
+Timer.publish(every: 0.03, on: .main, in: .common).autoconnect().prefix(2).sink { _ in auto += 1 }.store(in: &bag)
 girarAte(2) { auto >= 2 }
 check(auto == 2, "TimerPublisher.autoconnect + prefix(2)")
 
