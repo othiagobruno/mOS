@@ -320,14 +320,17 @@ static void build_headers(job_t *j, const mnet_url_t *u, const char *method, mne
             mnet_ieq(n, "upgrade") || mnet_ieq(n, "te")) continue;
         mnet_hdrs_add(h, n, strlen(n), q->hdrs->v[i].value, strlen(q->hdrs->v[i].value));
     }
-    if (!mnet_hdrs_get(h, "user-agent")) mnet_hdrs_add(h, "User-Agent", 10, j->c->user_agent, strlen(j->c->user_agent));
+    if (!q->bare_headers && !mnet_hdrs_get(h, "user-agent")) mnet_hdrs_add(h, "User-Agent", 10, j->c->user_agent, strlen(j->c->user_agent));
     if (!mnet_hdrs_get(h, "accept")) mnet_hdrs_add(h, "Accept", 6, "*/*", 3);
-    if (!mnet_hdrs_get(h, "accept-language")) mnet_hdrs_add(h, "Accept-Language", 15, "pt-BR,pt;q=0.9,en;q=0.8", 23);
+    if (!q->bare_headers && !mnet_hdrs_get(h, "accept-language")) mnet_hdrs_add(h, "Accept-Language", 15, "pt-BR,pt;q=0.9,en;q=0.8", 23);
     *we_set_ae = 0;
     if (!q->no_decode && !mnet_hdrs_get(h, "accept-encoding")) {
         mnet_hdrs_add(h, "Accept-Encoding", 15, "gzip, deflate, br", 17);
         *we_set_ae = 1;
     }
+    /* valor "\x7f" no pedido = tirar o cabeçalho, inclusive os padrão (o "Nome:" vazio da libcurl) */
+    for (int i = 0; q->hdrs && i < q->hdrs->n; i++)
+        if (!strcmp(q->hdrs->v[i].value, "\x7f")) mnet_hdrs_del(h, q->hdrs->v[i].name);
     if (JAR(j) && !q->no_cookies && !mnet_hdrs_get(h, "cookie")) {
         lk(j->c);
         char *ck = mnet_jar_header(JAR(j), u->scheme, u->host, u->target, 1, j->c->io->unix_time(j->c->io->env));

@@ -2,7 +2,7 @@
 """Servidor HTTP/1.1 local para tools/mnet_client_test.c. Só escuta em 127.0.0.1, porta no argv[1].
 Rotas: /ola, /redir/N (N saltos até /ola), /303 (POST vira GET), /307 (repete o POST), /gzip, /chunked,
 /cookie/set, /cookie/get, /lento, /conta (conta conexões: prova keep-alive), /eco (devolve o corpo), /laco."""
-import gzip, sys, threading
+import base64, gzip, hashlib, re, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 conexoes = 0
@@ -97,6 +97,27 @@ class H(BaseHTTPRequestHandler):
             import time
             time.sleep(3)
             self.body(200, b"tarde")
+        elif p == "/basic":
+            ok = self.headers.get("Authorization") == "Basic " + base64.b64encode(b"Aladdin:open sesame").decode()
+            if ok:
+                self.body(200, b"basic ok")
+            else:
+                self.body(401, b"nao", extra=[("WWW-Authenticate", 'Basic realm="mos"')])
+        elif p == "/digest":
+            a = self.headers.get("Authorization") or ""
+            ok = False
+            if a.startswith("Digest "):
+                d = dict(re.findall(r'(\w+)="?([^",]*)"?', a[7:]))
+                h1 = hashlib.md5(("%s:mos:segredo" % d.get("username")).encode()).hexdigest()
+                h2 = hashlib.md5(("%s:%s" % (self.command, d.get("uri"))).encode()).hexdigest()
+                r = hashlib.md5(("%s:%s:%s:%s:%s:%s" % (h1, d.get("nonce"), d.get("nc"), d.get("cnonce"), d.get("qop"), h2)).encode()).hexdigest()
+                ok = d.get("username") == "maria" and d.get("response") == r and d.get("nonce") == "n0nce42"
+            if ok:
+                self.body(200, b"digest ok")
+            else:
+                self.body(401, b"nao", extra=[("WWW-Authenticate", 'Digest realm="mos", qop="auth", nonce="n0nce42", opaque="op"')])
+        elif p == "/json":
+            self.body(200, b'{"a":1}', ctype="application/json; charset=utf-8")
         elif p == "/conta":
             self.body(200, str(conexoes).encode())
         else:
