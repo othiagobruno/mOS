@@ -560,6 +560,22 @@ cx_class_t *objc_allocateClassPair(cx_class_t *super, const char *name, u64 extr
     return c;
 }
 void objc_registerClassPair(cx_class_t *c) { (void)c; }
+/* objc_initializeClassPair: como o allocate, na memória de quem chama (o Swift monta assim classes ObjC próprias) */
+cx_class_t *objc_initializeClassPair(cx_class_t *super, const char *name, cx_class_t *c, cx_class_t *m) {
+    if (!c || !m || !name || cx_class_named(name)) return 0;
+    c->data = 0;                                   /* como o libobjc: o conteúdo anterior da memória não vale */
+    m->data = 0;
+    cx_define_class(c, m, strdup(name), super, 0);
+    return c;
+}
+/* layout de ivars fortes/fracos (o do class_ro_t compilado, +16 e +56); classe criada em tempo de execução não tem */
+static const u8 *class_ro_of(cx_class_t *c) {
+    if (!c) return 0;
+    u64 d = c->data & ~7ULL;
+    return d >= 0x1000 ? (const u8 *)d : 0;
+}
+const u8 *class_getIvarLayout(cx_class_t *c) { const u8 *ro = class_ro_of(c); return ro ? *(const u8 *const *)(ro + 16) : 0; }
+const u8 *class_getWeakIvarLayout(cx_class_t *c) { const u8 *ro = class_ro_of(c); return ro ? *(const u8 *const *)(ro + 56) : 0; }
 
 /* ================================================================ o que o runtime Swift (com interop ObjC) chama
  * Ver docs/swift-objc-runtime.md, fase 1. A metadata de uma classe Swift começa com os mesmos 5 words do
