@@ -130,6 +130,8 @@ typedef struct {
 #define DEV_WINDOW_CAPTURE 33
 #define DEV_AUDIO_SYSTEM 34   /* (amostras i16 estéreo 48 kHz, quadros, u64 *posição) -> quadros da mistura do sistema
                                * a partir da posição do leitor (0 = do agora); a posição avança */
+#define DEV_AUDIO_DUCK 35     /* (nível 0..65536, rampa em ms) AudioDeviceDuck: abaixa os streams dos outros processos;
+                               * 65536 devolve (só o processo que abaixou) */
 #define GUI_SC_MAXWIN 64
 enum { GUI_SC_INCLUDE = 1, GUI_SC_DESKTOP = 2, GUI_SC_CURSOR = 4 };
 typedef struct {

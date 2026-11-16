@@ -973,6 +973,7 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
         if (a == DEV_INPUT_TO_PID) return input_to_pid(b, c, d);
         if (a == DEV_FOCUS_PID) return focus_pid((int)b);
         if (a == DEV_FRONT_PID) return front_pid();
+        if (a == DEV_AUDIO_DUCK) { extern void audio_duck(int pid, i32 level, u32 ramp_ms); audio_duck(p->pid, (i32)b, (u32)c); return 0; }
         if (a == DEV_SCREEN_COMPOSE || a == DEV_WINDOW_CAPTURE || a == DEV_AUDIO_SYSTEM) { extern i64 sc_capture_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d); return sc_capture_syscall(p, a, b, c, d); }   /* ScreenCaptureKit (kernel/compat/sccapture.c) */
         if (a >= DEV_CAMERA_INFO && a <= DEV_CAMERA_CLOSE) { extern i64 uvc_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d); return uvc_syscall(p, a, b, c, d); }   /* câmeras USB (kernel/dev/uvc.c) */
         /* 22 e 23 são a faixa de status e o ocultar do Dock; 21 continua sendo a captura de áudio */
