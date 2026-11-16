@@ -3,9 +3,10 @@
  *  - AVAssetExportPresetPassthrough: todas as faixas copiáveis (H.264, AAC, Opus, PCM 16 bits), com o timeRange;
  *  - AVAssetExportPresetAppleM4A: só o áudio, quando ele já é AAC;
  *  - presets de qualidade e de tamanho (Low/Medium/HighestQuality, 640x480 ... 3840x2160, HEVC*): a AVFoundation
- *    recodifica; o mOS copia quando a origem já é H.264 (+ AAC) e cabe no tamanho do preset, o que dá um arquivo do mesmo
- *    tipo que o app espera. Fora disso (outro codec, maior que o preset, videoComposition, audioMix) a exportação falha com
- *    AVErrorExportFailed (-11820) e a mensagem diz o motivo.
+ *    recodifica; o mOS copia quando a origem já é H.264 (+ AAC) e cabe no tamanho do preset; maior que o preset, o vídeo
+ *    é decodificado, reduzido (mantendo a proporção) e recodificado em H.264 pelo AVAssetWriter, e o áudio é copiado.
+ *    Fora disso (outro codec, videoComposition, audioMix) a exportação falha com AVErrorExportFailed (-11820) e a
+ *    mensagem diz o motivo.
  * exportAsynchronouslyWithCompletionHandler: roda numa thread; status/progress/error como na AVFoundation; o arquivo de
  * saída não pode existir (-11823). Código original do mOS (MIT).
  */
@@ -80,9 +81,9 @@ static int container_of(const char *ft) {
 }
 
 /* o que o preset pede e se dá para atender copiando; why explica quando não */
-typedef struct { int ok, want, audio_only, maxw, maxh; const char *why; } plan_t;
+typedef struct { int ok, want, audio_only, maxw, maxh, reencode, tw, th; const char *why; } plan_t;
 static plan_t plan_for(const char *preset, const avx_info *in) {
-    plan_t p = {1, AVX_VIDEO | AVX_AUDIO, 0, 0, 0, 0};
+    plan_t p = {.ok = 1, .want = AVX_VIDEO | AVX_AUDIO};
     if (!preset) { p.ok = 0; p.why = "Preset nulo."; return p; }
     if (!strcmp(preset, "AVAssetExportPresetAppleM4A")) {
         p.audio_only = 1; p.want = AVX_AUDIO;
@@ -106,12 +107,91 @@ static plan_t plan_for(const char *preset, const avx_info *in) {
         p.maxw = sized[i].w; p.maxh = sized[i].h;
         if (in->has_video && in->vcodec != 0x61766331) { p.ok = 0; p.why = "Recodificar vídeo que não é H.264 ainda não é feito pelo mOS."; }
         else if (in->has_video && p.maxw && !((in->width <= p.maxw && in->height <= p.maxh) || (in->width <= p.maxh && in->height <= p.maxw))) {
-            p.ok = 0; p.why = "O vídeo é maior que o preset e o mOS ainda não reduz o tamanho ao exportar.";
+            /* maior que o preset: cabe no retângulo do preset (deitado ou em pé, como o vídeo), dimensões pares */
+            int bw = in->width >= in->height ? p.maxw : p.maxh, bh = in->width >= in->height ? p.maxh : p.maxw;
+            double k = (double)bw / in->width < (double)bh / in->height ? (double)bw / in->width : (double)bh / in->height;
+            p.reencode = 1;
+            p.tw = ((int)(in->width * k + 0.5)) & ~1; p.th = ((int)(in->height * k + 0.5)) & ~1;
+            if (p.tw < 16) p.tw = 16;
+            if (p.th < 16) p.th = 16;
+            if (in->has_audio && !in->audio_is_aac) { p.ok = 0; p.why = "O áudio não é AAC e o mOS ainda não tem o codificador AAC."; }
         } else if (in->has_audio && !in->audio_is_aac) { p.ok = 0; p.why = "O áudio não é AAC e o mOS ainda não tem o codificador AAC."; }
         return p;
     }
     p.ok = 0; p.why = "Preset desconhecido.";
     return p;
+}
+#include "avvideo.h"
+void *cx_vt_convert_frame(u32 fmt, int dw, int dh, const u8 *y, const u8 *u, const u8 *v, int sy, int suv, int w, int h, int full, int matrix);
+int avx_track_index(const char *path, int media);
+int unlink(const char *p);
+int snprintf(char *s, size_t n, const char *f, ...);
+typedef struct { long long value; int timescale; unsigned flags; long long epoch; } rcmt_t;
+static rcmt_t rsecs(double s) { rcmt_t t = {(long long)(s * 1000000000.0 + 0.5), 1000000000, 1, 0}; return t; }
+/* recodifica o vídeo de [start, start+dur) em tw x th (H.264, arquivo temporário) e junta o áudio copiado da origem */
+static int reencode(const char *in, const char *out, int container, int fast, double start, double dur, int tw, int th, int with_audio,
+                    avx_ctl *ctl, const char **why) {
+    int err = 0;
+    avv_t *v = avv_open_path(in, &err);
+    if (!v) { *why = "O vídeo de origem não pôde ser decodificado."; return AVX_ERR_CODEC; }
+    double total = 0, fps = 30;
+    int sw, sh;
+    uint32_t ns;
+    avv_info(v, &sw, &sh, &total, &fps, &ns);
+    double end = dur >= 0 ? start + dur : total;
+    char tmp[1100];
+    snprintf(tmp, sizeof tmp, "%s.mos-video.mp4", out);
+    unlink(tmp);
+    id url = MSG(id, (id)cx_class_named("NSURL"), "fileURLWithPath:", cx_str(tmp));
+    id e = 0;
+    id w = MSG(id, (id)cx_class_named("AVAssetWriter"), "assetWriterWithURL:fileType:error:", url, cx_str("public.mpeg-4"), &e);
+    id vs = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
+    MSG(void, vs, "setObject:forKey:", cx_str("avc1"), cx_str("AVVideoCodecKey"));
+    MSG(void, vs, "setObject:forKey:", cx_num_i(tw), cx_str("Width"));
+    MSG(void, vs, "setObject:forKey:", cx_num_i(th), cx_str("Height"));
+    id vin = w ? MSG(id, (id)cx_class_named("AVAssetWriterInput"), "assetWriterInputWithMediaType:outputSettings:", cx_str("vide"), vs) : 0;
+    id ad = vin ? MSG(id, (id)cx_class_named("AVAssetWriterInputPixelBufferAdaptor"),
+                      "assetWriterInputPixelBufferAdaptorWithAssetWriterInput:sourcePixelBufferAttributes:", vin, (id)0) : 0;
+    if (!ad || !MSG(BOOL, w, "canAddInput:", vin)) { avv_close(v); *why = "O codificador H.264 não aceitou o tamanho."; return AVX_ERR_CODEC; }
+    MSG(void, w, "addInput:", vin);
+    if (!MSG0(BOOL, w, "startWriting")) { avv_close(v); *why = "Não foi possível gravar o arquivo temporário."; return AVX_ERR_WRITE; }
+    ((void (*)(id, SEL, rcmt_t))objc_msgSend)(w, sel_registerName("startSessionAtSourceTime:"), rsecs(0));
+    avv_frame f;
+    int rc = avv_frame_at(v, start, &f), frames = 0, status = AVX_OK;
+    double last = -1;
+    while (rc >= 0) {
+        if (ctl && ctl->cancel) { status = AVX_ERR_CANCEL; break; }
+        if (f.pts >= end) break;
+        double t = f.pts < start ? 0 : f.pts - start;
+        if (t > last) {
+            void *pb = cx_vt_convert_frame(0x34323076u /* 420v */, tw, th, f.y, f.u, f.v, f.sy, f.suv, f.w, f.h, f.full_range, avv_matrix(&f));
+            if (!pb) { status = AVX_ERR_CODEC; *why = "Falha ao reduzir o quadro."; break; }
+            BOOL ok = ((BOOL (*)(id, SEL, void *, rcmt_t))objc_msgSend)(ad, sel_registerName("appendPixelBuffer:withPresentationTime:"), pb, rsecs(t));
+            objc_release((id)pb);
+            if (!ok) { status = AVX_ERR_WRITE; *why = "O codificador H.264 recusou um quadro."; break; }
+            last = t;
+            frames++;
+            if (ctl && end > start) ctl->progress = (float)(0.9 * t / (end - start));
+        }
+        rc = avv_next_frame(v, &f);
+        if (rc == 0) break;   /* fim */
+    }
+    avv_close(v);
+    MSG0(void, vin, "markAsFinished");
+    if (status != AVX_OK || !frames) { MSG0(void, w, "cancelWriting"); unlink(tmp); if (!frames && status == AVX_OK) { *why = "Nenhum quadro no intervalo."; status = AVX_ERR_EMPTY; } return status; }
+    ((void (*)(id, SEL, rcmt_t))objc_msgSend)(w, sel_registerName("endSessionAtSourceTime:"), rsecs(end - start));
+    if (!MSG0(BOOL, w, "finishWriting")) { unlink(tmp); *why = "O arquivo temporário não fechou."; return AVX_ERR_WRITE; }
+    /* vídeo novo + áudio da origem no mesmo intervalo */
+    avx_segment vseg = {tmp, 0, 0, end - start, 0}, aseg = {in, 0, start, end - start, 0};
+    avx_ctrack tr[2];
+    int n = 0;
+    tr[n++] = (avx_ctrack){AVX_VIDEO, &vseg, 1};
+    int ai = with_audio ? avx_track_index(in, AVX_AUDIO) : -1;
+    if (ai >= 0) { aseg.src_track = ai; tr[n++] = (avx_ctrack){AVX_AUDIO, &aseg, 1}; }
+    int r = avx_compose(out, container, fast, tr, n, ctl, why);
+    unlink(tmp);
+    if (!r && ctl) ctl->progress = 1;
+    return r;
 }
 int cx_avcomposition_is(id a);
 int cx_avcomposition_info(id a, int *has_video, int *has_audio, double *dur);
@@ -261,7 +341,8 @@ static void *export_thread(void *arg) {
         cmtime_t d = x->range.duration;
         if ((d.flags & 1) && !(d.flags & 0x1c) && d.timescale > 0) dur = secs(d);   /* sem +inf/-inf/indefinido */
         int rc = is_comp ? cx_avcomposition_export(x->asset, out, k, x->fast, start, dur, p.want, &x->ctl, &why)
-                         : avx_passthrough(in, out, k, x->fast, start, dur, p.want, &x->ctl, &why);
+                 : p.reencode ? reencode(in, out, k, x->fast, start, dur, p.tw, p.th, (p.want & AVX_AUDIO) && inf.has_audio, &x->ctl, &why)
+                              : avx_passthrough(in, out, k, x->fast, start, dur, p.want, &x->ctl, &why);
         if (rc == AVX_ERR_CANCEL) x->status = X_CANCELLED;
         else if (rc) fail(s, -11820, why ? why : "A exportação falhou.");
         else x->status = X_COMPLETED;
