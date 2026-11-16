@@ -5,6 +5,9 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-/tmp/mos-fdn-i18n}
 mkdir -p "$OUT"
+# NSDecimal não usa a ICU: roda sempre
+gcc -O1 -Wall -I"$ROOT/userland/libsystem" "$ROOT/userland/libsystem/fdn_decimal_core.c" "$ROOT/tools/fdn_dec_test.c" -o "$OUT/fdn_dec_test"
+"$OUT/fdn_dec_test"
 if ! compgen -G "/usr/lib/x86_64-linux-gnu/libicui18n.so.*" >/dev/null && ! compgen -G "/usr/lib64/libicui18n.so.*" >/dev/null \
    && ! compgen -G "/usr/lib/libicui18n.so.*" >/dev/null; then
     echo "fdn-i18n: sem ICU no host, testes pulados" >&2

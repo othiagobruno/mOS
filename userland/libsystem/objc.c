@@ -1172,6 +1172,7 @@ void cx_objc_boot(u64 sects, u64 n) {
         { extern void cx_fdn_units_init(void); cx_fdn_units_init(); }   /* fdn_units.c: NSUnit, NSDimension, NSMeasurement e o formatter */
         { extern void cx_fdn_cfsocket_init(void); cx_fdn_cfsocket_init(); }   /* fdn_cfsocket.c: CFSocket e CFFileDescriptor */
         { extern void cx_fdn_misc_init(void); cx_fdn_misc_init(); }   /* fdn_misc.c: CFURLEnumerator */
+        { extern void cx_fdn_decimal_init(void); cx_fdn_decimal_init(); }   /* fdn_decimal.c: NSDecimalNumber */
         /* blocks são objetos: [block copy] etc. */
         cx_class_t *nsobj = cx_class_named("NSObject");
         cx_class_t *bl[3] = {&_NSConcreteStackBlock_c, &_NSConcreteGlobalBlock_c, &_NSConcreteMallocBlock_c};

@@ -7,6 +7,7 @@
  */
 #include "foundation.h"
 #include "libc.h"
+#include "fdn_decimal_core.h"
 #include "urlrequest_fields.h"
 
 id objc_retain(id o);
@@ -29,7 +30,7 @@ int pipe(int *fds);
 CLASS(NSAffineTransform) CLASS(NSAppleEventDescriptor) CLASS(NSAssertionHandler) 
 CLASS(NSBundleResourceRequest) CLASS(NSComparisonPredicate)
 CLASS(NSCompoundPredicate) CLASS(NSCondition) CLASS(NSConditionLock) CLASS(NSCountedSet) CLASS(NSDataDetector)
-CLASS(NSDecimalNumber) CLASS(NSDecimalNumberHandler)
+
 CLASS(NSExpression) CLASS(NSFileCoordinator) CLASS(NSFileHandle) CLASS(NSHashTable)
 CLASS(NSHTTPURLResponse) CLASS(NSIndexPath)
 CLASS(NSItemProvider) CLASS(NSJSONSerialization)
@@ -177,73 +178,6 @@ rng_t NSRangeFromString(id s) {
     while (*p && (*p < '0' || *p > '9')) p++;
     r.length = (u64)strtoll(p, 0, 10);
     return r;
-}
-
-/* NSDecimal: 8 dígitos base 65536 + expoente de 10. Igual ao layout da Apple. */
-typedef struct {
-    signed int exp:8;
-    unsigned int length:4;
-    unsigned int neg:1;
-    unsigned int compact:1;
-    unsigned int reserved:18;
-    unsigned short m[8];
-} nsdec_t;
-enum { CALC_OK, CALC_PREC, CALC_UNDER, CALC_OVER, CALC_DIV0 };
-static void dec_zero(nsdec_t *r) { memset(r, 0, sizeof *r); }
-static void dec_norm(nsdec_t *r) {
-    int n = 8;
-    while (n > 0 && !r->m[n - 1]) n--;
-    r->length = (unsigned)n;
-    r->compact = 1;
-}
-static int dec_mul(nsdec_t *r, const nsdec_t *a, const nsdec_t *b) {
-    u32 acc[16];
-    memset(acc, 0, sizeof acc);
-    int la = a->length ? (int)a->length : 0, lb = b->length ? (int)b->length : 0;
-    for (int i = 0; i < la; i++) for (int j = 0; j < lb; j++) {
-        u32 p = (u32)a->m[i] * b->m[j] + acc[i + j];
-        acc[i + j] = p & 0xFFFF;
-        acc[i + j + 1] += p >> 16;
-    }
-    int over = 0;
-    for (int i = 8; i < 16; i++) if (acc[i]) over = 1;
-    dec_zero(r);
-    for (int i = 0; i < 8; i++) r->m[i] = (unsigned short)acc[i];
-    r->neg = a->neg ^ b->neg;
-    r->exp = (signed char)((int)a->exp + (int)b->exp);
-    dec_norm(r);
-    return over ? CALC_OVER : CALC_OK;
-}
-int NSDecimalMultiply(nsdec_t *result, const nsdec_t *left, const nsdec_t *right, int mode) {
-    (void)mode;
-    if (!result || !left || !right) return CALC_DIV0;
-    return dec_mul(result, left, right);
-}
-int NSDecimalRound(nsdec_t *result, const nsdec_t *number, int scale, int mode) {
-    if (!result || !number) return CALC_DIV0;
-    *result = *number;
-    /* scale é casas depois da vírgula: corta o expoente negativo além disso */
-    int cut = -(int)result->exp - scale;
-    int loss = 0;
-    while (cut-- > 0 && result->length) {
-        unsigned rem = 0;
-        for (int i = (int)result->length - 1; i >= 0; i--) {
-            u32 v = rem * 65536u + result->m[i];
-            result->m[i] = (unsigned short)(v / 10);
-            rem = v % 10;
-        }
-        result->exp = (signed char)(result->exp + 1);
-        loss |= rem != 0;
-        if (rem && mode == 2) { /* NSRoundUp: soma 1 no último dígito */
-            u32 c = 1;
-            for (int i = 0; i < 8 && c; i++) { u32 v = result->m[i] + c; result->m[i] = (unsigned short)(v & 0xFFFF); c = v >> 16; }
-        } else if (rem >= 5 && mode != 1) {
-            u32 c = 1;
-            for (int i = 0; i < 8 && c; i++) { u32 v = result->m[i] + c; result->m[i] = (unsigned short)(v & 0xFFFF); c = v >> 16; }
-        }
-        dec_norm(result);
-    }
-    return loss ? CALC_PREC : CALC_OK;
 }
 
 /* NSMapTable / NSHashTable em C (ponteiros). O objeto ObjC guarda este bloco. */
@@ -765,6 +699,17 @@ static BOOL sc_scan_ll(id s, SEL c, long long *out) {
     if (e == p) return NO;
     BOX(s)->i += e - p;
     if (out) *out = v;
+    return YES;
+}
+static BOOL sc_scan_dec(id s, SEL c, nsdec_t *out) {
+    (void)c;
+    sc_skip(s);
+    const char *p = cs(BOX(s)->a) + BOX(s)->i;
+    nsdec_t d;
+    int n = fdn_dec_parse(&d, p, ".");
+    if (!n) return NO;
+    BOX(s)->i += n;
+    if (out) *out = d;
     return YES;
 }
 static BOOL sc_scan_d(id s, SEL c, double *out) {
@@ -2170,13 +2115,6 @@ static void ns_publish(id s, SEL c) {
 static void ns_stop(id s, SEL c) { (void)c; BOX(s)->fl = 0; }
 static void ns_set_del(id s, SEL c, id d) { (void)c; rel(BOX(s)->e); BOX(s)->e = retain(d); }
 
-static id decnum_with(id cls, SEL c, id str) {
-    (void)c;
-    nsnum_t *o = (nsnum_t *)cx_alloc_instance((cx_class_t *)cls);
-    o->kind = 1; o->d = strtod(cs(str), 0);
-    return ar((id)o);
-}
-static id decnum_handler(id cls, SEL c) { (void)c; static id s; if (!s) s = cx_alloc_instance((cx_class_t *)cls); return s; }
 static id vt_set(id cls, SEL c, id t, id name) {
     (void)cls; (void)c;
     static id tab;
@@ -2281,17 +2219,6 @@ static id cs_alnum(id cls, SEL c) {
     return s;
 }
 
-static id dn_add(id s, SEL c, id o) { (void)c; return ar(num_d(dval(s) + dval(o))); }
-static id dn_mul(id s, SEL c, id o) { (void)c; return ar(num_d(dval(s) * dval(o))); }
-static id dn_num(id cls, SEL c, double v) {
-    (void)c;
-    nsnum_t *o = (nsnum_t *)cx_alloc_instance((cx_class_t *)cls);
-    o->kind = 1; o->d = v;
-    return ar((id)o);
-}
-static id dn_zero(id cls, SEL c) { return dn_num(cls, c, 0); }
-static id dn_one(id cls, SEL c) { return dn_num(cls, c, 1); }
-
 /* ---------------------------------------------------------------- registro */
 #define M(cls, s, f) cx_add_method(&cls##_c, s, (void *)(f))
 #define CM(cls, s, f) cx_add_cmethod(&cls##_c, s, (void *)(f))
@@ -2356,7 +2283,7 @@ void cx_foundation_more_init(void) {
     CM(NSScanner, "scannerWithString:", sc_with); CM(NSScanner, "alloc", lock_alloc);
     M(NSScanner, "initWithString:", sc_init); M(NSScanner, "isAtEnd", sc_end);
     M(NSScanner, "scanString:intoString:", sc_scan_str); M(NSScanner, "scanUpToString:intoString:", sc_scan_upto);
-    M(NSScanner, "scanInt:", sc_scan_int); M(NSScanner, "scanLongLong:", sc_scan_ll); M(NSScanner, "scanDouble:", sc_scan_d);
+    M(NSScanner, "scanInt:", sc_scan_int); M(NSScanner, "scanLongLong:", sc_scan_ll); M(NSScanner, "scanDouble:", sc_scan_d); M(NSScanner, "scanDecimal:", sc_scan_dec);
     M(NSScanner, "scanLocation", sc_loc); M(NSScanner, "setScanLocation:", sc_setloc); M(NSScanner, "string", sc_string);
 
     DEF(&NSRegularExpression_c, &NSRegularExpression_m, "NSRegularExpression", ob, BEX);
@@ -2602,13 +2529,6 @@ void cx_foundation_more_init(void) {
     CM(NSNetServiceBrowser, "alloc", lock_alloc);
     M(NSNetServiceBrowser, "searchForServicesOfType:inDomain:", ns_publish); M(NSNetServiceBrowser, "stop", ns_stop);
     M(NSNetServiceBrowser, "setDelegate:", ns_set_del);
-
-    DEF(&NSDecimalNumber_c, &NSDecimalNumber_m, "NSDecimalNumber", &NSNumber_c, 0);
-    CM(NSDecimalNumber, "decimalNumberWithString:", decnum_with);
-    CM(NSDecimalNumber, "zero", dn_zero); CM(NSDecimalNumber, "one", dn_one);
-    M(NSDecimalNumber, "decimalNumberByAdding:", dn_add); M(NSDecimalNumber, "decimalNumberByMultiplyingBy:", dn_mul);
-    DEF(&NSDecimalNumberHandler_c, &NSDecimalNumberHandler_m, "NSDecimalNumberHandler", ob, 0);
-    CM(NSDecimalNumberHandler, "defaultDecimalNumberHandler", decnum_handler);
 
     DEF(&NSValueTransformer_c, &NSValueTransformer_m, "NSValueTransformer", ob, BEX);
     CM(NSValueTransformer, "setValueTransformer:forName:", vt_set);
