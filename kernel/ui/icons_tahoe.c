@@ -3,6 +3,33 @@
  * vidro translúcido com realce na borda e sombra suave. Desenhados em vetor numa grade de 64 unidades;
  * o corpo ocupa 6..58 (81%, como a grade de ícones do macOS). icon_for() consulta tahoe_icon() primeiro. */
 #include "ui.h"
+#include "vfs.h"
+
+extern surface_t *image_decode(const u8 *data, usize size);
+
+/* As artes rasterizadas usam os mesmos nomes de exec do registro de apps.
+ * icon_for() mantém o resultado no seu cache por app/tamanho/tema. */
+static bool original_icon(const char *exec, surface_t *s, int x, int y, int size) {
+    if (strcmp(exec, "arquivos") && strcmp(exec, "horizonte") && strcmp(exec, "terminal")) return false;
+    if (!s || size < 1 || size > 256) return false;
+    int pixels = 16;
+    while (pixels < size) pixels *= 2;
+    char path[128];
+    snprintf(path, sizeof(path), "/Sistema/Biblioteca/Icones/%s-%d.png", exec, pixels);
+    vnode_t *node = vfs_lookup(path);
+    if (!node || node->dir || !vfs_ensure(node) || !node->data || node->size < 24 || node->size > 512 * 1024) return false;
+    const u8 *d = node->data;
+    /* Limita a alocação do decodificador às dimensões da variante pedida. */
+    if (memcmp(d, "\x89PNG\r\n\x1a\n", 8) || memcmp(d + 12, "IHDR", 4)) return false;
+    u32 w = (u32)d[16] << 24 | (u32)d[17] << 16 | (u32)d[18] << 8 | d[19];
+    u32 h = (u32)d[20] << 24 | (u32)d[21] << 16 | (u32)d[22] << 8 | d[23];
+    if (w != (u32)pixels || h != (u32)pixels) return false;
+    surface_t *image = image_decode(d, node->size);
+    if (!image) return false;
+    gfx_blit_scaled(s, image, x, y, size, size, 255);
+    surface_free(image);
+    return true;
+}
 
 typedef struct { surface_t *s; float x, y, u; } ic_t;
 #define X(v) (c->x + (v) * c->u)
@@ -451,6 +478,7 @@ static const struct { const char *exec; tahoe_fn fn; } table[] = {
 /* desenha o ícone Tahoe do app; false se o app não tem um (usa o desenho próprio do app) */
 bool tahoe_icon(const char *exec, surface_t *s, int x, int y, int size) {
     if (!exec) return false;
+    if (original_icon(exec, s, x, y, size)) return true;
     for (int i = 0; i < (int)ARRAY_LEN(table); i++)
         if (!strcmp(table[i].exec, exec)) {
             ic_t c = {s, (float)x, (float)y, size / 64.0f};
