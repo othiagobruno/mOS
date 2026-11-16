@@ -401,6 +401,20 @@ static int s_misc_x(T *t, a64_u32 w, int sc) {
             return s_fcmpv(t, q, size & 1, kind, 0, n, 32, d, sc);
         }
     }
+    if (op == 0x05 && u && size == 1 && jit_g.ssse3) {   /* RBIT: nibbles invertidos por tabela */
+        if (q) s_ld(t, 0, n); else x_movq_ld(B, 0, VO(n));
+        s_const2(t, 4, 0x0E060A020C040800ull, 0x0F070B030D050901ull);
+        x_movdqa_ld(B, 1, XR(0));
+        xop2(B, XF_66, 0x71, 2, XR(1)); xe8(B, 4);  /* psrlw 4 */
+        s_const(t, 2, 0x0F0F0F0F0F0F0F0Full);
+        s_op(t, 0xDB, 1, 2); s_op(t, 0xDB, 0, 2);   /* alto, baixo */
+        x_movdqa_ld(B, 3, XR(4)); s_pshufb(t, 3, 0); /* rev(baixo) */
+        s_pshufb(t, 4, 1);                          /* rev(alto) */
+        xop2(B, XF_66, 0x71, 6, XR(3)); xe8(B, 4);  /* rev(baixo) << 4 (sem vazar: rev < 16) */
+        s_op(t, 0xEB, 3, 4);
+        s_st(t, d, 3, q);
+        return 1;
+    }
     if (op == 0x05 && u && size == 0) {             /* NOT */
         s_ld(t, 0, n); s_ones(t, 1); s_op(t, 0xEF, 0, 1); s_st(t, d, 0, q);
         return 1;
