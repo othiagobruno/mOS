@@ -1,6 +1,5 @@
 /* mOS — os casos ObjC e CF dos testes do Darling (tests/src: objc_category, objc_exception, objc_super, objc_stret,
- * objc_fpret, objc_load, cfbridge, cfbridge_strequals), reescritos com o comportamento do macOS. O cfurl_fm_basic
- * (CFURLGetFSRef/FSRefMakePath) fica de fora: o mOS ainda não tem a File Manager do Carbon.
+ * objc_fpret, objc_load, cfbridge, cfbridge_strequals, cfurl_fm_basic), reescritos com o comportamento do macOS.
  * Compilar sem ARC (usa retain/release e retainCount). O mesmo binário roda no Darling, no macOS e no mOS. */
 #import <Foundation/Foundation.h>
 #include <stdio.h>
@@ -30,6 +29,17 @@ typedef unsigned char Boolean;
 CFStringRef CFStringCreateWithBytes(CFAllocatorRef a, const UInt8 *b, CFIndex n, CFStringEncoding e, Boolean ext);
 CFTypeRef CFRetain(CFTypeRef o);
 void CFRelease(CFTypeRef o);
+#endif
+#ifndef __CORESERVICES__
+/* File Manager do Carbon (CoreServices): FSRef opaco de 80 bytes */
+typedef struct { UInt8 hidden[80]; } FSRef;
+typedef int OSStatus;
+typedef const struct __CFURL *CFURLRef;
+typedef long CFURLPathStyle;
+#define kCFURLPOSIXPathStyle 0
+CFURLRef CFURLCreateWithFileSystemPath(CFAllocatorRef a, CFStringRef path, CFURLPathStyle style, Boolean isDir);
+Boolean CFURLGetFSRef(CFURLRef url, FSRef *ref);
+OSStatus FSRefMakePath(const FSRef *ref, UInt8 *path, unsigned int max);
 #endif
 
 static int fails, total;
@@ -129,6 +139,15 @@ int main(void) {
     EXPECT([a isEqual:b], 1, "CFSTR isEqual NSString");
     EXPECT([a isEqualToString:b], 1, "CFSTR isEqualToString NSString");
     EXPECT([a hash] == [b hash], 1, "o mesmo hash dos dois lados");
+
+    printf("CFURL e FSRef\n");
+    CFURLRef url = CFURLCreateWithFileSystemPath(NULL, CFSTR("/tmp"), kCFURLPOSIXPathStyle, true);
+    FSRef ref;
+    EXPECT(CFURLGetFSRef(url, &ref) != 0, 1, "CFURLGetFSRef de /tmp");
+    char path[256] = "", want[256] = "";
+    EXPECT(FSRefMakePath(&ref, (UInt8 *)path, sizeof path), 0, "FSRefMakePath");
+    EXPECT(realpath("/tmp", want) && strcmp(path, want) == 0, 1, "o caminho volta igual");
+    CFRelease(url);
 
     [pool release];
     printf("darwinobjc: %d/%d ok\n", total - fails, total);
