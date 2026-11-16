@@ -615,7 +615,8 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_offscreen_init(void); cx_appkit_offscreen_init(); }   /* appkit_offscreen.c: desenho em PDF/bitmap, lockFocus */
     { extern void cx_appkit_print_init(void); cx_appkit_print_init(); }       /* appkit_print.c: impressão (PDF), NSPrintOperation, PM* */
     { extern void cx_appkit_cells_init(void); cx_appkit_cells_init(); }       /* appkit_cells.c: família NSCell, NSMatrix, NSSwitch */
-    { extern void cx_appkit_more_init(void); cx_appkit_more_init(); }         /* appkit_more.c: gestos, NSAnimation, fontes, NSTextBlock, PDF/EPS */
+    { extern void cx_appkit_more_init(void); cx_appkit_more_init(); }
+    { extern void cx_appkit_sheets_init(void); cx_appkit_sheets_init(); }     /* appkit_sheets.c: sheets como janelas filhas, fila, legado do NSApp */         /* appkit_more.c: gestos, NSAnimation, fontes, NSTextBlock, PDF/EPS */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");
