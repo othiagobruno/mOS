@@ -248,6 +248,11 @@ void _start(const char *arg) {
         int ps = spawn("parateste", 0);
         CHECK(ps > 0 && wait(ps) == 0, "parateste: SIGSTOP, SIGCONT e POSIX_SPAWN_START_SUSPENDED");
     }
+    /* por último: o jetsam leva a RAM ao nível crítico por alguns segundos */
+    if (file_size("/Sistema/Programas/limiteteste") > 0) {   /* ELF: rlimit, limite de footprint e jetsam (userland/limiteteste.c) */
+        int lt = spawn("limiteteste", 0);
+        CHECK(lt > 0 && wait(lt) == 0, "limiteteste: rlimit, limite de footprint e jetsam");
+    }
 
     print(fails ? "teste: %d FALHA(S)\n" : "teste: TODOS OS TESTES OK\n", (i64)fails);
     exit(fails);
