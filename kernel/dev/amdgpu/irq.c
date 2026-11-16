@@ -137,6 +137,14 @@ u32 amdgpu_irq_process(amdgpu_t *a) {
         u32 client = e[0] & 0xFF, src = (e[0] >> 8) & 0xFF;
         if (client == IH_CLIENT_SDMA0 && src == IH_SRC_SDMA_TRAP) a->sdma_traps++;
         else if (client == IH_CLIENT_DCE && src == IH_SRC_DC_HPD) hpd_irq(a, e[4]);
+        else if (client == IH_CLIENT_GRBM_CP && src == IH_SRC_CP_EOP) a->gfx_eops++;
+        else if (client == IH_CLIENT_GRBM_CP && (src == IH_SRC_CP_PRIV_REG || src == IH_SRC_CP_PRIV_INSTR || src == IH_SRC_CP_BAD_OPCODE)) {
+            a->gfx_faults++;
+            kprintf("amdgpu: o CP recusou um pacote (%s)\n", src == IH_SRC_CP_PRIV_REG ? "registrador privilegiado" :
+                    src == IH_SRC_CP_PRIV_INSTR ? "comando privilegiado" : "opcode inválido");
+        }
+        else if (client == IH_CLIENT_GRBM_CP && (src == IH_SRC_CP_CTX_EMPTY || src == IH_SRC_CP_CTX_BUSY || src == IH_SRC_GRBM_GUI_IDLE))
+            a->gfx_idle_irqs++;                 /* ocioso/ocupado: só alimenta o relógio de deep sleep da APU */
         else a->ih_unknown++;
         a->ih_entries++;
         n++;
