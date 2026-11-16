@@ -1,6 +1,6 @@
 /*
  * mOS libSystem: SCNetworkReachability com estado, CNCopyCurrentNetworkInfo, CFHostGetNames,
- * CFStreamCreatePairWithSocketToCFHost e nw_tls_copy_sec_protocol_options.
+ * CFStreamCreatePairWithSocketToCFHost.
  * O WhatsApp cria a reachability por nome e põe numa fila (SetDispatchQueue); antes o mOS
  * devolvia um NSObject qualquer e nunca chamava a callback. Agora o objeto guarda alvo,
  * callback, contexto e fila; ao ganhar fila ou run loop, a callback recebe as flags atuais
@@ -129,6 +129,4 @@ void CFStreamCreatePairWithSocketToCFHost(void *alloc, id host, int port, id *rd
     objc_release(name);
 }
 
-/* nw_protocol_options de TLS: o Network.framework do mOS não separa as opções de segurança;
- * a "sec_protocol_options" é o próprio objeto de opções (retido), como um handle opaco. */
-id nw_tls_copy_sec_protocol_options(id options) { return options ? objc_retain(options) : 0; }
+/* nw_tls_copy_sec_protocol_options: nwnet.c (Network.framework) */

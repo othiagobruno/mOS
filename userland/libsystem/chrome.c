@@ -357,14 +357,14 @@ kern_return_t IOConnectCallStructMethod(unsigned c, unsigned sel, const void *in
     return kIOReturnUnsupported;
 }
 
-/* ---- SystemConfiguration: interfaces de rede (lista vazia em vez de NULL: o Chrome itera) */
+/* ---- SystemConfiguration: interfaces de rede em scnetwork.c */
 
 /* ---- LaunchServices / Spotlight */
 /* LSRegisterURL: openurl.c */
 /* MDItemCreate: mdquery.c */
 Boolean MDItemSetAttribute(void *item, id_ name, id_ value) { (void)item; (void)name; (void)value; return 0; }
 
-/* ---- Network.framework: Bonjour e parâmetros TLS (nenhum objeto é criado; os setters ignoram NULL) */
+/* ---- Network.framework: nw_browser (Bonjour) até a etapa de mDNS; o resto do nw_* está em nwnet.c */
 void *nw_browse_descriptor_create_bonjour_service(const char *type, const char *domain) { (void)type; (void)domain; return 0; }
 void *nw_browser_create(void *desc, void *params) { (void)desc; (void)params; return 0; }
 void nw_browser_set_queue(void *b, void *q) { (void)b; (void)q; }
@@ -374,13 +374,6 @@ void nw_browser_start(void *b) { (void)b; }
 void nw_browser_cancel(void *b) { (void)b; }
 void *nw_browse_result_copy_endpoint(void *r) { (void)r; return 0; }
 u64 nw_browse_result_get_changes(void *a, void *b) { (void)a; (void)b; return 0; }
-const char *nw_endpoint_get_bonjour_service_name(void *e) { (void)e; return 0; }
-int nw_error_get_error_code(void *e) { (void)e; return 0; }
-int nw_interface_get_type(void *i) { (void)i; return 0; }                 /* nw_interface_type_other */
-void nw_path_enumerate_interfaces(void *p, void *block) { (void)p; (void)block; }
-void *nw_parameters_create_secure_tcp(void *tls, void *tcp) { (void)tls; (void)tcp; return 0; }
-void _nw_parameters_configure_protocol_default_configuration(void *p) { (void)p; }
-void _nw_parameters_configure_protocol_disable(void *p) { (void)p; }
 
 /* ---- MediaAccessibility: legendas com a aparência padrão */
 /* No macOS as cores nunca são NULL: o Chrome (CaptionStyle) converte cada uma para sRGB e exige 4 componentes

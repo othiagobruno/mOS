@@ -2503,8 +2503,10 @@ static void cx_ws_register(void) {
 
 /* ================================================================ registro */
 static BOOL yes_(id s, SEL c) { (void)s; (void)c; return YES; }
+void cx_nw_init(void);
 void cx_urlsession_init(void) {
     cx_class_t *ob = &NSObject_c;
+    cx_nw_init();                                     /* Network.framework (nwnet.c) */
     DEF(NSHTTPCookie, ob);
     CM(NSHTTPCookie, "cookieWithProperties:", cookie_with_props); M(NSHTTPCookie, "initWithProperties:", cookie_init_props);
     CM(NSHTTPCookie, "cookiesWithResponseHeaderFields:forURL:", cookies_with_fields);
