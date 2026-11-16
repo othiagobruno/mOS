@@ -311,6 +311,7 @@ typedef struct {
     u16 mods;
     i32 key;       /* código / caractere ASCII */
     i32 dx, dy, dz;
+    i32 dw;        /* rolagem horizontal (AC Pan, roda inclinada): positiva = direita, mesma escala do dz */
 } input_event_t;
 void   input_push(input_event_t *e);
 bool   input_pop(input_event_t *e);

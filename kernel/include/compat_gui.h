@@ -222,7 +222,7 @@ typedef struct {
     int buttons, clicks;    /* botões pressionados; 2 = duplo clique */
     int key;                /* tecla (ASCII ou KEY_* do mOS) */
     unsigned int mods;      /* MOD_SHIFT 1, CTRL 2, ALT 4, CMD 8 */
-    int w, h;               /* GEV_RESIZE: novo tamanho; GEV_SCROLL: delta em w */
+    int w, h;               /* GEV_RESIZE: novo tamanho; GEV_SCROLL: delta vertical em w, horizontal em h (positivo = direita) */
     char text[8];           /* caractere digitado (UTF-8) */
 } gui_event_t;
 

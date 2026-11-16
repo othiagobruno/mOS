@@ -845,7 +845,7 @@ static void paint_window(window_t *w) {
         if (u->clicked_any || u->key_used || u->released || u->pressed) {
             /* segundo passe sem eventos transitórios: reflete mudanças de estado */
             u->pressed = u->released = u->rpressed = u->dblclick = false;
-            u->key = 0; u->text[0] = 0; u->wheel = 0;
+            u->key = 0; u->text[0] = 0; u->wheel = 0; u->wheel_x = 0;
             u->clicked_any = u->key_used = false;
             s->ox = 0; s->oy = 0;
             surface_reset_clip(s);
@@ -858,7 +858,7 @@ static void paint_window(window_t *w) {
         }
     }
     u->pressed = u->released = u->rpressed = u->dblclick = false;
-    u->key = 0; u->text[0] = 0; u->wheel = 0;
+    u->key = 0; u->text[0] = 0; u->wheel = 0; u->wheel_x = 0;
     u->clicked_any = u->key_used = false;
     s->ox = s->oy = 0;
     surface_reset_clip(s);
@@ -1458,7 +1458,7 @@ static int resize_edges(window_t *w, int x, int y) {
     return e;
 }
 
-static void deliver_mouse(window_t *w, bool pressed, bool released, bool rpressed, int wheel) {
+static void deliver_mouse(window_t *w, bool pressed, bool released, bool rpressed, int wheel, int wheel_x) {
     ui_t *u = &w->ui;
     rect_t cr = wm_content_rect(w);
     u->mx = mx - cr.x; u->my = my - cr.y;
@@ -1474,6 +1474,7 @@ static void deliver_mouse(window_t *w, bool pressed, bool released, bool rpresse
     if (released) u->released = true;
     if (rpressed) u->rpressed = true;
     u->wheel += wheel;
+    u->wheel_x += wheel_x;
     paint_window(w);
     if (u->inside) wm_set_cursor(u->cursor);
 }
@@ -1562,7 +1563,7 @@ bool wm_handle_event(input_event_t *e) {
                 w->needs_paint = true;
                 wm_damage(win_bounds(w));
             } else if (drag_mode == DRAG_CONTENT) {
-                deliver_mouse(w, false, lr, false, 0);
+                deliver_mouse(w, false, lr, false, 0, 0);
             } else if (drag_mode == DRAG_TRAFFIC) {
                 if (lr) {
                     float tcx, tcy;
@@ -1656,7 +1657,7 @@ bool wm_handle_event(input_event_t *e) {
             if (lp && tab_h(w) && ly >= tab_strip_y(w) && ly < tab_strip_y(w) + TAB_H && tab_click(w, lx, ly)) return true;
             if (lp && w->fullscreen && ly < title_h(w) + w->toolbar_h) {
                 /* tela cheia: o cabeçalho não arrasta; o clique vai para o conteúdo */
-                deliver_mouse(w, true, false, false, 0);
+                deliver_mouse(w, true, false, false, 0, 0);
                 drag_mode = DRAG_CONTENT; drag_win = w;
                 return true;
             }
@@ -1669,13 +1670,13 @@ bool wm_handle_event(input_event_t *e) {
             }
             if (lp && ly < title_h(w) + w->toolbar_h && !(w->flags & WIN_NO_TITLE)) {
                 /* barra de ferramentas: entrega ao conteúdo, mas arrasta se ninguém usar o clique */
-                deliver_mouse(w, true, false, false, 0);
+                deliver_mouse(w, true, false, false, 0, 0);
                 if (w->ui.active == 0) { drag_mode = DRAG_MOVE; drag_win = w; drag_dx = mx - w->x; drag_dy = my - w->y; drag_start = rect_make(mx, my, 0, 0); }
                 else { drag_mode = DRAG_CONTENT; drag_win = w; }
                 return true;
             }
             if (lp) { drag_mode = DRAG_CONTENT; drag_win = w; }
-            deliver_mouse(w, lp, false, rp, 0);
+            deliver_mouse(w, lp, false, rp, 0, 0);
             return true;
         }
         if (w) {
@@ -1683,10 +1684,10 @@ bool wm_handle_event(input_event_t *e) {
             if (edges) wm_set_cursor((edges & 3) == 3 || (edges & 12) == 12 ? CURSOR_RESIZE_D
                                      : (edges & 6) == 6 || (edges & 9) == 9 ? CURSOR_RESIZE_D2
                                      : (edges & 10) ? CURSOR_RESIZE_V : CURSOR_RESIZE_H);
-            if (e->dz) deliver_mouse(w, false, false, false, e->dz);
+            if (e->dz || e->dw) deliver_mouse(w, false, false, false, e->dz, e->dw);
             else if (!edges) {
                 rect_t cr = wm_content_rect(w);
-                if (rect_contains(cr, mx, my)) deliver_mouse(w, false, false, false, 0);
+                if (rect_contains(cr, mx, my)) deliver_mouse(w, false, false, false, 0, 0);
                 else wm_set_cursor(CURSOR_ARROW);
             }
             /* janela que perdeu o hover */
