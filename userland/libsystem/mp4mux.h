@@ -16,6 +16,9 @@ int mp4w_add_lpcm(mp4w_t *m, int rate, int channels, int bits);
  * vazio antes da faixa no filme, skip = mídia cortada do começo (além do priming / atraso de quadros B), limit = duração
  * máxima apresentada (< 0 sem limite) */
 int mp4w_set_edit(mp4w_t *m, int track, int64_t delay, int64_t skip, int64_t limit);
+/* edit list explícita (composição): media_time -1 = trecho vazio; dur no timescale da faixa. Substitui a de
+ * mp4w_set_edit quando há pelo menos uma entrada. */
+int mp4w_add_edit(mp4w_t *m, int track, int64_t media_time, uint64_t dur);
 /* matriz do tkhd (a, b, u, c, d, v, tx, ty, w; 16.16 e 2.30 como no QuickTime) — preferredTransform / transform */
 int mp4w_set_matrix(mp4w_t *m, int track, const int32_t mtx[9]);
 /* uma amostra; tempos no timescale da faixa; sync = quadro-chave (áudio: sempre 1) */

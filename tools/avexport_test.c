@@ -22,12 +22,12 @@ static uint8_t *slurp(const char *p, long *n) {
 }
 static int exists(const char *p) { FILE *f = fopen(p, "rb"); if (f) fclose(f); return f != 0; }
 
-static int make_src(const char *m4a) {
+static int make_src(const char *m4a, const char *name, int off) {
     long n; uint8_t *b = slurp(m4a, &n);
     mp4_file a;
     if (!b || mp4_open_mem(&a, b, (uint64_t)n)) return -1;
     mp4_track *at = &a.t[mp4_find_track(&a, MP4_FOURCC('s', 'o', 'u', 'n'))];
-    avw_t *w = avw_open(P("src.mp4"), MP4W_MP4, 0);
+    avw_t *w = avw_open(P(name), MP4W_MP4, 0);
     int iv = avw_add_input(w, AVW_VIDEO, 0, 0), ia = avw_add_input(w, AVW_AUDIO, 0, 0);
     static uint8_t sps[64], pps[16], cfg[128], out[1 << 16];
     uint32_t sn, pn;
@@ -50,7 +50,7 @@ static int make_src(const char *m4a) {
         }
         uint32_t len;
         if (k % 10 == 0) {
-            for (int i = 0; i < 64 * 48; i++) y[i] = (uint8_t)(16 + (i * 3 + k * 17) % 200);
+            for (int i = 0; i < 64 * 48; i++) y[i] = (uint8_t)(16 + (i * 3 + k * 17 + off) % 200);
             for (int i = 0; i < 32 * 24; i++) { u[i] = (uint8_t)(60 + (i + k * 5) % 120); v[i] = (uint8_t)(70 + (i * 2 + k) % 110); }
             len = hs_idr(out, 64, 48, y, u, v, k / 10 & 1);
         } else len = hs_pskip(out, 64, 48, k % 10);
@@ -70,7 +70,7 @@ static int make_src(const char *m4a) {
 int main(int argc, char **argv) {
     if (argc < 3) return 2;
     snprintf(dir, sizeof dir, "%s", argv[1]);
-    CHECK(make_src(argv[2]) == 0, "origem");
+    CHECK(make_src(argv[2], "src.mp4", 0) == 0 && make_src(argv[2], "src2.mp4", 77) == 0, "origens");
     avx_info inf;
     CHECK(avx_probe(P("src.mp4"), &inf) == 0 && inf.has_video && inf.has_audio && inf.video_copyable && inf.audio_copyable && inf.audio_is_aac &&
           inf.width == 64 && inf.height == 48, "probe");
@@ -97,6 +97,24 @@ int main(int argc, char **argv) {
     CHECK(rc == AVX_ERR_CANCEL && !exists(P("out4.mp4")), "cancelamento: %d", rc);
     rc = avx_passthrough(P("src.mp4"), P("out5.mp4"), MP4W_MP4, 0, 5, 1, AVX_VIDEO | AVX_AUDIO, 0, &why);
     CHECK(rc == AVX_ERR_EMPTY && !exists(P("out5.mp4")), "intervalo depois do fim: %d", rc);
+    /* composição: vídeo = A[0,4 s, 0,8 s) + B[0,2 s, 0,6 s); áudio = A[0, 0,8 s) */
+    {
+        char a[600], b2[600];
+        snprintf(a, sizeof a, "%s", P("src.mp4")); snprintf(b2, sizeof b2, "%s", P("src2.mp4"));
+        int vi = 0, ai = 0;   /* índices das faixas na origem (o avwcore cria a faixa na 1ª amostra: o áudio vem antes) */
+        { long sn; uint8_t *sb = slurp(P("src.mp4"), &sn); mp4_file sm;
+          if (sb && !mp4_open_mem(&sm, sb, (uint64_t)sn)) { vi = mp4_find_track(&sm, MP4_FOURCC('v', 'i', 'd', 'e')); ai = mp4_find_track(&sm, MP4_FOURCC('s', 'o', 'u', 'n')); mp4_close(&sm); } }
+        avx_segment vs[2] = {{a, vi, 0.4, 0.4, 0}, {b2, vi, 0.2, 0.4, 0.4}}, as[1] = {{a, ai, 0, 0.8, 0}};
+        avx_ctrack ct[2] = {{AVX_VIDEO, vs, 2}, {AVX_AUDIO, as, 1}};
+        rc = avx_compose(P("comp.mp4"), MP4W_MP4, 0, ct, 2, 0, &why);
+        CHECK(rc == 0, "composição: %d %s", rc, why ? why : "");
+        long cn; uint8_t *cb = slurp(P("comp.mp4"), &cn);
+        mp4_file cm;
+        CHECK(cb && !mp4_open_mem(&cm, cb, (uint64_t)cn) && cm.duration == 800 && cm.ntracks == 2, "composição legível, 0,8 s");
+        avx_segment bad[1] = {{a, vi, 0, 0.2, 0}};
+        avx_ctrack wrong[1] = {{AVX_AUDIO, bad, 1}};
+        CHECK(avx_compose(P("bad.mp4"), MP4W_MP4, 0, wrong, 1, 0, &why) == AVX_ERR_CODEC && !exists(P("bad.mp4")), "faixa de vídeo pedida como áudio é recusada");
+    }
     if (!fails) puts("avexport ok");
     return fails != 0;
 }

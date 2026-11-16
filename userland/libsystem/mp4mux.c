@@ -39,6 +39,8 @@ typedef struct {
     int64_t first_dts;
     int has_cto;
     int64_t delay, skip, limit;   /* edit list da sessão (mp4w_set_edit) */
+    struct { int64_t media_time; uint64_t dur; } *edits;   /* edit list explícita (mp4w_add_edit), no timescale da faixa */
+    uint32_t nedits, cedits;
     int32_t mtx[9]; int has_mtx;
     uint64_t pcm_frames;          /* LPCM: cada quadro de áudio é uma amostra de tamanho fixo (stsz constante) */
 } wtrack_t;
@@ -158,6 +160,20 @@ int mp4w_add_lpcm(mp4w_t *m, int rate, int channels, int bits) {
 int mp4w_set_edit(mp4w_t *m, int track, int64_t delay, int64_t skip, int64_t limit) {
     if (!m || track < 0 || track >= m->nt || delay < 0 || skip < 0) return -1;
     m->t[track].delay = delay; m->t[track].skip = skip; m->t[track].limit = limit;
+    return 0;
+}
+int mp4w_add_edit(mp4w_t *m, int track, int64_t media_time, uint64_t dur) {
+    if (!m || track < 0 || track >= m->nt || media_time < -1 || !dur) return -1;
+    wtrack_t *t = &m->t[track];
+    if (t->nedits == t->cedits) {
+        uint32_t nc = t->cedits ? t->cedits * 2 : 8;
+        void *x = realloc(t->edits, nc * sizeof *t->edits);
+        if (!x) return -1;
+        t->edits = x; t->cedits = nc;
+    }
+    t->edits[t->nedits].media_time = media_time;
+    t->edits[t->nedits].dur = dur;
+    t->nedits++;
     return 0;
 }
 int mp4w_set_matrix(mp4w_t *m, int track, const int32_t mtx[9]) {
@@ -296,6 +312,7 @@ static int write_moov(mp4w_t *m, buf_t *b, int64_t shift, int co64) {
         int64_t mt; uint64_t pd;
         track_edit(t, &mt, &pd);
         uint64_t d = to_movie((uint64_t)t->delay, t->timescale, mts) + to_movie(pd, t->timescale, mts);
+        if (t->nedits) { d = 0; for (uint32_t k = 0; k < t->nedits; k++) d += to_movie(t->edits[k].dur, t->timescale, mts); }
         if (d > movie_dur) movie_dur = d;
     }
     size_t_ moov = box(b, "moov");
@@ -308,16 +325,26 @@ static int write_moov(mp4w_t *m, buf_t *b, int64_t shift, int co64) {
         uint64_t md = media_duration(t);
         int64_t mt; uint64_t pd;
         int need_edts = track_edit(t, &mt, &pd);
-        uint64_t dly = to_movie((uint64_t)t->delay, t->timescale, mts), pdm = to_movie(pd, t->timescale, mts);
+        uint64_t dly = to_movie((uint64_t)t->delay, t->timescale, mts), pdm = to_movie(pd, t->timescale, mts), total = dly + pdm;
+        if (t->nedits) { total = 0; for (uint32_t k = 0; k < t->nedits; k++) total += to_movie(t->edits[k].dur, t->timescale, mts); }
         size_t_ trak = box(b, "trak");
         at = fullbox(b, "tkhd", 1, 3);                        /* habilitada, no filme */
-        w64(b, 0); w64(b, 0); w32(b, (uint32_t)i + 1); w32(b, 0); w64(b, dly + pdm);
+        w64(b, 0); w64(b, 0); w32(b, (uint32_t)i + 1); w32(b, 0); w64(b, total);
         zeros(b, 8); w16(b, 0); w16(b, t->kind == 1 ? 0 : 1); w16(b, t->kind == 1 ? 0 : 0x100); w16(b, 0);
         if (t->has_mtx) for (int k = 0; k < 9; k++) w32(b, (uint32_t)t->mtx[k]);
         else matrix(b);
         w32(b, t->kind == 1 ? (uint32_t)t->width << 16 : 0); w32(b, t->kind == 1 ? (uint32_t)t->height << 16 : 0);
         end(b, at);
-        if (need_edts) {   /* edit list: vazio do começo da sessão; depois do priming / do atraso dos quadros B / do corte */
+        if (t->nedits) {   /* edit list explícita (composição): uma entrada por trecho */
+            size_t_ ed = box(b, "edts");
+            at = fullbox(b, "elst", 1, 0);
+            w32(b, t->nedits);
+            for (uint32_t k = 0; k < t->nedits; k++) {
+                w64(b, to_movie(t->edits[k].dur, t->timescale, mts));
+                w64(b, (uint64_t)t->edits[k].media_time); w16(b, 1); w16(b, 0);
+            }
+            end(b, at); end(b, ed);
+        } else if (need_edts) {   /* edit list: vazio do começo da sessão; depois do priming / do atraso dos quadros B / do corte */
             size_t_ ed = box(b, "edts");
             at = fullbox(b, "elst", 1, 0);
             w32(b, dly ? 2 : 1);
@@ -399,7 +426,7 @@ static int write_moov(mp4w_t *m, buf_t *b, int64_t shift, int co64) {
 }
 
 static void freeall(mp4w_t *m) {
-    for (int i = 0; i < m->nt; i++) { free(m->t[i].s); free(m->t[i].c); free(m->t[i].cfg); }
+    for (int i = 0; i < m->nt; i++) { free(m->t[i].s); free(m->t[i].c); free(m->t[i].cfg); free(m->t[i].edits); }
     free(m);
 }
 int mp4w_close(mp4w_t *m) {

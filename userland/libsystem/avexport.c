@@ -213,3 +213,91 @@ done:
     fclose(f);
     return rc;
 }
+
+/* ---------------------------------------------------------------- composição */
+int memcmp(const void *a, const void *b, unsigned long n);
+int strcmp(const char *a, const char *b);
+typedef struct { const char *path; void *f; mp4_file m; int ok; } src_file;
+static src_file *src_get(src_file *c, int *n, const char *path) {
+    for (int i = 0; i < *n; i++) if (!strcmp(c[i].path, path)) return c[i].ok ? &c[i] : 0;
+    if (*n >= 16) return 0;
+    src_file *s = &c[(*n)++];
+    s->path = path;
+    s->ok = !open_in(path, &s->f, &s->m);
+    return s->ok ? s : 0;
+}
+int avx_compose(const char *out, int container, int faststart, const avx_ctrack *tracks, int ntracks, avx_ctl *ctl, const char **why) {
+    static const char *dummy;
+    if (!why) why = &dummy;
+    *why = 0;
+    src_file files[16];
+    int nfiles = 0, rc = 0;
+    mp4w_t *w = mp4w_open(out, container, faststart);
+    uint8_t *buf = 0;
+    uint32_t cap = 0;
+    if (!w) { *why = "Não foi possível criar o arquivo de saída."; return AVX_ERR_WRITE; }
+    uint64_t total = 0, done_n = 0;
+    for (int k = 0; k < ntracks; k++) total += (uint64_t)tracks[k].nseg;
+    for (int k = 0; k < ntracks && !rc; k++) {
+        const avx_ctrack *ct = &tracks[k];
+        int out_tr = -1;
+        mp4_track *first = 0;
+        int64_t media_base = 0;
+        double cursor = 0;   /* fim do último trecho no destino (s) */
+        for (int g = 0; g < ct->nseg && !rc; g++) {
+            const avx_segment *sg = &ct->seg[g];
+            if (ctl && ctl->cancel) { *why = "Exportação cancelada."; rc = AVX_ERR_CANCEL; break; }
+            if (sg->dur <= 0 || sg->dst_start < cursor - 1e-9) { *why = "Trechos da composição sobrepostos ou vazios."; rc = AVX_ERR_CODEC; break; }
+            src_file *sf = src_get(files, &nfiles, sg->path);
+            if (!sf || sg->src_track < 0 || (uint32_t)sg->src_track >= sf->m.ntracks) { *why = "Trecho com arquivo ou faixa de origem inválidos."; rc = AVX_ERR_OPEN; break; }
+            mp4_track *t = &sf->m.t[sg->src_track];
+            int media;
+            if (!copyable(t, &media) || media != ct->media) { *why = "Faixa de origem que o mOS não copia (vídeo H.264; áudio AAC, Opus ou PCM 16)."; rc = AVX_ERR_CODEC; break; }
+            if (!first) {   /* a faixa de saída nasce com a configuração do 1º trecho */
+                first = t;
+                if (t->codec == MP4_FOURCC('a', 'v', 'c', '1')) out_tr = mp4w_add_h264(w, (int)t->width, (int)t->height, t->cfg, t->cfg_len, t->timescale);
+                else if (t->codec == MP4_FOURCC('m', 'p', '4', 'a')) out_tr = mp4w_add_aac(w, (int)t->sample_rate, (int)t->channels, t->cfg, t->cfg_len, 0, 0);
+                else if (t->codec == MP4_FOURCC('O', 'p', 'u', 's')) out_tr = mp4w_add_opus(w, (int)t->channels, t->cfg_len >= 4 ? (uint32_t)(t->cfg[2] << 8 | t->cfg[3]) : 312, 48000);
+                else out_tr = mp4w_add_lpcm(w, (int)t->sample_rate, (int)t->channels, 16);
+                if (out_tr < 0) { *why = "A faixa não pôde ser criada na saída."; rc = AVX_ERR_CODEC; break; }
+                if (ct->media == AVX_VIDEO) mp4w_set_matrix(w, out_tr, t->matrix);
+            } else if (t->codec != first->codec || t->cfg_len != first->cfg_len || (t->cfg_len && memcmp(t->cfg, first->cfg, t->cfg_len)) ||
+                       t->timescale != first->timescale || t->sample_rate != first->sample_rate || t->channels != first->channels) {
+                *why = "Trechos com configurações de codec diferentes: juntar exige recodificar, o que o mOS ainda não faz no export.";
+                rc = AVX_ERR_CODEC; break;
+            }
+            uint32_t ts = first->timescale;
+            if (sg->dst_start > cursor + 1e-9) mp4w_add_edit(w, out_tr, -1, (uint64_t)((sg->dst_start - cursor) * ts + 0.5));   /* vazio */
+            xtrack x = {0};
+            x.t = t; x.media = media;
+            int64_t E = t->edit_media_time > 0 ? t->edit_media_time : 0;
+            int64_t empty = sf->m.timescale ? (int64_t)(t->edit_empty * t->timescale / sf->m.timescale) : 0;
+            x.shift = empty - E;
+            int64_t S = (int64_t)(sg->src_start * t->timescale + 0.5), T = (int64_t)((sg->src_start + sg->dur) * t->timescale + 0.5);
+            if (!pick_range(&x, S, T, 1)) { *why = "Trecho fora da faixa de origem."; rc = AVX_ERR_EMPTY; break; }
+            int64_t d_first = t->s[x.first].dts, written = 0;
+            for (uint32_t i = x.first; i <= x.last; i++) {
+                const mp4_sample *sm = &t->s[i];
+                if (sm->size > cap) { uint8_t *nb = realloc(buf, sm->size); if (!nb) { rc = AVX_ERR_WRITE; break; } buf = nb; cap = sm->size; }
+                if (mp4_read_sample(&sf->m, t, i, buf)) { *why = "Falha ao ler a amostra da origem."; rc = AVX_ERR_OPEN; break; }
+                int64_t dts = media_base + (sm->dts - d_first);
+                if (mp4w_write(w, out_tr, buf, sm->size, dts + sm->cto, dts, sm->dur, media == AVX_AUDIO ? 1 : sm->sync)) { *why = "Falha ao gravar a amostra."; rc = AVX_ERR_WRITE; break; }
+                written += t->codec == MP4_FOURCC('s', 'o', 'w', 't') ? (int64_t)(sm->size / (t->channels * 2)) : sm->dur;
+            }
+            if (rc) break;
+            /* a apresentação de src_start na mídia de saída: media_base + (S - shift - d_first) */
+            int64_t mt = media_base + (S - x.shift - d_first);
+            if (mt < 0) mt = 0;
+            mp4w_add_edit(w, out_tr, mt, (uint64_t)(sg->dur * ts + 0.5));
+            media_base += written;
+            cursor = sg->dst_start + sg->dur;
+            done_n++;
+            if (ctl && total) ctl->progress = (float)done_n / (float)total * 0.99f;
+        }
+    }
+    if (!rc) { rc = mp4w_close(w) ? AVX_ERR_WRITE : 0; if (rc) *why = "Falha ao fechar o arquivo de saída."; else if (ctl) ctl->progress = 1; }
+    else mp4w_abort(w);
+    for (int i = 0; i < nfiles; i++) if (files[i].ok) { mp4_close(&files[i].m); fclose(files[i].f); }
+    free(buf);
+    return rc;
+}

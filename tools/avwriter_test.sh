@@ -43,6 +43,15 @@ print('  vídeo', 'igual' if okv else 'DIFERE (%d bytes)' % len(o), '| áudio %d
 sys.exit(0 if okv and abs(len(b) - len(want)) <= 1024 * 2 * ch and snr > 60 else 1)   # o ffmpeg não corta o fim do AAC no exato
 P
 [ "$(ffprobe -v error -show_entries stream=duration_ts -of csv=p=0 "$X/out2.mp4" | tr '\n' ' ')" = "20 35280 " ]; chk "export [0,5 s, 1,3 s): edit list de 0,8 s exata nas duas faixas" $?
+dv "$X/src2.mp4" "$X/src2.yuv"; dv "$X/comp.mp4" "$X/comp.yuv"
+python3 - "$X" <<'P'; chk "composição: A[10..19] + B[5..14], quadro a quadro" $?
+import sys
+d = sys.argv[1]; fs = 64 * 48 * 3 // 2
+a = open(d + '/src.yuv', 'rb').read(); b = open(d + '/src2.yuv', 'rb').read(); c = open(d + '/comp.yuv', 'rb').read()
+want = a[10 * fs:20 * fs] + b[5 * fs:15 * fs]
+print('  composição: %d quadros (esperado 20)' % (len(c) // fs))
+sys.exit(0 if c == want else 1)
+P
 [ -z "$(ffprobe -v error -select_streams v -show_entries stream=index -of csv=p=0 "$X/out3.m4a")" ] && da "$X/out3.m4a" "$X/o3.pcm" && cmp -s "$X/src.pcm" "$X/o3.pcm"; chk "export só áudio (M4A): sem vídeo, áudio idêntico" $?
 # a casca ObjC (avwriter.c) com o runtime, a CoreMedia e o VT substituídos (tools/avwriter_host_test.c)
 K="-I$R/userland/libsystem/kshim -I$L -I$R/kernel/include"
