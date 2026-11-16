@@ -2,8 +2,10 @@
  * mOS — CoreImage.framework (Mach-O, /System/Library/Frameworks).
  *
  * Núcleo em CPU (coreimage_cpu.c): CIImage a partir de CGImage, de bytes PNG/JPEG
- * (ImageIO, mos_img_decode) ou de buffer, extent, corte, afim, CIGaussianBlur,
- * CIColorControls, CISourceOverCompositing e CILanczosScaleTransform.
+ * (ImageIO, mos_img_decode), de CVPixelBuffer ou de buffer; extent (inclusive infinito: geradores e
+ * imageByClampingToExtent), corte, afim, as 8 orientações e 45 filtros por tabela (blur gaussiano e box, ajustes de
+ * cor, matriz, efeitos de cor, 20 composições/misturas W3C e Porter-Duff, máscaras, geradores e gradientes,
+ * Lanczos, nitidez e pixellate), com attributes, inputKeys e as categorias.
  * CIContext createCGImage:fromRect: e render:toBitmap:... escrevem esses pixels.
  *
  * O que esta versão não faz: CIKernel, Metal, CIDetector, formatos half/float,
@@ -79,6 +81,7 @@ extern unsigned char CFURLGetFileSystemRepresentation(void *url, unsigned char r
 @end
 
 @interface NSValue : NSObject
++ (NSValue *)valueWithBytes:(const void *)value objCType:(const char *)type;
 - (void)getValue:(void *)value;
 @end
 
@@ -154,6 +157,7 @@ static uint32_t unpremul(uint32_t p) {
 + (CIImage *)imageWithBitmapData:(NSData *)data bytesPerRow:(long)bpr size:(CGSize)size format:(int)format colorSpace:(id)cs;
 - (CIImage *)imageByCroppingToRect:(CGRect)r;
 - (CIImage *)imageByApplyingTransform:(CGAffineTransform)t;
+- (CIImage *)imageByApplyingOrientation:(int)o;
 - (CGRect)extent;
 @end
 
@@ -264,9 +268,8 @@ static CIImage *from_px(const uint32_t *px, int w, int h) {
 - (CIImage *)imageByApplyingTransform:(CGAffineTransform)t {
     return wrap(mos_ci_affine(img, t.a, t.b, t.c, t.d, t.tx, t.ty));
 }
-- (CIImage *)imageByApplyingCGOrientation:(int)orientation {
-    if (orientation == 1 || orientation == 0) return wrap(mos_ci_affine(img, 1, 0, 0, 1, 0, 0));
-    return nil;
+- (CIImage *)imageByApplyingCGOrientation:(int)orientation {   /* as 8 orientações do EXIF (MOSMore) */
+    return [self imageByApplyingOrientation:orientation];
 }
 - (CIImage *)imageByCompositingOverImage:(CIImage *)bg {
     if (!bg) return nil;
@@ -274,13 +277,109 @@ static CIImage *from_px(const uint32_t *px, int w, int h) {
 }
 @end
 
+/* ---------------------------------------------------------------- constantes de atributos e categorias (valores da Apple) */
+#define CIK(n) NSString *const k##n = @#n;
+CIK(CIAttributeClass) CIK(CIAttributeType) CIK(CIAttributeDefault) CIK(CIAttributeIdentity) CIK(CIAttributeMin) CIK(CIAttributeMax)
+CIK(CIAttributeSliderMin) CIK(CIAttributeSliderMax) CIK(CIAttributeDisplayName) CIK(CIAttributeDescription) CIK(CIAttributeReferenceDocumentation)
+CIK(CIAttributeFilterName) CIK(CIAttributeFilterDisplayName) CIK(CIAttributeFilterCategories) CIK(CIAttributeFilterAvailable_Mac)
+CIK(CIAttributeFilterAvailable_iOS)
+CIK(CIAttributeTypeTime) CIK(CIAttributeTypeScalar) CIK(CIAttributeTypeDistance) CIK(CIAttributeTypeAngle) CIK(CIAttributeTypeBoolean)
+CIK(CIAttributeTypeInteger) CIK(CIAttributeTypeCount) CIK(CIAttributeTypePosition) CIK(CIAttributeTypeOffset) CIK(CIAttributeTypePosition3)
+CIK(CIAttributeTypeRectangle) CIK(CIAttributeTypeOpaqueColor) CIK(CIAttributeTypeColor) CIK(CIAttributeTypeGradient) CIK(CIAttributeTypeImage)
+CIK(CIAttributeTypeTransform)
+CIK(CICategoryDistortionEffect) CIK(CICategoryGeometryAdjustment) CIK(CICategoryCompositeOperation) CIK(CICategoryHalftoneEffect)
+CIK(CICategoryColorAdjustment) CIK(CICategoryColorEffect) CIK(CICategoryTransition) CIK(CICategoryTileEffect) CIK(CICategoryGenerator)
+CIK(CICategoryReduction) CIK(CICategoryGradient) CIK(CICategoryStylize) CIK(CICategorySharpen) CIK(CICategoryBlur) CIK(CICategoryVideo)
+CIK(CICategoryStillImage) CIK(CICategoryInterlaced) CIK(CICategoryNonSquarePixels) CIK(CICategoryHighDynamicRange) CIK(CICategoryBuiltIn)
+CIK(CICategoryFilterGenerator)
+#undef CIK
+NSString *const kCIInputCenterKey = @"inputCenter";
+NSString *const kCIInputWidthKey = @"inputWidth";
+NSString *const kCIInputSharpnessKey = @"inputSharpness";
+NSString *const kCIInputAngleKey = @"inputAngle";
+NSString *const kCIInputAmountKey = @"inputAmount";
+NSString *const kCIInputTimeKey = @"inputTime";
+NSString *const kCIInputTargetImageKey = @"inputTargetImage";
+NSString *const kCIInputVersionKey = @"inputVersion";
+
+/* ---------------------------------------------------------------- CIFilter por tabela
+ * Cada filtro: nome, categorias, entradas (chave, tipo, padrão, mínimo/máximo do controle) e o construtor no
+ * coreimage_cpu.c. setValue:forKey: guarda no dicionário; outputImage monta o nó com os valores atuais. */
+enum { T_IMAGE = 1, T_SCALAR, T_DISTANCE, T_ANGLE, T_POSITION, T_VECTOR, T_COLOR, T_RECT, T_TRANSFORM, T_COUNT };
+typedef struct { const char *key; int type; double def[4]; double smin, smax; } ci_in;
+typedef struct { const char *name; const char *cats[4]; ci_in in[6]; } ci_def;
+#define IMG {"inputImage", T_IMAGE, {0}, 0, 0}
+#define BGI {"inputBackgroundImage", T_IMAGE, {0}, 0, 0}
+#define WHITE {1, 1, 1, 1}
+#define BLACK {0, 0, 0, 1}
+#define BLEND(n) {n, {"CICategoryCompositeOperation", "CICategoryVideo", "CICategoryStillImage"}, {IMG, BGI}}
+static const ci_def ci_defs[] = {
+    {"CIGaussianBlur", {"CICategoryBlur", "CICategoryStillImage", "CICategoryVideo"}, {IMG, {"inputRadius", T_DISTANCE, {10}, 0, 100}}},
+    {"CIBoxBlur", {"CICategoryBlur", "CICategoryStillImage", "CICategoryVideo"}, {IMG, {"inputRadius", T_DISTANCE, {10}, 1, 100}}},
+    {"CIColorControls", {"CICategoryColorAdjustment", "CICategoryVideo", "CICategoryStillImage"},
+     {IMG, {"inputSaturation", T_SCALAR, {1}, 0, 2}, {"inputBrightness", T_SCALAR, {0}, -1, 1}, {"inputContrast", T_SCALAR, {1}, 0.25, 4}}},
+    {"CIExposureAdjust", {"CICategoryColorAdjustment", "CICategoryVideo", "CICategoryStillImage"}, {IMG, {"inputEV", T_SCALAR, {0}, -10, 10}}},
+    {"CIGammaAdjust", {"CICategoryColorAdjustment", "CICategoryVideo", "CICategoryStillImage"}, {IMG, {"inputPower", T_SCALAR, {1}, 0.25, 4}}},
+    {"CIHueAdjust", {"CICategoryColorAdjustment", "CICategoryVideo", "CICategoryStillImage"}, {IMG, {"inputAngle", T_ANGLE, {0}, -3.141592653589793, 3.141592653589793}}},
+    {"CIVibrance", {"CICategoryColorAdjustment", "CICategoryVideo", "CICategoryStillImage"}, {IMG, {"inputAmount", T_SCALAR, {0}, -1, 1}}},
+    {"CIColorMatrix", {"CICategoryColorAdjustment", "CICategoryVideo", "CICategoryStillImage"},
+     {IMG, {"inputRVector", T_VECTOR, {1, 0, 0, 0}, 0, 0}, {"inputGVector", T_VECTOR, {0, 1, 0, 0}, 0, 0}, {"inputBVector", T_VECTOR, {0, 0, 1, 0}, 0, 0},
+      {"inputAVector", T_VECTOR, {0, 0, 0, 1}, 0, 0}, {"inputBiasVector", T_VECTOR, {0, 0, 0, 0}, 0, 0}}},
+    {"CIColorClamp", {"CICategoryColorAdjustment", "CICategoryVideo", "CICategoryStillImage"},
+     {IMG, {"inputMinComponents", T_VECTOR, {0, 0, 0, 0}, 0, 0}, {"inputMaxComponents", T_VECTOR, {1, 1, 1, 1}, 0, 0}}},
+    {"CIColorInvert", {"CICategoryColorEffect", "CICategoryVideo", "CICategoryStillImage"}, {IMG}},
+    {"CIColorMonochrome", {"CICategoryColorEffect", "CICategoryVideo", "CICategoryStillImage"},
+     {IMG, {"inputColor", T_COLOR, {0.6, 0.45, 0.3, 1}, 0, 0}, {"inputIntensity", T_SCALAR, {1}, 0, 1}}},
+    {"CISepiaTone", {"CICategoryColorEffect", "CICategoryVideo", "CICategoryStillImage"}, {IMG, {"inputIntensity", T_SCALAR, {1}, 0, 1}}},
+    {"CIColorPosterize", {"CICategoryColorEffect", "CICategoryVideo", "CICategoryStillImage"}, {IMG, {"inputLevels", T_SCALAR, {6}, 2, 30}}},
+    {"CIMaskToAlpha", {"CICategoryColorEffect", "CICategoryVideo", "CICategoryStillImage"}, {IMG}},
+    {"CIMinimumComponent", {"CICategoryColorEffect", "CICategoryVideo", "CICategoryStillImage"}, {IMG}},
+    {"CIMaximumComponent", {"CICategoryColorEffect", "CICategoryVideo", "CICategoryStillImage"}, {IMG}},
+    {"CIFalseColor", {"CICategoryColorEffect", "CICategoryVideo", "CICategoryStillImage"},
+     {IMG, {"inputColor0", T_COLOR, {0.3, 0, 0, 1}, 0, 0}, {"inputColor1", T_COLOR, {1, 0.9, 0.8, 1}, 0, 0}}},
+    BLEND("CISourceOverCompositing"), BLEND("CISourceInCompositing"), BLEND("CISourceOutCompositing"), BLEND("CISourceAtopCompositing"),
+    BLEND("CIAdditionCompositing"), BLEND("CIMultiplyCompositing"), BLEND("CIMinimumCompositing"), BLEND("CIMaximumCompositing"),
+    BLEND("CIMultiplyBlendMode"), BLEND("CIScreenBlendMode"), BLEND("CIOverlayBlendMode"), BLEND("CIHardLightBlendMode"),
+    BLEND("CISoftLightBlendMode"), BLEND("CIDarkenBlendMode"), BLEND("CILightenBlendMode"), BLEND("CIDifferenceBlendMode"),
+    BLEND("CIExclusionBlendMode"), BLEND("CIColorDodgeBlendMode"), BLEND("CIColorBurnBlendMode"),
+    {"CIBlendWithMask", {"CICategoryCompositeOperation", "CICategoryVideo", "CICategoryStillImage"}, {IMG, BGI, {"inputMaskImage", T_IMAGE, {0}, 0, 0}}},
+    {"CIBlendWithAlphaMask", {"CICategoryCompositeOperation", "CICategoryVideo", "CICategoryStillImage"}, {IMG, BGI, {"inputMaskImage", T_IMAGE, {0}, 0, 0}}},
+    {"CIConstantColorGenerator", {"CICategoryGenerator", "CICategoryVideo", "CICategoryStillImage"}, {{"inputColor", T_COLOR, {1, 0, 0, 1}, 0, 0}}},
+    {"CILinearGradient", {"CICategoryGradient", "CICategoryVideo", "CICategoryStillImage"},
+     {{"inputPoint0", T_POSITION, {0, 0}, 0, 0}, {"inputPoint1", T_POSITION, {200, 200}, 0, 0}, {"inputColor0", T_COLOR, WHITE, 0, 0}, {"inputColor1", T_COLOR, BLACK, 0, 0}}},
+    {"CISmoothLinearGradient", {"CICategoryGradient", "CICategoryVideo", "CICategoryStillImage"},
+     {{"inputPoint0", T_POSITION, {0, 0}, 0, 0}, {"inputPoint1", T_POSITION, {200, 200}, 0, 0}, {"inputColor0", T_COLOR, WHITE, 0, 0}, {"inputColor1", T_COLOR, BLACK, 0, 0}}},
+    {"CIRadialGradient", {"CICategoryGradient", "CICategoryVideo", "CICategoryStillImage"},
+     {{"inputCenter", T_POSITION, {150, 150}, 0, 0}, {"inputRadius0", T_DISTANCE, {5}, 0, 800}, {"inputRadius1", T_DISTANCE, {100}, 0, 800},
+      {"inputColor0", T_COLOR, WHITE, 0, 0}, {"inputColor1", T_COLOR, BLACK, 0, 0}}},
+    {"CICheckerboardGenerator", {"CICategoryGenerator", "CICategoryVideo", "CICategoryStillImage"},
+     {{"inputCenter", T_POSITION, {150, 150}, 0, 0}, {"inputColor0", T_COLOR, WHITE, 0, 0}, {"inputColor1", T_COLOR, BLACK, 0, 0},
+      {"inputWidth", T_DISTANCE, {80}, 0, 800}, {"inputSharpness", T_SCALAR, {1}, 0, 1}}},
+    {"CIAffineTransform", {"CICategoryGeometryAdjustment", "CICategoryVideo", "CICategoryStillImage"}, {IMG, {"inputTransform", T_TRANSFORM, {0}, 0, 0}}},
+    {"CICrop", {"CICategoryGeometryAdjustment", "CICategoryVideo", "CICategoryStillImage"},
+     {IMG, {"inputRectangle", T_RECT, {-8.9884656743115785e307, -8.9884656743115785e307, 1.7976931348623157e308, 1.7976931348623157e308}, 0, 0}}},
+    {"CILanczosScaleTransform", {"CICategoryGeometryAdjustment", "CICategoryVideo", "CICategoryStillImage"},
+     {IMG, {"inputScale", T_SCALAR, {1}, 0.05, 1.5}, {"inputAspectRatio", T_SCALAR, {1}, 0.05, 2}}},
+    {"CIUnsharpMask", {"CICategorySharpen", "CICategoryVideo", "CICategoryStillImage"},
+     {IMG, {"inputRadius", T_DISTANCE, {2.5}, 0, 100}, {"inputIntensity", T_SCALAR, {0.5}, 0, 1}}},
+    {"CISharpenLuminance", {"CICategorySharpen", "CICategoryVideo", "CICategoryStillImage"},
+     {IMG, {"inputSharpness", T_SCALAR, {0.4}, 0, 2}, {"inputRadius", T_DISTANCE, {1.69}, 0, 20}}},
+    {"CIPixellate", {"CICategoryStylize", "CICategoryVideo", "CICategoryStillImage"},
+     {IMG, {"inputCenter", T_POSITION, {150, 150}, 0, 0}, {"inputScale", T_DISTANCE, {8}, 1, 100}}},
+};
+#undef IMG
+#undef BGI
+static const ci_def *def_named(const char *n) {
+    if (!n) return 0;
+    for (unsigned i = 0; i < sizeof ci_defs / sizeof ci_defs[0]; i++) if (!strcmp(ci_defs[i].name, n)) return &ci_defs[i];
+    return 0;
+}
+
 @interface CIFilter : NSObject {
     NSString *name;
-    CIImage *inputImage;
-    CIImage *inputBackgroundImage;
-    double radius, saturation, brightness, contrast, scale, aspect;
-    CGAffineTransform transform;
-    int hasTransform;
+    const ci_def *def;
+    NSMutableDictionary *values;
+    BOOL enabled;
 }
 + (CIFilter *)filterWithName:(NSString *)n;
 - (void)setDefaults;
@@ -298,14 +397,37 @@ static double num_of(id v, double fallback) {
 
 int mos_coreimage_real(void) { return 0xC1; }
 
+static id default_value(const ci_in *in) {
+    switch (in->type) {
+    case T_IMAGE: return nil;
+    case T_POSITION: return [CIVector vectorWithX:in->def[0] Y:in->def[1]];
+    case T_VECTOR: case T_RECT: return [CIVector vectorWithX:in->def[0] Y:in->def[1] Z:in->def[2] W:in->def[3]];
+    case T_COLOR: return [CIColor colorWithRed:in->def[0] green:in->def[1] blue:in->def[2] alpha:in->def[3]];
+    case T_TRANSFORM: { CGAffineTransform t = CGAffineTransformMake(1, 0, 0, 1, 0, 0); return [NSValue valueWithBytes:&t objCType:"{CGAffineTransform=dddddd}"]; }
+    default: return [NSNumber numberWithDouble:in->def[0]];
+    }
+}
+static const char *attr_type(int t) {
+    switch (t) {
+    case T_IMAGE: return "CIAttributeTypeImage"; case T_DISTANCE: return "CIAttributeTypeDistance"; case T_ANGLE: return "CIAttributeTypeAngle";
+    case T_POSITION: return "CIAttributeTypePosition"; case T_COLOR: return "CIAttributeTypeColor"; case T_RECT: return "CIAttributeTypeRectangle";
+    case T_TRANSFORM: return "CIAttributeTypeTransform"; case T_COUNT: return "CIAttributeTypeCount"; case T_VECTOR: return 0;
+    default: return "CIAttributeTypeScalar";
+    }
+}
+static const char *attr_class(int t) {
+    return t == T_IMAGE ? "CIImage" : t == T_POSITION || t == T_VECTOR || t == T_RECT ? "CIVector" : t == T_COLOR ? "CIColor" : t == T_TRANSFORM ? "NSAffineTransform" : "NSNumber";
+}
+
 @implementation CIFilter
 + (CIFilter *)filterWithName:(NSString *)n {
-    if (![n isEqualToString:@"CIGaussianBlur"] && ![n isEqualToString:@"CIColorControls"] &&
-        ![n isEqualToString:@"CISourceOverCompositing"] && ![n isEqualToString:@"CILanczosScaleTransform"] &&
-        ![n isEqualToString:@"CIAffineTransform"] && ![n isEqualToString:@"CICrop"])
-        return nil;
-    CIFilter *f = [[CIFilter alloc] init];
-    f->name = [n retain];
+    const ci_def *d = def_named(n.UTF8String);
+    if (!d) return nil;
+    CIFilter *f = [[[CIFilter alloc] init] autorelease];
+    f->name = [n copy];
+    f->def = d;
+    f->values = [[NSMutableDictionary alloc] init];
+    f->enabled = YES;
     [f setDefaults];
     return f;
 }
@@ -321,62 +443,180 @@ int mos_coreimage_real(void) { return 0xC1; }
     va_end(ap);
     return f;
 }
++ (CIFilter *)filterWithName:(NSString *)n withInputParameters:(NSDictionary *)params {
+    CIFilter *f = [self filterWithName:n];
+    for (id k in params) [f setValue:[params objectForKey:k] forKey:k];
+    return f;
+}
++ (NSArray *)filterNamesInCategories:(NSArray *)cats {
+    NSMutableArray *out = [NSMutableArray array];
+    for (unsigned i = 0; i < sizeof ci_defs / sizeof ci_defs[0]; i++) {
+        BOOL all = YES;
+        for (NSString *c in cats) {
+            BOOL has = [c isEqualToString:@"CICategoryBuiltIn"];
+            for (int k = 0; k < 4 && ci_defs[i].cats[k]; k++) if (!strcmp(ci_defs[i].cats[k], c.UTF8String)) has = YES;
+            if (!has) all = NO;
+        }
+        if (all) [out addObject:[NSString stringWithUTF8String:ci_defs[i].name]];
+    }
+    return out;
+}
++ (NSArray *)filterNamesInCategory:(NSString *)cat { return [self filterNamesInCategories:cat ? [NSArray arrayWithObject:cat] : nil]; }
++ (NSString *)localizedNameForFilterName:(NSString *)n { return def_named(n.UTF8String) ? [n substringFromIndex:2] : nil; }
++ (NSString *)localizedNameForCategory:(NSString *)c { return c; }
 - (void)dealloc {
     [name release];
-    [inputImage release];
-    [inputBackgroundImage release];
+    [values release];
     [super dealloc];
 }
+- (NSString *)name { return name; }
+- (void)setName:(NSString *)n { if (n != name) { [name release]; name = [n copy]; } }
+- (BOOL)isEnabled { return enabled; }
+- (void)setEnabled:(BOOL)v { enabled = v; }
 - (void)setDefaults {
-    radius = 10;
-    saturation = 1;
-    brightness = 0;
-    contrast = 1;
-    scale = 1;
-    aspect = 1;
-    transform = CGAffineTransformMake(1, 0, 0, 1, 0, 0);
-    hasTransform = 0;
-}
-- (void)setValue:(id)v forKey:(NSString *)key {
-    if ([key isEqualToString:kCIInputImageKey]) {
-        [inputImage release];
-        inputImage = [v retain];
-    } else if ([key isEqualToString:kCIInputBackgroundImageKey]) {
-        [inputBackgroundImage release];
-        inputBackgroundImage = [v retain];
-    } else if ([key isEqualToString:kCIInputRadiusKey]) radius = num_of(v, radius);
-    else if ([key isEqualToString:kCIInputSaturationKey]) saturation = num_of(v, saturation);
-    else if ([key isEqualToString:kCIInputBrightnessKey]) brightness = num_of(v, brightness);
-    else if ([key isEqualToString:kCIInputContrastKey]) contrast = num_of(v, contrast);
-    else if ([key isEqualToString:kCIInputScaleKey]) scale = num_of(v, scale);
-    else if ([key isEqualToString:kCIInputAspectRatioKey]) aspect = num_of(v, aspect);
-    else if ([key isEqualToString:kCIInputTransformKey] && [v isKindOfClass:[NSValue class]]) {
-        [(NSValue *)v getValue:&transform];
-        hasTransform = 1;
-    } else if ([key isEqualToString:@"inputRectangle"] && [v isKindOfClass:[CIVector class]]) {
-        CIVector *vec = v;
-        transform.tx = [vec valueAtIndex:0];
-        transform.ty = [vec valueAtIndex:1];
-        transform.a = [vec valueAtIndex:2];
-        transform.b = [vec valueAtIndex:3];
-        hasTransform = 2;
+    for (int i = 0; i < 6 && def->in[i].key; i++) {
+        id v = default_value(&def->in[i]);
+        NSString *k = [NSString stringWithUTF8String:def->in[i].key];
+        if (v) [values setObject:v forKey:k];
+        else [values removeObjectForKey:k];
     }
 }
+- (NSArray *)inputKeys {
+    NSMutableArray *a = [NSMutableArray array];
+    for (int i = 0; i < 6 && def->in[i].key; i++) [a addObject:[NSString stringWithUTF8String:def->in[i].key]];
+    return a;
+}
+- (NSArray *)outputKeys { return [NSArray arrayWithObject:@"outputImage"]; }
+- (NSDictionary *)attributes {
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    [d setObject:name forKey:kCIAttributeFilterName];
+    [d setObject:[name substringFromIndex:2] forKey:kCIAttributeFilterDisplayName];
+    NSMutableArray *cats = [NSMutableArray array];
+    for (int k = 0; k < 4 && def->cats[k]; k++) [cats addObject:[NSString stringWithUTF8String:def->cats[k]]];
+    [cats addObject:kCICategoryBuiltIn];
+    [d setObject:cats forKey:kCIAttributeFilterCategories];
+    for (int i = 0; i < 6 && def->in[i].key; i++) {
+        const ci_in *in = &def->in[i];
+        NSMutableDictionary *a = [NSMutableDictionary dictionary];
+        [a setObject:[NSString stringWithUTF8String:attr_class(in->type)] forKey:kCIAttributeClass];
+        if (attr_type(in->type)) [a setObject:[NSString stringWithUTF8String:attr_type(in->type)] forKey:kCIAttributeType];
+        id dv = default_value(in);
+        if (dv) [a setObject:dv forKey:kCIAttributeDefault];
+        if (in->smin != in->smax) {
+            [a setObject:[NSNumber numberWithDouble:in->smin] forKey:kCIAttributeSliderMin];
+            [a setObject:[NSNumber numberWithDouble:in->smax] forKey:kCIAttributeSliderMax];
+            [a setObject:[NSNumber numberWithDouble:in->smin < 0 ? in->smin : 0] forKey:kCIAttributeMin];
+        }
+        [a setObject:[[NSString stringWithUTF8String:in->key] substringFromIndex:5] forKey:kCIAttributeDisplayName];
+        [d setObject:a forKey:[NSString stringWithUTF8String:in->key]];
+    }
+    return d;
+}
+- (void)setValue:(id)v forKey:(NSString *)key {
+    if (!key) return;
+    if (v) [values setObject:v forKey:key];
+    else [values removeObjectForKey:key];
+}
 - (id)valueForKey:(NSString *)key {
-    if ([key isEqualToString:kCIOutputImageKey] || [key isEqualToString:@"outputImage"]) return [self outputImage];
-    if ([key isEqualToString:kCIInputImageKey]) return inputImage;
-    if ([key isEqualToString:kCIInputBackgroundImageKey]) return inputBackgroundImage;
-    if ([key isEqualToString:kCIInputRadiusKey]) return [NSNumber numberWithDouble:radius];
-    if ([key isEqualToString:kCIInputScaleKey]) return [NSNumber numberWithDouble:scale];
-    return nil;
+    if ([key isEqualToString:kCIOutputImageKey]) return [self outputImage];
+    if ([key isEqualToString:@"name"]) return name;
+    if ([key isEqualToString:@"inputKeys"]) return [self inputKeys];
+    if ([key isEqualToString:@"outputKeys"]) return [self outputKeys];
+    if ([key isEqualToString:@"attributes"]) return [self attributes];
+    return [values objectForKey:key];
+}
+- (id)copyWithZone:(void *)z {
+    (void)z;
+    CIFilter *f = [[CIFilter alloc] init];
+    f->name = [name copy];
+    f->def = def;
+    f->values = [values mutableCopy];
+    f->enabled = enabled;
+    return f;
+}
+/* valores atuais, já convertidos */
+- (mos_ci *)img:(const char *)k { id v = [values objectForKey:[NSString stringWithUTF8String:k]]; return [v isKindOfClass:[CIImage class]] ? ((CIImage *)v)->img : 0; }
+- (double)num:(const char *)k { return num_of([values objectForKey:[NSString stringWithUTF8String:k]], 0); }
+- (void)vec:(const char *)k out:(double *)o n:(int)n {
+    id v = [values objectForKey:[NSString stringWithUTF8String:k]];
+    for (int i = 0; i < n; i++) o[i] = 0;
+    if ([v isKindOfClass:[CIVector class]]) for (int i = 0; i < n; i++) o[i] = [(CIVector *)v valueAtIndex:i];
+    else if ([v isKindOfClass:[CIColor class]]) { o[0] = [(CIColor *)v red]; o[1] = [(CIColor *)v green]; if (n > 2) { o[2] = [(CIColor *)v blue]; o[3] = [(CIColor *)v alpha]; } }
+    else if ([v isKindOfClass:[NSNumber class]]) o[0] = [(NSNumber *)v doubleValue];
 }
 - (CIImage *)outputImage {
-    if (!inputImage || !inputImage->img) return nil;
-    return wrap(mos_ci_apply(name.UTF8String, inputImage->img,
-                             inputBackgroundImage ? inputBackgroundImage->img : 0,
-                             radius, saturation, brightness, contrast, scale, aspect,
-                             transform.a, transform.b, transform.c, transform.d, transform.tx, transform.ty,
-                             hasTransform == 2));
+    const char *n = def->name;
+    mos_ci *in = [self img:"inputImage"], *bg = [self img:"inputBackgroundImage"], *r = 0;
+    double p[24];
+    if (!strncmp(n, "CI", 2) && def->in[0].type == T_IMAGE && !in) return nil;   /* sem imagem de entrada: nil, como na Apple */
+    if (!enabled && in) { mos_ci_retain(in); return wrap(in); }
+    static const struct { const char *n; int op; } ops[] = {
+        {"CIColorInvert", MOS_CI_OP_INVERT}, {"CIMaskToAlpha", MOS_CI_OP_MASK_TO_ALPHA}, {"CIMinimumComponent", MOS_CI_OP_MIN_COMPONENT},
+        {"CIMaximumComponent", MOS_CI_OP_MAX_COMPONENT}};
+    for (unsigned i = 0; i < sizeof ops / sizeof ops[0]; i++) if (!strcmp(n, ops[i].n)) return wrap(mos_ci_pixop(in, ops[i].op, 0, 0));
+    static const struct { const char *n; int mode; } bl[] = {
+        {"CISourceInCompositing", MOS_CI_BL_SOURCE_IN}, {"CISourceOutCompositing", MOS_CI_BL_SOURCE_OUT}, {"CISourceAtopCompositing", MOS_CI_BL_SOURCE_ATOP},
+        {"CIAdditionCompositing", MOS_CI_BL_ADDITION}, {"CIMultiplyCompositing", MOS_CI_BL_MULTIPLY_COMPOSITING}, {"CIMinimumCompositing", MOS_CI_BL_MINIMUM},
+        {"CIMaximumCompositing", MOS_CI_BL_MAXIMUM}, {"CIMultiplyBlendMode", MOS_CI_BL_MULTIPLY}, {"CIScreenBlendMode", MOS_CI_BL_SCREEN},
+        {"CIOverlayBlendMode", MOS_CI_BL_OVERLAY}, {"CIHardLightBlendMode", MOS_CI_BL_HARD_LIGHT}, {"CISoftLightBlendMode", MOS_CI_BL_SOFT_LIGHT},
+        {"CIDarkenBlendMode", MOS_CI_BL_DARKEN}, {"CILightenBlendMode", MOS_CI_BL_LIGHTEN}, {"CIDifferenceBlendMode", MOS_CI_BL_DIFFERENCE},
+        {"CIExclusionBlendMode", MOS_CI_BL_EXCLUSION}, {"CIColorDodgeBlendMode", MOS_CI_BL_COLOR_DODGE}, {"CIColorBurnBlendMode", MOS_CI_BL_COLOR_BURN},
+        {"CIBlendWithMask", MOS_CI_BL_MASK}, {"CIBlendWithAlphaMask", MOS_CI_BL_ALPHA_MASK}};
+    for (unsigned i = 0; i < sizeof bl / sizeof bl[0]; i++)
+        if (!strcmp(n, bl[i].n)) {
+            if (!bg) { mos_ci_retain(in); return wrap(in); }   /* sem fundo: a própria imagem */
+            return wrap(mos_ci_blend(in, bg, [self img:"inputMaskImage"], bl[i].mode, 0));
+        }
+    if (!strcmp(n, "CISourceOverCompositing")) { if (!bg) { mos_ci_retain(in); return wrap(in); } return wrap(mos_ci_over(in, bg)); }
+    if (!strcmp(n, "CIGaussianBlur")) return wrap(mos_ci_blur(in, [self num:"inputRadius"]));
+    if (!strcmp(n, "CIBoxBlur")) return wrap(mos_ci_box_blur(in, [self num:"inputRadius"]));
+    if (!strcmp(n, "CIColorControls")) { p[0] = [self num:"inputSaturation"]; p[1] = [self num:"inputBrightness"]; p[2] = [self num:"inputContrast"]; return wrap(mos_ci_pixop(in, MOS_CI_OP_COLOR_CONTROLS, p, 3)); }
+    if (!strcmp(n, "CIExposureAdjust")) { p[0] = [self num:"inputEV"]; return wrap(mos_ci_pixop(in, MOS_CI_OP_EXPOSURE, p, 1)); }
+    if (!strcmp(n, "CIGammaAdjust")) { p[0] = [self num:"inputPower"]; return wrap(mos_ci_pixop(in, MOS_CI_OP_GAMMA, p, 1)); }
+    if (!strcmp(n, "CIHueAdjust")) { p[0] = [self num:"inputAngle"]; return wrap(mos_ci_pixop(in, MOS_CI_OP_HUE, p, 1)); }
+    if (!strcmp(n, "CIVibrance")) { p[0] = [self num:"inputAmount"]; return wrap(mos_ci_pixop(in, MOS_CI_OP_VIBRANCE, p, 1)); }
+    if (!strcmp(n, "CISepiaTone")) { p[0] = [self num:"inputIntensity"]; return wrap(mos_ci_pixop(in, MOS_CI_OP_SEPIA, p, 1)); }
+    if (!strcmp(n, "CIColorPosterize")) { p[0] = [self num:"inputLevels"]; return wrap(mos_ci_pixop(in, MOS_CI_OP_POSTERIZE, p, 1)); }
+    if (!strcmp(n, "CIColorMatrix")) {
+        [self vec:"inputRVector" out:p n:4]; [self vec:"inputGVector" out:p + 4 n:4]; [self vec:"inputBVector" out:p + 8 n:4];
+        [self vec:"inputAVector" out:p + 12 n:4]; [self vec:"inputBiasVector" out:p + 16 n:4];
+        return wrap(mos_ci_pixop(in, MOS_CI_OP_MATRIX, p, 20));
+    }
+    if (!strcmp(n, "CIColorClamp")) { [self vec:"inputMinComponents" out:p n:4]; [self vec:"inputMaxComponents" out:p + 4 n:4]; return wrap(mos_ci_pixop(in, MOS_CI_OP_CLAMP_COMPONENTS, p, 8)); }
+    if (!strcmp(n, "CIColorMonochrome")) { [self vec:"inputColor" out:p n:4]; p[3] = [self num:"inputIntensity"]; return wrap(mos_ci_pixop(in, MOS_CI_OP_MONOCHROME, p, 4)); }
+    if (!strcmp(n, "CIFalseColor")) { [self vec:"inputColor0" out:p n:4]; [self vec:"inputColor1" out:p + 4 n:4]; return wrap(mos_ci_pixop(in, MOS_CI_OP_FALSE_COLOR, p, 8)); }
+    if (!strcmp(n, "CIConstantColorGenerator")) { [self vec:"inputColor" out:p n:4]; return wrap(mos_ci_generator(MOS_CI_GEN_CONSTANT, p, 4)); }
+    if (!strcmp(n, "CILinearGradient") || !strcmp(n, "CISmoothLinearGradient")) {
+        [self vec:"inputPoint0" out:p n:2]; [self vec:"inputPoint1" out:p + 2 n:2]; [self vec:"inputColor0" out:p + 4 n:4]; [self vec:"inputColor1" out:p + 8 n:4];
+        return wrap(mos_ci_generator(n[2] == 'S' ? MOS_CI_GEN_SMOOTH_LINEAR : MOS_CI_GEN_LINEAR, p, 12));
+    }
+    if (!strcmp(n, "CIRadialGradient")) {
+        [self vec:"inputCenter" out:p n:2]; p[2] = [self num:"inputRadius0"]; p[3] = [self num:"inputRadius1"];
+        [self vec:"inputColor0" out:p + 4 n:4]; [self vec:"inputColor1" out:p + 8 n:4];
+        return wrap(mos_ci_generator(MOS_CI_GEN_RADIAL, p, 12));
+    }
+    if (!strcmp(n, "CICheckerboardGenerator")) {
+        [self vec:"inputCenter" out:p n:2]; [self vec:"inputColor0" out:p + 2 n:4]; [self vec:"inputColor1" out:p + 6 n:4];
+        p[10] = [self num:"inputWidth"]; p[11] = [self num:"inputSharpness"];
+        return wrap(mos_ci_generator(MOS_CI_GEN_CHECKER, p, 12));
+    }
+    if (!strcmp(n, "CIAffineTransform")) {
+        CGAffineTransform t = CGAffineTransformMake(1, 0, 0, 1, 0, 0);
+        id v = [values objectForKey:@"inputTransform"];
+        if ([v isKindOfClass:[NSValue class]]) [(NSValue *)v getValue:&t];
+        return wrap(mos_ci_affine(in, t.a, t.b, t.c, t.d, t.tx, t.ty));
+    }
+    if (!strcmp(n, "CICrop")) { [self vec:"inputRectangle" out:p n:4]; return wrap(mos_ci_crop(in, p[0], p[1], p[2], p[3])); }
+    if (!strcmp(n, "CILanczosScaleTransform")) return wrap(mos_ci_lanczos(in, [self num:"inputScale"], [self num:"inputAspectRatio"]));
+    if (!strcmp(n, "CIUnsharpMask") || !strcmp(n, "CISharpenLuminance")) {
+        int sharpen = n[2] == 'S';
+        mos_ci *cl = mos_ci_clamp(in), *bl2 = cl ? mos_ci_blur(cl, [self num:"inputRadius"]) : 0;
+        r = bl2 ? mos_ci_blend(in, bl2, 0, sharpen ? MOS_CI_BL_SHARPEN_LUMA : MOS_CI_BL_UNSHARP, [self num:sharpen ? "inputSharpness" : "inputIntensity"]) : 0;
+        mos_ci_release(cl); mos_ci_release(bl2);
+        return wrap(r);
+    }
+    if (!strcmp(n, "CIPixellate")) { [self vec:"inputCenter" out:p n:2]; return wrap(mos_ci_pixellate(in, p[0], p[1], [self num:"inputScale"])); }
+    return nil;
 }
 @end
 
@@ -609,4 +849,236 @@ static void free_bytes(void *info, const void *data, size_t size) {
     }
     return [[[CIRenderTask alloc] init] autorelease];
 }
+@end
+
+/* ---------------------------------------------------------------- CIColor, CIVector e CIImage: o resto da API usada */
+extern const double *CGColorGetComponents(void *c);
+extern size_t CGColorGetNumberOfComponents(void *c);
+extern uint32_t CVPixelBufferGetPixelFormatType(void *p);
+extern size_t CVPixelBufferGetWidth(void *p), CVPixelBufferGetHeight(void *p), CVPixelBufferGetBytesPerRow(void *p);
+extern size_t CVPixelBufferGetBytesPerRowOfPlane(void *p, size_t i);
+extern void *CVPixelBufferGetBaseAddress(void *p), *CVPixelBufferGetBaseAddressOfPlane(void *p, size_t i);
+extern int CVPixelBufferLockBaseAddress(void *p, uint64_t f), CVPixelBufferUnlockBaseAddress(void *p, uint64_t f);
+
+@implementation CIColor (MOSMore)
++ (CIColor *)colorWithRed:(double)rr green:(double)gg blue:(double)bb { return [self colorWithRed:rr green:gg blue:bb alpha:1]; }
++ (CIColor *)colorWithCGColor:(void *)c {
+    const double *v = c ? CGColorGetComponents(c) : 0;
+    size_t n = c ? CGColorGetNumberOfComponents(c) : 0;
+    if (!v || !n) return nil;
+    if (n == 2) return [self colorWithRed:v[0] green:v[0] blue:v[0] alpha:v[1]];   /* cinza + alfa */
+    return [self colorWithRed:v[0] green:n > 1 ? v[1] : 0 blue:n > 2 ? v[2] : 0 alpha:n > 3 ? v[3] : 1];
+}
++ (CIColor *)colorWithString:(NSString *)s {
+    double c[4] = {0, 0, 0, 1};
+    const char *p = s.UTF8String;
+    for (int i = 0; p && i < 4; i++) {
+        while (*p == ' ' || *p == '[' || *p == ']') p++;
+        if (!*p) break;
+        char *e;
+        double v = strtod(p, &e);
+        if (e == p) break;
+        c[i] = v;
+        p = e;
+    }
+    return [self colorWithRed:c[0] green:c[1] blue:c[2] alpha:c[3]];
+}
+- (NSString *)stringRepresentation { return [NSString stringWithFormat:@"%g %g %g %g", r, g, b, a]; }
+- (size_t)numberOfComponents { return 4; }
++ (CIColor *)blackColor { return [self colorWithRed:0 green:0 blue:0 alpha:1]; }
++ (CIColor *)whiteColor { return [self colorWithRed:1 green:1 blue:1 alpha:1]; }
++ (CIColor *)grayColor { return [self colorWithRed:0.5 green:0.5 blue:0.5 alpha:1]; }
++ (CIColor *)redColor { return [self colorWithRed:1 green:0 blue:0 alpha:1]; }
++ (CIColor *)greenColor { return [self colorWithRed:0 green:1 blue:0 alpha:1]; }
++ (CIColor *)blueColor { return [self colorWithRed:0 green:0 blue:1 alpha:1]; }
++ (CIColor *)cyanColor { return [self colorWithRed:0 green:1 blue:1 alpha:1]; }
++ (CIColor *)magentaColor { return [self colorWithRed:1 green:0 blue:1 alpha:1]; }
++ (CIColor *)yellowColor { return [self colorWithRed:1 green:1 blue:0 alpha:1]; }
++ (CIColor *)clearColor { return [self colorWithRed:0 green:0 blue:0 alpha:0]; }
+@end
+
+@implementation CIVector (MOSMore)
++ (CIVector *)vectorWithX:(double)x { CIVector *o = [self vectorWithX:x Y:0]; o->n = 1; return o; }
++ (CIVector *)vectorWithX:(double)x Y:(double)y Z:(double)z { CIVector *o = [self vectorWithX:x Y:y Z:z W:0]; o->n = 3; return o; }
++ (CIVector *)vectorWithValues:(const double *)vals count:(size_t)c {
+    CIVector *o = [self vectorWithX:0 Y:0 Z:0 W:0];
+    for (size_t i = 0; i < c && i < 4; i++) o->v[i] = vals[i];
+    o->n = (int)(c < 4 ? c : 4);
+    return o;
+}
++ (CIVector *)vectorWithCGPoint:(CGPoint)p { return [self vectorWithX:p.x Y:p.y]; }
++ (CIVector *)vectorWithCGRect:(CGRect)r { return [self vectorWithX:r.origin.x Y:r.origin.y Z:r.size.width W:r.size.height]; }
+- (size_t)count { return (size_t)n; }
+- (CGPoint)CGPointValue { return CGPointMake(v[0], v[1]); }
+- (CGRect)CGRectValue { return CGRectMake(v[0], v[1], v[2], v[3]); }
+- (NSString *)stringRepresentation {
+    if (n <= 2) return [NSString stringWithFormat:@"[%g %g]", v[0], v[1]];
+    if (n == 3) return [NSString stringWithFormat:@"[%g %g %g]", v[0], v[1], v[2]];
+    return [NSString stringWithFormat:@"[%g %g %g %g]", v[0], v[1], v[2], v[3]];
+}
+@end
+
+/* YCbCr de vídeo (faixa curta, BT.601) -> ARGB; '420f' é faixa cheia */
+static uint32_t ycc(int Y, int Cb, int Cr, int full) {
+    double y = full ? Y : (Y - 16) * 255.0 / 219.0, cb = (Cb - 128) * (full ? 1 : 255.0 / 224.0), cr = (Cr - 128) * (full ? 1 : 255.0 / 224.0);
+    double R = y + 1.402 * cr, G = y - 0.344136 * cb - 0.714136 * cr, B = y + 1.772 * cb;
+    int r = R < 0 ? 0 : R > 255 ? 255 : (int)(R + 0.5), g = G < 0 ? 0 : G > 255 ? 255 : (int)(G + 0.5), b = B < 0 ? 0 : B > 255 ? 255 : (int)(B + 0.5);
+    return 0xFF000000u | (uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b;
+}
+
+@implementation CIImage (MOSMore)
++ (CIImage *)imageWithColor:(CIColor *)c {
+    double p[4] = {[c red], [c green], [c blue], [c alpha]};
+    return wrap(mos_ci_generator(MOS_CI_GEN_CONSTANT, p, 4));
+}
++ (CIImage *)emptyImage { return [[[CIImage alloc] init] autorelease]; }   /* extent vazio, não desenha nada */
+- (CIImage *)imageByClampingToExtent { return img ? wrap(mos_ci_clamp(img)) : self; }
+- (CIImage *)imageByClampingToRect:(CGRect)r {
+    mos_ci *c = img ? mos_ci_crop(img, r.origin.x, r.origin.y, r.size.width, r.size.height) : 0;
+    CIImage *o = c ? wrap(mos_ci_clamp(c)) : nil;
+    mos_ci_release(c);
+    return o;
+}
+- (CIImage *)imageByApplyingFilter:(NSString *)name withInputParameters:(NSDictionary *)params {
+    CIFilter *f = [CIFilter filterWithName:name withInputParameters:params];
+    [f setValue:self forKey:kCIInputImageKey];
+    return [f outputImage];
+}
+- (CIImage *)imageByApplyingFilter:(NSString *)name { return [self imageByApplyingFilter:name withInputParameters:nil]; }
+- (CIImage *)imageByApplyingGaussianBlurWithSigma:(double)sigma { return img ? wrap(mos_ci_blur(img, sigma)) : nil; }
+- (CIImage *)imageByCompositingOverImage:(CIImage *)bg withMode:(int)mode { (void)mode; return [self imageByCompositingOverImage:bg]; }
+- (CIImage *)imageBySettingAlphaOneInExtent:(CGRect)r {
+    double m[20] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    mos_ci *c = img ? mos_ci_crop(img, r.origin.x, r.origin.y, r.size.width, r.size.height) : 0;
+    CIImage *o = c ? wrap(mos_ci_pixop(c, MOS_CI_OP_MATRIX, m, 20)) : nil;
+    mos_ci_release(c);
+    return o;
+}
+- (CGAffineTransform)imageTransformForCGOrientation:(int)o {
+    CGRect e = [self extent];
+    double w = e.size.width, h = e.size.height;
+    switch (o) {
+    case 2: return CGAffineTransformMake(-1, 0, 0, 1, w, 0);
+    case 3: return CGAffineTransformMake(-1, 0, 0, -1, w, h);
+    case 4: return CGAffineTransformMake(1, 0, 0, -1, 0, h);
+    case 5: return CGAffineTransformMake(0, -1, -1, 0, h, w);
+    case 6: return CGAffineTransformMake(0, -1, 1, 0, 0, w);
+    case 7: return CGAffineTransformMake(0, 1, 1, 0, 0, 0);
+    case 8: return CGAffineTransformMake(0, 1, -1, 0, h, 0);
+    default: return CGAffineTransformMake(1, 0, 0, 1, 0, 0);
+    }
+}
+- (CIImage *)imageByApplyingOrientation:(int)o {
+    if (!img || o < 1 || o > 8) return o == 0 ? self : nil;
+    CGRect e = [self extent];
+    CGAffineTransform t = [self imageTransformForCGOrientation:o];
+    /* a orientação gira em torno da origem do extent */
+    mos_ci *a = mos_ci_affine(img, t.a, t.b, t.c, t.d, t.tx + e.origin.x - (t.a * e.origin.x + t.c * e.origin.y), t.ty + e.origin.y - (t.b * e.origin.x + t.d * e.origin.y));
+    return wrap(a);
+}
++ (CIImage *)imageWithCVPixelBuffer:(void *)pb options:(NSDictionary *)opt {
+    (void)opt;
+    if (!pb) return nil;
+    uint32_t fmt = CVPixelBufferGetPixelFormatType(pb);
+    int w = (int)CVPixelBufferGetWidth(pb), h = (int)CVPixelBufferGetHeight(pb);
+    if (w <= 0 || h <= 0) return nil;
+    uint32_t *px = malloc((size_t)w * (size_t)h * 4u);
+    if (!px) return nil;
+    CVPixelBufferLockBaseAddress(pb, 1);
+    int ok = 1;
+    if (fmt == 0x42475241 /* BGRA */ || fmt == 0x20 /* 32ARGB */) {
+        const uint8_t *b = CVPixelBufferGetBaseAddress(pb);
+        size_t rb = CVPixelBufferGetBytesPerRow(pb);
+        for (int y = 0; b && y < h; y++)
+            for (int x = 0; x < w; x++) {
+                const uint8_t *s = b + (size_t)y * rb + (size_t)x * 4;
+                uint32_t p = fmt == 0x20 ? (uint32_t)s[0] << 24 | (uint32_t)s[1] << 16 | (uint32_t)s[2] << 8 | s[3]
+                                         : (uint32_t)s[3] << 24 | (uint32_t)s[2] << 16 | (uint32_t)s[1] << 8 | s[0];
+                px[(size_t)y * w + x] = unpremul(p);
+            }
+        ok = b != 0;
+    } else if (fmt == 0x34323076 /* 420v */ || fmt == 0x34323066 /* 420f */) {
+        const uint8_t *Y = CVPixelBufferGetBaseAddressOfPlane(pb, 0), *C = CVPixelBufferGetBaseAddressOfPlane(pb, 1);
+        size_t ry = CVPixelBufferGetBytesPerRowOfPlane(pb, 0), rc = CVPixelBufferGetBytesPerRowOfPlane(pb, 1);
+        for (int y = 0; Y && C && y < h; y++)
+            for (int x = 0; x < w; x++) {
+                const uint8_t *c = C + (size_t)(y / 2) * rc + (size_t)(x / 2) * 2;
+                px[(size_t)y * w + x] = ycc(Y[(size_t)y * ry + x], c[0], c[1], fmt == 0x34323066);
+            }
+        ok = Y && C;
+    } else ok = 0;
+    CVPixelBufferUnlockBaseAddress(pb, 1);
+    CIImage *o = ok ? from_px(px, w, h) : nil;
+    free(px);
+    return o;
+}
++ (CIImage *)imageWithCVPixelBuffer:(void *)pb { return [self imageWithCVPixelBuffer:pb options:nil]; }
++ (CIImage *)imageWithCVImageBuffer:(void *)pb { return [self imageWithCVPixelBuffer:pb options:nil]; }
++ (CIImage *)imageWithCVImageBuffer:(void *)pb options:(NSDictionary *)opt { return [self imageWithCVPixelBuffer:pb options:opt]; }
+- (NSDictionary *)properties { return [NSDictionary dictionary]; }
+- (id)colorSpace { return nil; }
+- (void *)pixelBuffer { return 0; }
+- (void *)CGImage { return 0; }
+- (NSURL *)url { return nil; }
+@end
+
+@implementation CIContext (MOSPixelBuffer)
++ (CIContext *)contextWithCGContext:(void *)cg options:(NSDictionary *)o { (void)cg; return [self contextWithOptions:o]; }
++ (CIContext *)contextWithMTLDevice:(id)d { (void)d; return [self contextWithOptions:nil]; }
++ (CIContext *)contextWithMTLDevice:(id)d options:(NSDictionary *)o { (void)d; return [self contextWithOptions:o]; }
+- (id)createCGImage:(CIImage *)im fromRect:(CGRect)r format:(int)f colorSpace:(id)cs { (void)f; (void)cs; return [self createCGImage:im fromRect:r]; }
+- (void)render:(CIImage *)im toCVPixelBuffer:(void *)pb bounds:(CGRect)b colorSpace:(id)cs {
+    (void)cs;
+    if (!im || !pb) return;
+    uint32_t fmt = CVPixelBufferGetPixelFormatType(pb);
+    int w = (int)CVPixelBufferGetWidth(pb), h = (int)CVPixelBufferGetHeight(pb);
+    int bw = (int)llround(b.size.width), bh = (int)llround(b.size.height);
+    if (bw > w) bw = w;
+    if (bh > h) bh = h;
+    if (bw <= 0 || bh <= 0) return;
+    uint32_t *px = malloc((size_t)bw * (size_t)bh * 4u);
+    if (!px) return;
+    if (!ready) mos_ci_ctx_init(&ctx, 1), ready = 1;
+    if (mos_ci_ctx_render(&ctx, im->img, b.origin.x, b.origin.y, bw, bh, px) != 0) { free(px); return; }
+    CVPixelBufferLockBaseAddress(pb, 0);
+    if (fmt == 0x42475241 || fmt == 0x20) {
+        uint8_t *d = CVPixelBufferGetBaseAddress(pb);
+        size_t rb = CVPixelBufferGetBytesPerRow(pb);
+        for (int y = 0; d && y < bh; y++)
+            for (int x = 0; x < bw; x++) {
+                uint32_t p = px[(size_t)y * bw + x];
+                unsigned A = p >> 24, R = (p >> 16 & 255) * A / 255, G = (p >> 8 & 255) * A / 255, B = (p & 255) * A / 255;   /* pré-multiplicado */
+                uint8_t *o = d + (size_t)y * rb + (size_t)x * 4;
+                if (fmt == 0x20) { o[0] = (uint8_t)A; o[1] = (uint8_t)R; o[2] = (uint8_t)G; o[3] = (uint8_t)B; }
+                else { o[0] = (uint8_t)B; o[1] = (uint8_t)G; o[2] = (uint8_t)R; o[3] = (uint8_t)A; }
+            }
+    } else if (fmt == 0x34323076 || fmt == 0x34323066) {   /* BT.601, faixa curta ('420v') ou cheia ('420f') */
+        int full = fmt == 0x34323066;
+        uint8_t *Y = CVPixelBufferGetBaseAddressOfPlane(pb, 0), *C = CVPixelBufferGetBaseAddressOfPlane(pb, 1);
+        size_t ry = CVPixelBufferGetBytesPerRowOfPlane(pb, 0), rc = CVPixelBufferGetBytesPerRowOfPlane(pb, 1);
+        for (int y = 0; Y && C && y < bh; y++)
+            for (int x = 0; x < bw; x++) {
+                uint32_t p = px[(size_t)y * bw + x];
+                double R = p >> 16 & 255, G = p >> 8 & 255, B = p & 255, l = 0.299 * R + 0.587 * G + 0.114 * B;
+                double v = full ? l : 16 + l * 219.0 / 255.0;
+                Y[(size_t)y * ry + x] = (uint8_t)(v + 0.5);
+                if (!(x & 1) && !(y & 1)) {
+                    double cb = (B - l) / 1.772, cr = (R - l) / 1.402, k = full ? 1 : 224.0 / 255.0;
+                    uint8_t *c = C + (size_t)(y / 2) * rc + (size_t)(x / 2) * 2;
+                    double u = 128 + cb * k, vv = 128 + cr * k;
+                    c[0] = (uint8_t)(u < 0 ? 0 : u > 255 ? 255 : u + 0.5);
+                    c[1] = (uint8_t)(vv < 0 ? 0 : vv > 255 ? 255 : vv + 0.5);
+                }
+            }
+    }
+    CVPixelBufferUnlockBaseAddress(pb, 0);
+    free(px);
+}
+- (void)render:(CIImage *)im toCVPixelBuffer:(void *)pb {
+    if (!pb) return;
+    [self render:im toCVPixelBuffer:pb bounds:CGRectMake(0, 0, (double)CVPixelBufferGetWidth(pb), (double)CVPixelBufferGetHeight(pb)) colorSpace:nil];
+}
+- (void)clearCaches { if (ready) { mos_ci_ctx_free(&ctx); mos_ci_ctx_init(&ctx, 1); } }
+- (id)workingColorSpace { return nil; }
+- (int)workingFormat { return MOS_CI_RGBA8; }
 @end
