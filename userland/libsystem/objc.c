@@ -1180,6 +1180,7 @@ void cx_objc_boot(u64 sects, u64 n) {
         { extern void cx_fdn_misc_init(void); cx_fdn_misc_init(); }   /* fdn_misc.c: CFURLEnumerator */
         { extern void cx_fdn_decimal_init(void); cx_fdn_decimal_init(); }   /* fdn_decimal.c: NSDecimalNumber */
         { extern void cx_fdn_indexset_init(void); cx_fdn_indexset_init(); } /* fdn_indexset.c: NSIndexSet */
+        { extern void cx_fdn_orderedset_init(void); cx_fdn_orderedset_init(); } /* fdn_orderedset.c */
         /* blocks são objetos: [block copy] etc. */
         cx_class_t *nsobj = cx_class_named("NSObject");
         cx_class_t *bl[3] = {&_NSConcreteStackBlock_c, &_NSConcreteGlobalBlock_c, &_NSConcreteMallocBlock_c};
@@ -1198,6 +1199,7 @@ void cx_objc_boot(u64 sects, u64 n) {
     { extern void cx_compat_objc_extra_init(void); cx_compat_objc_extra_init(); }   /* compat_objc_extra.c: depois de todas as classes (o NSURL vem do cx_darwin_init) */
     { extern void cx_fdn_filemanager_init(void); cx_fdn_filemanager_init(); }   /* fdn_filemanager.c: NSFileManager completo, por último */
     { extern void cx_fdn_bundle_init(void); cx_fdn_bundle_init(); }   /* fdn_bundle.c: NSBundle/CFBundle completos, por cima do básico */
+    { extern void cx_fdn_coll_init(void); cx_fdn_coll_init(); }       /* fdn_coll.c: NSArray/NSDictionary completos, por cima do básico */
     }
     if (n) cx_objc_init_image(sects, n);
 }
