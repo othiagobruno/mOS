@@ -4502,6 +4502,14 @@ static void sv_scroll(id self, SEL c, id e) {
 
 /* ================================================================ NSTableView */
 typedef struct { id ident, title; double width; } colst_t;
+/* appkit_table2.inc (incluído mais abaixo): geometria por linha, seleção e desenho extra */
+static double tv_row_top(id t, i64 r);
+static double tv_row_height(id t, i64 r);
+static double tv_total_h(id t);
+static i64 tv_row_at_y(id t, double y);
+static void tv_draw_drop_line(id t, i64 r, double x0, double ry, double w, double h);
+static int tv_draw_cell_based(id t, id col, i64 r, double x, double y, double w, double h, BOOL sel);
+static void tv_draw_sort_indicator(id t, id col, double x, double hy, double w);
 static colst_t *cs_(id col) { if (!ST(col)) { colst_t *s = calloc(1, sizeof *s); s->width = 120; ST(col) = s; } return ST(col); }
 static id col_init(id self, SEL c, id ident) { (void)c; keep(&cs_(self)->ident, ident); keep(&cs_(self)->title, ident); return self; }
 static id col_ident(id self, SEL c) { (void)c; return cs_(self)->ident; }
@@ -4530,7 +4538,7 @@ static i64 tv_num_rows(id self, SEL c) { (void)c; return tv_rows(self); }
 static void table_resize(id t, double width) {
     vstate_t *s = vs(t);
     s->frame.s.w = width > s->frame.s.w ? width : s->frame.s.w;
-    s->frame.s.h = (s->header ? 24 : 0) + s->row_h * (double)tv_rows(t);
+    s->frame.s.h = (s->header ? 24 : 0) + tv_total_h(t);
 }
 static void tv_reload(id self, SEL c) {
     (void)c;
@@ -4713,6 +4721,12 @@ static void tv_scroll_row(id self, SEL c, i64 r) {
     double cur = in_sc ? vs(s->superview)->scroll_y : cx_tv_engine_own_scroll(e);
     double view_h = in_sc ? vs(s->superview)->frame.s.h : s->frame.s.h;
     double next = cx_tv_reveal_row(e, in_sc, cur, view_h, row_h, header, (int)r, (int)tv_rows(self));
+    if (r >= 0 && r < tv_rows(self)) {   /* alturas por linha */
+        double top = header + tv_row_top(self, r), bot = top + tv_row_height(self, r);
+        next = cur;
+        if (top - header < cur) next = top - header;
+        else if (bot > cur + view_h) next = bot - view_h;
+    }
     if (in_sc) {
         vs(s->superview)->scroll_y = next;
         layout_scroll(s->superview);
@@ -4723,14 +4737,9 @@ static void tv_scroll_row(id self, SEL c, i64 r) {
     }
 }
 /* NSIndexSet: Foundation (fdn_indexset.c) */
-static void select_row(id t, i64 r, BOOL notify) {
-    vstate_t *s = vs(t);
-    if (s->selected == r) return;
-    s->selected = r;
-    mark(t);
-    if (notify && s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableViewSelectionDidChange:")))
-        MSG(void, s->delegate, "tableViewSelectionDidChange:", objc_autorelease(cx_note(cx_str("NSTableViewSelectionDidChangeNotification"), t, 0)));
-}
+static int tv_sel_contains(id t, i64 r);
+static void tv_sel_only(id t, i64 r, BOOL notify);
+static void select_row(id t, i64 r, BOOL notify) { tv_sel_only(t, r, notify); }
 static void tv_select(id self, SEL c, id ixs, BOOL ext) { (void)c; (void)ext; select_row(self, ixs && MSG0(u64, ixs, "count") ? (i64)MSG0(u64, ixs, "firstIndex") : -1, NO); }
 static void tv_deselect_all(id self, SEL c, id s) { (void)c; (void)s; select_row(self, -1, NO); }
 /* texto da célula cell-based. A view-based não passa por aqui: o layout pergunta viewFor e as subviews se desenham. */
@@ -4796,6 +4805,12 @@ static void tv_layout_views(id self) {
     double header = s->header ? 24 : 0, row_h = s->row_h > 0 ? s->row_h : 24;
     i64 nrows = tv_rows(self);
     cx_tv_span_t sp = cx_tv_visible_rows(scroll_y, view_h, row_h, header, (int)nrows);
+    {   /* alturas por linha: a faixa visível sai da geometria */
+        i64 a0 = tv_row_at_y(self, scroll_y - header), b0 = tv_row_at_y(self, scroll_y - header + view_h);
+        if (a0 < 0) a0 = scroll_y - header < 0 ? 0 : nrows;
+        if (b0 < 0) b0 = nrows - 1;
+        sp.first = nrows > 0 && a0 <= b0 ? (int)a0 : -1; sp.last = sp.first >= 0 ? (int)b0 : -1;
+    }
     int want = s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableView:viewForTableColumn:row:"));
     if (!want) {
         if (cx_tv_engine_placed_count(e)) { tv_in_layout = 1; tv_reclaim(self); tv_in_layout = 0; }
@@ -4827,7 +4842,9 @@ static void tv_layout_views(id self) {
             if (got && !cx_tv_show_cell(got)) {
                 int ocol_here = !group && level >= 0 && (ocol ? col == ocol : k == 0);
                 double cell_x = cx_tv_cell_x(x, level, per, ocol_here);
-                NSRect fr = r_make(cell_x, cx_tv_cell_y_scrolled(header, row_h, r, in_sc, scroll_y), cx_tv_cell_w(cw, x, cell_x), row_h);
+                double rh = tv_row_height(self, r);
+                double ry = header + tv_row_top(self, r) - (in_sc ? 0 : scroll_y);
+                NSRect fr = r_make(cell_x, ry, cx_tv_cell_w(cw, x, cell_x), rh);
                 ((void (*)(id, SEL, NSRect))objc_msgSend)(v, sel_registerName("setFrame:"), fr);
                 tv_set_cell_value(self, v, col, r);
                 if (vs(v)->superview != self) v_add_sub(self, 0, v);
@@ -4849,12 +4866,16 @@ static void draw_table(id t, absr_t *a) {
     double own = (!in_sc && eng) ? cx_tv_engine_own_scroll(eng) : 0;
     double y = a->tly + (s->header ? 24 : 0), x0 = a->tlx;
     int outline = tv_is_outline(t);
+    double row_hh = 0;
     for (i64 r = 0; r < rows; r++) {
-        double ry = y + r * s->row_h - own;
-        if (ry + s->row_h < clip_y0 || ry > clip_y1) continue;   /* fora da área visível da rolagem */
-        BOOL sel = r == s->selected;
-        if (sel) g_rrect(x0 + 4, ry + 1, a->w - 8, s->row_h - 2, 5, accent);
-        else if (s->alt_rows && (r & 1)) g_fill(x0, ry, a->w, s->row_h, 0x08000000);
+        double ry = y + tv_row_top(t, r) - own;
+        row_hh = tv_row_height(t, r);
+        if (row_hh <= 0) continue;                                 /* linha oculta */
+        if (ry + row_hh < clip_y0 || ry > clip_y1) continue;       /* fora da área visível da rolagem */
+        BOOL sel = tv_sel_contains(t, r);
+        if (sel) g_rrect(x0 + 4, ry + 1, a->w - 8, row_hh - 2, 5, accent);
+        else if (s->alt_rows && (r & 1)) g_fill(x0, ry, a->w, row_hh, 0x08000000);
+        tv_draw_drop_line(t, r, x0, ry, a->w, row_hh);
         int level = -1; double per = 16; id ocol = 0;
         if (outline) tv_outline_metrics(t, r, &level, &per, &ocol);
         double x = x0;
@@ -4866,7 +4887,7 @@ static void draw_table(id t, absr_t *a) {
                 id item = cx_responds(t->isa, sel_registerName("itemAtRow:")) ? MSG(id, t, "itemAtRow:", r) : 0;
                 if (MSG(BOOL, t, "isExpandable:", item)) {
                     double dx = x0 + cx_tv_disclosure_x(local, level, per, 1);
-                    double mid = ry + s->row_h / 2;
+                    double mid = ry + row_hh / 2;
                     int open = cx_responds(t->isa, sel_registerName("isItemExpanded:")) && MSG(BOOL, t, "isItemExpanded:", item);
                     float tri[6];
                     if (open) { tri[0] = (float)(dx + 2); tri[1] = (float)(mid - 3); tri[2] = (float)(dx + 10); tri[3] = (float)(mid - 3); tri[4] = (float)(dx + 6); tri[5] = (float)(mid + 3); }
@@ -4875,15 +4896,18 @@ static void draw_table(id t, absr_t *a) {
                 }
             }
             int got = eng ? cx_tv_engine_cell_view(eng, (int)r, (int)k) : 0;
-            if (cx_tv_show_cell(got)) {
+            if (cx_tv_show_cell(got) && tv_draw_cell_based(t, cols->items[k], r, x0 + cx_tv_cell_x(local, level, per, ocol_here), ry,
+                                                         cx_tv_cell_w(cs->width, local, cx_tv_cell_x(local, level, per, ocol_here)), row_hh, sel)) {
+                /* célula de verdade (dataCell do app): já desenhada */
+            } else if (cx_tv_show_cell(got)) {
                 id txt = cell_text(t, cols->items[k], r);
                 if (txt) {
                     const char *tt = cx_cstr(txt);
                     gui_metrics_t m = measure(tt, (u32)strlen(tt), 13, 0);
                     double tx = x0 + cx_tv_cell_x(local, level, per, ocol_here);
                     double tw = cx_tv_cell_w(cs->width, local, tx - x0);
-                    set_clip(tx, ry, tw - 4 > 1 ? tw - 4 : 1, s->row_h);
-                    g_text(tx + 8, ry + (s->row_h + m.ascent - m.descent) / 2, 13, 0, sel ? 0xFFFFFFFF : 0xE6000000, tt, (u32)strlen(tt));
+                    set_clip(tx, ry, tw - 4 > 1 ? tw - 4 : 1, row_hh);
+                    g_text(tx + 8, ry + (row_hh + m.ascent - m.descent) / 2, 13, 0, sel ? 0xFFFFFFFF : 0xE6000000, tt, (u32)strlen(tt));
                     set_clip(a->tlx, a->tly, a->w, a->h);
                 }
             }
@@ -4902,6 +4926,7 @@ static void draw_table(id t, absr_t *a) {
             const char *tt = cs->title ? cx_cstr(cs->title) : "";
             gui_metrics_t m = measure(tt, (u32)strlen(tt), 11, 2);
             g_text(x + 8, hy + (24 + m.ascent - m.descent) / 2, 11, 2, 0xB0000000, tt, (u32)strlen(tt));
+            tv_draw_sort_indicator(t, cols->items[k], x, hy, cs->width);
             x += cs->width;
             if (k + 1 < cols->n) g_fill(x - 1, hy + 4, 1, 16, 0x1A000000);
         }
@@ -4956,6 +4981,50 @@ static void tv_mouse_down(id self, SEL c, id e) {
     } else if (s->action && r >= 0) send_action(self);
 }
 /* view de célula -> linha/coluna: sobe pelas superviews até achar uma view que o layout pôs */
+#include "appkit_table2.inc"
+static int tv_sel_contains(id t, i64 r) { return r >= 0 && MSG(BOOL, tv_selset(t), "containsIndex:", (u64)r); }
+static void tv_sel_only(id t, i64 r, BOOL notify) {
+    id one = r >= 0 ? MSG(id, (id)cx_class_named("NSIndexSet"), "indexSetWithIndex:", (u64)r) : new_indexset();
+    if (r < 0) { BOOL keep = tvp_i(t, "allowsEmpty", 1); tvp_set_i(t, "allowsEmpty", 1); tv_apply_selection(t, one, notify); tvp_set_i(t, "allowsEmpty", keep); }
+    else tv_apply_selection(t, one, notify);
+}
+/* célula do app (setDataCell: ou do nib) no modo cell-based: valor, willDisplayCell: e drawWithFrame:inView: */
+static int tv_draw_cell_based(id t, id col, i64 r, double x, double y, double w, double h, BOOL sel) {
+    if (!colp_o(col, "dataCellSet")) return 0;
+    id cell = col2_data_cell(col, 0);
+    vstate_t *s = vs(t);
+    id v = s->data_source && dresp(s->data_source, "tableView:objectValueForTableColumn:row:") ? MSG(id, s->data_source, "tableView:objectValueForTableColumn:row:", t, col, r) : 0;
+    MSG(void, cell, "setObjectValue:", v);
+    if (dresp(cell, "setBackgroundStyle:")) MSG(void, cell, "setBackgroundStyle:", (i64)(sel ? 1 : 0));
+    if (dresp(s->delegate, "tableView:willDisplayCell:forTableColumn:row:")) MSG(void, s->delegate, "tableView:willDisplayCell:forTableColumn:row:", t, cell, col, r);
+    absr_t a;
+    if (!abs_rect(t, &a)) return 1;
+    NSRect fr = r_make(x - a.tlx, y - a.tly, w, h);   /* no sistema da tabela (invertida) */
+    ((void (*)(id, SEL, NSRect, id))objc_msgSend)(cell, sel_registerName("drawWithFrame:inView:"), fr, t);
+    return 1;
+}
+static void tv_draw_drop_line(id t, i64 r, double x0, double ry, double w, double h) {
+    i64 dr = tvp_i(t, "dropRow", -2);
+    if (dr == -2) return;
+    u64 op = (u64)tvp_i(t, "dropOp", 1);
+    if (op == 0 && dr == r) g_rstroke(x0 + 2, ry + 1, w - 4, h - 2, 5, 2, accent);
+    else if (op == 1 && dr == r) g_fill(x0 + 4, ry - 1, w - 8, 2, accent);
+    else if (op == 1 && dr == r + 1 && r + 1 == tv_rows(t)) g_fill(x0 + 4, ry + h - 1, w - 8, 2, accent);
+}
+static void tv_draw_sort_indicator(id t, id col, double x, double hy, double w) {
+    id img = tv2_indicator(t, 0, col);
+    id descs = tv2_sort(t, 0);
+    id first = MSG0(u64, descs, "count") ? MSG(id, descs, "objectAtIndex:", (u64)0) : 0;
+    id proto = colp_o(col, "sortProto");
+    int show = img || (first && proto && MSG(BOOL, MSG0(id, first, "key"), "isEqual:", MSG0(id, proto, "key")));
+    if (!show) return;
+    BOOL asc = first ? MSG0(BOOL, first, "ascending") : YES;
+    double cx = x + w - 14, cy = hy + 12;
+    float tri[6];
+    if (asc) { tri[0] = (float)(cx - 4); tri[1] = (float)(cy + 2); tri[2] = (float)(cx + 4); tri[3] = (float)(cy + 2); tri[4] = (float)cx; tri[5] = (float)(cy - 3); }
+    else { tri[0] = (float)(cx - 4); tri[1] = (float)(cy - 2); tri[2] = (float)(cx + 4); tri[3] = (float)(cy - 2); tri[4] = (float)cx; tri[5] = (float)(cy + 3); }
+    g_poly(tri, 3, 0xB0000000, 1, 0);
+}
 static int tv_cell_pos(id self, id v, int *row, int *col) {
     cx_tv_engine_t *e = cx_tv_engine_get(self, 0);
     *row = -1; *col = -1;
@@ -5977,6 +6046,7 @@ void cx_appkit_init(void) {
     M(NSTableView, "selectedRowIndexes", tv_sel_indexes); M(NSTableView, "removeTableColumn:", tv_remove_col);
     M(NSTableView, "noteNumberOfRowsChanged", tv_note_rows); M(NSTableView, "reloadDataForRowIndexes:columnIndexes:", tv_reload_rows);
     M(NSTableView, "editColumn:row:withEvent:select:", tv_edit);
+    cx_table2_register();   /* appkit_table2.inc: seleção múltipla, teclado, ordenação, colunas, arrastar, geometria */
     DEF(NSTableColumn, NSObject);
     M(NSTableColumn, "initWithIdentifier:", col_init); M(NSTableColumn, "identifier", col_ident); M(NSTableColumn, "setTitle:", col_set_title);
     M(NSTableColumn, "title", col_title); M(NSTableColumn, "setWidth:", col_set_width); M(NSTableColumn, "width", col_width);
