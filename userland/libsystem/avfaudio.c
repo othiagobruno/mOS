@@ -1816,6 +1816,17 @@ const char *cx_avitem_video_path(id item) {
     return a && AST(a)->has_vid ? cx_audio_url_path(AST(a)->url) : 0;
 }
 id cx_avplayer_item(id player) { return player ? APL(player)->item : 0; }
+/* AVPlayerItem.videoComposition: guardada como objeto associado (cópia, como a propriedade copy da Apple) */
+static const char k_vcomp = 0;
+id objc_getAssociatedObject(id obj, const void *key);
+id cx_avitem_video_composition(id item) { return item ? objc_getAssociatedObject(item, &k_vcomp) : 0; }
+static id item_vcomp(id s, SEL c) { (void)c; return cx_avitem_video_composition(s); }
+static void item_set_vcomp(id s, SEL c, id vc) {
+    (void)c;
+    id cp = vc ? MSG0(id, vc, "copy") : 0;
+    objc_setAssociatedObject(s, &k_vcomp, cp, 1);
+    if (cp) objc_release(cp);
+}
 float cx_avplayer_rate(id player) { return player ? APL(player)->rate : 0; }
 static cmtime_t apl_current(id s, SEL c) { (void)c; clock_sync(s); return APL(s)->item ? cm_seconds(ITM(APL(s)->item)->pos) : cm_invalid(); }
 static void apl_seek(id s, SEL c, cmtime_t t) {
@@ -2336,6 +2347,7 @@ void cx_avfaudio_init(void) {
     K(&AVPlayerItem_c, &AVPlayerItem_m, "AVPlayerItem", obj, sizeof(avitem_t) - 8);
     CM(AVPlayerItem, "playerItemWithURL:", item_with_url); CM(AVPlayerItem, "playerItemWithAsset:", item_with_asset);
     M(AVPlayerItem, "initWithURL:", item_init_url); M(AVPlayerItem, "initWithAsset:", item_init_asset);
+    M(AVPlayerItem, "videoComposition", item_vcomp); M(AVPlayerItem, "setVideoComposition:", item_set_vcomp);
     M(AVPlayerItem, "asset", item_asset); M(AVPlayerItem, "status", item_status); M(AVPlayerItem, "error", item_error);
     M(AVPlayerItem, "duration", item_duration); M(AVPlayerItem, "currentTime", item_current);
     M(AVPlayerItem, "outputs", item_outputs); M(AVPlayerItem, "addOutput:", item_add_output); M(AVPlayerItem, "removeOutput:", item_remove_output);
