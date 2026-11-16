@@ -180,6 +180,8 @@ typedef struct window {
     bool tab_hidden;            /* aba que não é a da frente */
     u32 title_bg;               /* cor própria da barra de título (0 = do tema; ex.: Notas Autoadesivas) */
     struct window *owner;       /* janela dona (apps do macOS: addChildWindow:): esta fica sempre acima dela */
+    int max_w, max_h;           /* limite do redimensionamento pelo usuário, em quadro (0 = sem limite) */
+    int level;                  /* NSWindowLevel: um nível maior fica sempre acima de um menor (0 = normal) */
 } window_t;
 
 typedef struct app {
@@ -214,6 +216,14 @@ void      wm_invalidate(window_t *w);
 void      wm_focus(window_t *w);
 bool      wm_begin_move(window_t *w);            /* o botão esquerdo apertado no conteúdo de w passa a mover w */
 void      wm_set_hidden(window_t *w, bool hidden);  /* orderOut:/orderFront: de app: esconde ou mostra sem destruir */
+/* setFrame: de app: retângulo do conteúdo (x, y do canto superior esquerdo, relativos ao monitor principal, com y contado
+ * do topo da tela). w ou h <= 0 mantém o tamanho. */
+void      wm_set_content_frame(window_t *w, int x, int y, int cw, int ch);
+rect_t    wm_get_content_frame(window_t *w);    /* o mesmo retângulo, lido de volta */
+/* setContentMinSize:/setContentMaxSize: (0 = sem limite; o mínimo nunca fica abaixo de min_cw x min_ch) */
+void      wm_set_content_limits(window_t *w, int min_cw, int min_ch, int max_cw, int max_ch);
+void      wm_set_level(window_t *w, int level); /* setLevel: e refaz a ordem */
+void      wm_restack(void);                     /* refaz a ordem por nível (depois de mudar owner) */
 window_t *wm_focused(void);
 app_t    *wm_active_app(void);
 void      wm_set_title(window_t *w, const char *t);

@@ -123,6 +123,10 @@ static int traffic_at(window_t *w, int lx, int ly) {
 
 rect_t wm_content_rect(window_t *w) { return rect_make(w->x, w->y + title_h(w), w->w, w->h - title_h(w)); }
 
+/* tamanho do quadro dentro dos limites da janela (min_w/min_h e max_w/max_h, 0 = sem máximo) */
+static int lim_w(window_t *w, int v) { if (w->max_w > 0) v = MIN(v, w->max_w); return MAX(v, w->min_w); }
+static int lim_h(window_t *w, int v) { if (w->max_h > 0) v = MIN(v, w->max_h); return MAX(v, w->min_h); }
+
 /* ============================================================ z-order e foco */
 static int index_of(window_t *w) { for (int i = 0; i < nwins; i++) if (wins[i] == w) return i; return -1; }
 
@@ -144,13 +148,20 @@ bool g_stage_manager;
 static app_t *stage_app;
 static bool on_stage(window_t *w) { return !g_stage_manager || space_win || !stage_app || w->app == stage_app; }
 
-window_t *wm_focused(void) {
-    for (int i = nwins - 1; i >= 0; i--) {
-        window_t *w = wins[i];
-        if (!w->minimized && !w->closing && w->visible && in_space(w)) return w;
-    }
-    return NULL;
-}
+/* Níveis (NSWindowLevel, wm_set_level): wins[] fica ordenado pelo nível efetivo, então um painel flutuante segue por cima
+ * de janelas normais mesmo depois que outra ganha o foco. Por isso a janela em foco nem sempre é a do topo: é a última que
+ * recebeu wm_focus (key_win) ou, se ela sumiu, a mais alta de nível normal. Sem janelas com nível, é sempre a do topo. */
+static window_t *key_win;
+
+#include "wmlevel.inc"
+
+static bool focusable(window_t *w) { return !w->minimized && !w->closing && w->visible && in_space(w); }
+
+window_t *wm_focused(void) { return wl_focused(wins, nwins, key_win, focusable); }
+
+static bool restack(void) { return wl_restack(wins, nwins); }
+
+void wm_restack(void) { if (restack()) wm_damage_all(); }
 
 app_t *wm_active_app(void) { window_t *w = wm_focused(); return w ? w->app : NULL; }
 
@@ -168,6 +179,53 @@ bool wm_begin_move(window_t *w) {
 
 /* -[NSWindow orderOut:] / orderFront: de um app do macOS: a janela some da tela e do foco (wm_focused só olha as
  * visíveis) sem ser destruída, e volta na frente. Janelas em grupo de abas ficam por conta das abas. */
+/* -[NSWindow setFrame:display:] e afins numa janela que já está na tela. O app fala do conteúdo (como no GUI_WIN_CREATE);
+ * aqui vira quadro. Como no Cocoa, setFrame: não respeita min/max (eles valem para o usuário), só um piso para a superfície.
+ * O GEV_RESIZE volta pelo proxy_paint, como num redimensionamento pelo usuário. */
+void wm_set_content_frame(window_t *w, int x, int y, int cw, int ch) {
+    if (!w || w->closing || w->fullscreen || index_of(w) < 0) return;
+    rect_t pd = display_rect(0);
+    int th = title_h(w);
+    wm_damage(win_bounds(w));
+    if (cw > 0 && ch > 0) {
+        w->w = CLAMP(cw, 40, 8192);
+        w->h = CLAMP(ch, 20, 8192) + th;
+        surface_resize(w->surf, w->w, w->h);
+    }
+    w->x = pd.x + x;
+    w->y = pd.y + y - th;
+    rect_t d = display_rect(display_for(rect_make(w->x, w->y, w->w, w->h)));
+    if (!(w->flags & WIN_NO_TITLE)) w->y = MAX(w->y, d.y + MENUBAR_H);   /* a barra de título não vai para baixo da de menus */
+    w->zoomed = false;
+    w->needs_paint = true;
+    wm_damage(win_bounds(w));
+    if (w->tab_group) {                            /* abas dividem um quadro: as outras vão junto, como no Cocoa */
+        window_t *m[16];
+        int n = tab_members(w, m, 16);
+        for (int k = 0; k < n; k++) if (m[k] != w) { tab_frame_from(m[k], w); surface_resize(m[k]->surf, m[k]->w, m[k]->h); m[k]->needs_paint = true; }
+    }
+}
+
+rect_t wm_get_content_frame(window_t *w) {
+    rect_t pd = display_rect(0), c = wm_content_rect(w);
+    return rect_make(c.x - pd.x, c.y - pd.y, c.w, c.h);
+}
+
+void wm_set_content_limits(window_t *w, int min_cw, int min_ch, int max_cw, int max_ch) {
+    if (!w) return;
+    int th = title_h(w);
+    w->min_w = MAX(min_cw, 160);
+    w->min_h = MAX(min_ch, 90) + th;
+    w->max_w = max_cw > 0 ? MAX(max_cw, w->min_w) : 0;
+    w->max_h = max_ch > 0 ? MAX(max_ch + th, w->min_h) : 0;
+}
+
+void wm_set_level(window_t *w, int level) {
+    if (!w || index_of(w) < 0) return;
+    w->level = level;
+    if (restack()) wm_damage_all();
+}
+
 void wm_set_hidden(window_t *w, bool hidden) {
     if (!w || w->tab_group || w->closing) return;
     if (w->visible == !hidden) { if (!hidden) wm_focus(w); return; }
@@ -215,7 +273,9 @@ void wm_focus(window_t *w) {
         if (old) wm_damage(win_bounds(old));
         wm_damage(menubar_rect()); /* nome do app no menu */
     }
+    key_win = w;
     raise_owned(w, 0);
+    if (restack()) wm_damage_all();
 }
 
 int wm_count_for(app_t *a) {
@@ -280,6 +340,7 @@ window_t *wm_create(app_t *app, const char *title, int x, int y, int w, int h, u
         tab_repaint_group(win);
         tab_pending_src = NULL;
     }
+    if (restack()) wm_damage_all();                                  /* nova janela normal fica abaixo das flutuantes */
     if (space_win && !win->fullscreen) space_switch(NULL, -1);       /* janela nova aparece na mesa */
     window_t *old = nwins > 1 ? wins[nwins - 2] : NULL;
     if (old) old->needs_paint = true;
@@ -296,6 +357,7 @@ static void destroy(window_t *w) {
     nwins--;
     for (int k = 0; k < nwins; k++) if (wins[k]->owner == w) wins[k]->owner = NULL;   /* filhas perdem a dona */
     if (drag_win == w) { drag_win = NULL; drag_mode = DRAG_NONE; }
+    if (key_win == w) key_win = NULL;
     if (w->app) w->app->windows--;
     for (int k = 0; k < nspaces; k++) if (spaces[k] == w) { memmove(spaces + k, spaces + k + 1, (nspaces - k - 1) * sizeof(window_t *)); nspaces--; k--; }
     if (space_win == w) { space_win = NULL; wm_damage_all(); }
@@ -377,14 +439,14 @@ void wm_tile(window_t *w, int zone) {
         int cw = w->zoomed ? w->restore.w : w->w, ch = w->zoomed ? w->restore.h : w->h;
         cw = MIN(cw, a.w - 12); ch = MIN(ch, a.h - 10);
         r = rect_make(a.x + (a.w - cw) / 2, a.y + (a.h - ch) / 2, cw, ch);
-        w->x = r.x; w->y = r.y; w->w = MAX(w->min_w, r.w); w->h = MAX(w->min_h, r.h);
+        w->x = r.x; w->y = r.y; w->w = lim_w(w, r.w); w->h = lim_h(w, r.h);
         w->zoomed = false;
         surface_resize(w->surf, w->w, w->h);
         w->needs_paint = true;
         wm_damage(win_bounds(w));
         return;
     }
-    w->x = r.x; w->y = r.y; w->w = MAX(w->min_w, r.w); w->h = MAX(w->min_h, r.h);
+    w->x = r.x; w->y = r.y; w->w = lim_w(w, r.w); w->h = lim_h(w, r.h);
     w->zoomed = true; /* "zoom" de novo (ou arrastar) devolve o tamanho anterior */
     surface_resize(w->surf, w->w, w->h);
     w->needs_paint = true;
@@ -1552,11 +1614,11 @@ bool wm_handle_event(input_event_t *e) {
                 wm_damage(win_bounds(w));
                 rect_t s0 = drag_start;
                 int ddx = mx - drag_dx, ddy = my - drag_dy;
-                if (drag_edges & 1) w->w = MAX(w->min_w, s0.w + ddx);
-                if (drag_edges & 2) w->h = MAX(w->min_h, s0.h + ddy);
-                if (drag_edges & 4) { int nw = MAX(w->min_w, s0.w - ddx); w->x = s0.x + s0.w - nw; w->w = nw; }
+                if (drag_edges & 1) w->w = lim_w(w, s0.w + ddx);
+                if (drag_edges & 2) w->h = lim_h(w, s0.h + ddy);
+                if (drag_edges & 4) { int nw = lim_w(w, s0.w - ddx); w->x = s0.x + s0.w - nw; w->w = nw; }
                 if (drag_edges & 8) {
-                    int nh = MAX(w->min_h, s0.h - ddy);
+                    int nh = lim_h(w, s0.h - ddy);
                     int ny = MAX(MENUBAR_H, s0.y + s0.h - nh);
                     w->h = s0.y + s0.h - ny; w->y = ny;
                 }

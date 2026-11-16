@@ -988,8 +988,27 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
             gwin_t *o = c ? win_get(p, c) : NULL;
             if (c && !o) return -MOS_EBADF;
             if (g->w) g->w->owner = o && o->w && o->w != g->w ? o->w : NULL;
+            wm_restack();                          /* a filha herda o nível da dona */
             return 0;
         }
+        if (b == GUI_FOCUS_FRAME) {
+            gui_frame_t f;
+            if (!uvm_copy_in(p, &f, c, sizeof f)) return -MOS_EFAULT;
+            if (g->w) wm_set_content_frame(g->w, f.x, f.y, f.w, f.h);
+            return 0;
+        }
+        if (b == GUI_FOCUS_GETFRAME) {
+            gui_frame_t f = {0, 0, 0, 0};
+            if (g->w) { rect_t r = wm_get_content_frame(g->w); f.x = r.x; f.y = r.y; f.w = r.w; f.h = r.h; }
+            return uvm_copy_out(p, c, &f, sizeof f) ? 0 : -MOS_EFAULT;
+        }
+        if (b == GUI_FOCUS_LIMITS) {
+            gui_limits_t l;
+            if (!uvm_copy_in(p, &l, c, sizeof l)) return -MOS_EFAULT;
+            if (g->w) wm_set_content_limits(g->w, l.min_w, l.min_h, l.max_w, l.max_h);
+            return 0;
+        }
+        if (b == GUI_FOCUS_LEVEL) { if (g->w) wm_set_level(g->w, (int)(i64)c); return 0; }
         if (g->w) wm_focus(g->w);
         return 0;
     }

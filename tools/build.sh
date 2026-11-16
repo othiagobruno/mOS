@@ -31,6 +31,8 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/futexq_ho
 gcc -O2 -Wall -Wextra -I kernel/include tools/vmpolicy_host.c -o /tmp/vmpolicy_host
 /tmp/vmpolicy_host
 /tmp/futexq_host
+gcc -O2 -Wall -Wextra -fno-builtin -DMOS_HOST_TEST -I kernel/include -I kernel/ui tools/wmlevel_host.c -o /tmp/wmlevel_host
+/tmp/wmlevel_host
 /tmp/vmcomp_host
 # o que o ChatGPT desktop pedia (Spotlight, chave P-256 em PEM, inversa de CATransform3D)
 gcc -std=c11 -Wall -Wextra -I userland/libsystem -DCK_PEM_HOST userland/libsystem/mdq_core.c userland/libsystem/ck_pem.c \
