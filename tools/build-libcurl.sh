@@ -10,10 +10,12 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ZIG=${MOS_ZIG:-zig}
-TGT=x86_64-macos.11.0
-OUT=$ROOT/build/curl-x86_64
+ARCH=${MOS_ARCH:-x86_64}   # x86_64 ou arm64 (processo arm64 do tradutor; o build.sh junta as duas com o lipo-mos.py)
+case "$ARCH" in x86_64) ZT=x86_64 ;; arm64) ZT=aarch64 ;; *) echo "MOS_ARCH=$ARCH: use x86_64 ou arm64" >&2; exit 1 ;; esac
+TGT=$ZT-macos.11.0
+OUT=$ROOT/build/curl-$ARCH
 DY=$OUT/libcurl.4.dylib
-JOBS=$(nproc 2>/dev/null || echo 4)
+JOBS=${MOS_JOBS:-2}   # docs: regras de RAM do time (no máximo 2 jobs)
 
 VER=8.23.0
 SHA=e3de77cfa6367083c776a26647fc9f633b538c06c3baa73d931a252ac8f72b49
@@ -50,15 +52,15 @@ if [ ! -f "$MSRC/include/mbedtls/ssl.h" ]; then
     [ -f "$MSRC/include/mbedtls/ssl.h" ] || { echo "mbedtls: extrair o fonte falhou" >&2; exit 1; }
 fi
 
-MOS_ZIG="$ZIG" sh "$ROOT/tools/build-libz.sh"
-ZLIB=$ROOT/build/zlib-x86_64/libz.1.dylib
+MOS_ZIG="$ZIG" MOS_ARCH="$ARCH" sh "$ROOT/tools/build-libz.sh"
+ZLIB=$ROOT/build/zlib-$ARCH/libz.1.dylib
 ZSRC=$ROOT/.tools/zlib-dl/zlib-1.3.2
 if [ ! -f "$ZLIB" ] || [ ! -f "$ZSRC/zlib.h" ]; then
-    echo "libcurl: falta a libz (build/zlib-x86_64, .tools/zlib-dl)" >&2
+    echo "libcurl: falta a libz (build/zlib-$ARCH, .tools/zlib-dl)" >&2
     exit 1
 fi
 
-if [ -f "$DY" ] && [ "$DY" -nt "$0" ] && [ "$DY" -nt "$ROOT/tools/libcurl/curl_config.h" ] && [ "$DY" -nt "$ZLIB" ]; then
+if [ -s "$DY" ] && [ "$DY" -nt "$0" ] && [ "$DY" -nt "$ROOT/tools/libcurl/curl_config.h" ] && [ "$DY" -nt "$ZLIB" ]; then
     echo "OK: $DY (cache)"
     exit 0
 fi

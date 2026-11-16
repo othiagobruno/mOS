@@ -16,7 +16,10 @@ SHA=1d3049dd0f830a025a53105fc79fd2ab9431aea99e137809d064d8ee8356b032
 DL=$ROOT/.tools/sqlite-dl
 ZIP=$DL/sqlite-amalgamation-$VER.zip
 SRC=$DL/sqlite-amalgamation-$VER
+ARCH=${MOS_ARCH:-x86_64}   # x86_64 ou arm64 (processo arm64 do tradutor; o build.sh junta as duas com o lipo-mos.py)
+case "$ARCH" in x86_64) ZT=x86_64 ;; arm64) ZT=aarch64 ;; *) echo "MOS_ARCH=$ARCH: use x86_64 ou arm64" >&2; exit 1 ;; esac
 OUT=$ROOT/build/sqlite
+[ "$ARCH" = x86_64 ] || OUT=$ROOT/build/sqlite-$ARCH
 DY=$OUT/libsqlite3.dylib
 mkdir -p "$DL" "$OUT"
 . "$ROOT/tools/baixar.sh"
@@ -34,11 +37,11 @@ if [ ! -f "$SRC/sqlite3.c" ]; then
     echo "sqlite: falta $SRC/sqlite3.c depois de extrair" >&2
     exit 1
 fi
-if [ -f "$DY" ] && [ "$DY" -nt "$SRC/sqlite3.c" ] && [ "$DY" -nt "$0" ]; then
+if [ -s "$DY" ] && [ "$DY" -nt "$SRC/sqlite3.c" ] && [ "$DY" -nt "$0" ]; then
     echo "OK: $DY (cache)"
     exit 0
 fi
-"$ZIG" cc -target x86_64-macos.11.0 -O2 -g0 -fPIC -shared \
+"$ZIG" cc -target $ZT-macos.11.0 -O2 -g0 -fPIC -shared \
     -DSQLITE_THREADSAFE=2 -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_FTS3_PARENTHESIS -DSQLITE_ENABLE_FTS4 \
     -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_DBSTAT_VTAB \
     -DSQLITE_ENABLE_PREUPDATE_HOOK -DSQLITE_ENABLE_SESSION -DSQLITE_ENABLE_UNLOCK_NOTIFY -DSQLITE_ENABLE_SNAPSHOT \

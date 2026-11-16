@@ -13,6 +13,8 @@ VER=2.13.8
 SHA=277294cb33119ab71b2bc81f2f445e9bc9435b893ad15bb2cd2b0e859a0ee84a
 DL="$ROOT/.tools/dl/libxml2-$VER.tar.xz"
 SRC="$ROOT/.tools/libxml2-$VER"
+ARCH=${MOS_ARCH:-x86_64}   # x86_64 ou arm64 (processo arm64 do tradutor; o build.sh junta as duas com o lipo-mos.py)
+case "$ARCH" in x86_64) ZT=x86_64 ;; arm64) ZT=aarch64 ;; *) echo "MOS_ARCH=$ARCH: use x86_64 ou arm64" >&2; exit 1 ;; esac
 OUT=${1:-$ROOT/build/libxml2/libxml2.2.dylib}
 mkdir -p "$ROOT/.tools/dl" "$(dirname "$OUT")"
 # curl, wget ou python3: a máquina de build pode não ter curl (sem ele a imagem saía sem libxml2)
@@ -40,11 +42,11 @@ xinclude.c xpath.c xlink.c xpointer.c"
 OBJ=$(mktemp -d)
 objs=()
 for f in $FILES; do
-    "$ZIG" cc -target x86_64-macos -O2 -fPIC -DHAVE_CONFIG_H -D_REENTRANT -I"$SRC" -I"$SRC/include" \
+    "$ZIG" cc -target $ZT-macos -O2 -fPIC -DHAVE_CONFIG_H -D_REENTRANT -I"$SRC" -I"$SRC/include" \
         -w -c "$SRC/$f" -o "$OBJ/${f%.c}.o"
     objs+=("$OBJ/${f%.c}.o")
 done
-"$ZIG" cc -target x86_64-macos -shared -o "$OUT" -Wl,-install_name,/usr/lib/libxml2.2.dylib \
+"$ZIG" cc -target $ZT-macos -shared -o "$OUT" -Wl,-install_name,/usr/lib/libxml2.2.dylib \
     -Wl,-undefined,dynamic_lookup "${objs[@]}"
 rm -rf "$OBJ"
 echo "libxml2 $VER: $OUT ($(wc -c < "$OUT") bytes)"
