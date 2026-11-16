@@ -527,7 +527,9 @@ DONOS = {
     "otavio": "Otavio (OpenGL, Metal, Core Animation)", "isabela": "Isabela (mídia)", "fabio": "Fabio (WebKit/Electron)",
     "natalia": "Natalia (serviços e segurança)", "patricia": "Patricia (rede para apps)", "renata": "Renata (BSD/Mach/XPC)",
     "vinicius": "Vinicius (arquivos e volumes)", "larissa": "Larissa (plataforma: IOKit, USB, áudio HW)",
-    "sergio": "Sergio (runtime arm64)", "igor": "Igor (sem dono claro: triagem)",
+    "sergio": "Sergio (runtime arm64)", "thais": "Thais (GPU e telas)", "camila": "Camila (desktop e window server)",
+    "igor": "Igor (sem dono claro: triagem)",
+    "plugin": "Plugins (flat lookup: o símbolo vem do app que carrega o plugin, não do mOS)",
 }
 FW_DONO = {
     "Foundation": "eduardo", "CoreFoundation": "eduardo", "CoreData": "eduardo", "libswiftFoundation.dylib": "eduardo",
@@ -558,7 +560,14 @@ FW_DONO = {
     "libswiftDarwin.dylib": "fernanda", "libswiftos.dylib": "fernanda", "libswiftObjectiveC.dylib": "fernanda",
     "libobjc.A.dylib": "fernanda",
     "libc++.1.dylib": "leonardo", "libc++abi.dylib": "leonardo", "libunwind.dylib": "leonardo",
+    "OpenCL": "otavio", "AddressBook": "natalia", "OpenDirectory": "natalia", "DeviceCheck": "natalia",
+    "SystemExtensions": "natalia", "OpenAL": "isabela", "CoreMediaIO": "isabela", "PIP": "isabela", "AVFAudio": "isabela",
+    "SafariServices": "fabio", "ForceFeedback": "larissa", "GameController": "larissa", "CoreDisplay": "thais",
+    "DisplayServices": "thais", "SkyLight": "camila", "OSD": "camila", "CoreGraphicsServices": "camila",
 }
+# imports flat/self: o símbolo é resolvido no processo que carrega a imagem (plugin). Só os do sistema têm dono.
+PREFIXO_FLAT = (("eduardo", ("_CF", "_NS")), ("mariana", ("_CG", "_CT")), ("leonardo", ("__ZNSt3__", "___cxa_")),
+                ("fernanda", ("_swift_", "_dispatch_", "_objc_")))
 PREFIXO_LIBSYSTEM = (
     ("renata", ("_mach_", "_task_", "_thread_", "_host_", "_vm_", "_kevent", "_proc_", "_sysctl", "_xpc_", "_launch_",
                 "_bootstrap_", "_sandbox_", "_ptrace", "_posix_spawn", "_audit", "_csops", "_notify_", "_os_log",
@@ -583,6 +592,11 @@ def dono_de(lib: str, sym: str, origem: str) -> str:
     fw = framework_de(lib)
     if fw.endswith(".framework"):
         fw = fw[: -len(".framework")]          # o relatório do machocheck grava "AppKit.framework"
+    if "flat/self" in lib or fw in ("(flat/self)", "self)"):
+        for dono, pre in PREFIXO_FLAT:
+            if sym.startswith(pre):
+                return dono
+        return "plugin"
     if fw in FW_DONO:
         return FW_DONO[fw]
     if fw.startswith("libswift"):
@@ -780,6 +794,9 @@ def cmd_hosttest(args: argparse.Namespace) -> None:
         ("/System/Library/Frameworks/Metal.framework/Versions/A/Metal", "_MTLCreateSystemDefaultDevice", "sistema", "otavio"),
         ("/System/Library/PrivateFrameworks/Algo.framework/Algo", "_Algo", "sistema", "igor"),
         ("AppKit.framework", "_NSBeep", "sistema", "beatriz"),
+        ("OpenCL.framework", "_clGetPlatformIDs", "sistema", "otavio"),
+        ("(flat/self)", "_PyBool_FromLong", "sistema", "plugin"),
+        ("(flat/self)", "_CFBundleGetBundleWithIdentifier", "sistema", "eduardo"),
         ("libncurses.5.4.dylib", "_initscr", "sistema", "leonardo"),
     ):
         if dono_de(lib_, sym_, orig_) != esperado:

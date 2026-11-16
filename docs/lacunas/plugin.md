@@ -1,0 +1,94 @@
+# Lacunas de Plugins (flat lookup: o símbolo vem do app que carrega o plugin, não do mOS)
+
+Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Plugins (flat lookup: o símbolo vem do app que carrega o plugin, não do mOS) (`TIME.md`).
+Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
+
+**85** símbolos distintos.
+
+| biblioteca | símbolo | apps | exemplos |
+|---|---|---:|---|
+| self) | `_PyArg_UnpackTuple` | 1 | obs |
+| self) | `_PyBool_FromLong` | 1 | obs |
+| self) | `_PyBool_Type` | 1 | obs |
+| self) | `_PyBytes_AsStringAndSize` | 1 | obs |
+| self) | `_PyCFunction_GetFlags` | 1 | obs |
+| self) | `_PyCFunction_GetFunction` | 1 | obs |
+| self) | `_PyCFunction_GetSelf` | 1 | obs |
+| self) | `_PyCapsule_GetPointer` | 1 | obs |
+| self) | `_PyCapsule_Import` | 1 | obs |
+| self) | `_PyCapsule_New` | 1 | obs |
+| self) | `_PyDict_GetItem` | 1 | obs |
+| self) | `_PyDict_New` | 1 | obs |
+| self) | `_PyDict_SetItem` | 1 | obs |
+| self) | `_PyDict_SetItemString` | 1 | obs |
+| self) | `_PyErr_Clear` | 1 | obs |
+| self) | `_PyErr_Fetch` | 1 | obs |
+| self) | `_PyErr_Format` | 1 | obs |
+| self) | `_PyErr_Occurred` | 1 | obs |
+| self) | `_PyErr_Restore` | 1 | obs |
+| self) | `_PyErr_SetString` | 1 | obs |
+| self) | `_PyErr_WriteUnraisable` | 1 | obs |
+| self) | `_PyExc_AttributeError` | 1 | obs |
+| self) | `_PyExc_IOError` | 1 | obs |
+| self) | `_PyExc_IndexError` | 1 | obs |
+| self) | `_PyExc_OverflowError` | 1 | obs |
+| self) | `_PyExc_RuntimeError` | 1 | obs |
+| self) | `_PyExc_SystemError` | 1 | obs |
+| self) | `_PyExc_TypeError` | 1 | obs |
+| self) | `_PyExc_ValueError` | 1 | obs |
+| self) | `_PyExc_ZeroDivisionError` | 1 | obs |
+| self) | `_PyFloat_AsDouble` | 1 | obs |
+| self) | `_PyFloat_FromDouble` | 1 | obs |
+| self) | `_PyFloat_Type` | 1 | obs |
+| self) | `_PyGILState_Ensure` | 1 | obs |
+| self) | `_PyGILState_Release` | 1 | obs |
+| self) | `_PyImport_AddModule` | 1 | obs |
+| self) | `_PyLong_AsDouble` | 1 | obs |
+| self) | `_PyLong_AsLong` | 1 | obs |
+| self) | `_PyLong_AsLongLong` | 1 | obs |
+| self) | `_PyLong_AsUnsignedLong` | 1 | obs |
+| self) | `_PyLong_AsUnsignedLongLong` | 1 | obs |
+| self) | `_PyLong_FromLong` | 1 | obs |
+| self) | `_PyLong_FromSize_t` | 1 | obs |
+| self) | `_PyLong_FromUnsignedLong` | 1 | obs |
+| self) | `_PyLong_FromUnsignedLongLong` | 1 | obs |
+| self) | `_PyLong_FromVoidPtr` | 1 | obs |
+| self) | `_PyModule_AddObject` | 1 | obs |
+| self) | `_PyModule_Create2` | 1 | obs |
+| self) | `_PyModule_GetDict` | 1 | obs |
+| self) | `_PyObject_Call` | 1 | obs |
+| self) | `_PyObject_CallFunctionObjArgs` | 1 | obs |
+| self) | `_PyObject_Free` | 1 | obs |
+| self) | `_PyObject_GenericGetAttr` | 1 | obs |
+| self) | `_PyObject_GetAttr` | 1 | obs |
+| self) | `_PyObject_GetAttrString` | 1 | obs |
+| self) | `_PyObject_IsInstance` | 1 | obs |
+| self) | `_PyObject_IsTrue` | 1 | obs |
+| self) | `_PyObject_SetAttr` | 1 | obs |
+| self) | `_PyTuple_GetItem` | 1 | obs |
+| self) | `_PyTuple_GetSlice` | 1 | obs |
+| self) | `_PyTuple_New` | 1 | obs |
+| self) | `_PyTuple_SetItem` | 1 | obs |
+| self) | `_PyTuple_Size` | 1 | obs |
+| self) | `_PyType_FromSpec` | 1 | obs |
+| self) | `_PyType_GetFlags` | 1 | obs |
+| self) | `_PyType_GetSlot` | 1 | obs |
+| self) | `_PyType_IsSubtype` | 1 | obs |
+| self) | `_PyType_Modified` | 1 | obs |
+| self) | `_PyType_Type` | 1 | obs |
+| self) | `_PyUnicode_AsUTF8String` | 1 | obs |
+| self) | `_PyUnicode_CompareWithASCIIString` | 1 | obs |
+| self) | `_PyUnicode_Concat` | 1 | obs |
+| self) | `_PyUnicode_DecodeUTF8` | 1 | obs |
+| self) | `_PyUnicode_FromFormat` | 1 | obs |
+| self) | `_PyUnicode_FromString` | 1 | obs |
+| self) | `_PyUnicode_InternFromString` | 1 | obs |
+| self) | `_Py_DecRef` | 1 | obs |
+| self) | `__FE_DFL_ENV` | 1 | libreoffice |
+| self) | `__PyObject_New` | 1 | obs |
+| self) | `__Py_Dealloc` | 1 | obs |
+| self) | `__Py_NoneStruct` | 1 | obs |
+| self) | `__Py_NotImplementedStruct` | 1 | obs |
+| self) | `_fegetenv` | 1 | libreoffice |
+| self) | `_fesetenv` | 1 | libreoffice |
+| self) | `_pthread_setcanceltype` | 1 | libreoffice |
