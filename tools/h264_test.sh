@@ -10,6 +10,9 @@ I="-I$O/api/wels -I$O/common/inc -I$O/decoder/core/inc -I$O/decoder/plus/inc"
 ls "$O"/common/src/*.cpp "$O"/decoder/core/src/*.cpp "$O"/decoder/plus/src/*.cpp | \
     xargs -P2 -I{} sh -c 'g++ -O2 -w '"$I"' -c {} -o '"$T"'/o/$(basename {} .cpp).o' || exit 1
 g++ -O1 -w $I "$R/tools/h264_test_dec.cpp" "$T"/o/*.o -lpthread -o "$T/dec" || exit 1
+# a casca C cx_h264_* (a mesma que vai no libSystem) e o teste dela
+g++ -O1 -w -fno-exceptions -fno-rtti $I -I"$R/userland/host-audio" -c "$R/userland/host-audio/h264_glue.cpp" -o "$T/glue.o" || exit 1
+gcc -O1 -w -I"$R/userland/host-audio" -c "$R/tools/h264_glue_test.c" -o "$T/gt.o" && g++ "$T/gt.o" "$T/glue.o" "$T"/o/*.o -lpthread -o "$T/gt" || exit 1
 F="-loglevel error -y"
 A="-f lavfi -i testsrc2=size=352x288:rate=25:duration=3"
 B="-f lavfi -i mandelbrot=size=320x240:rate=25,trim=duration=3"
@@ -34,8 +37,10 @@ fa = sorted(hashlib.md5(a[i:i + fs]).digest() for i in range(0, len(a), fs))
 fb = sorted(hashlib.md5(b[i:i + fs]).digest() for i in range(0, len(b), fs))
 sys.exit(0 if fa == fb and len(a) == len(b) else 1)
 P
-    echo "$nm: exibição $ex, ordem de decodificação $dord"
-    [ "$ex" = bit-exato ] && [ "$dord" = ok ] && ok=$((ok+1))
+    local gl=FALHA
+    "$T/gt" "$T/$nm.264" "$T/$nm.ref" > "$T/$nm.gl" && gl=ok
+    echo "$nm: exibição $ex, ordem de decodificação $dord, casca cx_h264 $gl $(grep -v '^glue ok' "$T/$nm.gl" | head -1)"
+    [ "$ex" = bit-exato ] && [ "$dord" = ok ] && [ "$gl" = ok ] && ok=$((ok+1))
 }
 t baseline "$A" -profile:v baseline
 t main "$A" -profile:v main

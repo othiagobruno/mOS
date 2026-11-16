@@ -1,6 +1,24 @@
-diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/deblocking.cpp openh264-2.6.0/codec/decoder/core/src/deblocking.cpp
---- /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/deblocking.cpp	2025-02-10 04:27:56.000000000 -0300
-+++ openh264-2.6.0/codec/decoder/core/src/deblocking.cpp	2026-11-16 11:50:15.332485641 -0300
+Somente em codec/api: meson.build
+Somente em codec/api/wels: meson.build
+Somente em codec: build
+Somente em codec/common: arm
+Somente em codec/common: arm64
+Somente em codec/common: generate_version.sh
+Somente em codec/common/inc: .gitignore
+Somente em codec/common/inc: version_gen.h.template
+Somente em codec/common: loongarch
+Somente em codec/common: meson.build
+Somente em codec/common: mips
+Somente em codec/common: targets.mk
+Somente em codec/common: x86
+Somente em codec: console
+Somente em codec/decoder/core: arm
+Somente em codec/decoder/core: arm64
+Somente em codec/decoder/core: loongarch
+Somente em codec/decoder/core: mips
+diff -ru codec/decoder/core/src/deblocking.cpp codec/decoder/core/src/deblocking.cpp
+--- codec/decoder/core/src/deblocking.cpp	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/core/src/deblocking.cpp	2026-11-16 11:59:07.118770597 -0300
 @@ -1181,7 +1181,10 @@
        * (uint32_t*)nBS[1][0] = 0;
      }
@@ -13,9 +31,9 @@ diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/deblocking.cpp o
        * (uint32_t*)nBS[0][1] = * (uint32_t*)nBS[0][2] = * (uint32_t*)nBS[0][3] =
                                   * (uint32_t*)nBS[1][1] = * (uint32_t*)nBS[1][2] = * (uint32_t*)nBS[1][3] = 0;
      } else {
-diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/decoder.cpp openh264-2.6.0/codec/decoder/core/src/decoder.cpp
---- /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/decoder.cpp	2025-02-10 04:27:56.000000000 -0300
-+++ openh264-2.6.0/codec/decoder/core/src/decoder.cpp	2026-11-16 11:54:02.459596746 -0300
+diff -ru codec/decoder/core/src/decoder.cpp codec/decoder/core/src/decoder.cpp
+--- codec/decoder/core/src/decoder.cpp	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/core/src/decoder.cpp	2026-11-16 11:59:07.119252092 -0300
 @@ -439,7 +439,27 @@
    if ((pCtx == NULL) || (pCtx->pSps == NULL)) {
      iNumRefFrames = MAX_REF_PIC_COUNT + 2;
@@ -45,9 +63,9 @@ diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/decoder.cpp open
      int32_t  iThreadCount = GetThreadCount (pCtx);
      if (iThreadCount > 1) {
        //due to thread and reordering buffering, it needs more dpb space
-diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/mv_pred.cpp openh264-2.6.0/codec/decoder/core/src/mv_pred.cpp
---- /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/mv_pred.cpp	2025-02-10 04:27:56.000000000 -0300
-+++ openh264-2.6.0/codec/decoder/core/src/mv_pred.cpp	2026-11-16 11:54:54.350371562 -0300
+diff -ru codec/decoder/core/src/mv_pred.cpp codec/decoder/core/src/mv_pred.cpp
+--- codec/decoder/core/src/mv_pred.cpp	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/core/src/mv_pred.cpp	2026-11-16 11:59:07.122252114 -0300
 @@ -346,6 +346,9 @@
      mbType |= MB_TYPE_8x8 | MB_TYPE_L0 | MB_TYPE_L1;
    }
@@ -96,9 +114,9 @@ diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/mv_pred.cpp open
          SetRectBlock (&pCurDqLayer->iColocRefIndex[1][0], 4, 4, 4, (uint8_t)REF_NOT_IN_LIST, 1);
      }
    }
-diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/rec_mb.cpp openh264-2.6.0/codec/decoder/core/src/rec_mb.cpp
---- /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/rec_mb.cpp	2025-02-10 04:27:56.000000000 -0300
-+++ openh264-2.6.0/codec/decoder/core/src/rec_mb.cpp	2026-11-16 11:54:54.348428260 -0300
+diff -ru codec/decoder/core/src/rec_mb.cpp codec/decoder/core/src/rec_mb.cpp
+--- codec/decoder/core/src/rec_mb.cpp	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/core/src/rec_mb.cpp	2026-11-16 11:59:07.123252121 -0300
 @@ -704,7 +704,6 @@
    int8_t iRefIndex = 0;
  
@@ -267,9 +285,11 @@ diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/core/src/rec_mb.cpp openh
              pTempMCRefMem.pDstU = pDstU2 + iUVLineStride;
              pTempMCRefMem.pDstV = pDstV2 + iUVLineStride;;
  
-diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/plus/inc/welsDecoderExt.h openh264-2.6.0/codec/decoder/plus/inc/welsDecoderExt.h
---- /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/plus/inc/welsDecoderExt.h	2025-02-10 04:27:56.000000000 -0300
-+++ openh264-2.6.0/codec/decoder/plus/inc/welsDecoderExt.h	2026-11-16 11:57:13.069355987 -0300
+Somente em codec/decoder/core: x86
+Somente em codec/decoder: meson.build
+diff -ru codec/decoder/plus/inc/welsDecoderExt.h codec/decoder/plus/inc/welsDecoderExt.h
+--- codec/decoder/plus/inc/welsDecoderExt.h	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/plus/inc/welsDecoderExt.h	2026-11-16 11:59:07.124825187 -0300
 @@ -118,6 +118,11 @@
    welsCodecTrace*         m_pWelsTrace;
    uint32_t                m_uiDecodeTimeStamp;
@@ -282,9 +302,10 @@ diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/plus/inc/welsDecoderExt.h
    int32_t                 m_iCpuCount;
    int32_t                 m_iThreadCount;
    int32_t                 m_iCtxCount;
-diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/plus/src/welsDecoderExt.cpp openh264-2.6.0/codec/decoder/plus/src/welsDecoderExt.cpp
---- /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/plus/src/welsDecoderExt.cpp	2025-02-10 04:27:56.000000000 -0300
-+++ openh264-2.6.0/codec/decoder/plus/src/welsDecoderExt.cpp	2026-11-16 11:57:13.069697866 -0300
+Somente em codec/decoder/plus/src: wels_dec_export.def
+diff -ru codec/decoder/plus/src/welsDecoderExt.cpp codec/decoder/plus/src/welsDecoderExt.cpp
+--- codec/decoder/plus/src/welsDecoderExt.cpp	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/plus/src/welsDecoderExt.cpp	2026-11-16 12:25:52.185595284 -0300
 @@ -134,6 +134,7 @@
    : m_pWelsTrace (NULL),
      m_uiDecodeTimeStamp (0),
@@ -293,7 +314,24 @@ diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/plus/src/welsDecoderExt.c
      m_iCpuCount (1),
      m_iThreadCount (0),
      m_iCtxCount (1),
-@@ -1139,6 +1140,7 @@
+@@ -934,11 +935,14 @@
+     }
+   }
+   if (bEndOfStreamFlag && m_sReoderingStatus.iNumOfPicts > 0) {
++    /* mOS: sem threads o pool é o do contexto (m_pPicBuff só existe com threads); com NULL o refcount do quadro
++     * entregue não voltava e, depois do flush, o pool esgotava (PrefetchPic ERROR) */
++    PWelsDecoderContext pCtx = m_iThreadCount <= 1 ? m_pDecThrCtx[0].pCtx : NULL;
+     if (!m_sReoderingStatus.bHasBSlice) {
+-      ReleaseBufferedReadyPictureNoReorder (NULL, ppDst, pDstInfo);
++      ReleaseBufferedReadyPictureNoReorder (pCtx, ppDst, pDstInfo);
+     }
+     else {
+-      ReleaseBufferedReadyPictureReorder (NULL, ppDst, pDstInfo, true);
++      ReleaseBufferedReadyPictureReorder (pCtx, ppDst, pDstInfo, true);
+     }
+   }
+   return dsErrorFree;
+@@ -1139,6 +1143,7 @@
  DECODING_STATE CWelsDecoder::ReorderPicturesInDisplay(PWelsDecoderContext pDecContext, unsigned char** ppDst,
    SBufferInfo* pDstInfo) {
    DECODING_STATE iRet = dsErrorFree;
@@ -301,3 +339,7 @@ diff -ru /tmp/isa-oh-orig/openh264-2.6.0/codec/decoder/plus/src/welsDecoderExt.c
    if (pDecContext->pSps != NULL) {
      m_bIsBaseline = pDecContext->pSps->uiProfileIdc == 66 || pDecContext->pSps->uiProfileIdc == 83;
      if (!m_bIsBaseline) {
+Somente em codec/decoder: targets.mk
+Somente em codec: encoder
+Somente em codec: meson.build
+Somente em codec: processing
