@@ -262,6 +262,8 @@ static int s_addlp(T *t, int q, int u, int size, int acc, int n, int d);
 static int s_fcvtln(T *t, int narrow, int q, int sz, int n, int d);
 static void mx_clean(T *t);
 static void ixc_if_pe(T *t);
+static int s_frint_vec_x(T *t, int q, int size, int mode, int n, int d, int ixc);
+static int fpv_core(T *t, unsigned x86, int fma, int dbl, int q, int d, int n, int m, int lane);
 static int s_misc(T *t, a64_u32 w) { return s_misc_x(t, w, 0); }
 /* SADDLP / UADDLP / SADALP / UADALP: soma de pares vizinhos alargada (acc: + V[d]) */
 static int s_addlp(T *t, int q, int u, int size, int acc, int n, int d) {
@@ -337,7 +339,9 @@ static int s_misc_x(T *t, a64_u32 w, int sc) {
     if (op == 0x1D && !(size & 2)) return s_scvtf(t, q, u, size, n, d, 0);
     {
         int key = (u << 6) | ((size >> 1) << 5) | op;
-        if (key == 0x58 || key == 0x59) return 0; /* FRINTA / FRINTX vetoriais → interpretador */
+        if (key == 0x58) return 0;                 /* FRINTA vetorial → interpretador */
+        if (key == 0x59) return s_frint_vec_x(t, q, size, -1, n, d, 1);   /* FRINTX */
+        if (key == 0x7F && !(size == 3 && !q)) return fpv_core(t, 0x51, 0, size & 1, q, d, n, n, -1);   /* FSQRT */
         if (key == 0x18 || key == 0x19 || key == 0x38 || key == 0x39 || key == 0x79)
             return s_frint_vec(t, q, size, key == 0x79 ? -1 : key == 0x18 ? 0 : key == 0x19 ? 1 : key == 0x38 ? 2 : 3, n, d);
         if (key == 0x2F || key == 0x6F) return s_fabsneg_vec(t, q, size, key == 0x6F, n, d);
@@ -378,6 +382,12 @@ static int s_misc_x(T *t, a64_u32 w, int sc) {
     case 0x12:                                      /* XTN / XTN2, SQXTUN */
         if (u) return s_qxtn(t, q, u, 0x12, size, n, d);
         return s_xtn(t, q, size, n, d);
+    case 0x13:                                      /* SHLL / SHLL2: alarga e desloca pela largura */
+        if (!u || sc || size == 3) return 0;
+        s_widen(t, 0, n, q, size, 0);
+        s_shimm(t, 0, 16 << size, 0, 8 << size);
+        s_st(t, d, 0, 1);
+        return 1;
     case 0x16: case 0x17:                           /* FCVTN FCVTN2 / FCVTL FCVTL2 (size 0x) */
         if (u || sc || (size & 2)) return 0;
         return s_fcvtln(t, op == 0x16, q, size & 1, n, d);
@@ -2888,7 +2898,10 @@ static int s_scvtf(T *t, int q, int u, int size, int n, int d, int scalar) {
 }
 
 /* mode: 0 par, 1 chão, 2 teto, 3 trunca, -1 = FPCR. FRINTN/M/P/Z/I não levantam IXC. */
-static int s_frint_vec(T *t, int q, int size, int mode, int n, int d) {
+static int s_frint_vec_x(T *t, int q, int size, int mode, int n, int d, int ixc);
+static int s_frint_vec(T *t, int q, int size, int mode, int n, int d) { return s_frint_vec_x(t, q, size, mode, n, d, 0); }
+/* ixc: FRINTX (o PE do round vira IXC) */
+static int s_frint_vec_x(T *t, int q, int size, int mode, int n, int d, int ixc) {
     if (!jit_g.sse41) return 0;
     int dbl = size & 1;
     if (dbl && !q) return 0;
@@ -2904,6 +2917,7 @@ static int s_frint_vec(T *t, int q, int size, int mode, int n, int d) {
     x_test8_mi(B, XM(XSP, 0), 0x1F);
     slow_if(t, CC_NE);
     s_lanecheck(t, dbl, q);
+    if (ixc) ixc_if_pe(t);
     s_st(t, d, 0, q);
     mx_reset(t);
     return 1;
