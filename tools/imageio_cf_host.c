@@ -274,7 +274,7 @@ int main(void) {
     img_t *r = CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithData(data, 0), 0, 0);
     CHECK(r && (r->px[0] >> 16 & 255) > 200 && (r->px[0] >> 8 & 255) < 60, "alfa achatado sobre o fundo vermelho");
     arr_t *types = CGImageSourceCopyTypeIdentifiers();
-    CHECK(types && types->n == 7, "7 tipos de leitura");
+    CHECK(types && types->n == 8, "8 tipos de leitura");
     printf("imageio_cf_host: %s (%d falhas)\n", fails ? "FALHOU" : "ok", fails);
     return fails != 0;
 }

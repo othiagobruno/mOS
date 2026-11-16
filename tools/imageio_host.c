@@ -1,6 +1,7 @@
 /*
  * Teste de host dos codecs do ImageIO (userland/libsystem/imageio.c, só a camada iio_*).
- *   gcc -O1 -DIIO_HOST -Iuserland/libsystem tools/imageio_host.c userland/libsystem/imageio.c -lz -lm -o /tmp/imageio_host
+ *   gcc -O1 -DIIO_HOST -Iuserland/libsystem tools/imageio_host.c userland/libsystem/imageio.c \
+ *       -Itools/iio_host_inc userland/libsystem/iio_webp.c -lz -lm -o /tmp/imageio_host
  *   python3 tools/imageio_host.py      (gera os arquivos com o PIL, roda o binário e confere)
  * Uso do binário:  decode <arq> <saida.rgba>   → grava "W H N\n" + quadros ARGB crus
  *                  encode <uti> <entrada.rgba> <saida> [qualidade] [compressão TIFF]
