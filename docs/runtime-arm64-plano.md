@@ -43,7 +43,7 @@ Conferido com `.tools/swift-6.4.2/usr/bin/swift-frontend -emit-ir -parse-stdlib`
 só muda o registrador): método não-mutating de struct/enum leva `self` expandido nos **últimos argumentos normais**
 (1 ou 2 palavras, sem `swiftself`); método de classe, `mutating` e witness genérico levam `self` (ou o ponteiro) em
 `swiftself` (r13 / x20); init e `static` não têm `self`. Erro em `swifterror` (r12 / x21), resultado indireto em
-r14?/x8 conforme o LLVM, retorno até 4 palavras em rax..r8 / x0..x3. No libSystem arm64 as entradas novas usam
+rax / x8, retorno até 4 palavras em rax..r8 / x0..x3. No libSystem arm64 as entradas novas usam
 `__attribute__((swiftcall))` + `swift_context`/`swift_error_result` (testado no triplo `arm64-apple-macos11-elf`:
 self em x20, erro em x21, retorno de 4 palavras em x0..x3), não asm à mão.
 
