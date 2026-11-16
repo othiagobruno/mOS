@@ -67,8 +67,10 @@ nos binários públicos. A tabela e o que foi implementado por causa dela estão
 
 - **Diálogos.** `alert`/`confirm`/`prompt` não param o script esperando o app. O delegate recebe a mensagem;
   `confirm` devolve `false` e `prompt` devolve `null` à página, como o WebKit sem `WKUIDelegate`.
-- **O que o motor ainda não suporta.** Iframes, mídia (`<video>`/`<audio>`), WebGL/canvas 3D, SVG e WebP/AVIF,
+- **O que o motor ainda não suporta.** Iframes, mídia (`<video>`/`<audio>`), WebGL/canvas 3D, SVG e AVIF,
   impressão e PDF ficam de fora (o motor do Horizonte não os tem). Os completions de PDF e impressão devolvem erro.
+  WebP decodifica (`kernel/web/webp.c`, idêntico ao libwebp no teste de host), e `<picture>`/`srcset` escolhem o
+  candidato. Plano e estado da frente: [web-electron-plano.md](web-electron-plano.md).
 - **Um mundo de conteúdo.** `WKContentWorld` é aceito, mas tudo roda no mundo da página.
 - **Esquemas próprios.** Servem a navegação principal. Sub-recursos (imagens, folhas e scripts em `app://`) ainda
   não passam pelo `WKURLSchemeHandler`.

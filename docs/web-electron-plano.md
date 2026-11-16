@@ -23,8 +23,13 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 
 1. ✅ **Harness de host do motor** — `tools/web_host.sh` compila `kernel/web` + `kernel/gfx` no Linux e roda
    HTML → layout → pixels e JavaScript (`tools/web_host.c`).
-2. **WebP** (VP8L sem perdas, VP8 com perdas, ALPH, VP8X, animação: 1º quadro) — `kernel/web/webp.c`, ligado ao
-   `image_decode`. Código freestanding, reutilizável pelo ImageIO (Mariana).
+2. ✅ **WebP** — `kernel/web/webp.c` (VP8L, VP8 com filtro de laço, ALPH, VP8X, ANMF: 1º quadro), ligado ao
+   `image_decode`; o `webview.c` e o Horizonte não recusam mais `.webp`. Teste: `tools/web_host_webp.c` compara com o
+   libwebp (Pillow) **bit a bit** em 13 arquivos (sem perdas, paletas de 2/4/16/200 cores, alfa, q5–q90, método 6,
+   animação) e em 1280×853 nos três modos; entradas truncadas e corrompidas não travam. `webp_decode_argb` serve ao
+   ImageIO. Animação: só o 1º quadro (o motor não anima GIF nem WebP).
+2b. ✅ **Imagens responsivas** — `<picture><source type media srcset>`, `srcset` com descritores `x` e `w`,
+   `data-srcset`; `type` sem decodificador (AVIF, JPEG XL) cai para o próximo candidato (`img_pick_src`, `layout.c`).
 3. **SVG**: `<svg>` inline e `.svg` em `<img>`/CSS — parser, caminhos (`path d`, formas básicas, `transform`,
    `viewBox`), preenchimento com regra não-zero/par-ímpar, traço com junções e tampas, gradientes linear/radial,
    opacidade, `<use>`, `<text>` simples; rasterizador com antisserrilhado próprio.
@@ -57,3 +62,4 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 ## Diário
 
 - 15 nov.: harness de host do motor (`tools/web_host.sh`, 5/5).
+- 15 nov.: WebP e imagens responsivas (`tools/web_host.sh`: casos `webp_formatos`, `webp_lixo`, `img_srcset_picture`, `img_webp_na_pagina`).

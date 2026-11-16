@@ -562,13 +562,80 @@ static box_t *gen_block(lay_t *L, node_t *n) {
     return b;
 }
 
+/* formatos que o motor decodifica (type de <source>) */
+static bool img_type_ok(const char *t) {
+    if (!t || !*t) return true;
+    static const char *ok[] = { "image/png", "image/jpeg", "image/jpg", "image/pjpeg", "image/gif", "image/bmp", "image/webp",
+                                "image/x-portable-pixmap", "image/apng" };
+    for (unsigned i = 0; i < ARRAY_LEN(ok); i++) if (!strncasecmp(t, ok[i], strlen(ok[i])) && (!t[strlen(ok[i])] || t[strlen(ok[i])] == ';')) return true;
+    return false;
+}
+
+/* escolhe um candidato de srcset: descritor x mais próximo acima do dpr, ou w mais próximo acima da largura
+ * de exibição (sizes simplificado: a largura da janela), ou o maior se nenhum alcança */
+static bool pick_srcset(const char *ss, int vw, float dpr, char *buf, int cap) {
+    const char *best = NULL; int bestn = 0; float bestv = 0; bool best_over = false;
+    float want_x = dpr, want_w = vw * dpr;
+    const char *p = ss;
+    while (*p) {
+        while (*p == ',' || isspace(*p)) p++;
+        if (!*p) break;
+        const char *u = p;
+        while (*p && !isspace(*p) && !(*p == ',' && (isspace(p[1]) || !p[1]))) p++;
+        int un = (int)(p - u);
+        while (un > 0 && u[un - 1] == ',') un--;
+        float v = 1; bool isw = false;
+        while (isspace(*p)) p++;
+        if (*p && *p != ',') {
+            const char *dsc = p;
+            while (*p && *p != ',') p++;
+            float num = 0, frac = 0.1f; bool dot = false;
+            const char *q = dsc;
+            for (; q < p && ((*q >= '0' && *q <= '9') || *q == '.'); q++) {
+                if (*q == '.') dot = true;
+                else if (!dot) num = num * 10 + (*q - '0');
+                else { num += (*q - '0') * frac; frac /= 10; }
+            }
+            if (q < p && (*q == 'w' || *q == 'W')) { isw = true; v = num; }
+            else if (q < p && (*q == 'x' || *q == 'X')) v = num;
+            else if (q < p && *q == 'h') v = 1;
+        }
+        if (un > 0) {
+            float target = isw ? want_w : want_x;
+            bool over = v >= target;
+            bool better = !best || (over && (!best_over || v < bestv)) || (!over && !best_over && v > bestv);
+            if (better) { best = u; bestn = un; bestv = v; best_over = over; }
+        }
+    }
+    if (!best || bestn >= cap) return false;
+    memcpy(buf, best, bestn);
+    buf[bestn] = 0;
+    return true;
+}
+
+const char *img_pick_src(node_t *n, int vw, float dpr, char *buf, int cap) {
+    if (n->parent && n->parent->tag == T_PICTURE)
+        for (node_t *c = n->parent->first; c && c != n; c = c->next) {
+            if (c->type != N_ELEM || c->tag != T_SOURCE) continue;
+            const char *ss = node_attr(c, "srcset");
+            if (!ss || !*ss || !img_type_ok(node_attr(c, "type")) || !css_media_ok(node_attr(c, "media"), vw)) continue;
+            if (pick_srcset(ss, vw, dpr, buf, cap)) return buf;
+        }
+    const char *ss = node_attr(n, "srcset");
+    if (ss && *ss && pick_srcset(ss, vw, dpr, buf, cap)) return buf;
+    const char *src = node_attr(n, "src");
+    if (!src || !*src) src = node_attr(n, "data-src");
+    if (!src || !*src) { ss = node_attr(n, "data-srcset"); if (ss && *ss && pick_srcset(ss, vw, dpr, buf, cap)) return buf; }
+    return src && *src ? src : NULL;
+}
+
 static box_t *gen_atom(lay_t *L, node_t *n) {
     if (n->tag == T_IMG) {
         box_t *b = nbox(L, B_REPLACED, n, n->st);
         if (!b) return NULL;
-        const char *src = node_attr(n, "src");
-        if (!src || !*src) src = node_attr(n, "data-src");
-        if (!n->img && src && *src) n->img = get_img(L, src);
+        char sb[512];
+        const char *src = img_pick_src(n, L->d->vw > 0 ? L->d->vw : L->d->layout_w, L->d->zoom > 0 ? L->d->zoom : 1.0f, sb, sizeof sb);
+        if (!n->img && src) n->img = get_img(L, src);
         return b;
     }
     if (is_ctrl_tag(n->tag)) {

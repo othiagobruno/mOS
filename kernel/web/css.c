@@ -503,6 +503,9 @@ static bool media_ok(const char *p, const char *e, int vw) {
     return any_true;
 }
 
+/* media query de <source media> e de folhas <link media> (mesma avaliação do @media) */
+bool css_media_ok(const char *q, int vw) { return !q || !*q || media_ok(q, q + strlen(q), vw); }
+
 static const char *match_brace(const char *p, const char *e) {
     int depth = 0;
     char quote = 0;
