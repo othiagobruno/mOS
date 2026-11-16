@@ -60,6 +60,10 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu tools/amdgpu_host.c k
     kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_host
 /tmp/amdgpu_host > /tmp/amdgpu_host.log || { cat /tmp/amdgpu_host.log; exit 1; }
 tail -1 /tmp/amdgpu_host.log
+# GPU AMD: validador dos IBs PM4 do userland (ABI revisão 3)
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu tools/amdgpu_pm4_host.c kernel/dev/amdgpu/pm4check.c -o /tmp/amdgpu_pm4_host
+/tmp/amdgpu_pm4_host > /tmp/amdgpu_pm4_host.log || { cat /tmp/amdgpu_pm4_host.log; exit 1; }
+tail -1 /tmp/amdgpu_pm4_host.log
 # sysctl do libSystem (docs/darwin-bsd-mach.md, F1): kernel falso de SYS_DARWIN e o CPUID real do host
 gcc -O1 -Wall -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/sysctl.c -o /tmp/sysctl_ls.o
 gcc -O1 -Wall tools/sysctl_host.c /tmp/sysctl_ls.o -o /tmp/sysctl_host
