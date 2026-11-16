@@ -1,10 +1,10 @@
 #!/bin/bash
-# Mede o corpus inteiro, um app por vez. Regras de RAM do PC (/home/thiago/OpenBot/Shared/mos-regras-de-ram.md):
-# o download (rede, pouca RAM) corre fora da trava e já adianta o próximo app; extração e machocheck de arquivo com
-# 200 MB ou mais correm dentro de `flock /tmp/mos-pesado.lock nice -n 10` (descompactação grande); os menores, só com
-# `nice`. Tudo só com RAM disponível >= 3000 MB. O binário é apagado depois de medido.
-# Não roda o build: usa o libSystem da main do CI ou o já compilado em build/. Uso: tools/corpus/varrer-tudo.sh [ids...]
-# Sem ids mede um lote de 20 e sai 3 se ainda faltar: while tools/corpus/varrer-tudo.sh; [ $? = 3 ]; do :; done
+# Mede o corpus inteiro, um app por vez, em primeiro plano. Regras de RAM do PC
+# (/home/thiago/OpenBot/Shared/mos-regras-de-ram.md): nada em background; extração e machocheck de arquivo com
+# 200 MB ou mais correm pelo mos-pesado (trava única do PC e limite de 2 GB); os menores, só com nice. Cada app só
+# começa com RAM disponível >= 4000 MB. O binário é apagado depois de medido.
+# Não roda o build: usa o libSystem já compilado em build/. Uso: tools/corpus/varrer-tudo.sh [ids...]
+# Sem ids mede um lote de LOTE apps (padrão 20) e sai 3 se ainda faltar.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 H=tools/corpus/harness.py
@@ -31,46 +31,37 @@ for a in json.load(open('tools/corpus/manifest.json'))['apps']:
         print(a['id'])")
 fi
 mais=0
-if [ $# -eq 0 ] && [ ${#ids[@]} -gt 20 ]; then
-    # lotes de 20: a cada lote o libSystem da main é conferido de novo (sai 3 quando ainda há apps)
-    ids=("${ids[@]:0:20}")
+LOTE=${LOTE:-20}
+if [ $# -eq 0 ] && [ ${#ids[@]} -gt "$LOTE" ]; then
+    # um lote por chamada: a cada lote o libSystem é conferido de novo (sai 3 quando ainda há apps)
+    ids=("${ids[@]:0:$LOTE}")
     mais=1
 fi
 echo "varrer-tudo: ${#ids[@]} apps a medir neste lote"
-pre=""
+PESADO=/home/thiago/OpenBot/Shared/mos-tools/bin/mos-pesado
+espera_ram() { while [ "$(free -m | awk '/^Mem/{print $7}')" -lt 4000 ]; do sleep 60; done; }
+mede() {
+    timeout 1800 python3 "$H" scan --tolerante --limpar --fixar --continuar \
+        "${LIBS[@]}" --summary "build/corpus/$1.summary.json" "$1" 2>&1 | grep -v '^baixando' | tail -2
+}
 adiados=()
-for i in "${!ids[@]}"; do
-    id=${ids[$i]}
-    [ -n "$pre" ] && wait "$pre" 2>/dev/null
+for id in "${ids[@]}"; do
     python3 "$H" baixar --fixar "$id" 2>&1 | grep -v '^baixando'
-    if [ $((i + 1)) -lt ${#ids[@]} ]; then
-        python3 "$H" baixar --fixar "${ids[$((i + 1))]}" > /dev/null 2>&1 &
-        pre=$!
-    else
-        pre=""
-    fi
-    while [ "$(free -m | awk '/^Mem/{print $7}')" -lt 3000 ]; do sleep 60; done
-    # arquivo pequeno (< 200 MB) não é descompactação grande: mede fora da trava; o resto espera a vez nela
+    espera_ram
+    # arquivo pequeno (< 200 MB) não é descompactação grande: mede fora da trava; o resto vai pelo mos-pesado
     tam=$(du -sm "build/corpus/$id" 2>/dev/null | cut -f1)
-    trava=(flock /tmp/mos-pesado.lock)
-    [ "${tam:-999}" -lt 200 ] && trava=()
-    if [ ${#trava[@]} -gt 0 ] && [ -z "${adiado_ok:-}" ] && ! flock -n /tmp/mos-pesado.lock true; then
+    if [ "${tam:-999}" -lt 200 ]; then nice -n 10 bash -c "$(declare -p H LIBS); $(declare -f mede); mede $id"; continue; fi
+    if ! flock -n /tmp/mos-pesado.lock true; then
         # trava ocupada e arquivo grande: vai para o fim do lote (o download fica no disco) e os pequenos seguem
         adiados+=("$id")
         echo "varrer-tudo: $id ($tam MB) adiado para o fim do lote"
         continue
     fi
-    "${trava[@]}" nice -n 10 timeout 1800 python3 "$H" scan --tolerante --limpar --fixar --continuar \
-        "${LIBS[@]}" \
-        --summary "build/corpus/$id.summary.json" "$id" 2>&1 | grep -v '^baixando' | tail -2
+    "$PESADO" bash -c "$(declare -p H LIBS); $(declare -f mede); mede $id"
 done
-[ -n "$pre" ] && wait "$pre"
-# os grandes adiados, agora esperando a vez na trava
-adiado_ok=1
 for id in "${adiados[@]}"; do
-    while [ "$(free -m | awk '/^Mem/{print $7}')" -lt 3000 ]; do sleep 60; done
-    flock /tmp/mos-pesado.lock nice -n 10 timeout 1800 python3 "$H" scan --tolerante --limpar --fixar --continuar \
-        "${LIBS[@]}" --summary "build/corpus/$id.summary.json" "$id" 2>&1 | grep -v '^baixando' | tail -2
+    espera_ram
+    "$PESADO" bash -c "$(declare -p H LIBS); $(declare -f mede); mede $id"
 done
 [ $mais = 1 ] && exit 3
 exit 0
