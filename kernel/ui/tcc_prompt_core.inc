@@ -78,6 +78,7 @@ typedef struct { const char *service, *what, *detail; } tcc_prompt_text;
 static const tcc_prompt_text tcc_prompt_texts[] = {
     {"kTCCServiceCamera", "acessar a câmera", "O app poderá gravar vídeo e tirar fotos."},
     {"kTCCServiceMicrophone", "acessar o microfone", "O app poderá gravar o som deste computador."},
+    {"kTCCServiceSpeechRecognition", "usar o reconhecimento de fala", "O app poderá mandar o que você fala para ser transcrito."},
     {"kTCCServiceAddressBook", "acessar seus contatos", "O app poderá ler e alterar os contatos."},
     {"kTCCServiceCalendar", "acessar sua agenda", "O app poderá ler e alterar os eventos do Calendário."},
     {"kTCCServiceReminders", "acessar seus lembretes", "O app poderá ler e alterar os lembretes."},
