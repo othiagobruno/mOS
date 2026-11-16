@@ -37,6 +37,7 @@ typedef struct {
     char error[96];         /* motivo da última falha, em português */
     char driver[48];        /* "Simulado", "Intel Wi-Fi 6 AX200", ... */
     bool present;           /* existe placa Wi-Fi */
+    int  security;          /* WIFI_SEC_* da rede conectada */
 } wifi_status_t;
 
 bool wifi_present(void);
@@ -76,6 +77,8 @@ typedef struct wifi_radio {
     bool (*set_chan)(struct wifi_radio *r, int primary, int center, int bw);
     void (*bss)(struct wifi_radio *r, const wifi_bss_t *b);                   /* NULL = desassociado */
     bool (*powersave)(struct wifi_radio *r, bool on);
+    /* taxa de TX atual (código de taxa do descritor, SGI, largura 0/1/2) e ruído em dBm (0 = não mede) */
+    void (*link_info)(struct wifi_radio *r, int *rate, int *sgi, int *bw, int *noise);
     /* firmware com MLME próprio (fullMAC, ex.: Intel): se presente, a pilha delega scan/conexão */
     bool (*fw_connect)(struct wifi_radio *r, const char *ssid, const u8 *bssid, int channel, const u8 pmk[32]);
 } wifi_radio_t;
@@ -122,3 +125,6 @@ bool sae_check_confirm(const sae_t *s, u16 peer_sc, const u8 conf[32]);
 void wpa_kdf_sha256(const u8 *key, usize klen, const char *label, const u8 *ctx, usize clen, u8 *out, usize bits);
 void aes_cmac(const u8 key[16], const u8 *m, usize len, u8 out[16]);   /* kernel/bt/smp_crypto.c */
 void wifi_radio_lost(void);                 /* driver: o enlace caiu por baixo (S3) */
+
+int  wifi_rate_kbps(int rate, int sgi, int bw);      /* taxa do descritor (CCK/OFDM/HT/VHT 1 fluxo) em kb/s */
+wifi_radio_t *wifi_radio(void);

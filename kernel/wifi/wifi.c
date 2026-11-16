@@ -141,3 +141,57 @@ void wifi_selftest_poll(void) {
         return;
     }
 }
+
+/* ------------------------------------------------------------ taxa do descritor -> kb/s (1 fluxo) */
+int wifi_rate_kbps(int rate, int sgi, int bw) {
+    static const int cck[4] = {1000, 2000, 5500, 11000};
+    static const int ofdm[8] = {6000, 9000, 12000, 18000, 24000, 36000, 48000, 54000};
+    static const int mcs20[10] = {6500, 13000, 19500, 26000, 39000, 52000, 58500, 65000, 78000, 0};   /* MCS9 não existe em 20 MHz */
+    static const int mcs40[10] = {13500, 27000, 40500, 54000, 81000, 108000, 121500, 135000, 162000, 180000};
+    static const int mcs80[10] = {29300, 58500, 87800, 117000, 175500, 234000, 263300, 292500, 351000, 390000};
+    int v;
+    if (rate < 0) return 0;
+    if (rate <= 0x03) return cck[rate];
+    if (rate <= 0x0B) return ofdm[rate - 4];
+    if (rate >= 0x0C && rate <= 0x13) v = (bw ? mcs40 : mcs20)[rate - 0x0C];
+    else if (rate >= 0x2C && rate <= 0x35) v = (bw == 2 ? mcs80 : bw == 1 ? mcs40 : mcs20)[rate - 0x2C];
+    else return 0;
+    return sgi ? v * 10 / 9 : v;
+}
+
+/* ------------------------------------------------------------ CoreWLAN (GUI_DEVICE, DEV_WIFI_INFO) */
+#ifndef MOS_HOST_TEST
+#include "proc.h"
+#include "syscall.h"
+#include "../include/compat_gui.h"
+static void mac_str(const u8 *m, char *o) { snprintf(o, 18, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]); }
+
+i64 wifi_user_info(process_t *p, u64 uptr) {
+    gui_wifi_info_t o;
+    memset(&o, 0, sizeof o);
+    wifi_status_t st;
+    wifi_status(&st);
+    wifi_radio_t *r = wifi_radio();
+    o.present = r != NULL;
+    o.power = st.state != WIFI_OFF;
+    o.state = st.state;
+    snprintf(o.ifname, sizeof o.ifname, "en1");
+    if (r) mac_str(r->mac, o.mac);
+    if (st.state == WIFI_CONNECTED) {
+        snprintf(o.ssid, sizeof o.ssid, "%s", st.ssid);
+        mac_str(st.bssid, o.bssid);
+        o.rssi = st.rssi;
+        o.channel = st.channel;
+        o.band = st.channel > 14 ? 2 : 1;
+        o.security = st.security;
+        int rate = -1, sgi = 0, bw = 0, noise = 0;
+        if (r && r->link_info) r->link_info(r, &rate, &sgi, &bw, &noise);
+        o.width = bw + 1;
+        o.noise = noise;
+        o.tx_kbps = wifi_rate_kbps(rate, sgi, bw);
+        o.phy = rate >= 0x2C ? 5 : rate >= 0x0C ? 4 : rate >= 0x04 ? (o.band == 2 ? 1 : 3) : rate >= 0 ? 2 : (o.band == 2 ? 1 : 3);
+    }
+    if (uptr && !uvm_copy_out(p, uptr, &o, sizeof o)) return -MOS_EFAULT;
+    return o.present;
+}
+#endif

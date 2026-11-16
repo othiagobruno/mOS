@@ -267,7 +267,7 @@ typedef struct {
     wifi_bss_t bss;
     u8 rate_id, ra_bw;
     u32 last_watchdog;
-    u8 tx_rate;                          /* última taxa que o firmware reportou */
+    u8 tx_rate, tx_sgi, tx_bw;           /* última taxa que o firmware reportou */
     int rssi;
     u8 igi;
     u8 scbd;
@@ -1209,6 +1209,8 @@ static void c2h(const u8 *p, int len) {
     if (len < 2) return;
     if (p[0] == 0x0C && len >= 3) {                          /* RA report: taxa atual */
         D.tx_rate = p[2] & 0x7F;
+        D.tx_sgi = p[2] >> 7;
+        if (len >= 9) D.tx_bw = p[8] & 3;
     } else if (p[0] == 0x09) {                               /* estado do BT: registra para o log de coex */
         /* o firmware mantém a tabela; nada a fazer aqui além de saber que o BT está vivo */
     }
@@ -1289,6 +1291,13 @@ static void dig(void) {
     if (igi < 0x1C) igi = 0x1C;                              /* dig_min do 8821C */
     if (igi != D.igi) { D.igi = (u8)igi; w32m(R_IGI_A, 0x7F, (u32)igi); }
     fw_rssi(rssi_pct);
+}
+
+static void r_link_info(wifi_radio_t *r, int *rate, int *sgi, int *bw, int *noise) {
+    (void)r;
+    *rate = D.assoc && D.tx_rate ? D.tx_rate : -1;
+    *sgi = D.tx_sgi; *bw = D.tx_rate ? D.tx_bw : D.bw;
+    *noise = 0;                                              /* o 8821C não expõe medida de ruído ao driver */
 }
 
 static void r_poll(wifi_radio_t *r) {
@@ -1389,6 +1398,7 @@ bool rtw8821c_attach(rtw_io_t *io, pci_dev_t *pci) {
     D.radio.poll = r_poll;
     D.radio.bss = r_bss;
     D.radio.powersave = r_powersave;
+    D.radio.link_info = r_link_info;
     wifi_register_radio(&D.radio);
     pm_register(&rtw_pm);
     return true;

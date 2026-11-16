@@ -417,6 +417,7 @@ void wifi_register_radio(wifi_radio_t *r) {
 }
 
 bool wifi_present(void) { return radio != NULL; }
+wifi_radio_t *wifi_radio(void) { return radio; }
 
 static void scan_next(void) {
     if (scan_ch >= scan_nch) { state = target.ssid[0] && want_ssid[0] ? WIFI_IDLE : WIFI_IDLE; scan_ch = 0; return; }
@@ -537,6 +538,7 @@ void wifi_status(wifi_status_t *s) {
         memcpy(s->bssid, target.bssid, 6);
         s->rssi = target.rssi;
         s->channel = target.channel;
+        s->security = target.security;
     }
     snprintf(s->error, sizeof s->error, "%s", err);
     extern const char *wifi_detected_chip(void);

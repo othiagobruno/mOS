@@ -1002,4 +1002,5 @@ void cx_corebluetooth_init(void) {
     server_register(obj);
     K(&CBMOSTicker_c, &CBMOSTicker_m, "CBMOSTicker", obj, 0);
     A(&CBMOSTicker_c, "tick:", cb_tick);
+    { extern void cx_corewlan_init(void); cx_corewlan_init(); }   /* corewlan.c: CWWiFiClient/CWInterface/CWChannel */
 }

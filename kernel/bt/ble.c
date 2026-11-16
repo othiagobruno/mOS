@@ -1019,6 +1019,7 @@ static bool raw_send(const u8 *pdu, u16 len) {
 }
 i64 bt_user_syscall(process_t *p, u64 op, u64 b, u64 cc, u64 d) {
     switch (op) {
+    case DEV_WIFI_INFO: { extern i64 wifi_user_info(process_t *p, u64 uptr); return wifi_user_info(p, b); }   /* CoreWLAN */
     case DEV_BT_STATE: return ready ? 2 : 0;
     case DEV_BT_SCAN: return bt_le_scan(b != 0) ? 0 : -MOS_EINVAL;
     case DEV_BT_DEVICE: {
