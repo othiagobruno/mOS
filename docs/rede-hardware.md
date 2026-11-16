@@ -80,5 +80,5 @@ gcc -O1 -Wall -Wextra -DMOS_HOST_TEST -I tools -I kernel/include -I kernel/wifi/
 Ainda **não** existe o rádio registrado no `wifi_init`: o PCIe, o download do firmware e a troca de canal
 são os próximos itens (2 a 8 da lista acima).
 
-Pendência com o núcleo (Gustavo): `dma_alloc` não garante endereço abaixo de 4 GiB e o RTL8821CE só faz
-DMA de 32 bits; o PC tem 14 GB. O driver vai precisar de uma alocação abaixo de 4 GiB.
+DMA de 32 bits: o RTL8821CE só endereça abaixo de 4 GiB e o PC tem 16 GB (2 GB reservados para a GPU,
+14 GB visíveis ao sistema). O driver usa `dma_alloc32` (Gustavo, PR #249), alocado na subida do driver.
