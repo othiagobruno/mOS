@@ -119,6 +119,7 @@ void   vm_pageout_kick(void);          /* pede uma rodada à thread vm_pageout; 
 void   vm_pageout_start(void);
 void   pmm_reclaim_boot(void);
 void   vmm_map_mmio(u64 phys, u64 size);
+void   vmm_map_wc(u64 phys, u64 size);     /* VRAM (BAR de vídeo) em write-combining */
 void  *kmalloc(usize n);
 void  *kcalloc(usize n, usize sz);
 void  *krealloc(void *p, usize n);
