@@ -90,7 +90,20 @@ Nos 28 bundles do corpus local (Firefox, GIMP, Inkscape, iTerm2, Rectangle, VLC 
 | F1 | **pronto** (15 nov.): `SYS_DARWIN` no kernel (`kernel/proc/darwin.c`), `userland/libsystem/sysctl.c` | `tools/sysctl_host.c`: 89/89 no Ryzen R2544 do Thiago (CPUID real, kernel falso). Não rodou no QEMU (build proibido até o fim) |
 | F2 | **pronto** (15 nov.): `userland/libsystem/procinfo.c`, `task_info`/`thread_info`/`host_info` em `mach.c`, `MOS_DW_FDS`/`MOS_DW_CWD` no kernel | `tools/procinfo_host.c`: 50/50 (kernel falso). Não rodou no QEMU |
 | F7 (parte 1) | **pronto** (15 nov.): IPC System V (`sysv_ipc.c`), `oslock.c`, `pid_suspend/resume` | `tools/sysv_ipc_host.c` 35/35 entre processos reais (fork); `tools/oslock_host.c` 9/9 com 4 threads |
-| F3, F4, F5, F6, F7 (resto), F8, F9, F10 | a fazer | — |
+| F6 | **pronto** (15 nov.): `userland/libsystem/kqueue.c`, gancho de sinais em `libc.c`, `MOS_DW_EXITSTATUS` | `tools/kqueue_host.c` 33/33 (kernel falso) |
+| F3, F4, F5, F7 (resto), F8, F9, F10 | a fazer | — |
+
+### F6 em detalhe
+
+- Filtros: READ (arquivo comum dá o que falta a partir da posição; pipe, terminal, socket e AF_UNIX como antes),
+  WRITE, EXCEPT (registra; sem OOB no mOS), VNODE (DELETE, WRITE, EXTEND, ATTRIB, LINK, RENAME, REVOKE pelo journal do
+  VFS do Vinicius, casando pelo inode do fd; pasta: filho criado/removido/renomeado), PROC (EXIT, EXITSTATUS sem colher
+  o filho, FORK, EXEC), SIGNAL (conta a entrega mesmo com SIG_IGN, como o macOS: o `libc.c` põe um tratador interno
+  e repassa à ação do usuário), TIMER (s/ms/us/ns, NOTE_ABSOLUTE, disparos perdidos em `data`), MACHPORT, FS (montar e
+  desmontar), USER, VM e MEMORYSTATUS (nível de pressão do kernel). Erros de registro como o XNU: EINVAL (filtro),
+  EBADF (fd), ESRCH (pid). Flags: DISPATCH, DISPATCH2, UDATA_SPECIFIC, RECEIPT, ONESHOT, CLEAR, EOF.
+- Limites: 256 kqueues e 1024 knotes por kqueue. A espera continua sendo consulta com cochilo crescente (1 a 8 ms,
+  nunca além do próximo timer); uma espera no kernel em várias fontes de uma vez ainda não existe.
 
 ### F7 (parte 1) em detalhe
 

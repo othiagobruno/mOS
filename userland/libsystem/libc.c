@@ -1286,14 +1286,59 @@ __attribute__((noreturn)) void cx_sigtramp(void *h, int style, int mossig, mos_s
     if (s == 20 && (si->si_code == MOS_CLD_KILLED || si->si_code == MOS_CLD_STOPPED || si->si_code == MOS_CLD_CONTINUED))
         si->si_status = sig_from_mos(si->si_status);
     uc->uc_sigmask = cx_sigmask_from_mos(uc->uc_sigmask);
+    { extern void cx_kq_signal_hit(int) __attribute__((weak)); if (cx_kq_signal_hit) cx_kq_signal_hit(s); }   /* EVFILT_SIGNAL */
     ((void (*)(int, void *, void *))h)(s, si, uc);     /* o macOS passa (sinal, siginfo, ucontext) nos dois estilos */
     uc->uc_sigmask = cx_sigmask_to_mos(uc->uc_sigmask);
     cx_errno = saved_errno;
     SYS2(SYS_SIG, MOS_SIGOP_RETURN, uc);
     for (;;) __builtin_trap();
 }
+/* EVFILT_SIGNAL (kqueue.c): o macOS conta a tentativa de entrega mesmo com SIG_IGN (o libdispatch ignora o sinal e
+ * vigia por dispatch_source). Enquanto um kqueue vigia o sinal, o kernel recebe um tratador interno (sig_watch_h) e a
+ * ação do usuário fica guardada aqui: o tratador interno repassa a ela; SIG_IGN e os SIG_DFL que só ignoram
+ * (CHLD, URG, CONT, WINCH, INFO) viram nada; um SIG_DFL que encerra continua no kernel (o processo sai do mesmo jeito). */
+static mac_sigaction_t sig_user[32];
+static int sig_watched[32];
+static int dfl_ignores(int s) { return s == 20 || s == 16 || s == 19 || s == 28 || s == 29; }
+static void sig_watch_h(int s, void *si, void *uc) {
+    if (s <= 0 || s >= 32) return;
+    void *h = sig_user[s].handler;
+    if ((u64)h > 1) ((void (*)(int, void *, void *))h)(s, si, uc);
+}
+static long sig_kernel_set(int s, const mac_sigaction_t *a, mos_sigaction_t *old) {
+    mos_sigaction_t n;
+    n.handler = (u64)a->handler; n.tramp = (u64)cx_sigtramp; n.mask = cx_sigmask_to_mos(a->mask); n.flags = (u32)a->flags;
+    if (sig_watched[s] && ((u64)a->handler > 1 || (u64)a->handler == 1 || dfl_ignores(s))) {
+        n.handler = (u64)sig_watch_h;
+        n.flags |= MOS_SA_SIGINFO;
+    }
+    return SYS4(SYS_SIG, MOS_SIGOP_ACTION, sig_to_mos(s), &n, old);
+}
+void cx_sig_watch(int s, int on) {
+    if (s <= 0 || s >= 32 || s == 9 || s == 17) return;
+    if (on) {
+        if (sig_watched[s]++) return;
+        mos_sigaction_t cur;
+        memset(&cur, 0, sizeof cur);
+        SYS4(SYS_SIG, MOS_SIGOP_ACTION, sig_to_mos(s), 0, &cur);
+        sig_user[s].handler = (void *)cur.handler; sig_user[s].mask = cx_sigmask_from_mos(cur.mask); sig_user[s].flags = (int)cur.flags;
+        sig_kernel_set(s, &sig_user[s], 0);
+    } else if (sig_watched[s] > 0 && !--sig_watched[s]) {
+        sig_kernel_set(s, &sig_user[s], 0);    /* sig_watched 0: a ação do usuário volta direto ao kernel */
+    }
+}
 int sigaction(int s, const mac_sigaction_t *a, mac_sigaction_t *o) {
     if (s <= 0 || s >= 32 || ((s == 9 || s == 17) && a)) { cx_errno = CX_EINVAL; return -1; }   /* KILL e STOP fixos */
+    if (sig_watched[s]) {                       /* vigiado por um kqueue: o kernel tem o tratador interno */
+        mac_sigaction_t prev = sig_user[s];
+        if (a) {
+            long r = sig_kernel_set(s, a, 0);
+            if (r < 0) { cx_errno = (int)-r; return -1; }
+            sig_user[s] = *a;
+        }
+        if (o) *o = prev;
+        return 0;
+    }
     mos_sigaction_t n, old;
     memset(&old, 0, sizeof old);
     if (a) {

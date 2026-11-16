@@ -236,6 +236,7 @@ enum {
     MOS_DW_THREADS,      /* (pid, mos_dw_thread_t *buf, cap) -> quantidade de threads vivas (copia até cap) */
     MOS_DW_FDS,          /* (pid, mos_dw_fd_t *buf, cap) -> quantidade de fds abertos (copia até cap, em ordem de fd) */
     MOS_DW_CWD,          /* (pid, buf, cap) -> tamanho do caminho da pasta atual (0 final gravado se couber) */
+    MOS_DW_EXITSTATUS,   /* (pid) -> status do wait(2) de um filho já encerrado, sem colher | -MOS_ESRCH (vivo ou não é filho) */
 };
 #define MOS_DW_FD_FILE 1   /* mos_dw_fd_t.kind */
 #define MOS_DW_FD_PIPE 2
