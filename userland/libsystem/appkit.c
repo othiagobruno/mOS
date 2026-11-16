@@ -3550,7 +3550,7 @@ static void sync_menus(void) {
     if (app.menu) {
         static double last;
         double now = cx_now();
-        if (now - last > 0.4) { last = now; revalidate_menu(app.menu, 0); }
+        if (now - last > 0.4) { last = now; revalidate_menu(app.menu, 0); extern void cx_toolbar_revalidate(id win); cx_toolbar_revalidate(g_key_window); }
     }
     if (!app.menu || (menus_sent && !menus_dirty)) return;
     menus_dirty = NO;
