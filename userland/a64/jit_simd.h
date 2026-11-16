@@ -259,6 +259,9 @@ static int s_three_same_x(T *t, a64_u32 w, int sc) {
 
 static int s_misc_x(T *t, a64_u32 w, int sc);
 static int s_addlp(T *t, int q, int u, int size, int acc, int n, int d);
+static int s_clz(T *t, int q, int size, int cls, int n, int d);
+static void s_pshufb(T *t, int x, int mask);
+static void s_const2(T *t, int x, a64_u64 lo, a64_u64 hi);
 static int s_fcvtln(T *t, int narrow, int q, int sz, int n, int d);
 static void mx_clean(T *t);
 static void ixc_if_pe(T *t);
@@ -330,6 +333,41 @@ static int s_fcvtln(T *t, int narrow, int q, int sz, int n, int d) {
     else s_st(t, d, 0, 0);
     return 1;
 }
+/* CLZ / CLS vetoriais de 8, 16 e 32 bits. Bytes: tabela de nibbles com pshufb (clz8 = clz(alto) ou
+ * 4 + clz(baixo)); 16 e 32 bits juntam as metades (alto + (alto == largura ? baixo : 0)).
+ * CLS(x) = CLZ(x ^ (x >> (e - 1))) - 1. Usa xmm0..xmm4. */
+static int s_clz(T *t, int q, int size, int cls, int n, int d) {
+    if (size == 3 || !jit_g.ssse3) return 0;
+    int eb = 8 << size;
+    if (q) s_ld(t, 0, n); else x_movq_ld(B, 0, VO(n));
+    if (cls) { x_movdqa_ld(B, 1, XR(0)); s_shimm(t, 1, eb, 2, eb - 1); s_op(t, 0xEF, 0, 1); }
+    s_const2(t, 4, 0x0101010102020304ull, 0);      /* clz de 0..15 em 4 bits */
+    x_movdqa_ld(B, 1, XR(0));
+    xop2(B, XF_66, 0x71, 2, XR(1)); xe8(B, 4);      /* psrlw 4 */
+    s_const(t, 2, 0x0F0F0F0F0F0F0F0Full);
+    s_op(t, 0xDB, 1, 2);                            /* nibble alto */
+    s_op(t, 0xDB, 0, 2);                            /* nibble baixo */
+    x_movdqa_ld(B, 3, XR(4)); s_pshufb(t, 3, 1);    /* clz(alto) */
+    s_pshufb(t, 4, 0);                              /* clz(baixo) */
+    s_zero(t, 2); s_op(t, 0x74, 1, 2);              /* alto == 0 */
+    s_op(t, 0xDB, 4, 1);
+    s_op(t, 0xFC, 3, 4);                            /* xmm3 = clz por byte */
+    for (int w = 16; w <= eb; w <<= 1) {            /* junta pares: largura w a partir de w/2 */
+        int h = w / 2;
+        x_movdqa_ld(B, 0, XR(3));
+        s_shimm(t, 0, w, 1, h);                     /* contagem da metade alta */
+        s_const(t, 2, w == 16 ? 0x00FF00FF00FF00FFull : 0x0000FFFF0000FFFFull);
+        s_op(t, 0xDB, 3, 2);                        /* da metade baixa */
+        s_const(t, 2, w == 16 ? 0x0008000800080008ull : 0x0000001000000010ull);
+        s_op(t, w == 16 ? 0x75 : 0x76, 2, 0);       /* alta == h */
+        s_op(t, 0xDB, 3, 2);
+        s_op(t, w == 16 ? 0xFD : 0xFE, 3, 0);
+    }
+    if (cls) { s_const(t, 2, size == 0 ? 0x0101010101010101ull : size == 1 ? 0x0001000100010001ull : 0x0000000100000001ull);
+               s_op(t, 0xF8 + (unsigned)size, 3, 2); }
+    s_st(t, d, 3, q);
+    return 1;
+}
 static int s_misc_x(T *t, a64_u32 w, int sc) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), size = (int)BITS(w, 23, 22), op = (int)BITS(w, 16, 12);
     int n = (int)BITS(w, 9, 5), d = (int)(w & 31);
@@ -382,6 +420,9 @@ static int s_misc_x(T *t, a64_u32 w, int sc) {
     case 0x12:                                      /* XTN / XTN2, SQXTUN */
         if (u) return s_qxtn(t, q, u, 0x12, size, n, d);
         return s_xtn(t, q, size, n, d);
+    case 0x04:                                      /* CLS / CLZ */
+        if (sc) return 0;
+        return s_clz(t, q, size, !u, n, d);
     case 0x13:                                      /* SHLL / SHLL2: alarga e desloca pela largura */
         if (!u || sc || size == 3) return 0;
         s_widen(t, 0, n, q, size, 0);
