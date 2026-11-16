@@ -401,8 +401,10 @@ fi
 if [ $fails -eq 0 ] && [ -f "$out/System.o" ] && [ -f "$dest/libswiftFoundation.dylib" ]; then
     if build_mod _System_Foundation 5 1 -- -autolink-force-load -- "$root/userland/sdk/swift-objc/System/SystemFoundation.swift" &&
         want _System_Foundation; then
-        link_dylib libswift_System_Foundation "$out/_System_Foundation.o" "$dest/libswiftFoundation.dylib" \
-            "$objc/dylib/System/Library/Frameworks/System.framework/Versions/A/System"
+        # o zig só liga entradas com extensão conhecida: uma cópia .dylib do System.framework (o LC_ID_DYLIB dela é o
+        # caminho do framework, então o LC_LOAD_DYLIB da ponte sai certo)
+        cp -f "$objc/dylib/System/Library/Frameworks/System.framework/Versions/A/System" "$out/System-link.dylib"
+        link_dylib libswift_System_Foundation "$out/_System_Foundation.o" "$dest/libswiftFoundation.dylib" "$out/System-link.dylib"
     fi
 fi
 
