@@ -2,6 +2,7 @@
 #include "apps.h"
 #include "net.h"
 #include "gpu.h"
+#include "pm.h"
 
 static window_t *aw;
 static int tab;
@@ -23,7 +24,7 @@ static void paint(window_t *w, ui_t *u) {
         y += 30;
         char vendor[16], brand[64], l[160];
         cpu_info(vendor, brand);
-        struct { const char *k; char v[128]; } rows[5];
+        struct { const char *k; char v[128]; } rows[6];
         rows[0].k = "Computador";
         snprintf(rows[0].v, 128, "PC x86_64 com firmware UEFI");
         rows[1].k = "Processador";
@@ -35,7 +36,9 @@ static void paint(window_t *w, ui_t *u) {
         else snprintf(rows[3].v, 128, "Framebuffer UEFI GOP %ux%u", g_boot->fb.width, g_boot->fb.height);
         rows[4].k = "Rede";
         snprintf(rows[4].v, 128, "%s", net_device_name());
-        for (int i = 0; i < 5; i++) {
+        rows[5].k = "Energia";
+        snprintf(rows[5].v, 128, "%s", pm_status());
+        for (int i = 0; i < 6; i++) {
             snprintf(l, sizeof l, "%s", rows[i].k);
             ui_label(u, x, y, l, FONT_SEMIBOLD, 12.5f, T.text);
             text_draw_ellipsis(s, font_get(FONT_REGULAR), 12.5f, x + 96, y + text_ascent(font_get(FONT_REGULAR), 12.5f), u->cw - x - 110, T.text, rows[i].v);
@@ -88,7 +91,7 @@ static void on_close(window_t *w) { aw = NULL; }
 
 void about_open(void) {
     if (aw) { wm_focus(aw); return; }
-    aw = wm_create(&app_sobre, "", -1, -1, 620, 340, WIN_CENTER);
+    aw = wm_create(&app_sobre, "", -1, -1, 620, 362, WIN_CENTER);
     if (!aw) return;
     aw->paint = paint;
     aw->on_close = on_close;
