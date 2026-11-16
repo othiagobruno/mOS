@@ -1059,6 +1059,7 @@ static id bt_init_frame(id self, SEL c, NSRect f) { v_init_frame(self, c, f); vs
 static void bt_set_title(id self, SEL c, id t) { (void)c; keep(&vs(self)->title, t); mark(self); }
 static id bt_title(id self, SEL c) { (void)c; return vs(self)->title; }
 static void bt_set_type(id self, SEL c, u64 t) { (void)c; vs(self)->btype = t == 3 ? BT_CHECK : t == 4 ? BT_RADIO : BT_PUSH; mark(self); }
+static i64 bt_type_code(id self, SEL c) { (void)c; int t = vs(self)->btype; return t == BT_CHECK ? 3 : t == BT_RADIO ? 4 : 7; }   /* NSButtonType (acessibilidade) */
 static void bt_set_state(id self, SEL c, i64 st) { (void)c; vs(self)->state = (int)st; mark(self); }
 static i64 bt_state(id self, SEL c) { (void)c; return vs(self)->state; }
 static void bt_set_key(id self, SEL c, id k) { (void)c; keep(&vs(self)->key_equiv, k); mark(self); }
@@ -5988,7 +5989,7 @@ void cx_appkit_init(void) {
     CM(NSButton, "buttonWithTitle:target:action:", bt_with_title); CM(NSButton, "checkboxWithTitle:target:action:", bt_checkbox);
     CM(NSButton, "radioButtonWithTitle:target:action:", bt_radio);
     M(NSButton, "initWithFrame:", bt_init_frame); M(NSButton, "setTitle:", bt_set_title); M(NSButton, "title", bt_title);
-    M(NSButton, "setButtonType:", bt_set_type); M(NSButton, "setState:", bt_set_state); M(NSButton, "state", bt_state);
+    M(NSButton, "setButtonType:", bt_set_type); M(NSButton, "_cxButtonType", bt_type_code); M(NSButton, "setState:", bt_set_state); M(NSButton, "state", bt_state);
     M(NSButton, "setKeyEquivalent:", bt_set_key); M(NSButton, "setBezelStyle:", bt_set_bezel); M(NSButton, "setBordered:", bt_set_bordered);
     M(NSButton, "setImage:", noop1_m); M(NSButton, "setContentTintColor:", noop1_m);
 

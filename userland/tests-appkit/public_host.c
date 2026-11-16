@@ -37,7 +37,7 @@ int main(void) {
     check(!strcmp(cx_ax_role("NSButton"), "AXButton"), "papel do botão");
     check(!strcmp(cx_ax_role("NSTextField"), "AXTextField"), "papel do campo");
     check(!strcmp(cx_ax_role("NSWindow"), "AXWindow"), "papel da janela");
-    check(!strcmp(cx_ax_role("NSStepper"), "AXSlider"), "papel do stepper");
+    check(!strcmp(cx_ax_role("NSStepper"), "AXIncrementor"), "papel do stepper (AXIncrementor, como no macOS)");
     check(!strcmp(cx_ax_role("NSView"), "AXGroup"), "papel genérico");
 
     /* view 0 → superview 1 → janela 2 → app 3. Só a janela implementa performClose:. */
