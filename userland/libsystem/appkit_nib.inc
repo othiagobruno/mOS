@@ -340,12 +340,20 @@ static id nib_decode(nibctx_t *x, unsigned idx) {
     if (!strcmp(cn, "NSString") || !strcmp(cn, "NSMutableString") || !strcmp(cn, "NSLocalizableString")) {
         const nib_val_t *b = nv(x, idx, "NS.bytes");
         r = b && b->type == NV_DATA ? cx_str_n((const char *)b->data, b->len) : cx_str("");
-    } else if (!strcmp(cn, "NSArray") || !strcmp(cn, "NSMutableArray") || !strcmp(cn, "NSSet") || !strcmp(cn, "NSMutableSet") || !strcmp(cn, "NSOrderedSet")) {
+    } else if (!strcmp(cn, "NSArray") || !strcmp(cn, "NSMutableArray")) {
         r = cx_arr_new(0);
         x->memo[idx] = r;
         unsigned it[512];
         int n = nib_items(x, idx, it, 512);
         for (int i = 0; i < n; i++) { id v = nib_decode(x, it[i]); if (v) cx_arr_add(r, v); }
+    } else if (!strcmp(cn, "NSSet") || !strcmp(cn, "NSMutableSet") || !strcmp(cn, "NSOrderedSet") || !strcmp(cn, "NSMutableOrderedSet")) {
+        /* conjunto de verdade (o NSSet do Foundation não responde a objectAtIndex:; antes virava NSArray) */
+        const char *k = strstr(cn, "Ordered") ? "NSMutableOrderedSet" : "NSMutableSet";
+        r = MSG0(id, MSG0(id, (id)cx_class_named(k), "alloc"), "init");
+        x->memo[idx] = r;
+        unsigned it[512];
+        int n = nib_items(x, idx, it, 512);
+        for (int i = 0; i < n; i++) { id v = nib_decode(x, it[i]); if (v) MSG(void, r, "addObject:", v); }
     } else if (!strcmp(cn, "NSDictionary") || !strcmp(cn, "NSMutableDictionary")) {
         r = MSG0(id, MSG0(id, (id)cx_class_named("NSMutableDictionary"), "alloc"), "init");
         x->memo[idx] = r;
