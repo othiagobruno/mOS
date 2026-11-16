@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <Foundation/NSFoundationOptions.h>
+#include <dispatch/dispatch.h>
 
 #define NS_ASSUME_NONNULL_BEGIN _Pragma("clang assume_nonnull begin")
 #define NS_ASSUME_NONNULL_END _Pragma("clang assume_nonnull end")
@@ -332,15 +333,126 @@ typedef NS_OPTIONS(NSUInteger, NSKeyValueObservingOptions) {
 @end
 @protocol NSURLSessionTaskDelegate <NSObject>
 @end
+NS_SWIFT_NAME(URLSessionTask)
 @interface NSURLSessionTask : NSObject
 - (void)resume;
+- (void)cancel;
+- (void)suspend;
 @end
+NS_SWIFT_NAME(URLSessionDataTask)
 @interface NSURLSessionDataTask : NSURLSessionTask
 @end
+NS_SWIFT_NAME(URLSession)
 @interface NSURLSession : NSObject
 @property (class, readonly, strong) NSURLSession *sharedSession;
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error))completionHandler;
+- (NSURLSessionDataTask *)dataTaskWithURL:(NSURL *)url completionHandler:(void (^)(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error))completionHandler;
 @end
+
+/* ---- run loop, timer, centro de notificações e filas de operação (classes do libSystem: foundation.c,
+ * fdn_operation.c), com os nomes Swift da Apple */
+typedef double NSTimeInterval;
+typedef NSString *NSRunLoopMode NS_TYPED_EXTENSIBLE_ENUM NS_SWIFT_NAME(RunLoop.Mode);
+FOUNDATION_EXPORT NSRunLoopMode const NSDefaultRunLoopMode;
+FOUNDATION_EXPORT NSRunLoopMode const NSRunLoopCommonModes;
+
+NS_SWIFT_NAME(Timer)
+@interface NSTimer : NSObject
++ (NSTimer *)timerWithTimeInterval:(NSTimeInterval)interval repeats:(BOOL)repeats block:(void (^)(NSTimer *timer))block;
++ (NSTimer *)scheduledTimerWithTimeInterval:(NSTimeInterval)interval repeats:(BOOL)repeats block:(void (^)(NSTimer *timer))block;
++ (NSTimer *)timerWithTimeInterval:(NSTimeInterval)ti target:(id)aTarget selector:(SEL)aSelector userInfo:(nullable id)userInfo repeats:(BOOL)yesOrNo;
++ (NSTimer *)scheduledTimerWithTimeInterval:(NSTimeInterval)ti target:(id)aTarget selector:(SEL)aSelector userInfo:(nullable id)userInfo repeats:(BOOL)yesOrNo;
+- (instancetype)initWithFireDate:(NSDate *)date interval:(NSTimeInterval)interval repeats:(BOOL)repeats block:(void (^)(NSTimer *timer))block;
+- (void)fire;
+- (void)invalidate;
+@property (copy) NSDate *fireDate;
+@property (readonly) NSTimeInterval timeInterval;
+@property NSTimeInterval tolerance;
+@property (readonly, getter=isValid) BOOL valid;
+@property (nullable, readonly, retain) id userInfo;
+@end
+
+NS_SWIFT_NAME(RunLoop)
+@interface NSRunLoop : NSObject
+@property (class, readonly, strong) NSRunLoop *currentRunLoop;
+@property (class, readonly, strong) NSRunLoop *mainRunLoop;
+@property (nullable, readonly, copy) NSRunLoopMode currentMode;
+- (void)addTimer:(NSTimer *)timer forMode:(NSRunLoopMode)mode;
+- (void)run;
+- (void)runUntilDate:(NSDate *)limitDate;
+- (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)limitDate;
+- (void)performBlock:(void (^)(void))block;
+- (void)performInModes:(NSArray<NSRunLoopMode> *)modes block:(void (^)(void))block;
+@end
+
+@class NSOperationQueue;
+NS_SWIFT_NAME(NotificationCenter)
+@interface NSNotificationCenter : NSObject
+@property (class, readonly, strong) NSNotificationCenter *defaultCenter;
+- (void)addObserver:(id)observer selector:(SEL)aSelector name:(nullable NSNotificationName)aName object:(nullable id)anObject;
+- (id<NSObject>)addObserverForName:(nullable NSNotificationName)name object:(nullable id)obj queue:(nullable NSOperationQueue *)queue usingBlock:(void (^)(NSNotification *notification))block;
+- (void)postNotification:(NSNotification *)notification;
+- (void)postNotificationName:(NSNotificationName)aName object:(nullable id)anObject;
+- (void)postNotificationName:(NSNotificationName)aName object:(nullable id)anObject userInfo:(nullable NSDictionary *)aUserInfo;
+- (void)removeObserver:(id)observer;
+- (void)removeObserver:(id)observer name:(nullable NSNotificationName)aName object:(nullable id)anObject;
+@end
+
+typedef NS_ENUM(NSInteger, NSOperationQueuePriority) {
+    NSOperationQueuePriorityVeryLow = -8L, NSOperationQueuePriorityLow = -4L, NSOperationQueuePriorityNormal = 0,
+    NSOperationQueuePriorityHigh = 4, NSOperationQueuePriorityVeryHigh = 8
+};
+typedef NS_ENUM(NSInteger, NSQualityOfService) {
+    NSQualityOfServiceUserInteractive = 0x21, NSQualityOfServiceUserInitiated = 0x19, NSQualityOfServiceUtility = 0x11,
+    NSQualityOfServiceBackground = 0x09, NSQualityOfServiceDefault = -1
+};
+
+NS_SWIFT_NAME(Operation)
+@interface NSOperation : NSObject
+- (void)start;
+- (void)main;
+- (void)cancel;
+- (void)addDependency:(NSOperation *)op;
+- (void)removeDependency:(NSOperation *)op;
+- (void)waitUntilFinished;
+@property (readonly, getter=isCancelled) BOOL cancelled;
+@property (readonly, getter=isExecuting) BOOL executing;
+@property (readonly, getter=isFinished) BOOL finished;
+@property (readonly, getter=isAsynchronous) BOOL asynchronous;
+@property (readonly, getter=isReady) BOOL ready;
+@property (readonly, copy) NSArray<NSOperation *> *dependencies;
+@property NSOperationQueuePriority queuePriority;
+@property NSQualityOfService qualityOfService;
+@property (nullable, copy) void (^completionBlock)(void);
+@property (nullable, copy) NSString *name;
+@end
+
+NS_SWIFT_NAME(BlockOperation)
+@interface NSBlockOperation : NSOperation
++ (instancetype)blockOperationWithBlock:(void (^)(void))block;
+- (void)addExecutionBlock:(void (^)(void))block;
+@property (readonly, copy) NSArray<void (^)(void)> *executionBlocks;
+@end
+
+NS_SWIFT_NAME(OperationQueue)
+@interface NSOperationQueue : NSObject
+@property (class, readonly, strong) NSOperationQueue *mainQueue;
+@property (class, readonly, strong, nullable) NSOperationQueue *currentQueue;
+- (void)addOperation:(NSOperation *)op;
+- (void)addOperations:(NSArray<NSOperation *> *)ops waitUntilFinished:(BOOL)wait;
+- (void)addOperationWithBlock:(void (^)(void))block;
+- (void)addBarrierBlock:(void (^)(void))barrier;
+- (void)cancelAllOperations;
+- (void)waitUntilAllOperationsAreFinished;
+@property (readonly, copy) NSArray<NSOperation *> *operations;
+@property (readonly) NSUInteger operationCount;
+@property NSInteger maxConcurrentOperationCount;
+@property (getter=isSuspended) BOOL suspended;
+@property (nullable, copy) NSString *name;
+@property NSQualityOfService qualityOfService;
+@property (nullable, assign) dispatch_queue_t underlyingQueue;
+@end
+FOUNDATION_EXPORT const NSInteger NSOperationQueueDefaultMaxConcurrentOperationCount;
 
 @interface NSObject (NSKeyValueObservingMOS)
 - (void)addObserver:(NSObject *)observer forKeyPath:(NSString *)keyPath options:(NSKeyValueObservingOptions)options context:(nullable void *)context;

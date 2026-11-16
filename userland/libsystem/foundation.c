@@ -913,6 +913,35 @@ static void tm_invalidate(id self, SEL c) { (void)c; ((cx_timer_t *)self)->valid
 static BOOL tm_valid(id self, SEL c) { (void)c; return ((cx_timer_t *)self)->valid; }
 static id tm_info(id self, SEL c) { (void)c; return ((cx_timer_t *)self)->info; }
 static double tm_interval(id self, SEL c) { (void)c; return ((cx_timer_t *)self)->interval; }
+static double tm_tolerance(id self, SEL c) { (void)c; return ((cx_timer_t *)self)->tolerance; }
+static void tm_set_tolerance(id self, SEL c, double v) { (void)c; ((cx_timer_t *)self)->tolerance = v > 0 ? v : 0; }
+static id tm_fire_date(id self, SEL c) { (void)c; return MSG(id, (id)cx_class_named("NSDate"), "dateWithTimeIntervalSince1970:", ((cx_timer_t *)self)->fire); }
+static void tm_set_fire_date(id self, SEL c, id d) { (void)c; if (d) ((cx_timer_t *)self)->fire = MSG0(double, d, "timeIntervalSince1970"); }
+/* -initWithFireDate:...: timer ainda fora do run loop, com o primeiro disparo na data dada */
+static id tm_init_date(id self, SEL c, id date, double iv, id target, SEL sel, id info, BOOL rep) {
+    (void)c;
+    cx_timer_t *t = (cx_timer_t *)self;
+    t->interval = iv < 0.0001 ? 0.0001 : iv;
+    t->fire = date ? MSG0(double, date, "timeIntervalSince1970") : cx_now();
+    t->target = objc_retain(target);
+    t->sel = sel;
+    t->info = objc_retain(info);
+    t->repeats = rep;
+    t->valid = 1;
+    return self;
+}
+static id tm_init_date_blk(id self, SEL c, id date, double iv, BOOL rep, void *blk) {
+    id r = tm_init_date(self, c, date, iv, 0, 0, 0, rep);
+    ((cx_timer_t *)r)->block = blk ? _Block_copy(blk) : 0;
+    return r;
+}
+static id tm_s_with_invocation(id cls, SEL c, double iv, id inv, BOOL rep, int sched) {
+    (void)c;
+    id t = tm_make(cls, iv, inv, sel_registerName("invoke"), 0, rep, 0, (BOOL)sched);
+    return t;
+}
+static id tm_s_sched_inv(id cls, SEL c, double iv, id inv, BOOL rep) { return tm_s_with_invocation(cls, c, iv, inv, rep, 1); }
+static id tm_s_timer_inv(id cls, SEL c, double iv, id inv, BOOL rep) { return tm_s_with_invocation(cls, c, iv, inv, rep, 0); }
 void cx_timer_fire(cx_timer_t *t) {
     if (t->block) { void (*inv)(void *, id) = *(void **)((u8 *)t->block + 16); inv(t->block, (id)t); }
     else if (t->target) ((void (*)(id, SEL, id))objc_msgSend)(t->target, t->sel, (id)t);
@@ -962,6 +991,12 @@ extern void *CFRunLoopGetCurrent(void);
 extern const void *kCFRunLoopDefaultMode;
 static id rl_current_mode(id self, SEL c) { (void)self; (void)c; return (id)kCFRunLoopDefaultMode; }
 static void *rl_cf(id self, SEL c) { (void)self; (void)c; return CFRunLoopGetCurrent(); }
+void CFRunLoopPerformBlock(void *rl, void *mode, void *block);
+void *CFRunLoopGetMain(void);
+extern const void *kCFRunLoopCommonModes;
+/* -performBlock: / -performInModes:block:: o bloco entra no run loop (CFRunLoopPerformBlock) e roda na thread dele */
+static void rl_perform(id self, SEL c, void *blk) { (void)self; (void)c; CFRunLoopPerformBlock(CFRunLoopGetMain(), (void *)kCFRunLoopCommonModes, blk); }
+static void rl_perform_modes(id self, SEL c, id modes, void *blk) { (void)modes; rl_perform(self, c, blk); }
 
 /* ================================================================ diversos */
 static id singleton(id cls) {
@@ -1751,12 +1786,19 @@ void cx_foundation_init(void) {
     CM(NSTimer, "timerWithTimeInterval:repeats:block:", tm_timer_blk);
     M(NSTimer, "invalidate", tm_invalidate); M(NSTimer, "isValid", tm_valid); M(NSTimer, "userInfo", tm_info); M(NSTimer, "fire", tm_fire);
     M(NSTimer, "timeInterval", tm_interval);
+    M(NSTimer, "tolerance", tm_tolerance); M(NSTimer, "setTolerance:", tm_set_tolerance);
+    M(NSTimer, "fireDate", tm_fire_date); M(NSTimer, "setFireDate:", tm_set_fire_date);
+    M(NSTimer, "initWithFireDate:interval:target:selector:userInfo:repeats:", tm_init_date);
+    M(NSTimer, "initWithFireDate:interval:repeats:block:", tm_init_date_blk);
+    CM(NSTimer, "scheduledTimerWithTimeInterval:invocation:repeats:", tm_s_sched_inv);
+    CM(NSTimer, "timerWithTimeInterval:invocation:repeats:", tm_s_timer_inv);
 
     cx_define_class(&NSRunLoop_c, &NSRunLoop_m, "NSRunLoop", &NSObject_c, 0);
     CM(NSRunLoop, "currentRunLoop", rl_current); CM(NSRunLoop, "mainRunLoop", rl_current);
     M(NSRunLoop, "addTimer:forMode:", rl_add_timer); M(NSRunLoop, "run", rl_run); M(NSRunLoop, "runUntilDate:", rl_run_until);
     M(NSRunLoop, "runMode:beforeDate:", rl_run_mode);
     M(NSRunLoop, "currentMode", rl_current_mode); M(NSRunLoop, "getCFRunLoop", rl_cf);
+    M(NSRunLoop, "performBlock:", rl_perform); M(NSRunLoop, "performInModes:block:", rl_perform_modes);
 
     cx_define_class(&NSNotification_c, &NSNotification_m, "NSNotification", &NSObject_c, 24);
     CM(NSNotification, "notificationWithName:object:userInfo:", nn_with_ar);

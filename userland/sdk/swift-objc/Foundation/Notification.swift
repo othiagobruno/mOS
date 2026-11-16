@@ -129,7 +129,7 @@ extension URLRequest: _ObjectiveCBridgeable {
 
 // MARK: - NSURLSession.data(for:delegate:) (async)
 
-extension NSURLSession {
+extension URLSession {
     public func data(for request: URLRequest, delegate: (any NSURLSessionTaskDelegate)? = nil) async throws -> (Data, NSURLResponse) {
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<(Data, NSURLResponse), Error>) in
             let task = self.dataTask(with: request._bridgeToObjectiveC()) { data, response, error in

@@ -26,23 +26,23 @@ int pipe(int *fds);
 #define NSNotFound ((u64)0x7fffffffffffffffULL)
 
 #define CLASS(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
-CLASS(NSAffineTransform) CLASS(NSAppleEventDescriptor) CLASS(NSAssertionHandler) CLASS(NSBlockOperation)
+CLASS(NSAffineTransform) CLASS(NSAppleEventDescriptor) CLASS(NSAssertionHandler) 
 CLASS(NSBundleResourceRequest) CLASS(NSComparisonPredicate)
 CLASS(NSCompoundPredicate) CLASS(NSCondition) CLASS(NSConditionLock) CLASS(NSCountedSet) CLASS(NSDataDetector)
 CLASS(NSDecimalNumber) CLASS(NSDecimalNumberHandler)
 CLASS(NSExpression) CLASS(NSFileCoordinator) CLASS(NSFileHandle) CLASS(NSHashTable)
 CLASS(NSHTTPURLResponse) CLASS(NSIndexPath)
-CLASS(NSInvocationOperation) CLASS(NSItemProvider) CLASS(NSJSONSerialization)
+CLASS(NSItemProvider) CLASS(NSJSONSerialization)
 CLASS(NSKeyedArchiver) CLASS(NSKeyedUnarchiver) CLASS(NSLinguisticTagger) CLASS(NSLock)
 CLASS(NSMachBootstrapServer) CLASS(NSMachPort) CLASS(NSMapTable) CLASS(NSMeasurementFormatter)
 CLASS(NSMetadataItem) CLASS(NSMetadataQuery) CLASS(NSMutableAttributedString) CLASS(NSMutableCharacterSet)
 CLASS(NSMutableIndexSet) CLASS(NSMutableURLRequest) CLASS(NSNetService) CLASS(NSNetServiceBrowser)
-CLASS(NSOperation) CLASS(NSOperationQueue)
+
 CLASS(NSPipe) CLASS(NSPointerArray) CLASS(NSPredicate) CLASS(NSProgress) CLASS(NSPropertyListSerialization)
 CLASS(NSProxy) CLASS(NSPurgeableData) CLASS(NSRecursiveLock) CLASS(NSRegularExpression)
 CLASS(NSScanner) CLASS(NSScriptClassDescription) CLASS(NSScriptCommand)
 CLASS(NSSecureUnarchiveFromDataTransformer) CLASS(NSSortDescriptor) CLASS(NSTask) CLASS(NSTextCheckingResult)
-CLASS(NSUndoManager) CLASS(NSUniqueIDSpecifier) CLASS(NSUnitAngle) CLASS(NSUnitDuration)
+CLASS(NSUniqueIDSpecifier) CLASS(NSUnitAngle) CLASS(NSUnitDuration)
 CLASS(NSUnitInformationStorage) CLASS(NSUnitLength)
 CLASS(NSURLComponents)
 CLASS(NSURLQueryItem) CLASS(NSURLRequest) CLASS(NSURLResponse)
@@ -1646,78 +1646,7 @@ static void coord_read(id s, SEL c, id url, u64 opt, id *err, void *block) {
     void (*inv)(void *, id) = *(void **)((u8 *)block + 16);
     inv(block, url);
 }
-static void op_start(id s, SEL c);
-static id op_alloc(id cls, SEL c) { (void)c; return cx_alloc_instance((cx_class_t *)cls); }
-static void op_main(id s, SEL c) { (void)s; (void)c; }
-static void op_start(id s, SEL c) {
-    if (BOX(s)->fl2) { BOX(s)->fl = 2; return; }
-    BOX(s)->fl = 1;
-    MSG0(void, s, "main");
-    BOX(s)->fl = 2;
-    if (BOX(s)->p) { void (*inv)(void *) = *(void **)((u8 *)BOX(s)->p + 16); inv(BOX(s)->p); }
-    (void)c;
-}
-static void op_cancel(id s, SEL c) { (void)c; BOX(s)->fl2 = 1; }
-static BOOL op_finished(id s, SEL c) { (void)c; return BOX(s)->fl == 2; }
-static BOOL op_exec(id s, SEL c) { (void)c; return BOX(s)->fl == 1; }
-static BOOL op_cancelled(id s, SEL c) { (void)c; return BOX(s)->fl2 ? YES : NO; }
-static BOOL op_ready(id s, SEL c) { (void)c; return YES; }
-static void op_wait(id s, SEL c) { (void)c; while (BOX(s)->fl != 2) SYS0(SYS_YIELD); }
-static void op_set_done(id s, SEL c, void *b) { (void)c; if (BOX(s)->p) rel(0); BOX(s)->p = b ? _Block_copy(b) : 0; }
-static id bop_with(id cls, SEL c, void *b) {
-    (void)c;
-    box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls);
-    o->a = mutarr();
-    if (b) cx_arr_add(o->a, (id)_Block_copy(b));
-    return ar((id)o);
-}
-static void bop_add(id s, SEL c, void *b) { (void)c; if (b && BOX(s)->a) cx_arr_add(BOX(s)->a, (id)_Block_copy(b)); }
-static void bop_main(id s, SEL c) {
-    (void)c;
-    id a = BOX(s)->a;
-    u64 n = a ? MSG0(u64, a, "count") : 0;
-    for (u64 i = 0; i < n; i++) {
-        void *b = MSG(id, a, "objectAtIndex:", i);
-        void (*inv)(void *) = *(void **)((u8 *)b + 16);
-        inv(b);
-    }
-}
-static id q_main(id cls, SEL c) { (void)c; static id s; if (!s) s = cx_alloc_instance((cx_class_t *)cls); return s; }
-static void *op_thread(void *op) { op_start((id)op, 0); rel((id)op); return 0; }
-/* a fila guarda as operações ainda não terminadas (BOX->a, NSMutableArray sob o trinco BOX->fl):
- * -operations, -operationCount e -cancelAllOperations as enxergam */
-static void q_track(id s, id op) {
-    spin_lock((volatile int *)&BOX(s)->fl);
-    if (!BOX(s)->a) BOX(s)->a = MSG0(id, MSG0(id, (id)&NSMutableArray_c, "alloc"), "init");
-    id arr = BOX(s)->a;
-    for (long i = MSG0(long, arr, "count") - 1; i >= 0; i--)
-        if (MSG0(BOOL, MSG(id, arr, "objectAtIndex:", (unsigned long)i), "isFinished")) MSG(void, arr, "removeObjectAtIndex:", (unsigned long)i);
-    if (op) MSG(void, arr, "addObject:", op);
-    spin_unlock((volatile int *)&BOX(s)->fl);
-}
-static id q_ops(id s, SEL c) {
-    (void)c;
-    q_track(s, 0);
-    spin_lock((volatile int *)&BOX(s)->fl);
-    id r = MSG(id, (id)&NSArray_c, "arrayWithArray:", BOX(s)->a);
-    spin_unlock((volatile int *)&BOX(s)->fl);
-    return r;
-}
-static long q_count(id s, SEL c) { return MSG0(long, q_ops(s, c), "count"); }
-static void q_cancel_all(id s, SEL c) {
-    id ops = q_ops(s, c);
-    long n = MSG0(long, ops, "count");
-    for (long i = 0; i < n; i++) MSG0(void, MSG(id, ops, "objectAtIndex:", (unsigned long)i), "cancel");
-}
-static void q_add(id s, SEL c, id op) {
-    (void)c;
-    if (!op) return;
-    q_track(s, op);
-    retain(op);
-    unsigned long tid = 0;
-    if (pthread_create(&tid, 0, op_thread, op)) { op_start(op, c); rel(op); }
-}
-static void q_add_block(id s, SEL c, void *b) { id op = bop_with((id)&NSBlockOperation_c, c, b); q_add(s, c, op); }
+/* NSOperation, NSBlockOperation, NSInvocationOperation e NSOperationQueue estão em fdn_operation.c (libdispatch) */
 static void prog_set_total(id s, SEL c, long long n) { (void)c; BOX(s)->j = n; }
 static void prog_set_done(id s, SEL c, long long n) { (void)c; BOX(s)->i = n; }
 static long long prog_total(id s, SEL c) { (void)c; return BOX(s)->j; }
@@ -1728,31 +1657,7 @@ static void prog_cancel(id s, SEL c) { (void)c; BOX(s)->fl = 1; }
 static BOOL prog_cancelled(id s, SEL c) { (void)c; return BOX(s)->fl ? YES : NO; }
 
 typedef struct undo_item { id target; char sel[128]; id arg; struct undo_item *next; } undo_item_t;
-static void undo_reg(id s, SEL c, id target, SEL sel, id arg) {
-    (void)c;
-    undo_item_t *it = calloc(1, sizeof *it);
-    it->target = retain(target);
-    strlcpy(it->sel, sel ? sel : "", sizeof it->sel);
-    it->arg = retain(arg);
-    it->next = BOX(s)->p;
-    BOX(s)->p = it;
-}
-static void undo_do(id s, SEL c) {
-    (void)c;
-    undo_item_t *it = BOX(s)->p;
-    if (!it || BOX(s)->fl) return;
-    BOX(s)->p = it->next;
-    it->next = BOX(s)->e ? (undo_item_t *)BOX(BOX(s)->e)->p : 0;
-    if (!BOX(s)->e) BOX(s)->e = cx_alloc_instance(&NSUndoManager_c);
-    ((undo_item_t *)it)->next = BOX(BOX(s)->e)->p;
-    BOX(BOX(s)->e)->p = it;
-    if (it->target && it->sel[0]) MSG(void, it->target, it->sel, it->arg);
-}
-static BOOL undo_can(id s, SEL c) { (void)c; return BOX(s)->p ? YES : NO; }
-static void undo_begin(id s, SEL c) { (void)c; BOX(s)->i++; }
-static void undo_end(id s, SEL c) { (void)c; if (BOX(s)->i) BOX(s)->i--; }
-static void undo_clear(id s, SEL c) { (void)c; BOX(s)->fl = 1; }
-static void undo_enable(id s, SEL c) { (void)c; BOX(s)->fl = 0; }
+/* NSUndoManager está em fdn_undo.c */
 
 /* ---------------------------------------------------------------- keyed archiver */
 static int is_uid(id o) { return is_cls(o, &NSDictionary_c) && MSG0(u64, o, "count") == 1 && dget(o, "CF$UID"); }
@@ -2572,23 +2477,6 @@ void cx_foundation_more_init(void) {
     CM(NSURLQueryItem, "queryItemWithName:value:", qitem_make);
     M(NSURLQueryItem, "name", qitem_name); M(NSURLQueryItem, "value", qitem_value);
 
-    DEF(&NSOperation_c, &NSOperation_m, "NSOperation", ob, BEX);
-    CM(NSOperation, "alloc", op_alloc);
-    M(NSOperation, "start", op_start); M(NSOperation, "main", op_main); M(NSOperation, "cancel", op_cancel);
-    M(NSOperation, "isFinished", op_finished); M(NSOperation, "isExecuting", op_exec); M(NSOperation, "isCancelled", op_cancelled);
-    M(NSOperation, "isReady", op_ready); M(NSOperation, "waitUntilFinished", op_wait);
-    M(NSOperation, "setCompletionBlock:", op_set_done); M(NSOperation, "addDependency:", noop);
-    DEF(&NSBlockOperation_c, &NSBlockOperation_m, "NSBlockOperation", &NSOperation_c, 0);
-    CM(NSBlockOperation, "blockOperationWithBlock:", bop_with);
-    M(NSBlockOperation, "addExecutionBlock:", bop_add); M(NSBlockOperation, "main", bop_main);
-    DEF(&NSInvocationOperation_c, &NSInvocationOperation_m, "NSInvocationOperation", &NSOperation_c, 0);
-    DEF(&NSOperationQueue_c, &NSOperationQueue_m, "NSOperationQueue", ob, BEX);
-    CM(NSOperationQueue, "mainQueue", q_main); CM(NSOperationQueue, "currentQueue", q_main);
-    M(NSOperationQueue, "addOperation:", q_add); M(NSOperationQueue, "addOperationWithBlock:", q_add_block);
-    M(NSOperationQueue, "setMaxConcurrentOperationCount:", noop); M(NSOperationQueue, "setSuspended:", noop);
-    M(NSOperationQueue, "waitUntilAllOperationsAreFinished", noop);
-    M(NSOperationQueue, "operations", q_ops); M(NSOperationQueue, "operationCount", q_count);
-    M(NSOperationQueue, "cancelAllOperations", q_cancel_all);
 
     DEF(&NSProgress_c, &NSProgress_m, "NSProgress", ob, BEX);
     CM(NSProgress, "progressWithTotalUnitCount:", prog_with); CM(NSProgress, "discreteProgressWithTotalUnitCount:", prog_with);
@@ -2597,13 +2485,6 @@ void cx_foundation_more_init(void) {
     M(NSProgress, "fractionCompleted", prog_frac); M(NSProgress, "cancel", prog_cancel); M(NSProgress, "isCancelled", prog_cancelled);
     M(NSProgress, "setLocalizedDescription:", set_a); M(NSProgress, "localizedDescription", get_a);
 
-    DEF(&NSUndoManager_c, &NSUndoManager_m, "NSUndoManager", ob, BEX);
-    M(NSUndoManager, "registerUndoWithTarget:selector:object:", undo_reg);
-    M(NSUndoManager, "undo", undo_do); M(NSUndoManager, "canUndo", undo_can); M(NSUndoManager, "canRedo", undo_can);
-    M(NSUndoManager, "beginUndoGrouping", undo_begin); M(NSUndoManager, "endUndoGrouping", undo_end);
-    M(NSUndoManager, "disableUndoRegistration", undo_clear); M(NSUndoManager, "enableUndoRegistration", undo_enable);
-    M(NSUndoManager, "setActionName:", set_a); M(NSUndoManager, "undoActionName", get_a);
-    M(NSUndoManager, "removeAllActions", undo_clear);
 
     DEF(&NSKeyedArchiver_c, &NSKeyedArchiver_m, "NSKeyedArchiver", ob, BEX);
     CM(NSKeyedArchiver, "archivedDataWithRootObject:requiringSecureCoding:error:", arch_finished);
