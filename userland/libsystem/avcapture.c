@@ -492,6 +492,7 @@ typedef struct {
     volatile int pvlock;
     u8 *pv; int pvw, pvh, pvmirror; u64 pvseq;
     int previews;
+    double audio_t0; u64 audio_frames;
 } avsess_t;
 extern cx_class_t AVCaptureSession_c __asm__("OBJC_CLASS_$_AVCaptureSession"), AVCaptureSession_m __asm__("OBJC_METACLASS_$_AVCaptureSession");
 #define SESS(o) ((avsess_t *)(o))
@@ -580,6 +581,12 @@ static u8 *frame_bgra(frame_t *f) {
 }
 
 static void photo_fulfil(avsess_t *ss, frame_t *f, cmt_t pts);
+static int is_file_output(id o);
+static void rec_video(avsess_t *ss, id o, frame_t *f, cmt_t pts);
+static void rec_audio(avsess_t *ss, id o, void *sample, double at, unsigned frames);
+static void rec_session_stopped(avsess_t *ss);
+static int rec_tick(id o, double now);
+static double secs(cmt_t t);
 static void still_fulfil(avsess_t *ss, frame_t *f, cmt_t pts);
 
 static void on_frame(avsess_t *ss, frame_t *f) {
@@ -615,18 +622,31 @@ static void on_frame(avsess_t *ss, frame_t *f) {
     }
     photo_fulfil(ss, f, pts);
     still_fulfil(ss, f, pts);
+    for (int i = 0; i < ss->n; i++)
+        if (!ss->items[i].is_input && is_file_output(ss->items[i].obj)) rec_video(ss, ss->items[i].obj, f, pts);
 }
 
+int CMSampleBufferCreateCopyWithNewTiming(void *a, void *src, long nt, const void *t, void **out);
 static void deliver_audio(avsess_t *ss) {
     short pcm[2048];
     int err = 0;
     unsigned n = avf_cap_pull(1, pcm, 1024, &err);
     if (!n) return;
-    void *sample = cx_cm_audio_sample(pcm, n, 48000);
-    if (!sample) return;
+    void *raw = cx_cm_audio_sample(pcm, n, 48000);
+    if (!raw) return;
+    /* pts no relógio do host: o primeiro bloco marca o início, os seguintes contam quadros */
+    if (!ss->audio_frames) ss->audio_t0 = secs(host_now());
+    double at = ss->audio_t0 + (double)ss->audio_frames / 48000.0;
+    ss->audio_frames += n;
+    cmtiming_t t = {cmt(n, 48000), cmt((long long)(at * 48000.0 + 0.5), 48000), {0, 0, 0, 0}};
+    void *sample = 0;
+    if (CMSampleBufferCreateCopyWithNewTiming(0, raw, 1, &t, &sample) || !sample) sample = objc_retain((id)raw);
+    objc_release((id)raw);
+    for (int i = 0; i < ss->n; i++)
+        if (!ss->items[i].is_input && is_file_output(ss->items[i].obj)) rec_audio(ss, ss->items[i].obj, sample, at, n);
     for (int i = 0; i < ss->n; i++) {
         id o = ss->items[i].obj;
-        if (ss->items[i].is_input || object_getClass(o) == &AVCaptureVideoDataOutput_c) continue;
+        if (ss->items[i].is_input || object_getClass(o) == &AVCaptureVideoDataOutput_c || is_file_output(o)) continue;
         if (!cx_responds(object_getClass(o), sel_registerName("sampleBufferDelegate"))) continue;
         id del = MSG0(id, o, "sampleBufferDelegate");
         void *q = cx_responds(object_getClass(o), sel_registerName("sampleBufferCallbackQueue")) ? MSG0(void *, o, "sampleBufferCallbackQueue") : 0;
@@ -663,6 +683,11 @@ static void *sess_thread(void *a) {
             }
         }
         if (ss->mic) deliver_audio(ss);
+        if (ss->cam < 0) {   /* sem quadros: pedidos de parada das saídas de arquivo andam aqui */
+            double now = secs(host_now());
+            for (int i = 0; i < ss->n; i++)
+                if (!ss->items[i].is_input && is_file_output(ss->items[i].obj)) rec_tick(ss->items[i].obj, now);
+        }
         objc_autoreleasePoolPop(pool);
         if (!got) usleep(ss->cam >= 0 ? 3000 : 10000);
     }
@@ -730,6 +755,7 @@ static void sess_start(id s, SEL c) {
     ss->err = 0;
     ss->cam = -1;
     ss->mic = 0;
+    ss->audio_frames = 0;
     if (mic) {
         int e = 0;
         ss->mic = avf_cap_start(1, 0, &e);
@@ -764,6 +790,7 @@ static void sess_stop(id s, SEL c) {
     for (int i = 0; i < 500 && ss->th && !ss->done; i++) usleep(1000);
     ss->th = 0;
     ss->running = 0;
+    rec_session_stopped(ss);
     post("AVCaptureSessionDidStopRunningNotification", s);
 }
 static BOOL sess_running(id s, SEL c) { (void)c; return SESS(s)->running ? YES : NO; }
@@ -1052,6 +1079,280 @@ static id still_jpeg(id cls, SEL c, void *sb) {
 static id still_codecs(id s, SEL c) { return pho_codecs(s, c); }
 static id still_pixfmts(id s, SEL c) { return pho_pixfmts(s, c); }
 
+/* ================================================================ gravação em arquivo */
+/* AVCaptureMovieFileOutput: H.264 (VTCompressionSession do avwriter.c) + LPCM 16 bits em QuickTime; AVCaptureAudioFileOutput:
+ * só o áudio, no tipo de arquivo pedido (MOV, WAV). O AVAssetWriter é montado no primeiro quadro (o tamanho vem da câmera);
+ * a sessão do escritor começa no pts desse quadro e a pausa desconta o tempo parado. */
+enum { REC_IDLE = 0, REC_PENDING = 1, REC_ON = 2, REC_STOP = 3 };
+typedef struct {
+    cx_class_t *isa;
+    id conn;
+    id url, rdelegate, fdelegate, ftype, vsettings;
+    id writer, vin, ain, adaptor;
+    volatile int state, pause_req, resume_req;
+    int paused, audio_only;
+    double pause_at, offset, first, last, max_dur, next_check, min_free;
+    i64 max_size, size;
+    cmt_t frag;
+} avmfo_t;
+cx_class_t AVCaptureFileOutput_c __asm__("OBJC_CLASS_$_AVCaptureFileOutput"), AVCaptureFileOutput_m __asm__("OBJC_METACLASS_$_AVCaptureFileOutput");
+cx_class_t AVCaptureMovieFileOutput_c __asm__("OBJC_CLASS_$_AVCaptureMovieFileOutput"), AVCaptureMovieFileOutput_m __asm__("OBJC_METACLASS_$_AVCaptureMovieFileOutput");
+cx_class_t AVCaptureAudioFileOutput_c __asm__("OBJC_CLASS_$_AVCaptureAudioFileOutput"), AVCaptureAudioFileOutput_m __asm__("OBJC_METACLASS_$_AVCaptureAudioFileOutput");
+#define MFO(o) ((avmfo_t *)(o))
+const char *cx_audio_url_path(id url);
+int fseek(FILE_ *f, long o, int w);
+long ftell(FILE_ *f);
+static int is_file_output(id o) { cx_class_t *k = object_getClass(o); return k == &AVCaptureMovieFileOutput_c || k == &AVCaptureAudioFileOutput_c; }
+static double secs(cmt_t t) { return t.timescale > 0 && (t.flags & 1) ? (double)t.value / t.timescale : 0; }
+static cmt_t from_secs(double s) { return cmt((long long)(s * 1000000000.0 + 0.5), 1000000000); }
+static i64 file_size(const char *path) {
+    FILE_ *f = path ? fopen(path, "rb") : 0;
+    if (!f) return -1;
+    fseek(f, 0, 2 /* SEEK_END */);
+    long n = ftell(f);
+    fclose(f);
+    return n;
+}
+static id rec_connections(id o) { id a = arr_new(); MSG(void, a, "addObject:", out_conn_lazy(o)); return a; }
+static id rec_error(long code, int finished) {
+    id info = dict_new();
+    id yes = MSG(id, (id)cx_class_named("NSNumber"), "numberWithBool:", (BOOL)(finished ? YES : NO));
+    MSG(void, info, "setObject:forKey:", yes, cx_str("AVErrorRecordingSuccessfullyFinishedKey"));
+    return MSG(id, (id)cx_class_named("NSError"), "errorWithDomain:code:userInfo:", cx_str("AVFoundationErrorDomain"), code, info);
+}
+typedef struct { id out, del, url, conns, err; int kind; } recjob_t;   /* kind 0 começou, 1 terminou, 2 pausou, 3 voltou */
+static void rec_send(void *a) {
+    recjob_t *j = a;
+    static const char *sel[4] = {
+        "captureOutput:didStartRecordingToOutputFileAtURL:fromConnections:",
+        "captureOutput:didFinishRecordingToOutputFileAtURL:fromConnections:error:",
+        "captureOutput:didPauseRecordingToOutputFileAtURL:fromConnections:",
+        "captureOutput:didResumeRecordingToOutputFileAtURL:fromConnections:",
+    };
+    if (j->del && cx_responds(object_getClass(j->del), sel_registerName(sel[j->kind]))) {
+        if (j->kind == 1) MSG(void, j->del, sel[1], j->out, j->url, j->conns, j->err);
+        else MSG(void, j->del, sel[j->kind], j->out, j->url, j->conns);
+    }
+    objc_release(j->out); objc_release(j->del); objc_release(j->url); objc_release(j->conns);
+    if (j->err) objc_release(j->err);
+    free(j);
+}
+static void rec_notify(id o, int kind, id err) {
+    avmfo_t *m = MFO(o);
+    recjob_t *j = calloc(1, sizeof *j);
+    if (!j || !m->rdelegate) { free(j); return; }
+    j->out = objc_retain(o); j->del = objc_retain(m->rdelegate); j->url = objc_retain(m->url);
+    j->conns = objc_retain(rec_connections(o)); j->err = err ? objc_retain(err) : 0; j->kind = kind;
+    dispatch_async_f(dispatch_get_main_queue(), j, rec_send);
+}
+static void rec_release(avmfo_t *m) {
+    if (m->adaptor) objc_release(m->adaptor);
+    if (m->vin) objc_release(m->vin);
+    if (m->ain) objc_release(m->ain);
+    if (m->writer) objc_release(m->writer);
+    m->adaptor = m->vin = m->ain = m->writer = 0;
+}
+/* fecha o arquivo; code != 0: parou por limite (o arquivo fica bom) ou falhou antes de gravar */
+static void rec_finish(id o, long code) {
+    avmfo_t *m = MFO(o);
+    id err = 0;
+    if (m->writer) {
+        if (m->vin) MSG0(void, m->vin, "markAsFinished");
+        if (m->ain) MSG0(void, m->ain, "markAsFinished");
+        BOOL ok = MSG0(BOOL, m->writer, "finishWriting");
+        if (!ok) { id we = MSG0(id, m->writer, "error"); err = we ? we : rec_error(-11800, 0); }
+        else if (code) err = rec_error(code, 1);
+        m->size = file_size(cx_audio_url_path(m->url));
+    } else err = rec_error(code ? code : -11805 /* AVErrorNoDataCaptured */, 0);
+    rec_release(m);
+    m->state = REC_IDLE;
+    m->paused = 0;
+    rec_notify(o, 1, err);
+}
+static id lpcm_settings(void) {
+    id d = dict_new();
+    dset(d, "AVFormatIDKey", cx_num_i(0x6c70636d /* 'lpcm' */));
+    dset(d, "AVSampleRateKey", cx_num_i(48000));
+    dset(d, "AVNumberOfChannelsKey", cx_num_i(2));
+    dset(d, "AVLinearPCMBitDepthKey", cx_num_i(16));
+    dset(d, "AVLinearPCMIsFloatKey", cx_num_i(0));
+    dset(d, "AVLinearPCMIsBigEndianKey", cx_num_i(0));
+    dset(d, "AVLinearPCMIsNonInterleaved", cx_num_i(0));
+    return d;
+}
+/* monta o AVAssetWriter; w/h = 0 no AVCaptureAudioFileOutput */
+static int rec_setup(id o, avsess_t *ss, int w, int h, double start) {
+    avmfo_t *m = MFO(o);
+    const char *ft = m->ftype ? cx_cstr(m->ftype) : "com.apple.quicktime-movie";
+    id err = 0;
+    id wr = MSG(id, (id)cx_class_named("AVAssetWriter"), "assetWriterWithURL:fileType:error:", m->url, cx_str(ft), &err);
+    if (!wr) return -11800;
+    m->writer = objc_retain(wr);
+    if (!m->audio_only) {
+        if (w < 16 || h < 16 || (w & 1) || (h & 1)) return -11800;
+        id vs = dict_new();
+        dset(vs, "AVVideoCodecKey", cx_str("avc1"));
+        dset(vs, "Width", cx_num_i(w));
+        dset(vs, "Height", cx_num_i(h));
+        id props = m->vsettings ? MSG(id, m->vsettings, "objectForKey:", cx_str("AVVideoCompressionPropertiesKey")) : 0;
+        if (props) dset(vs, "AVVideoCompressionPropertiesKey", props);
+        id vin = MSG(id, (id)cx_class_named("AVAssetWriterInput"), "assetWriterInputWithMediaType:outputSettings:", cx_str("vide"), vs);
+        if (!vin || !MSG(BOOL, m->writer, "canAddInput:", vin)) return -11800;
+        MSG(void, vin, "setExpectsMediaDataInRealTime:", (BOOL)YES);
+        MSG(void, m->writer, "addInput:", vin);
+        m->vin = objc_retain(vin);
+        id ad = MSG(id, (id)cx_class_named("AVAssetWriterInputPixelBufferAdaptor"),
+                    "assetWriterInputPixelBufferAdaptorWithAssetWriterInput:sourcePixelBufferAttributes:", vin, (id)0);
+        if (!ad) return -11800;
+        m->adaptor = objc_retain(ad);
+    }
+    if (ss->mic) {
+        id ain = MSG(id, (id)cx_class_named("AVAssetWriterInput"), "assetWriterInputWithMediaType:outputSettings:", cx_str("soun"), lpcm_settings());
+        if (ain && MSG(BOOL, m->writer, "canAddInput:", ain)) {
+            MSG(void, ain, "setExpectsMediaDataInRealTime:", (BOOL)YES);
+            MSG(void, m->writer, "addInput:", ain);
+            m->ain = objc_retain(ain);
+        }
+    }
+    if (m->audio_only && !m->ain) return -11800;
+    if (!MSG0(BOOL, m->writer, "startWriting")) return -11800;
+    ((void (*)(id, SEL, cmt_t))objc_msgSend)(m->writer, sel_registerName("startSessionAtSourceTime:"), from_secs(start));
+    m->first = m->last = start;
+    m->offset = 0;
+    m->next_check = start + 1;
+    return 0;
+}
+/* pedidos de pausa/volta e limites; devolve 1 se a gravação está ativa e não pausada */
+static int rec_tick(id o, double now) {
+    avmfo_t *m = MFO(o);
+    if (m->state == REC_STOP) { rec_finish(o, 0); return 0; }
+    if (m->state != REC_ON) return 0;
+    if (m->pause_req) { m->pause_req = 0; if (!m->paused) { m->paused = 1; m->pause_at = now; rec_notify(o, 2, 0); } }
+    if (m->resume_req) { m->resume_req = 0; if (m->paused) { m->paused = 0; m->offset += now - m->pause_at; rec_notify(o, 3, 0); } }
+    if (m->paused) return 0;
+    if (m->max_dur > 0 && now - m->offset - m->first >= m->max_dur) { rec_finish(o, -11810 /* AVErrorMaximumDurationReached */); return 0; }
+    if (now >= m->next_check) {
+        m->next_check = now + 1;
+        i64 n = file_size(cx_audio_url_path(m->url));
+        if (n >= 0) m->size = n;
+        if (m->max_size > 0 && m->size >= m->max_size) { rec_finish(o, -11811 /* AVErrorMaximumFileSizeReached */); return 0; }
+    }
+    return 1;
+}
+static void rec_video(avsess_t *ss, id o, frame_t *f, cmt_t pts) {
+    avmfo_t *m = MFO(o);
+    double now = secs(pts);
+    if (m->audio_only) { rec_tick(o, now); return; }
+    if (m->state == REC_PENDING) {
+        int rc = rec_setup(o, ss, f->w, f->h, now);
+        if (rc) { rec_release(m); m->state = REC_IDLE; rec_notify(o, 1, rec_error(rc, 0)); return; }
+        m->state = REC_ON;
+        rec_notify(o, 0, 0);
+    }
+    if (!rec_tick(o, now) || !CONN(out_conn_lazy(o))->enabled) return;
+    void *pb = make_pb(f, AVC_FMT_420V, CONN(out_conn_lazy(o))->mirrored);
+    if (!pb) return;
+    double rel = now - m->offset;
+    if (MSG0(BOOL, m->vin, "isReadyForMoreMediaData"))
+        ((BOOL (*)(id, SEL, void *, cmt_t))objc_msgSend)(m->adaptor, sel_registerName("appendPixelBuffer:withPresentationTime:"), pb, from_secs(rel));
+    objc_release((id)pb);
+    m->last = rel;
+}
+int CMSampleBufferCreateCopyWithNewTiming(void *a, void *src, long nt, const void *t, void **out);
+static void rec_audio(avsess_t *ss, id o, void *sample, double at, unsigned frames) {
+    avmfo_t *m = MFO(o);
+    if (m->audio_only && m->state == REC_PENDING) {
+        int rc = rec_setup(o, ss, 0, 0, at);
+        if (rc) { rec_release(m); m->state = REC_IDLE; rec_notify(o, 1, rec_error(rc, 0)); return; }
+        m->state = REC_ON;
+        rec_notify(o, 0, 0);
+    }
+    if (m->audio_only && !rec_tick(o, at)) return;
+    if (m->state != REC_ON || m->paused || !m->ain) return;
+    double rel = at - m->offset;
+    if (rel < m->first) return;   /* antes do primeiro quadro: o arquivo começa no vídeo */
+    cmtiming_t t = {cmt(frames, 48000), from_secs(rel), {0, 0, 0, 0}};
+    void *sb = 0;
+    if (CMSampleBufferCreateCopyWithNewTiming(0, sample, 1, &t, &sb) || !sb) return;
+    if (MSG0(BOOL, m->ain, "isReadyForMoreMediaData")) MSG(BOOL, m->ain, "appendSampleBuffer:", (id)sb);
+    objc_release((id)sb);
+    if (m->audio_only) m->last = rel;
+}
+/* a sessão parou: fecha o que estava gravando */
+static void rec_session_stopped(avsess_t *ss) {
+    for (int i = 0; i < ss->n; i++) {
+        id o = ss->items[i].obj;
+        if (ss->items[i].is_input || !is_file_output(o)) continue;
+        if (MFO(o)->state != REC_IDLE) rec_finish(o, MFO(o)->state == REC_PENDING ? -11805 : 0);
+    }
+}
+
+static void mfo_start(id s, SEL c, id url, id delegate) {
+    (void)c;
+    avmfo_t *m = MFO(s);
+    if (m->state != REC_IDLE || !url) return;
+    if (m->url) objc_release(m->url);
+    if (m->rdelegate) objc_release(m->rdelegate);
+    m->url = objc_retain(url);
+    m->rdelegate = delegate ? objc_retain(delegate) : 0;
+    m->size = 0; m->paused = 0; m->pause_req = m->resume_req = 0;
+    m->audio_only = object_getClass(s) == &AVCaptureAudioFileOutput_c;
+    if (file_size(cx_audio_url_path(url)) >= 0) { rec_notify(s, 1, rec_error(-11823 /* AVErrorFileAlreadyExists */, 0)); return; }
+    m->state = REC_PENDING;
+}
+static void afo_start(id s, SEL c, id url, id type, id delegate) {
+    if (type) { if (MFO(s)->ftype) objc_release(MFO(s)->ftype); MFO(s)->ftype = objc_retain(type); }
+    mfo_start(s, c, url, delegate);
+}
+static void mfo_stop(id s, SEL c) {
+    (void)c;
+    avmfo_t *m = MFO(s);
+    if (m->state == REC_PENDING) { rec_finish(s, -11805); return; }
+    if (m->state == REC_ON) m->state = REC_STOP;   /* a thread da sessão fecha no próximo passo */
+}
+static BOOL mfo_recording(id s, SEL c) { (void)c; return MFO(s)->state != REC_IDLE ? YES : NO; }
+static BOOL mfo_paused(id s, SEL c) { (void)c; return MFO(s)->paused ? YES : NO; }
+static void mfo_pause(id s, SEL c) { (void)c; if (MFO(s)->state == REC_ON) MFO(s)->pause_req = 1; }
+static void mfo_resume(id s, SEL c) { (void)c; if (MFO(s)->state == REC_ON) MFO(s)->resume_req = 1; }
+static id mfo_url(id s, SEL c) { (void)c; return MFO(s)->state != REC_IDLE ? MFO(s)->url : 0; }
+static cmt_t mfo_duration(id s, SEL c) { (void)c; avmfo_t *m = MFO(s); return from_secs(m->state == REC_ON ? m->last - m->first : 0); }
+static i64 mfo_size(id s, SEL c) { (void)c; return MFO(s)->size; }
+static cmt_t mfo_max_dur(id s, SEL c) { (void)c; return MFO(s)->max_dur > 0 ? from_secs(MFO(s)->max_dur) : cmt(0, 0); }
+static void mfo_set_max_dur(id s, SEL c, cmt_t t) { (void)c; MFO(s)->max_dur = secs(t); }
+static i64 mfo_max_size(id s, SEL c) { (void)c; return MFO(s)->max_size; }
+static void mfo_set_max_size(id s, SEL c, i64 v) { (void)c; MFO(s)->max_size = v; }
+static i64 mfo_min_free(id s, SEL c) { (void)c; return (i64)MFO(s)->min_free; }
+static void mfo_set_min_free(id s, SEL c, i64 v) { (void)c; MFO(s)->min_free = (double)v; }
+static cmt_t mfo_frag(id s, SEL c) { (void)c; return MFO(s)->frag.flags ? MFO(s)->frag : cmt(10, 1); }
+static void mfo_set_frag(id s, SEL c, cmt_t t) { (void)c; MFO(s)->frag = t; }   /* o QuickTime sai inteiro no fim: guardado só para leitura */
+static id mfo_delegate(id s, SEL c) { (void)c; return MFO(s)->fdelegate; }
+static void mfo_set_delegate(id s, SEL c, id d) { (void)c; MFO(s)->fdelegate = d; }
+static id mfo_codecs(id s, SEL c) { (void)s; (void)c; id a = arr_new(); MSG(void, a, "addObject:", cx_str("avc1")); return a; }
+static id mfo_settings_for(id s, SEL c, id conn) {
+    (void)c; (void)conn;
+    if (MFO(s)->vsettings) return MFO(s)->vsettings;
+    id d = dict_new();
+    dset(d, "AVVideoCodecKey", cx_str("avc1"));
+    return d;
+}
+/* só H.264: outro codec é recusado (como um codec fora de availableVideoCodecTypes no macOS) */
+static void mfo_set_settings(id s, SEL c, id st, id conn) {
+    (void)c; (void)conn;
+    id codec = st ? MSG(id, st, "objectForKey:", cx_str("AVVideoCodecKey")) : 0;
+    if (codec && strcmp(cx_cstr(codec), "avc1")) return;
+    if (st) objc_retain(st);
+    if (MFO(s)->vsettings) objc_release(MFO(s)->vsettings);
+    MFO(s)->vsettings = st;
+}
+static id afo_types(id s, SEL c) {
+    (void)s; (void)c;
+    id a = arr_new();
+    MSG(void, a, "addObject:", cx_str("com.apple.quicktime-movie"));
+    MSG(void, a, "addObject:", cx_str("com.microsoft.waveform-audio"));
+    return a;
+}
+static id afo_settings(id s, SEL c) { (void)s; (void)c; return lpcm_settings(); }
+
 /* ================================================================ prévia */
 typedef struct { cx_class_t *isa; id session; id timer; id layer; u64 seq; int w, h; id conn; } pvst_t;
 cx_class_t MOSCapturePreviewState_c __asm__("OBJC_CLASS_$_MOSCapturePreviewState"), MOSCapturePreviewState_m __asm__("OBJC_METACLASS_$_MOSCapturePreviewState");
@@ -1168,6 +1469,9 @@ void cx_avcapture_classes_init(void) {
     DEF(AVCaptureResolvedPhotoSettings, "AVCaptureResolvedPhotoSettings", ob, sizeof(avrset_t) - 8);
     DEF(AVCapturePhoto, "AVCapturePhoto", ob, sizeof(avphoto_t) - 8);
     DEF(AVCaptureSession, "AVCaptureSession", ob, sizeof(avsess_t) - 8);
+    DEF(AVCaptureFileOutput, "AVCaptureFileOutput", &AVCaptureOutput_c, sizeof(avmfo_t) - 8);
+    DEF(AVCaptureMovieFileOutput, "AVCaptureMovieFileOutput", &AVCaptureFileOutput_c, 0);
+    DEF(AVCaptureAudioFileOutput, "AVCaptureAudioFileOutput", &AVCaptureFileOutput_c, 0);
     DEF(MOSCapturePreviewState, "MOSCapturePreviewState", ob, sizeof(pvst_t) - 8);
 }
 
@@ -1293,6 +1597,32 @@ void cx_avcapture_init(void) {
     add("AVCaptureStillImageOutput", "availableImageDataCodecTypes", (void *)still_codecs, 0);
     add("AVCaptureStillImageOutput", "availableImageDataCVPixelFormatTypes", (void *)still_pixfmts, 0);
     add("AVCaptureStillImageOutput", "jpegStillImageNSDataRepresentation:", (void *)still_jpeg, 1);
+
+    add("AVCaptureFileOutput", "startRecordingToOutputFileURL:recordingDelegate:", (void *)mfo_start, 0);
+    add("AVCaptureAudioFileOutput", "startRecordingToOutputFileURL:outputFileType:recordingDelegate:", (void *)afo_start, 0);
+    add("AVCaptureFileOutput", "stopRecording", (void *)mfo_stop, 0);
+    add("AVCaptureFileOutput", "isRecording", (void *)mfo_recording, 0);
+    add("AVCaptureFileOutput", "isRecordingPaused", (void *)mfo_paused, 0);
+    add("AVCaptureFileOutput", "pauseRecording", (void *)mfo_pause, 0);
+    add("AVCaptureFileOutput", "resumeRecording", (void *)mfo_resume, 0);
+    add("AVCaptureFileOutput", "outputFileURL", (void *)mfo_url, 0);
+    add("AVCaptureFileOutput", "recordedDuration", (void *)mfo_duration, 0);
+    add("AVCaptureFileOutput", "recordedFileSize", (void *)mfo_size, 0);
+    add("AVCaptureFileOutput", "maxRecordedDuration", (void *)mfo_max_dur, 0);
+    add("AVCaptureFileOutput", "setMaxRecordedDuration:", (void *)mfo_set_max_dur, 0);
+    add("AVCaptureFileOutput", "maxRecordedFileSize", (void *)mfo_max_size, 0);
+    add("AVCaptureFileOutput", "setMaxRecordedFileSize:", (void *)mfo_set_max_size, 0);
+    add("AVCaptureFileOutput", "minFreeDiskSpaceLimit", (void *)mfo_min_free, 0);
+    add("AVCaptureFileOutput", "setMinFreeDiskSpaceLimit:", (void *)mfo_set_min_free, 0);
+    add("AVCaptureFileOutput", "delegate", (void *)mfo_delegate, 0);
+    add("AVCaptureFileOutput", "setDelegate:", (void *)mfo_set_delegate, 0);
+    add("AVCaptureMovieFileOutput", "movieFragmentInterval", (void *)mfo_frag, 0);
+    add("AVCaptureMovieFileOutput", "setMovieFragmentInterval:", (void *)mfo_set_frag, 0);
+    add("AVCaptureMovieFileOutput", "availableVideoCodecTypes", (void *)mfo_codecs, 0);
+    add("AVCaptureMovieFileOutput", "outputSettingsForConnection:", (void *)mfo_settings_for, 0);
+    add("AVCaptureMovieFileOutput", "setOutputSettings:forConnection:", (void *)mfo_set_settings, 0);
+    add("AVCaptureAudioFileOutput", "availableOutputFileTypes", (void *)afo_types, 1);
+    add("AVCaptureAudioFileOutput", "audioSettings", (void *)afo_settings, 0);
 
     add("AVCaptureSession", "init", (void *)sess_init, 0);
     add("AVCaptureSession", "dealloc", (void *)sess_dealloc, 0);
