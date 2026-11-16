@@ -1,8 +1,9 @@
 /*
  * mOS — CoreMediaIO (DAL): objeto de sistema, dispositivos e streams.
- * O mOS ainda não tem câmera de hardware (a classe UVC está por vir): a lista de dispositivos tem só o que um plug-in
- * do próprio processo publicou (CMIOObjectCreate + CMIOObjectsPublishedAndDied) ou o que um CMIOExtensionProvider
- * acrescentou. Propriedades: kCMIOHardwarePropertyDevices/DefaultInputDevice/AllowScreenCaptureDevices/
+ * Dispositivos: as câmeras USB do driver UVC (kernel/dev/uvc.c, DEV_CAMERA_*), cada uma com um stream de entrada
+ * (formatos 'pfta'/'pft ', taxa 'nfrm'/'nfr#'; quadros em '2vuy' ou '420v' numa thread, na fila do stream), mais o que
+ * um plug-in do próprio processo publicou (CMIOObjectCreate + CMIOObjectsPublishedAndDied) ou o que um
+ * CMIOExtensionProvider acrescentou. Propriedades: kCMIOHardwarePropertyDevices/DefaultInputDevice/AllowScreenCaptureDevices/
  * AllowWirelessScreenCaptureDevices, nome, classe, dono, objetos, streams do dispositivo, UID, "rodando", direção e
  * formato do stream; ouvintes (proc e bloco) avisados quando um valor muda. Stream: fila de buffers (CMSimpleQueue),
  * start/stop, relógio (CMIOStreamClock*) e CMIOSampleBufferCreateForImageBuffer.
@@ -10,6 +11,8 @@
  * chaves CMIOExtensionProperty* é o próprio nome (o da Apple não foi medido). Código original do mOS (MIT).
  */
 #include "foundation.h"
+#include "sys.h"
+#include "../../kernel/include/compat_gui.h"
 
 typedef int OSStatus;
 id objc_retain(id o);
@@ -39,6 +42,7 @@ int CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, v
 enum { C_SYS = FCC('a', 's', 'y', 's'), C_DEV = FCC('a', 'd', 'e', 'v'), C_STREAM = FCC('a', 's', 't', 'r') };
 typedef struct { u32 sel, scope, elem; } paddr;
 
+struct hwcam;
 typedef struct cobj {
     u32 id, cls, owner;
     int published, running, direction;
@@ -46,6 +50,7 @@ typedef struct cobj {
     void *fd;              /* CMFormatDescription do stream */
     void *queue;           /* CMSimpleQueue do stream */
     void (*altered)(u32, void *, void *); void *alt_ref;
+    struct hwcam *hw;      /* câmera do kernel (dispositivo e stream) */
     struct cobj *next;
 } cobj;
 typedef struct lis { u32 obj; paddr a; void *proc, *ref, *block, *queue; struct lis *next; } lis;
@@ -54,6 +59,11 @@ static lis *g_lis;
 static u32 g_next = 0x100;
 static u32 g_allow_screen, g_allow_wireless;
 static cobj *find(u32 id) { for (cobj *o = g_objs; o; o = o->next) if (o->id == id) return o; return 0; }
+static void hw_refresh(void);
+static OSStatus hw_prop(cobj *o, u32 sel, u32 *size, void *data, u32 cap);
+static OSStatus hw_set(cobj *o, u32 sel, u32 size, const void *data);
+static OSStatus hw_start(cobj *s);
+static void hw_stop(cobj *s);
 
 static void notify(u32 obj, u32 sel) {
     paddr a = {sel, FCC('g', 'l', 'o', 'b'), 0};
@@ -77,6 +87,7 @@ static OSStatus prop(u32 obj, const paddr *a, u32 *size, void *data, u32 cap) {
     u32 list[64];
     int is_list = 0, is_id = 0;
     if (obj == SYSOBJ) {
+        if (a->sel == FCC('d', 'e', 'v', '#') || a->sel == FCC('d', 'I', 'n', ' ') || a->sel == FCC('o', 'w', 'n', 'd')) hw_refresh();
         switch (a->sel) {
         case FCC('d', 'e', 'v', '#'): nl = list_ids(C_DEV, 0, list, 64); is_list = 1; break;
         case FCC('d', 'I', 'n', ' '): { u32 n = list_ids(C_DEV, 0, list, 1); v32 = n ? list[0] : 0; break; }
@@ -89,6 +100,7 @@ static OSStatus prop(u32 obj, const paddr *a, u32 *size, void *data, u32 cap) {
     } else {
         cobj *o = find(obj);
         if (!o || !o->published) return E_BADOBJ;
+        if (o->hw) { OSStatus r = hw_prop(o, a->sel, size, data, cap); if (r != E_UNKNOWN) return r; }
         switch (a->sel) {
         case FCC('c', 'l', 'a', 's'): v32 = o->cls; break;
         case FCC('s', 't', 'd', 'v'): v32 = o->owner ? o->owner : SYSOBJ; break;
@@ -125,7 +137,9 @@ u8 CMIOObjectHasProperty(u32 obj, const paddr *a) { u32 s; return prop(obj, a, &
 OSStatus CMIOObjectIsPropertySettable(u32 obj, const paddr *a, u8 *out) {
     u32 s;
     OSStatus rc = prop(obj, a, &s, 0, 0);
-    if (out) *out = !rc && obj == SYSOBJ && (a->sel == FCC('y', 'e', 's', ' ') || a->sel == FCC('w', 's', 'c', 'd'));
+    cobj *o = obj == SYSOBJ ? 0 : find(obj);
+    if (out) *out = !rc && ((obj == SYSOBJ && (a->sel == FCC('y', 'e', 's', ' ') || a->sel == FCC('w', 's', 'c', 'd'))) ||
+                            (o && o->hw && o->cls == C_STREAM && (a->sel == FCC('p', 'f', 't', ' ') || a->sel == FCC('n', 'f', 'r', 'm'))));
     return rc;
 }
 OSStatus CMIOObjectSetPropertyData(u32 obj, const paddr *a, u32 qs, const void *q, u32 size, const void *data) {
@@ -138,6 +152,8 @@ OSStatus CMIOObjectSetPropertyData(u32 obj, const paddr *a, u32 qs, const void *
         if (*slot != (v != 0)) { *slot = v != 0; notify(SYSOBJ, a->sel); }
         return 0;
     }
+    cobj *o = find(obj);
+    if (o && o->hw && o->published && (a->sel == FCC('p', 'f', 't', ' ') || a->sel == FCC('n', 'f', 'r', 'm'))) return hw_set(o, a->sel, size, data);
     u32 s;
     OSStatus rc = prop(obj, a, &s, 0, 0);
     return rc ? rc : E_UNSUP;   /* existe, mas só se lê */
@@ -214,13 +230,21 @@ OSStatus CMIOStreamCopyBufferQueue(u32 stream, void *altered, void *ref, void **
 OSStatus CMIODeviceStartStream(u32 dev, u32 stream) {
     cobj *d = find(dev), *s = find(stream);
     if (!d || !s || d->cls != C_DEV || s->owner != dev) return E_BADOBJ;
-    if (!s->running) { s->running = 1; notify(dev, FCC('g', 'o', 'n', 'e')); }
+    if (!s->running) {
+        if (s->hw) { OSStatus r = hw_start(s); if (r) return r; }
+        s->running = 1;
+        notify(dev, FCC('g', 'o', 'n', 'e'));
+    }
     return 0;
 }
 OSStatus CMIODeviceStopStream(u32 dev, u32 stream) {
     cobj *d = find(dev), *s = find(stream);
     if (!d || !s || d->cls != C_DEV || s->owner != dev) return E_BADOBJ;
-    if (s->running) { s->running = 0; notify(dev, FCC('g', 'o', 'n', 'e')); }
+    if (s->running) {
+        s->running = 0;
+        if (s->hw) hw_stop(s);
+        notify(dev, FCC('g', 'o', 'n', 'e'));
+    }
     return 0;
 }
 /* entrega de um quadro ao consumidor do stream (plug-in/extensão): entra na fila e avisa */
@@ -231,6 +255,229 @@ int cx_cmio_stream_push(u32 stream, void *sbuf) {
     if (o->altered) o->altered(stream, sbuf, o->alt_ref);
     return 0;
 }
+
+/* ---------------------------------------------------------------- câmeras USB (DEV_CAMERA_*) */
+int CMVideoFormatDescriptionCreate(void *a, u32 codec, i32 w, i32 h, id ext, void **out);
+typedef struct { cmt duration, pts, dts; } cmtiming;
+cmt CMClockGetTime(void *clock);
+void *CMClockGetHostTimeClock(void);
+void *cx_avcap_frame_pb(u32 fourcc, const u8 *data, u32 len, int w, int h, u32 fmt);
+void *malloc(size_t n);
+int snprintf(char *s, size_t n, const char *f, ...);
+int pthread_create(unsigned long *t, const void *attr, void *(*fn)(void *), void *arg);
+int usleep(unsigned us);
+void *objc_autoreleasePoolPush(void);
+void objc_autoreleasePoolPop(void *p);
+OSStatus CMIOSampleBufferCreateForImageBuffer(void *a, void *img, void *fd, const void *timing, u64 seq, u32 disc, void **out);
+#define DEV_OP(op, a, b, c) ((long)SYS4(79 /* GUI_DEVICE */, (op), (a), (b), (c)))
+typedef struct hwcam {
+    int cam, alive;
+    char key[48];
+    u32 dev, stream;
+    gui_camera_info_t info;
+    void *fds[GUI_CAMERA_MODES];
+    int cur;
+    u32 interval;
+    volatile int run, done;
+    unsigned long th;
+    u8 *buf; u32 cap;
+    u64 seq;
+    gui_camera_info_t open;
+    struct hwcam *next;
+} hwcam;
+static hwcam *g_hw;
+static u32 out_fmt(u32 fourcc) { return fourcc == 0x3231564eu /* NV12 */ ? FCC('4', '2', '0', 'v') : FCC('2', 'v', 'u', 'y'); }
+static void hw_publish(hwcam *h) {
+    cobj *d = calloc(1, sizeof *d), *st = calloc(1, sizeof *st);
+    if (!d || !st) { free(d); free(st); return; }
+    d->id = g_next++; d->cls = C_DEV; d->published = 1; d->hw = h;
+    st->id = g_next++; st->cls = C_STREAM; st->owner = d->id; st->published = 1; st->direction = 1; st->hw = h;
+    d->name = objc_retain(cx_str(h->info.name));
+    d->uid = objc_retain(cx_str(h->key));
+    st->name = objc_retain(cx_str(h->info.name));
+    for (int i = 0; i < h->info.nmode; i++)
+        CMVideoFormatDescriptionCreate(0, out_fmt(h->info.mode[i].fourcc), h->info.mode[i].width, h->info.mode[i].height, 0, &h->fds[i]);
+    h->cur = 0;
+    for (int i = 0; i < h->info.nmode; i++) if (h->info.mode[i].width == 1280 && h->info.mode[i].height == 720) { h->cur = i; break; }
+    h->interval = h->info.nmode ? h->info.mode[h->cur].def_interval : 333333;
+    st->fd = h->info.nmode ? h->fds[h->cur] : 0;
+    h->dev = d->id; h->stream = st->id;
+    st->next = g_objs; d->next = st; g_objs = d;
+}
+static void hw_unpublish(hwcam *h) {
+    for (cobj **pp = &g_objs; *pp;) {
+        cobj *o = *pp;
+        if (o->hw == h) {
+            if (o->cls == C_STREAM && o->running) { o->running = 0; hw_stop(o); }
+            *pp = o->next;
+            if (o->name) objc_release(o->name);
+            if (o->uid) objc_release(o->uid);
+            free(o);
+        } else pp = &o->next;
+    }
+}
+/* a lista acompanha o que o kernel tem agora; câmera nova ou que saiu avisa o ouvinte de 'dev#' */
+static void hw_refresh(void) {
+    gui_camera_info_t *info = calloc(1, sizeof *info);
+    if (!info) return;
+    for (hwcam *h = g_hw; h; h = h->next) h->alive = 0;
+    int changed = 0;
+    for (int k = 0; k < 8 && DEV_OP(DEV_CAMERA_INFO, k, info, 0) == 1; k++) {
+        char key[48];
+        snprintf(key, sizeof key, "uvc-%s-%04x%04x", info->path, info->vid, info->pid);
+        hwcam *h = g_hw;
+        while (h && strcmp(h->key, key)) h = h->next;
+        if (!h) {
+            h = calloc(1, sizeof *h);
+            if (!h) break;
+            memcpy(h->key, key, sizeof key);
+            h->info = *info;
+            h->next = g_hw; g_hw = h;
+            hw_publish(h);
+            changed = 1;
+        }
+        h->cam = k;
+        h->alive = 1;
+    }
+    free(info);
+    for (hwcam **pp = &g_hw; *pp;) {
+        hwcam *h = *pp;
+        if (!h->alive && !h->run) { hw_unpublish(h); *pp = h->next; free(h->buf); free(h); changed = 1; }
+        else pp = &h->next;
+    }
+    if (changed) notify(SYSOBJ, FCC('d', 'e', 'v', '#'));
+}
+static double rate_of(u32 iv) { return iv ? 10000000.0 / iv : 0; }
+static OSStatus hw_prop(cobj *o, u32 sel, u32 *size, void *data, u32 cap) {
+    hwcam *h = o->hw;
+    if (o->cls == C_DEV) {
+        u32 v;
+        switch (sel) {
+        case FCC('t', 'r', 'a', 'n'): v = FCC('u', 's', 'b', ' '); break;
+        case FCC('m', 'u', 'i', 'd'): {
+            char m[64];
+            snprintf(m, sizeof m, "UVC Camera VendorID_%u ProductID_%u", h->info.vid, h->info.pid);
+            if (!data) { *size = sizeof(id); return 0; }
+            if (cap < sizeof(id)) return E_SIZE;
+            id s = objc_retain(cx_str(m));
+            memcpy(data, &s, sizeof s); *size = sizeof s;
+            return 0;
+        }
+        default: return E_UNKNOWN;
+        }
+        if (!data) { *size = 4; return 0; }
+        if (cap < 4) return E_SIZE;
+        memcpy(data, &v, 4); *size = 4;
+        return 0;
+    }
+    switch (sel) {
+    case FCC('p', 'f', 't', 'a'): {   /* CFArray com um CMFormatDescription por modo */
+        if (!data) { *size = sizeof(id); return 0; }
+        if (cap < sizeof(id)) return E_SIZE;
+        id a = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+        for (int i = 0; i < h->info.nmode; i++) if (h->fds[i]) MSG(void, a, "addObject:", (id)h->fds[i]);
+        objc_retain(a);
+        memcpy(data, &a, sizeof a); *size = sizeof a;
+        return 0;
+    }
+    case FCC('n', 'f', 'r', 'm'): {
+        double r = rate_of(h->interval);
+        if (!data) { *size = 8; return 0; }
+        if (cap < 8) return E_SIZE;
+        memcpy(data, &r, 8); *size = 8;
+        return 0;
+    }
+    case FCC('n', 'f', 'r', '#'): {   /* taxas do modo atual: a mínima e a máxima (e a padrão, se no meio) */
+        gui_camera_mode_t *m = &h->info.mode[h->cur];
+        double r[3]; u32 n = 0;
+        r[n++] = rate_of(m->min_interval ? m->min_interval : m->def_interval);
+        if (m->def_interval != m->min_interval && m->def_interval != m->max_interval) r[n++] = rate_of(m->def_interval);
+        if (m->max_interval && m->max_interval != m->min_interval) r[n++] = rate_of(m->max_interval);
+        if (!data) { *size = n * 8; return 0; }
+        u32 k = cap / 8 < n ? cap / 8 : n;
+        memcpy(data, r, k * 8); *size = k * 8;
+        return 0;
+    }
+    }
+    return E_UNKNOWN;
+}
+static OSStatus hw_set(cobj *o, u32 sel, u32 size, const void *data) {
+    hwcam *h = o->hw;
+    if (o->cls != C_STREAM) return E_UNSUP;
+    if (h->run) return FCC('n', 'o', 't', 'r');   /* kCMIOHardwareNotStoppedError: troca com o stream parado */
+    if (sel == FCC('p', 'f', 't', ' ')) {
+        if (size < sizeof(void *)) return E_SIZE;
+        void *fd; memcpy(&fd, data, sizeof fd);
+        for (int i = 0; i < h->info.nmode; i++) if (h->fds[i] == fd) {
+            h->cur = i; h->interval = h->info.mode[i].def_interval; o->fd = fd;
+            notify(o->id, sel); notify(o->id, FCC('n', 'f', 'r', 'm'));
+            return 0;
+        }
+        return FCC('f', 'm', 't', '?');   /* kCMIOHardwareUnsupportedFormatError */
+    }
+    if (size < 8) return E_SIZE;
+    double r; memcpy(&r, data, 8);
+    gui_camera_mode_t *m = &h->info.mode[h->cur];
+    if (r <= 0) return E_ILLEGAL;
+    u32 iv = (u32)(10000000.0 / r + 0.5);
+    if (m->min_interval && iv < m->min_interval) iv = m->min_interval;
+    if (m->max_interval && iv > m->max_interval) iv = m->max_interval;
+    h->interval = iv;
+    notify(o->id, sel);
+    return 0;
+}
+static void *hw_thread(void *a) {
+    cobj *st = a;
+    hwcam *h = st->hw;
+    u32 fmt = out_fmt(h->open.cur.fourcc);
+    void *fd = 0;
+    CMVideoFormatDescriptionCreate(0, fmt, h->open.cur.width, h->open.cur.height, 0, &fd);
+    while (h->run) {
+        long n = DEV_OP(DEV_CAMERA_READ, h->cam, h->buf, h->cap);
+        if (n < 0) break;   /* desligada: o refresh tira da lista */
+        if (!n) { usleep(3000); continue; }
+        void *pool = objc_autoreleasePoolPush();
+        void *pb = cx_avcap_frame_pb(h->open.cur.fourcc, h->buf, (u32)n, h->open.cur.width, h->open.cur.height, fmt);
+        if (pb) {
+            cmt now = CMClockGetTime(CMClockGetHostTimeClock());
+            cmtiming t = {{h->open.cur_interval ? h->open.cur_interval : 333333, 10000000, 1, 0}, now, {0, 0, 0, 0}};
+            void *sb = 0;
+            if (fd && !CMIOSampleBufferCreateForImageBuffer(0, pb, fd, &t, h->seq++, 0, &sb) && sb) {
+                cx_cmio_stream_push(st->id, sb);
+                objc_release((id)sb);
+            }
+            objc_release((id)pb);
+        }
+        objc_autoreleasePoolPop(pool);
+    }
+    if (fd) objc_release((id)fd);
+    DEV_OP(DEV_CAMERA_CLOSE, h->cam, 0, 0);
+    h->done = 1;
+    return 0;
+}
+static OSStatus hw_start(cobj *s) {
+    hwcam *h = s->hw;
+    if (!h->info.nmode) return E_ILLEGAL;
+    gui_camera_mode_t *m = &h->info.mode[h->cur];
+    if (DEV_OP(DEV_CAMERA_OPEN, h->cam, (u64)m->width | (u64)m->height << 32, (u64)m->fourcc | (u64)h->interval << 32) < 0)
+        return FCC('w', 'h', 'a', 't');   /* kCMIOHardwareUnspecifiedError: outra captura segura a câmera */
+    if (DEV_OP(DEV_CAMERA_INFO, h->cam, &h->open, 0) != 1) { DEV_OP(DEV_CAMERA_CLOSE, h->cam, 0, 0); return E_ILLEGAL; }
+    u32 need = h->open.cur.max_size, raw = (u32)h->open.cur.width * h->open.cur.height * 2;
+    if (need < raw) need = raw;
+    need += 65536;
+    if (need > h->cap) { free(h->buf); h->buf = malloc(need); h->cap = h->buf ? need : 0; }
+    if (!h->buf) { DEV_OP(DEV_CAMERA_CLOSE, h->cam, 0, 0); return -108; }
+    h->run = 1; h->done = 0;
+    if (pthread_create(&h->th, 0, hw_thread, s)) { h->run = 0; DEV_OP(DEV_CAMERA_CLOSE, h->cam, 0, 0); return -108; }
+    return 0;
+}
+static void hw_stop(cobj *s) {
+    hwcam *h = s->hw;
+    if (!h->run) return;
+    h->run = 0;
+    for (int i = 0; i < 500 && !h->done; i++) usleep(1000);
+}
+
 /* ---------------------------------------------------------------- relógio do stream e sample buffer */
 OSStatus CMIOStreamClockCreate(void *a, id name, const void *src, cmt min_interval, u32 nev, u32 navg, void **clock) {
     (void)name; (void)src; (void)min_interval; (void)nev; (void)navg;

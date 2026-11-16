@@ -542,6 +542,18 @@ static void *make_pb(const frame_t *f, u32 fmt, int mirror) {
     }
     return pb;
 }
+/* para o CoreMediaIO (cmio.c): um quadro cru da câmera (YUY2, NV12 ou JPEG) em CVPixelBuffer do formato pedido; +1 */
+void *cx_avcap_frame_pb(u32 fourcc, const u8 *data, u32 len, int w, int h, u32 fmt) {
+    frame_t f = {fourcc == FCC_NV12 ? AVC_SRC_NV12 : AVC_SRC_YUY2, data, len, w, h, 0};
+    mos_img_t img = {0};
+    if (fourcc == FCC_MJPG) {
+        if (mos_img_decode(data, len, &img) || !img.px) return 0;
+        f.bgra = (u8 *)img.px; f.w = img.w; f.h = img.h; f.src = AVC_SRC_BGRA;
+    }
+    void *pb = make_pb(&f, fmt, 0);
+    if (fourcc == FCC_MJPG) mos_img_free(&img);
+    return pb;
+}
 static void *make_sb(void *pb, cmt_t pts, cmt_t dur) {
     void *fd = 0, *sb = 0;
     if (CMVideoFormatDescriptionCreateForImageBuffer(0, pb, &fd) || !fd) return 0;
