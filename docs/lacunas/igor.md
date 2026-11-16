@@ -3,66 +3,89 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Igor (sem dono claro: triagem) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**230** símbolos distintos.
+**547** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| ImageCaptureCore.framework | `_ICDownloadsDirectoryURL` | 5 | bruno, pencil, postman, vnote |
-| ImageCaptureCore.framework | `_ICOverwrite` | 5 | bruno, pencil, postman, vnote |
-| ImageCaptureCore.framework | `_ICSaveAsFilename` | 5 | bruno, pencil, postman, vnote |
-| ImageCaptureCore.framework | `_ICSavedFilename` | 5 | bruno, pencil, postman, vnote |
-| ImageCaptureCore.framework | `_ICTransportTypeMassStorage` | 5 | bruno, pencil, postman, vnote |
-| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraDevice` | 5 | bruno, pencil, postman, vnote |
-| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraFile` | 5 | bruno, pencil, postman, vnote |
-| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICDeviceBrowser` | 5 | bruno, pencil, postman, vnote |
-| JavaRuntimeSupport.framework | `_JRSUIControlCreate` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlDraw` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlGetHitPart` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarOffsetFor` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarPartBounds` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlRelease` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentHorizontal` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentVertical` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetAnimating` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetDirection` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetOrientation` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetScrollBarPart` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetSegmentPosition` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetShowArrows` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetSize` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetState` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetValueByKey` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetVariant` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetWidget` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetWindowType` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIControlShouldScrollToClick` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIGetKey` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSUIRendererCreate` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSFontAlignStyleForFractionalMeasurement` | 3 | android-studio, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSFontCreateFallbackFontForCharacters` | 3 | android-studio, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSFontGetBoundingBoxesForGlyphsAndStyle` | 3 | android-studio, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSFontGetRenderingStyleForHints` | 3 | android-studio, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSFontSetRenderingStyleOnContext` | 3 | android-studio, dbeaver-community, temurin |
-| JavaRuntimeSupport.framework | `_JRSFontStyleUsesFractionalMetrics` | 3 | android-studio, dbeaver-community, temurin |
-| MetricKit.framework | `_OBJC_CLASS_$_MXMetricManager` | 3 | hammerspoon, tailscale-app, whatsapp |
-| vmnet.framework | `_vmnet_interface_set_event_callback` | 3 | docker-desktop, orbstack, utm |
-| vmnet.framework | `_vmnet_max_packet_size_key` | 3 | docker-desktop, orbstack, utm |
+| ImageCaptureCore.framework | `_ICDownloadsDirectoryURL` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
+| ImageCaptureCore.framework | `_ICOverwrite` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
+| ImageCaptureCore.framework | `_ICSaveAsFilename` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
+| ImageCaptureCore.framework | `_ICSavedFilename` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
+| ImageCaptureCore.framework | `_ICTransportTypeMassStorage` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
+| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraDevice` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
+| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraFile` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
+| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICDeviceBrowser` | 9 | adobe-acrobat-reader, bruno, calibre, headlamp |
+| JavaRuntimeSupport.framework | `_JRSUIControlCreate` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlDraw` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetHitPart` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarOffsetFor` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarPartBounds` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlRelease` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentHorizontal` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentVertical` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAnimating` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetDirection` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetOrientation` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetScrollBarPart` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetSegmentPosition` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetShowArrows` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetSize` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetState` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetValueByKey` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetVariant` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetWidget` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetWindowType` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIControlShouldScrollToClick` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIGetKey` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSUIRendererCreate` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
+| MetricKit.framework | `_OBJC_CLASS_$_MXMetricManager` | 6 | cloudflare-warp, hammerspoon, microsoft-teams, tableplus |
+| JavaRuntimeSupport.framework | `_JRSFontAlignStyleForFractionalMeasurement` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
+| JavaRuntimeSupport.framework | `_JRSFontCreateFallbackFontForCharacters` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
+| JavaRuntimeSupport.framework | `_JRSFontGetBoundingBoxesForGlyphsAndStyle` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
+| JavaRuntimeSupport.framework | `_JRSFontGetRenderingStyleForHints` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
+| JavaRuntimeSupport.framework | `_JRSFontSetRenderingStyleOnContext` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
+| JavaRuntimeSupport.framework | `_JRSFontStyleUsesFractionalMetrics` | 5 | android-studio, dbeaver-community, intellij-idea, jetbrains-toolbox |
+| MetricKit.framework | `_OBJC_CLASS_$_MXCPUExceptionDiagnostic` | 4 | cloudflare-warp, hammerspoon, tableplus, tailscale-app |
+| MetricKit.framework | `_OBJC_CLASS_$_MXCrashDiagnostic` | 4 | cloudflare-warp, hammerspoon, tableplus, tailscale-app |
+| MetricKit.framework | `_OBJC_CLASS_$_MXDiagnosticPayload` | 4 | cloudflare-warp, hammerspoon, tableplus, tailscale-app |
+| MetricKit.framework | `_OBJC_CLASS_$_MXDiskWriteExceptionDiagnostic` | 4 | cloudflare-warp, hammerspoon, tableplus, tailscale-app |
+| MetricKit.framework | `_OBJC_CLASS_$_MXHangDiagnostic` | 4 | cloudflare-warp, hammerspoon, tableplus, tailscale-app |
+| vmnet.framework | `_vmnet_interface_set_event_callback` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_max_packet_size_key` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_operation_mode_key` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_read` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_start_interface` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_write` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLLanguageRecognizer` | 3 | markedit, raycast, whatsapp |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLTokenizer` | 3 | markedit, raycast, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHImageRequestOptions` | 3 | gemini, localsend, whatsapp |
+| vmnet.framework | `_vmnet_allocate_mac_address_key` | 3 | orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_interface_id_key` | 3 | docker-desktop, orbstack, virtualbox |
 | vmnet.framework | `_vmnet_mtu_key` | 3 | docker-desktop, orbstack, utm |
-| vmnet.framework | `_vmnet_operation_mode_key` | 3 | docker-desktop, orbstack, utm |
-| vmnet.framework | `_vmnet_read` | 3 | docker-desktop, orbstack, utm |
-| vmnet.framework | `_vmnet_start_interface` | 3 | docker-desktop, orbstack, utm |
-| vmnet.framework | `_vmnet_write` | 3 | docker-desktop, orbstack, utm |
+| vmnet.framework | `_vmnet_stop_interface` | 3 | orbstack, utm, virtualbox |
+| Collaboration.framework | `_OBJC_CLASS_$_CBIdentity` | 2 | anydesk, sourcetree |
+| Collaboration.framework | `_OBJC_CLASS_$_CBIdentityAuthority` | 2 | anydesk, sourcetree |
+| CoreML.framework | `_MLModelCreatorDefinedKey` | 2 | microsoft-teams, openclaw |
 | FinderSync.framework | `_OBJC_CLASS_$_FIFinderSync` | 2 | keka, pearcleaner |
 | FinderSync.framework | `_OBJC_CLASS_$_FIFinderSyncController` | 2 | keka, pearcleaner |
 | FinderSync.framework | `_OBJC_METACLASS_$_FIFinderSync` | 2 | keka, pearcleaner |
+| LDAP.framework | `_ldap_count_entries` | 2 | adobe-acrobat-reader, tableplus |
+| LDAP.framework | `_ldap_result` | 2 | adobe-acrobat-reader, tableplus |
+| LDAP.framework | `_ldap_unbind` | 2 | adobe-acrobat-reader, tableplus |
 | LinkPresentation.framework | `_OBJC_CLASS_$_LPLinkMetadata` | 2 | vorssaint, whatsapp |
-| MetricKit.framework | `_OBJC_CLASS_$_MXCPUExceptionDiagnostic` | 2 | hammerspoon, tailscale-app |
-| MetricKit.framework | `_OBJC_CLASS_$_MXCrashDiagnostic` | 2 | hammerspoon, tailscale-app |
-| MetricKit.framework | `_OBJC_CLASS_$_MXDiagnosticPayload` | 2 | hammerspoon, tailscale-app |
-| MetricKit.framework | `_OBJC_CLASS_$_MXDiskWriteExceptionDiagnostic` | 2 | hammerspoon, tailscale-app |
-| MetricKit.framework | `_OBJC_CLASS_$_MXHangDiagnostic` | 2 | hammerspoon, tailscale-app |
-| NaturalLanguage.framework | `_OBJC_CLASS_$_NLLanguageRecognizer` | 2 | raycast, whatsapp |
-| NaturalLanguage.framework | `_OBJC_CLASS_$_NLTokenizer` | 2 | raycast, whatsapp |
+| MapKit.framework | `_OBJC_CLASS_$_MKPolylineRenderer` | 2 | raycast, tableplus |
+| OSLog.framework | `_OBJC_CLASS_$_OSLogEntryLog` | 2 | linearmouse, protonvpn |
+| PCSC.framework | `_SCardBeginTransaction` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardConnect` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardDisconnect` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardEndTransaction` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardEstablishContext` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardIsValidContext` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardListReaders` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardReconnect` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardReleaseContext` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardStatus` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardTransmit` | 2 | keepassxc, windows-app |
 | Photos.framework | `_OBJC_CLASS_$_PHAssetChangeRequest` | 2 | localsend, whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHAssetCollection` | 2 | localsend, whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHAssetCollectionChangeRequest` | 2 | localsend, whatsapp |
@@ -74,7 +97,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Photos.framework | `_OBJC_CLASS_$_PHCachingImageManager` | 2 | localsend, whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHCollectionList` | 2 | localsend, whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHContentEditingInputRequestOptions` | 2 | localsend, whatsapp |
-| Photos.framework | `_OBJC_CLASS_$_PHImageRequestOptions` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHImageManager` | 2 | gemini, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHLivePhoto` | 2 | applite, whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHVideoRequestOptions` | 2 | localsend, whatsapp |
 | Photos.framework | `_PHImageCancelledKey` | 2 | localsend, whatsapp |
 | Photos.framework | `_PHImageErrorKey` | 2 | localsend, whatsapp |
@@ -82,11 +106,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Photos.framework | `_PHImageResultIsDegradedKey` | 2 | localsend, whatsapp |
 | Virtualization.framework | `_OBJC_CLASS_$_VZSingleDirectoryShare` | 2 | docker-desktop, orbstack |
 | Virtualization.framework | `_OBJC_CLASS_$_VZVirtioConsoleDeviceSerialPortConfiguration` | 2 | docker-desktop, orbstack |
-| vmnet.framework | `_vmnet_allocate_mac_address_key` | 2 | orbstack, utm |
 | vmnet.framework | `_vmnet_enable_isolation_key` | 2 | orbstack, utm |
-| vmnet.framework | `_vmnet_interface_id_key` | 2 | docker-desktop, orbstack |
+| vmnet.framework | `_vmnet_end_address_key` | 2 | utm, virtualbox |
 | vmnet.framework | `_vmnet_network_identifier_key` | 2 | orbstack, utm |
-| vmnet.framework | `_vmnet_stop_interface` | 2 | orbstack, utm |
+| vmnet.framework | `_vmnet_shared_interface_name_key` | 2 | utm, virtualbox |
+| vmnet.framework | `_vmnet_start_address_key` | 2 | utm, virtualbox |
+| vmnet.framework | `_vmnet_subnet_mask_key` | 2 | utm, virtualbox |
 | AdServices.framework | `_OBJC_CLASS_$_AAAttribution` | 1 | whatsapp |
 | BezelServices.framework | `_ALCALSCopyALSServiceClient` | 1 | betterdisplay |
 | CommerceKit.framework | `_CKDownloadDirectory` | 1 | pearcleaner |
@@ -95,24 +120,76 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreAnalytics.framework | `_AnalyticsSendEventLazy` | 1 | utm |
 | CoreBrightness.framework | `_OBJC_CLASS_$_CBBlueLightClient` | 1 | betterdisplay |
 | CoreBrightness.framework | `_OBJC_CLASS_$_CBTrueToneClient` | 1 | betterdisplay |
-| CoreML.framework | `_MLModelCreatorDefinedKey` | 1 | openclaw |
 | CoreML.framework | `_MLModelDescriptionKey` | 1 | openclaw |
 | CoreML.framework | `_OBJC_CLASS_$_MLFeatureDescription` | 1 | openclaw |
+| CoreML.framework | `_OBJC_CLASS_$_MLModelAsset` | 1 | microsoft-teams |
 | CoreMotion.framework | `_OBJC_CLASS_$_CMAltimeter` | 1 | whatsapp |
 | CoreMotion.framework | `_OBJC_CLASS_$_CMMotionManager` | 1 | whatsapp |
+| CoreUI.framework | `_CUIDraw` | 1 | zotero |
+| DirectoryService.framework | `_dsBuildFromPath` | 1 | virtualbox |
+| DirectoryService.framework | `_dsBuildListFromStrings` | 1 | virtualbox |
+| DirectoryService.framework | `_dsCloseAttributeList` | 1 | virtualbox |
+| DirectoryService.framework | `_dsCloseAttributeValueList` | 1 | virtualbox |
+| DirectoryService.framework | `_dsCloseDirNode` | 1 | virtualbox |
+| DirectoryService.framework | `_dsCloseDirService` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDataBufferAllocate` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDataBufferDeAllocate` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDataListDeallocate` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDataNodeAllocateString` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDataNodeDeAllocate` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDeallocAttributeEntry` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDeallocAttributeValueEntry` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDeallocRecordEntry` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDoDirNodeAuth` | 1 | virtualbox |
+| DirectoryService.framework | `_dsFindDirNodes` | 1 | virtualbox |
+| DirectoryService.framework | `_dsGetAttributeEntry` | 1 | virtualbox |
+| DirectoryService.framework | `_dsGetAttributeValue` | 1 | virtualbox |
+| DirectoryService.framework | `_dsGetDirNodeName` | 1 | virtualbox |
+| DirectoryService.framework | `_dsGetRecordEntry` | 1 | virtualbox |
+| DirectoryService.framework | `_dsGetRecordList` | 1 | virtualbox |
+| DirectoryService.framework | `_dsOpenDirNode` | 1 | virtualbox |
+| DirectoryService.framework | `_dsOpenDirService` | 1 | virtualbox |
+| DirectoryService.framework | `_dsReleaseContinueData` | 1 | virtualbox |
 | EventKitUI.framework | `_OBJC_CLASS_$_EKEventEditViewController` | 1 | whatsapp |
 | ExtensionKit.framework | `_OBJC_CLASS_$_EXAppExtensionBrowserViewController` | 1 | cmux |
 | ExtensionKit.framework | `_OBJC_CLASS_$_EXHostViewController` | 1 | cmux |
+| FSKit.framework | `_OBJC_CLASS_$_FSClient` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSContainerIdentifier` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSContainerStatus` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSFileName` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSItem` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSItemAttributes` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSProbeResult` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSStatFSResult` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSUnaryFileSystem` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSVolume` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSVolumeIdentifier` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSVolumeSupportedCapabilities` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_METACLASS_$_FSItem` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_METACLASS_$_FSUnaryFileSystem` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_METACLASS_$_FSVolume` | 1 | fuse-t |
+| GameplayKit.framework | `_OBJC_CLASS_$_GKNoise` | 1 | shottr |
+| GameplayKit.framework | `_OBJC_CLASS_$_GKNoiseMap` | 1 | shottr |
+| GameplayKit.framework | `_OBJC_CLASS_$_GKPerlinNoiseSource` | 1 | shottr |
 | IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostDevice` | 1 | orbstack |
+| LDAP.framework | `_ldap_bind_s` | 1 | adobe-acrobat-reader |
+| LDAP.framework | `_ldap_count_values_len` | 1 | adobe-acrobat-reader |
+| LDAP.framework | `_ldap_initialize` | 1 | adobe-acrobat-reader |
+| LDAP.framework | `_ldap_search_ext` | 1 | adobe-acrobat-reader |
+| LDAP.framework | `_ldap_search_st` | 1 | tableplus |
+| LDAP.framework | `_ldap_simple_bind` | 1 | tableplus |
 | LinkPresentation.framework | `_OBJC_CLASS_$_LPMetadataProvider` | 1 | raycast |
 | MapKit.framework | `_OBJC_CLASS_$_MKGeodesicPolyline` | 1 | raycast |
-| MapKit.framework | `_OBJC_CLASS_$_MKPolylineRenderer` | 1 | raycast |
+| MapKit.framework | `_OBJC_CLASS_$_MKPolygon` | 1 | tableplus |
+| MapKit.framework | `_OBJC_CLASS_$_MKPolygonRenderer` | 1 | tableplus |
+| MapKit.framework | `_OBJC_CLASS_$_MKPolyline` | 1 | tableplus |
 | MapKit.framework | `_OBJC_CLASS_$_MKStandardMapConfiguration` | 1 | raycast |
 | MessageUI.framework | `_OBJC_CLASS_$_MFMailComposeViewController` | 1 | whatsapp |
 | MessageUI.framework | `_OBJC_CLASS_$_MFMessageComposeViewController` | 1 | whatsapp |
 | MessageUI.framework | `_OBJC_METACLASS_$_MFMessageComposeViewController` | 1 | whatsapp |
 | MetalFX.framework | `_OBJC_CLASS_$_MTLFXSpatialScalerDescriptor` | 1 | utm |
 | MetalFX.framework | `_OBJC_CLASS_$_MTLFXTemporalScalerDescriptor` | 1 | utm |
+| MetricKit.framework | `_OBJC_CLASS_$_MXHistogramBucket` | 1 | microsoft-teams |
 | NaturalLanguage.framework | `_NLTagAdjective` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagAdverb` | 1 | openclaw |
 | NaturalLanguage.framework | `_NLTagClassifier` | 1 | openclaw |
@@ -145,18 +222,29 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | NaturalLanguage.framework | `_NLTagWordJoiner` | 1 | openclaw |
 | NaturalLanguage.framework | `_OBJC_CLASS_$_NLEmbedding` | 1 | whatsapp |
 | NaturalLanguage.framework | `_OBJC_CLASS_$_NLTagger` | 1 | openclaw |
-| OSLog.framework | `_OBJC_CLASS_$_OSLogEntryLog` | 1 | linearmouse |
-| PCSC.framework | `_SCardBeginTransaction` | 1 | keepassxc |
-| PCSC.framework | `_SCardConnect` | 1 | keepassxc |
-| PCSC.framework | `_SCardDisconnect` | 1 | keepassxc |
-| PCSC.framework | `_SCardEndTransaction` | 1 | keepassxc |
-| PCSC.framework | `_SCardEstablishContext` | 1 | keepassxc |
-| PCSC.framework | `_SCardIsValidContext` | 1 | keepassxc |
-| PCSC.framework | `_SCardListReaders` | 1 | keepassxc |
-| PCSC.framework | `_SCardReconnect` | 1 | keepassxc |
-| PCSC.framework | `_SCardReleaseContext` | 1 | keepassxc |
-| PCSC.framework | `_SCardStatus` | 1 | keepassxc |
-| PCSC.framework | `_SCardTransmit` | 1 | keepassxc |
+| NetFS.framework | `_NetFSMountURLSync` | 1 | adobe-acrobat-reader |
+| NetworkStatistics.framework | `_NStatManagerAddAllTCP` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerAddAllUDP` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerCreate` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerDestroy` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerQueryAllSources` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerQueryAllSourcesDescriptions` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerSetFlags` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatSourceSetDescriptionBlock` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatSourceSetRemovedBlock` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyInterface` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyLocal` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyPID` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyProvider` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyRemote` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyRxBytes` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyTCPState` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyTxBytes` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyUUID` | 1 | lulu |
+| PCSC.framework | `_SCardCancel` | 1 | windows-app |
+| PCSC.framework | `_SCardControl132` | 1 | windows-app |
+| PCSC.framework | `_SCardGetAttrib` | 1 | windows-app |
+| PCSC.framework | `_SCardGetStatusChange` | 1 | windows-app |
 | PCSC.framework | `_g_rgSCardT0Pci` | 1 | keepassxc |
 | PCSC.framework | `_g_rgSCardT1Pci` | 1 | keepassxc |
 | PackageKit.framework | `_OBJC_CLASS_$_PKBOM` | 1 | pearcleaner |
@@ -184,8 +272,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Photos.framework | `_OBJC_CLASS_$_PHCollectionListChangeRequest` | 1 | localsend |
 | Photos.framework | `_OBJC_CLASS_$_PHContentEditingOutput` | 1 | whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHFetchResultChangeDetails` | 1 | whatsapp |
-| Photos.framework | `_OBJC_CLASS_$_PHImageManager` | 1 | whatsapp |
-| Photos.framework | `_OBJC_CLASS_$_PHLivePhoto` | 1 | whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHLivePhotoEditingContext` | 1 | localsend |
 | Photos.framework | `_OBJC_CLASS_$_PHLivePhotoRequestOptions` | 1 | whatsapp |
 | Photos.framework | `_OBJC_CLASS_$_PHObjectChangeDetails` | 1 | whatsapp |
@@ -193,8 +279,240 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Photos.framework | `_OBJC_METACLASS_$_PHFetchResultChangeDetails` | 1 | whatsapp |
 | Photos.framework | `_PHImageResultIsInCloudKey` | 1 | whatsapp |
 | Photos.framework | `_PHImageResultRequestIDKey` | 1 | localsend |
+| Photos.framework | `_PHLivePhotoInfoCancelledKey` | 1 | applite |
+| Photos.framework | `_PHLivePhotoInfoErrorKey` | 1 | applite |
+| Photos.framework | `_PHLivePhotoInfoIsDegradedKey` | 1 | applite |
 | Photos.framework | `_PHPhotosErrorDomain` | 1 | whatsapp |
 | PushKit.framework | `_OBJC_CLASS_$_PKPushRegistry` | 1 | whatsapp |
+| QTKit.framework | `_OBJC_CLASS_$_QTMovieModernizer` | 1 | adobe-acrobat-reader |
+| QtPdf.framework | `__ZN12QPdfDocument10getAllTextEi` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument11qt_metacastEPKc` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument11setPasswordERK7QString` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument12getSelectionEi7QPointFS0_` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument16staticMetaObjectE` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument17pageIndexForLabelERK7QString` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument19getSelectionAtIndexEiii` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument4loadEP9QIODevice` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument4loadERK7QString` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument5closeEv` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument6renderEi5QSize25QPdfDocumentRenderOptions` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument9pageLabelEi` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocument9pageModelEv` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocumentC1EP7QObject` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocumentC2EP7QObject` | 1 | calibre |
+| QtPdf.framework | `__ZN12QPdfDocumentD2Ev` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfLinkModel11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfLinkModel11qt_metacastEPKc` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfLinkModel11setDocumentEP12QPdfDocument` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfLinkModel16staticMetaObjectE` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfLinkModel7setPageEi` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfLinkModelC1EP7QObject` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfLinkModelC2EP7QObject` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfLinkModelD1Ev` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfLinkModelD2Ev` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfSelectionC1ERKS_` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfSelectionD1Ev` | 1 | calibre |
+| QtPdf.framework | `__ZN13QPdfSelectionaSERKS_` | 1 | calibre |
+| QtPdf.framework | `__ZN15QPdfSearchModel10timerEventEP11QTimerEvent` | 1 | calibre |
+| QtPdf.framework | `__ZN15QPdfSearchModel11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtPdf.framework | `__ZN15QPdfSearchModel11qt_metacastEPKc` | 1 | calibre |
+| QtPdf.framework | `__ZN15QPdfSearchModel11setDocumentEP12QPdfDocument` | 1 | calibre |
+| QtPdf.framework | `__ZN15QPdfSearchModel15setSearchStringERK7QString` | 1 | calibre |
+| QtPdf.framework | `__ZN15QPdfSearchModel16staticMetaObjectE` | 1 | calibre |
+| QtPdf.framework | `__ZN15QPdfSearchModelC2EP7QObject` | 1 | calibre |
+| QtPdf.framework | `__ZN15QPdfSearchModelD2Ev` | 1 | calibre |
+| QtPdf.framework | `__ZN16QPdfPageRenderer11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtPdf.framework | `__ZN16QPdfPageRenderer11qt_metacastEPKc` | 1 | calibre |
+| QtPdf.framework | `__ZN16QPdfPageRenderer11requestPageEi5QSize25QPdfDocumentRenderOptions` | 1 | calibre |
+| QtPdf.framework | `__ZN16QPdfPageRenderer11setDocumentEP12QPdfDocument` | 1 | calibre |
+| QtPdf.framework | `__ZN16QPdfPageRenderer13setRenderModeENS_10RenderModeE` | 1 | calibre |
+| QtPdf.framework | `__ZN16QPdfPageRenderer16staticMetaObjectE` | 1 | calibre |
+| QtPdf.framework | `__ZN16QPdfPageRendererC2EP7QObject` | 1 | calibre |
+| QtPdf.framework | `__ZN16QPdfPageRendererD2Ev` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfBookmarkModel11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfBookmarkModel11qt_metacastEPKc` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfBookmarkModel11setDocumentEP12QPdfDocument` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfBookmarkModel16staticMetaObjectE` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfBookmarkModelC2EP7QObject` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfBookmarkModelD2Ev` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigator11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigator11qt_metacastEPKc` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigator16staticMetaObjectE` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigator4backEv` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigator4jumpE8QPdfLink` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigator4jumpEiRK7QPointFd` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigator5clearEv` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigator6updateEiRK7QPointFd` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigator7forwardEv` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigatorC2EP7QObject` | 1 | calibre |
+| QtPdf.framework | `__ZN17QPdfPageNavigatorD2Ev` | 1 | calibre |
+| QtPdf.framework | `__ZN8QPdfFile16staticMetaObjectE` | 1 | calibre |
+| QtPdf.framework | `__ZN8QPdfLinkC1EOS_` | 1 | calibre |
+| QtPdf.framework | `__ZN8QPdfLinkC1ERKS_` | 1 | calibre |
+| QtPdf.framework | `__ZN8QPdfLinkC1Ev` | 1 | calibre |
+| QtPdf.framework | `__ZN8QPdfLinkD1Ev` | 1 | calibre |
+| QtPdf.framework | `__ZN8QPdfLinkaSERKS_` | 1 | calibre |
+| QtPdf.framework | `__ZNK12QPdfDocument10metaObjectEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK12QPdfDocument13pagePointSizeEi` | 1 | calibre |
+| QtPdf.framework | `__ZNK12QPdfDocument5errorEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK12QPdfDocument6statusEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK12QPdfDocument8metaDataENS_13MetaDataFieldE` | 1 | calibre |
+| QtPdf.framework | `__ZNK12QPdfDocument8passwordEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK12QPdfDocument9pageCountEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfLinkModel10metaObjectEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfLinkModel4dataERK11QModelIndexi` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfLinkModel4pageEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfLinkModel6linkAtE7QPointF` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfLinkModel8documentEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfLinkModel8rowCountERK11QModelIndex` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfLinkModel9roleNamesEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfSelection10startIndexEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfSelection15copyToClipboardEN10QClipboard4ModeE` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfSelection17boundingRectangleEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfSelection4textEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfSelection6boundsEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfSelection7isValidEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK13QPdfSelection8endIndexEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK15QPdfSearchModel10metaObjectEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK15QPdfSearchModel12searchStringEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK15QPdfSearchModel13resultAtIndexEi` | 1 | calibre |
+| QtPdf.framework | `__ZNK15QPdfSearchModel13resultsOnPageEi` | 1 | calibre |
+| QtPdf.framework | `__ZNK15QPdfSearchModel4dataERK11QModelIndexi` | 1 | calibre |
+| QtPdf.framework | `__ZNK15QPdfSearchModel5countEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK15QPdfSearchModel8documentEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK15QPdfSearchModel8rowCountERK11QModelIndex` | 1 | calibre |
+| QtPdf.framework | `__ZNK15QPdfSearchModel9roleNamesEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK16QPdfPageRenderer10metaObjectEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK16QPdfPageRenderer10renderModeEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK16QPdfPageRenderer8documentEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfBookmarkModel10metaObjectEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfBookmarkModel11columnCountERK11QModelIndex` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfBookmarkModel4dataERK11QModelIndexi` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfBookmarkModel5indexEiiRK11QModelIndex` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfBookmarkModel6parentERK11QModelIndex` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfBookmarkModel8documentEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfBookmarkModel8rowCountERK11QModelIndex` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfBookmarkModel9roleNamesEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfPageNavigator10metaObjectEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfPageNavigator11currentPageEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfPageNavigator11currentZoomEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfPageNavigator13backAvailableEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfPageNavigator15currentLocationEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK17QPdfPageNavigator16forwardAvailableEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK8QPdfLink10rectanglesEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK8QPdfLink12contextAfterEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK8QPdfLink13contextBeforeEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK8QPdfLink15copyToClipboardEN10QClipboard4ModeE` | 1 | calibre |
+| QtPdf.framework | `__ZNK8QPdfLink3urlEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK8QPdfLink4pageEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK8QPdfLink4zoomEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK8QPdfLink7isValidEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK8QPdfLink8locationEv` | 1 | calibre |
+| QtPdf.framework | `__ZNK8QPdfLink8toStringEv` | 1 | calibre |
+| QtPdf.framework | `__ZTI12QPdfDocument` | 1 | calibre |
+| QtPdf.framework | `__ZTI13QPdfLinkModel` | 1 | calibre |
+| QtPdf.framework | `__ZTI15QPdfSearchModel` | 1 | calibre |
+| QtPdf.framework | `__ZTI16QPdfPageRenderer` | 1 | calibre |
+| QtPdf.framework | `__ZTI17QPdfBookmarkModel` | 1 | calibre |
+| QtPdf.framework | `__ZTI17QPdfPageNavigator` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN16QPdfPageSelector11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN16QPdfPageSelector11qt_metacastEPKc` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN16QPdfPageSelector11setDocumentEP12QPdfDocument` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN16QPdfPageSelector14setCurrentPageEi` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN16QPdfPageSelector16staticMetaObjectE` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN16QPdfPageSelectorC2EP7QWidget` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN16QPdfPageSelectorD2Ev` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView10paintEventEP11QPaintEvent` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView11qt_metacastEPKc` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView11resizeEventEP12QResizeEvent` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView11setDocumentEP12QPdfDocument` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView11setPageModeENS_8PageModeE` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView11setZoomModeENS_8ZoomModeE` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView13setZoomFactorEd` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView14mouseMoveEventEP11QMouseEvent` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView14setPageSpacingEi` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView14setSearchModelEP15QPdfSearchModel` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView15mousePressEventEP11QMouseEvent` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView16scrollContentsByEii` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView16staticMetaObjectE` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView17mouseReleaseEventEP11QMouseEvent` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView18setDocumentMarginsE8QMargins` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfView27setCurrentSearchResultIndexEi` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfViewC2EP7QWidget` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZN8QPdfViewD2Ev` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK16QPdfPageSelector10metaObjectEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK16QPdfPageSelector11currentPageEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK16QPdfPageSelector16currentPageLabelEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK16QPdfPageSelector8documentEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK8QPdfView10metaObjectEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK8QPdfView10zoomFactorEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK8QPdfView11pageSpacingEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK8QPdfView11searchModelEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK8QPdfView13pageNavigatorEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK8QPdfView15documentMarginsEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK8QPdfView24currentSearchResultIndexEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK8QPdfView8documentEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK8QPdfView8pageModeEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZNK8QPdfView8zoomModeEv` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZTI16QPdfPageSelector` | 1 | calibre |
+| QtPdfWidgets.framework | `__ZTI8QPdfView` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidget10paintEventEP11QPaintEvent` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidget10setOptionsE6QFlagsIN5QtSvg6OptionEE` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidget11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidget11qt_metacastEPKc` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidget16staticMetaObjectE` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidget4loadERK10QByteArray` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidget4loadERK7QString` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidgetC1EP7QWidget` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidgetC2EP7QWidget` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidgetC2ERK7QStringP7QWidget` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidgetD1Ev` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN10QSvgWidgetD2Ev` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN16QGraphicsSvgItem11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN16QGraphicsSvgItem11qt_metacastEPKc` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN16QGraphicsSvgItem12setElementIdERK7QString` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN16QGraphicsSvgItem16staticMetaObjectE` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN16QGraphicsSvgItem17setSharedRendererEP12QSvgRenderer` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN16QGraphicsSvgItem19setMaximumCacheSizeERK5QSize` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN16QGraphicsSvgItem5paintEP8QPainterPK24QStyleOptionGraphicsItemP7QWidget` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN16QGraphicsSvgItemC1EP13QGraphicsItem` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN16QGraphicsSvgItemC2EP13QGraphicsItem` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZN16QGraphicsSvgItemC2ERK7QStringP13QGraphicsItem` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZNK10QSvgWidget10metaObjectEv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZNK10QSvgWidget7optionsEv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZNK10QSvgWidget8rendererEv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZNK10QSvgWidget8sizeHintEv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZNK16QGraphicsSvgItem10metaObjectEv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZNK16QGraphicsSvgItem12boundingRectEv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZNK16QGraphicsSvgItem16maximumCacheSizeEv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZNK16QGraphicsSvgItem4typeEv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZNK16QGraphicsSvgItem8rendererEv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZNK16QGraphicsSvgItem9elementIdEv` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZTI10QSvgWidget` | 1 | calibre |
+| QtSvgWidgets.framework | `__ZTI16QGraphicsSvgItem` | 1 | calibre |
+| QtTest.framework | `__ZN10QSignalSpy4waitENSt3__16chrono8durationIxNS0_5ratioILl1ELl1000EEEEE` | 1 | calibre |
+| QtTest.framework | `__ZN10QSignalSpy6verifyEPK7QObject11QMetaMethod` | 1 | calibre |
+| QtTest.framework | `__ZN10QSignalSpy6verifyEPK7QObjectPKc` | 1 | calibre |
+| QtTest.framework | `__ZN10QSignalSpyC1ENS_12ObjectSignalE` | 1 | calibre |
+| QtTest.framework | `__ZN10QSignalSpyD1Ev` | 1 | calibre |
+| QtTest.framework | `__ZN12QTestPrivate17qtestMouseButtonsE` | 1 | calibre |
+| QtTest.framework | `__ZN24QAbstractItemModelTester11qt_metacallEN11QMetaObject4CallEiPPv` | 1 | calibre |
+| QtTest.framework | `__ZN24QAbstractItemModelTester11qt_metacastEPKc` | 1 | calibre |
+| QtTest.framework | `__ZN24QAbstractItemModelTester15setUseFetchMoreEb` | 1 | calibre |
+| QtTest.framework | `__ZN24QAbstractItemModelTester16staticMetaObjectE` | 1 | calibre |
+| QtTest.framework | `__ZN24QAbstractItemModelTesterC2EP18QAbstractItemModelNS_20FailureReportingModeEP7QObject` | 1 | calibre |
+| QtTest.framework | `__ZN24QAbstractItemModelTesterC2EP18QAbstractItemModelP7QObject` | 1 | calibre |
+| QtTest.framework | `__ZN5QTest10asciiToKeyEc` | 1 | calibre |
+| QtTest.framework | `__ZN5QTest10keyToAsciiEN2Qt3KeyE` | 1 | calibre |
+| QtTest.framework | `__ZN5QTest15defaultKeyDelayEv` | 1 | calibre |
+| QtTest.framework | `__ZN5QTest17defaultMouseDelayEv` | 1 | calibre |
+| QtTest.framework | `__ZN5QTest18lastMouseTimestampE` | 1 | calibre |
+| QtTest.framework | `__ZNK24QAbstractItemModelTester10metaObjectEv` | 1 | calibre |
+| QtTest.framework | `__ZNK24QAbstractItemModelTester20failureReportingModeEv` | 1 | calibre |
+| QtTest.framework | `__ZNK24QAbstractItemModelTester5modelEv` | 1 | calibre |
+| QtTest.framework | `__ZTI24QAbstractItemModelTester` | 1 | calibre |
 | ReplayKit.framework | `_OBJC_CLASS_$_RPSystemBroadcastPickerView` | 1 | whatsapp |
 | SceneKit.framework | `_OBJC_CLASS_$_SCNAction` | 1 | telegram |
 | SceneKit.framework | `_OBJC_CLASS_$_SCNMaterial` | 1 | telegram |
@@ -225,15 +543,14 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Virtualization.framework | `_OBJC_CLASS_$__VZGDBDebugStubConfiguration` | 1 | docker-desktop |
 | Virtualization.framework | `_OBJC_METACLASS_$_VZVirtualMachine` | 1 | docker-desktop |
 | WatchConnectivity.framework | `_OBJC_CLASS_$_WCSession` | 1 | whatsapp |
+| iTunesLibrary.framework | `_OBJC_CLASS_$_ITLibrary` | 1 | alfred |
+| login.framework | `_SACLockScreenImmediate` | 1 | anydesk |
 | vmnet.framework | `_vmnet_copy_shared_interface_list` | 1 | utm |
 | vmnet.framework | `_vmnet_enable_checksum_offload_key` | 1 | orbstack |
 | vmnet.framework | `_vmnet_enable_tso_key` | 1 | orbstack |
-| vmnet.framework | `_vmnet_end_address_key` | 1 | utm |
+| vmnet.framework | `_vmnet_estimated_packets_available_key` | 1 | virtualbox |
 | vmnet.framework | `_vmnet_host_ip_address_key` | 1 | orbstack |
 | vmnet.framework | `_vmnet_host_ipv6_address_key` | 1 | orbstack |
 | vmnet.framework | `_vmnet_host_subnet_mask_key` | 1 | orbstack |
 | vmnet.framework | `_vmnet_mac_address_key` | 1 | docker-desktop |
 | vmnet.framework | `_vmnet_nat66_prefix_key` | 1 | utm |
-| vmnet.framework | `_vmnet_shared_interface_name_key` | 1 | utm |
-| vmnet.framework | `_vmnet_start_address_key` | 1 | utm |
-| vmnet.framework | `_vmnet_subnet_mask_key` | 1 | utm |
