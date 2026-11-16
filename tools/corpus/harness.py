@@ -217,7 +217,8 @@ def detecta_formato(archive: Path) -> str:
     return ".dmg"
 
 
-def fetch_one(app: dict) -> Path:
+def baixa_um(app: dict) -> tuple[Path, str]:
+    """Só o download e o hash (rede, pouca RAM): fica fora da trava de trabalho pesado. Devolve (arquivo, sha256)."""
     dest_dir = CACHE / app["id"]
     dest_dir.mkdir(parents=True, exist_ok=True)
     archive = dest_dir / nome_do_arquivo(app, app["url"])
@@ -240,6 +241,12 @@ def fetch_one(app: dict) -> Path:
             break
     if digest != app["sha256"]:
         raise SystemExit(f"{app['id']}: sha256 {digest} != {app['sha256']} depois de 3 tentativas")
+    return archive, digest
+
+
+def fetch_one(app: dict) -> Path:
+    dest_dir = CACHE / app["id"]
+    archive, digest = baixa_um(app)
     extracted = dest_dir / "extracted"
     marker = dest_dir / "extracted.ok"
     if not marker.is_file() or marker.read_text(encoding="utf-8") != digest:
@@ -303,6 +310,24 @@ def parse_summary(text: str) -> dict:
     if distinct is None:
         raise SystemExit("saída do machocheck sem a linha Total")
     return {"distintos": distinct, "origens": origins}
+
+
+def cmd_baixar(args: argparse.Namespace) -> None:
+    """Baixa e confere (ou fixa) o hash, sem extrair: o varrer-tudo.sh roda isto fora da trava."""
+    man = load_manifest()
+    want = set(args.ids)
+    for app in [a for a in man["apps"] if a["id"] in want]:
+        medido = CACHE / app["id"] / "medido.sha256"
+        if app.get("sha256") and medido.is_file() and medido.read_text().strip() == app["sha256"]:
+            continue
+        try:
+            baixa_um(app)
+        except (SystemExit, OSError, urllib.error.URLError, ValueError) as e:
+            print("FALHA download", app["id"], str(e)[:200], flush=True)   # o scan registra a falha em falhas.json
+        if args.fixar:
+            atual = load_manifest()                  # relê: o scan de outro app pode ter gravado no meio
+            atual["apps"] = [app if a["id"] == app["id"] else a for a in atual["apps"]]
+            grava_manifesto(atual)
 
 
 def cmd_fetch(args: argparse.Namespace) -> None:
@@ -806,6 +831,10 @@ def cmd_hosttest(args: argparse.Namespace) -> None:
 def main() -> None:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
+    bx = sub.add_parser("baixar")
+    bx.add_argument("--fixar", action="store_true")
+    bx.add_argument("ids", nargs="+")
+    bx.set_defaults(func=cmd_baixar)
     f = sub.add_parser("fetch")
     f.add_argument("ids", nargs="*")
     f.set_defaults(func=cmd_fetch)
