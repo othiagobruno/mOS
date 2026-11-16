@@ -7,6 +7,9 @@ OUT=${1:-/tmp/mos-fdn-i18n}
 mkdir -p "$OUT"
 # NSDecimal não usa a ICU: roda sempre
 gcc -O1 -Wall -I"$ROOT/userland/libsystem" "$ROOT/userland/libsystem/fdn_decimal_core.c" "$ROOT/tools/fdn_dec_test.c" -o "$OUT/fdn_dec_test"
+# trechos de atributos do NSAttributedString (sem ICU)
+gcc -O1 -Wall -I"$ROOT/userland/libsystem" "$ROOT/userland/libsystem/fdn_astr_core.c" "$ROOT/tools/fdn_astr_test.c" -o "$OUT/fdn_astr_test"
+"$OUT/fdn_astr_test"
 # tabela hash do NSSet/CFSet: com os cabeçalhos do libSystem e o include do zig
 ZIG_INC=$(dirname "$(readlink -f "$(command -v zig 2>/dev/null || echo /nao/existe)")")/lib/include
 if [ -d "$ZIG_INC" ]; then

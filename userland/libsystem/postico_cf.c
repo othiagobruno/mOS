@@ -66,10 +66,6 @@ void CFBitVectorSetBitAtIndex(id bv, long i, u32 bit) {
 }
 
 /* ---- outros */
-id CFAttributedStringCreate(void *alloc, id str, id attrs) {
-    (void)alloc;
-    return MSG(id, MSG0(id, cls_("NSAttributedString"), "alloc"), "initWithString:attributes:", str, attrs);
-}
 u8 CFPropertyListIsValid(id plist, long format) { (void)format; return plist != 0; }
 
 /* observador com bloco: o bloco recebe (observador, atividade) */

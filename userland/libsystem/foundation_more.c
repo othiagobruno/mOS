@@ -36,7 +36,7 @@ CLASS(NSHTTPURLResponse) CLASS(NSIndexPath)
 CLASS(NSItemProvider) CLASS(NSJSONSerialization)
 CLASS(NSKeyedArchiver) CLASS(NSKeyedUnarchiver) CLASS(NSLinguisticTagger) CLASS(NSLock)
 CLASS(NSMachBootstrapServer) CLASS(NSMachPort) CLASS(NSMapTable) 
-CLASS(NSMetadataItem) CLASS(NSMetadataQuery) CLASS(NSMutableAttributedString)
+CLASS(NSMetadataItem) CLASS(NSMetadataQuery) 
 CLASS(NSMutableURLRequest) CLASS(NSNetService) CLASS(NSNetServiceBrowser)
 
 CLASS(NSPipe) CLASS(NSPointerArray) CLASS(NSPredicate) CLASS(NSProgress) CLASS(NSPropertyListSerialization)
@@ -2038,19 +2038,6 @@ static id pls_write(id cls, SEL c, id obj, u64 fmt, u64 opt, id *err) {
     return obj ? plist_data(obj) : 0;
 }
 
-static void mas_replace(id s, SEL c, rng_t r, id str) {
-    (void)c; (void)r;
-    id *slot = (id *)((u8 *)s + 8);
-    id st = *slot ? *(id *)*slot : 0;
-    /* estado do AppKit: {id str, attrs} logo após o ponteiro */
-    if (*slot) {
-        id *fields = (id *)(void *)(*slot);
-        rel(fields[0]);
-        fields[0] = retain(str);
-    }
-    (void)st;
-}
-static void mas_set_attr(id s, SEL c, id name, id value, rng_t r) { (void)s; (void)c; (void)name; (void)value; (void)r; }
 
 /* NSCharacterSet/NSMutableCharacterSet: fdn_charset.c */
 
@@ -2369,13 +2356,7 @@ void cx_foundation_more_init(void) {
     DEF(&NSUniqueIDSpecifier_c, &NSUniqueIDSpecifier_m, "NSUniqueIDSpecifier", ob, BEX);
     M(NSUniqueIDSpecifier, "uniqueID", get_a); M(NSUniqueIDSpecifier, "initWithContainerClassDescription:containerSpecifier:key:uniqueID:", box_init);
 
-    if (cx_class_named("NSAttributedString")) {
-        DEF(&NSMutableAttributedString_c, &NSMutableAttributedString_m, "NSMutableAttributedString", &NSAttributedString_c, 0);
-        M(NSMutableAttributedString, "replaceCharactersInRange:withString:", mas_replace);
-        M(NSMutableAttributedString, "setAttributes:range:", mas_set_attr);
-        M(NSMutableAttributedString, "addAttribute:value:range:", mas_set_attr);
-        M(NSMutableAttributedString, "mutableString", get_a);
-    }
+    /* NSAttributedString/NSMutableAttributedString: fdn_astr.c */
 
     DEF(&NSPurgeableData_c, &NSPurgeableData_m, "NSPurgeableData", &NSData_c, 0);
     M(NSPurgeableData, "beginContentAccess", yes_m); M(NSPurgeableData, "endContentAccess", noop);

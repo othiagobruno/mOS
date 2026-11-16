@@ -34,20 +34,6 @@ static id S(const char *s) { return CFStringCreateWithCString(0, s ? s : "", UTF
 static const char *C(id o) { return o ? cx_cstr(o) : ""; }
 
 
-id CFAttributedStringCreateMutable(void *alloc, long max) {
-    (void)alloc; (void)max;
-    return MSG(id, MSG0(id, (id)cx_class_named("NSMutableAttributedString"), "alloc"), "initWithString:", cx_str(""));
-}
-void CFAttributedStringSetAttribute(id a, rng_t r, id name, id value) {
-    if (a && name) MSG(void, a, "addAttribute:value:range:", name, value, r);
-}
-void CFAttributedStringRemoveAttribute(id a, rng_t r, id name) {
-    (void)name;
-    if (a) MSG(void, a, "setAttributes:range:", (id)0, r);
-}
-void CFAttributedStringReplaceString(id a, rng_t r, id s) {
-    if (a) MSG(void, a, "replaceCharactersInRange:withString:", r, s ? s : cx_str(""));
-}
 
 id CFBundleGetInfoDictionary(id bundle) { return bundle ? MSG0(id, bundle, "infoDictionary") : 0; }
 id CFCopyHomeDirectoryURL(void) {
