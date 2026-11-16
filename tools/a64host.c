@@ -260,6 +260,9 @@ static int fuzz_main(int engine, a64_u64 budget, const char *inpath, const char 
     fclose(f);
     if (!budget) budget = hdr.budget ? hdr.budget : 100000;
     if (!map_span(FZ_CODE_VA, FZ_CODE_SZ) || !map_span(FZ_SCR_VA, FZ_SCR_SZ)) return 2;
+    /* como no a64test e no monitor do oráculo: só os 16 KiB do rascunho existem; o resto do bloco
+     * de 64 KiB fica sem acesso (acesso ali é FAULT nos três motores) */
+    if (mprotect((void *)(uintptr_t)(FZ_SCR_VA + FZ_SCR_SZ), (size_t)(0x10000 - FZ_SCR_SZ), PROT_NONE) != 0) return 2;
     size_t csz = (sizeof(a64_cpu) + 63u) & ~(size_t)63u;
     a64_cpu *c = aligned_alloc(64, csz);
     if (!c) return 2;

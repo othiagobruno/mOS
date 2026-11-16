@@ -46,6 +46,64 @@ tools/a64-linux.sh cmp                            # ELF de tools/a64tests
 tools/a64-linux.sh fuzz --grupo all --casos 300 --k 8 --jit --semente N
 ```
 
-## Andamento
+## Andamento (15 nov. 2026)
 
-Atualizado a cada PR desta frente.
+### Bugs do JIT achados e corrigidos (todos com regressão)
+
+| PR | Bug | Como apareceu |
+|---|---|---|
+| #271 | FCVTAS/FCVTAU somavam ±0,5 e truncavam: erro em 0,49999997f, 2^52 + 1, 2^23 + 1 | fuzz interp × JIT, `fp.int`; `jit_cvt_borda` falha no código antigo |
+| #271 | UCVTF de u64 com bit 63 sem sticky: arredondamento duplo (2^63 + 1025) | fuzz, `simdv.2misc` |
+| #301 | remendo de salto (`x_patch8/32`) gravava 1–4 bytes depois do fim do cache de código quando o bloco estourava o buffer | FAULT do JIT em endereço do host, 3 em 45 000 casos; `a64-linux.sh jitcache` (cache de 16 KiB) |
+
+O terceiro corrompe a memória logo depois do cache de código no processo real; avisei o Sergio e a Paula
+(pode ter relação com a queda do Claude arm64 na VM, `tradutor-arm64-runtime-falta.md` item 2).
+
+### Novos nativos no JIT (antes iam pela chamada leve ao interpretador)
+
+| PR | Instruções |
+|---|---|
+| #271 | SQSHL/UQSHL/SQSHLU por imediato (vetor e escalar) |
+| #277 | SHADD/UHADD/SRHADD/URHADD/SHSUB/UHSUB, SABD/UABD/SABA/UABA, MUL/MLA/MLS 8..32 bits, ADD/SUB/CMxx/NEG de D escalar |
+| #286 | FCMEQ/FCMGE/FCMGT/FACGE/FACGT e FCMxx #0 (S/D, vetor e escalar), FCVTZS/FCVTZU de S/D |
+| #290 | SMULL/UMULL/SMLAL/UMLAL/SMLSL/UMLSL por elemento, SABDL/UABDL/SABAL/UABAL |
+| #293 | SDOT/UDOT/USDOT/SUDOT (vetor e por elemento) |
+| #301 | SQDMULH/SQRDMULH de S e por elemento, SQDMULL/SQDMLAL/SQDMLSL |
+| #304 | SQABS/SQNEG, SQADD/UQADD/SQSUB/UQSUB escalares |
+| #308 | FCVTN/P/M/A (S e U) vetoriais e escalares de S/D |
+| #311 | DUP elemento → escalar, FMUL/FMLA/FMLS escalares por elemento, FADDP escalar e 2S |
+| #314 | FMAX/FMIN/FMAXNM/FMINNM, FABD, FMULX vetoriais de S/D |
+
+Cada lote: fuzz interp × JIT (`a64fuzz --sem-qemu`) com 3–4 sementes, de 75 000 a 250 000 casos,
+0 divergências. O interpretador é o oráculo verificado contra o QEMU.
+
+### Verificação
+
+- Testes ELF × QEMU 10.2 (`a64-linux.sh cmp`): 62 iguais, 0 diferentes (inclui `jit_qshl` e
+  `jit_cvt_borda`).
+- Fuzz SIMD/FP × QEMU, semente 20261115, 100 000 casos: JIT = interpretador em todos; 245 casos de
+  load/store SIMD divergiam do QEMU por causa do harness Linux (o `a64host` mapeava 64 KiB de rascunho
+  e o monitor 16 KiB). Corrigido no `a64host`; placar completo na fila.
+- Modelo de memória (`tools/a64litmus_host.c`, `a64-linux.sh litmus`): duas threads, 500 000 iterações
+  por teste, JIT e interpretador. SB com STLR/LDAR, DMB ISH e SWPAL e MP com STLR/LDAR: 0 resultados
+  proibidos. Controle sem barreira: 57 285 reordenações no JIT (o teste enxerga a reordenação do x86).
+- Desempenho (`tools/jit-medida.sh`, carga 7,3 no host): chamadas 632 MIPS, inteiros 1045, memória 586,
+  folha 1839, desvios 1954.
+
+### O que ainda passa pela chamada leve (correto, sem aceleração)
+
+Medido com `A64JIT_FBLOG=1` no fuzz de SIMD/FP (distribuição uniforme por codificação, não por uso real):
+- FP16 (formas `h` de quase tudo: aritmética por elemento, FMLA/FMLS, comparações, conversões, pareadas);
+- SHA1/SHA256 quando a codificação não cai no caminho nativo (investigar: o host tem SHA-NI);
+- estimativas FRECPE/FRSQRTE/FRECPS/FRSQRTS/FRECPX, FCMLA/FCADD, BF16 (BFDOT/BFMMLA/BFMLAL/BFCVT), I8MM;
+- SQRDMLAH/SQRDMLSH, SQRSHL/UQRSHL/SQSHL/UQSHL por registrador, SUQADD/USQADD, SQ*SHRN/SQXTN escalares;
+- conversões de ponto fixo (`#fbits`) e FP↔GPR fora de FCVTZ, FP pareadas (FMAXP/FMINP/...NMP), FMAXV etc.;
+- SADDLP/UADALP, CLZ/CLS, RBIT, SRI/SLI, URSHL/SRSHL, PMUL/PMULL de 8 bits.
+
+### Próximos passos
+
+1. Placar completo × QEMU com o harness corrigido (na fila) e tabela no `tradutor-arm64.md`.
+2. Desempenho: medir com a máquina livre; superblocos e cache de registradores entre saídas encadeadas
+   (`jit_bench_call`).
+3. FP16 nativo via F16C (exato para add/sub/mul/div/sqrt: f32 tem precisão ≥ 2·11 + 2) e o resto da
+   lista acima, por ordem de uso nos apps (`A64JIT_FBSTAT` nos binários reais com o Sergio).
