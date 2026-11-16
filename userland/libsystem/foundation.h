@@ -14,6 +14,7 @@ typedef struct cx_timer {
     void *block;
     int repeats, valid;
     struct cx_timer *next;
+    double tolerance;               /* NSTimer.tolerance: só guardado (o disparo usa o horário exato) */
 } cx_timer_t;
 typedef struct { long sec; int usec; } mac_tv_t;
 typedef void FILE_;
