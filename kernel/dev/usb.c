@@ -5,8 +5,10 @@
 #include "usb.h"
 
 static usb_dev_t devs[USB_MAX_DEVS];
-static const usb_driver_t *drivers[] = { &usb_hub_driver, &usb_hid_driver, &usb_msc_driver, &usb_bt_driver, &usb_xinput_driver };
-#define NDRIVERS ((int)ARRAY_LEN(drivers))
+#define MAX_DRIVERS 16
+static const usb_driver_t *drivers[MAX_DRIVERS] = { &usb_hub_driver, &usb_hid_driver, &usb_msc_driver, &usb_bt_driver, &usb_xinput_driver };
+static int ndrivers = 5;
+#define NDRIVERS ndrivers
 
 /* ------------------------------------------------------------------ transferências */
 int usb_control(usb_dev_t *d, u8 rt, u8 req, u16 val, u16 idx, u16 len, void *data) {
@@ -26,6 +28,63 @@ int usb_clear_halt(usb_dev_t *d, u8 ep) {
     xhci_reset_endpoint(d, ep);
     return usb_control(d, 0x02, 1 /* CLEAR_FEATURE */, 0 /* ENDPOINT_HALT */, ep, 0, NULL);
 }
+static void build_desc(usb_dev_t *d);
+
+/* ------------------------------------------------------------------ isócrono e alternate settings */
+int usb_iso_start(usb_dev_t *d, u8 ep, u32 esit, int npkts, int nbufs, usb_iso_cb cb, void *ctx) {
+    if (!d || !d->used) return USB_NODEV;
+    return xhci_iso_start(d, ep, esit, npkts, nbufs, cb, ctx);
+}
+int usb_iso_stop(usb_dev_t *d, u8 ep) { if (!d || !d->used) return USB_NODEV; return xhci_iso_stop(d, ep); }
+u32 usb_iso_esit_max(usb_dev_t *d, u8 ep) { return d && d->used ? xhci_iso_esit_max(d, ep) : 0; }
+u32 usb_iso_interval_us(usb_dev_t *d, u8 ep) { return d && d->used ? xhci_iso_interval_us(d, ep) : 0; }
+
+static void load_alt(usb_iface_t *it, const usb_alt_t *a) {
+    it->cur_alt = a->alt;
+    it->nep = a->nep;
+    memcpy(it->ep, a->ep, sizeof it->ep);
+    memcpy(it->ss_burst, a->ss_burst, sizeof it->ss_burst);
+    memcpy(it->ss_mult, a->ss_mult, sizeof it->ss_mult);
+    memcpy(it->ss_bpi, a->ss_bpi, sizeof it->ss_bpi);
+}
+
+int usb_set_interface(usb_dev_t *d, usb_iface_t *it, u8 alt) {
+    if (!d || !d->used || !it) return USB_NODEV;
+    const usb_alt_t *a = NULL;
+    for (int i = 0; i < it->nalt; i++) if (it->alts[i].alt == alt) a = &it->alts[i];
+    if (!a) return USB_ERR;
+    for (int i = 0; i < it->nep; i++) xhci_drop_endpoint(d, it->ep[i].bEndpointAddress);   /* para os anéis da atual */
+    for (int i = 0; i < a->nep; i++)
+        if (xhci_add_endpoint_ss(d, &a->ep[i], a->ss_burst[i], a->ss_mult[i], a->ss_bpi[i]) != USB_OK) return USB_ERR;
+    if (xhci_commit_endpoints(d) != USB_OK) return USB_ERR;           /* um Configure Endpoint com drop + add */
+    int r = usb_control(d, 0x01, 11 /* SET_INTERFACE */, alt, it->num, 0, NULL);
+    if (r < 0 && alt != 0) return r;                                    /* alt 0 com STALL: aceito (só uma alt) */
+    load_alt(it, a);
+    return USB_OK;
+}
+
+int usb_register_driver(const usb_driver_t *drv) {
+    if (!drv || ndrivers >= MAX_DRIVERS) return USB_ERR;
+    int k = ndrivers;
+    drivers[ndrivers++] = drv;
+    /* dispositivos já conectados: oferece as interfaces livres ao driver novo */
+    for (int i = 0; i < USB_MAX_DEVS; i++) {
+        usb_dev_t *d = &devs[i];
+        if (!d->used || !d->configured) continue;
+        bool any = false;
+        for (int j = 0; j < d->nifaces; j++) {
+            usb_iface_t *it = &d->iface[j];
+            if (it->driver < 0 && drv->probe(d, it)) { it->driver = k; any = true; }
+        }
+        if (!any) continue;
+        if (xhci_commit_endpoints(d) != USB_OK) kprintf("USB: [%s] endpoints do driver %s não configurados\n", d->path, drv->name);
+        for (int j = 0; j < d->nifaces && d->used; j++)
+            if (d->iface[j].driver == k && drv->start) drv->start(d, &d->iface[j]);
+        if (d->used) build_desc(d);
+    }
+    return USB_OK;
+}
+
 int usb_get_descriptor(usb_dev_t *d, u8 type, u8 index, u16 lang, void *buf, u16 len) {
     return usb_control(d, 0x80, 6, ((u16)type << 8) | index, lang, len, buf);
 }
@@ -34,7 +93,7 @@ void usb_events(void) { xhci_process_events(); }
 
 int usb_add_ep(usb_dev_t *d, usb_iface_t *it, int idx) {
     if (idx < 0 || idx >= it->nep) return USB_ERR;
-    return xhci_add_endpoint(d, &it->ep[idx], it->ss_burst[idx]);
+    return xhci_add_endpoint_ss(d, &it->ep[idx], it->ss_burst[idx], it->ss_mult[idx], it->ss_bpi[idx]);
 }
 
 usb_ep_desc_t *usb_find_ep(usb_iface_t *it, u8 type, bool in, int *idx) {
@@ -74,17 +133,21 @@ static void get_string(usb_dev_t *d, u16 lang, u8 idx, char *out, int max) {
 }
 
 /* ------------------------------------------------------------------ parsing da configuração */
+/* todas as alternate settings ficam em it->alts[]; a interface começa na alt 0 */
 static void parse_config(usb_dev_t *d) {
     u8 *p = d->config, *end = d->config + d->config_len;
     usb_iface_t *cur = NULL;
+    usb_alt_t *alt = NULL;
     int last_ep = -1;
     d->nifaces = 0;
     while (p + 2 <= end && p[0] >= 2 && p + p[0] <= end) {
         u8 len = p[0], type = p[1];
         if (type == USB_DT_INTERFACE && len >= 9) {
             usb_iface_desc_t *id = (usb_iface_desc_t *)p;
-            cur = NULL; last_ep = -1;
-            if (id->bAlternateSetting == 0 && d->nifaces < USB_MAX_IFACES) {
+            alt = NULL; last_ep = -1;
+            cur = NULL;
+            for (int i = 0; i < d->nifaces; i++) if (d->iface[i].num == id->bInterfaceNumber) cur = &d->iface[i];
+            if (!cur && d->nifaces < USB_MAX_IFACES) {
                 cur = &d->iface[d->nifaces++];
                 memset(cur, 0, sizeof *cur);
                 cur->num = id->bInterfaceNumber; cur->cls = id->bInterfaceClass;
@@ -92,14 +155,28 @@ static void parse_config(usb_dev_t *d) {
                 cur->driver = -1;
                 cur->extra = p + len;
             }
-        } else if (type == USB_DT_ENDPOINT && len >= 7 && cur) {
-            if (cur->nep < USB_MAX_EPS) { memcpy(&cur->ep[cur->nep], p, 7); last_ep = cur->nep++; }
-        } else if (type == USB_DT_SS_EP_COMP && len >= 6 && cur && last_ep >= 0) {
-            cur->ss_burst[last_ep] = p[2];
-        } else if (cur && cur->nep == 0) {
-            cur->extra_len = (u16)(p + len - cur->extra);
+            if (cur && cur->nalt < USB_MAX_ALTS) {
+                alt = &cur->alts[cur->nalt++];
+                memset(alt, 0, sizeof *alt);
+                alt->alt = id->bAlternateSetting;
+                alt->extra = p + len;
+            }
+        } else if (type == USB_DT_ENDPOINT && len >= 7 && alt) {
+            if (alt->nep < USB_MAX_EPS) { memcpy(&alt->ep[alt->nep], p, 7); last_ep = alt->nep++; }
+        } else if (type == USB_DT_SS_EP_COMP && len >= 6 && alt && last_ep >= 0) {
+            alt->ss_burst[last_ep] = p[2];
+            alt->ss_mult[last_ep] = p[3] & 3;                 /* isócrono: Mult; bulk: streams (ignorado) */
+            alt->ss_bpi[last_ep] = (u16)(p[4] | p[5] << 8);
+        } else if (alt && alt->nep == 0) {
+            alt->extra_len = (u16)(p + len - alt->extra);
         }
         p += len;
+    }
+    for (int i = 0; i < d->nifaces; i++) {                    /* estado inicial: alt 0 (ou a primeira listada) */
+        usb_iface_t *it = &d->iface[i];
+        const usb_alt_t *a0 = it->nalt ? &it->alts[0] : NULL;
+        for (int k = 0; k < it->nalt; k++) if (it->alts[k].alt == 0) { a0 = &it->alts[k]; break; }
+        if (a0) { load_alt(it, a0); it->extra = a0->extra; it->extra_len = a0->extra_len; }
     }
 }
 
