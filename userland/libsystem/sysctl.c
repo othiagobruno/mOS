@@ -439,7 +439,9 @@ static size_t ent_value(const sc_ent_t *e, u8 *out) {
     case V_NUMTASKS: dw_sysinfo(&si); v = si.nprocs; break;
     case V_NUMTHREADS: dw_sysinfo(&si); v = si.nthreads; break;
     case V_MSLEVEL: dw_sysinfo(&si); v = si.mem_total ? si.mem_free * 100 / si.mem_total : 100; break;
-    case V_PRESSURE: {   /* 1 normal, 2 aviso, 4 crítico (kVMPressure* do XNU) pela RAM livre */
+    case V_PRESSURE: {   /* 1 normal, 2 aviso, 4 crítico (kVMPressure* do XNU) */
+        mos_vmstats_t vs;   /* o nível do próprio kernel (piso do vm_pageout, vmpolicy.h), o mesmo que dispara o jetsam */
+        if (SYS2(SYS_VMCTL, MOS_VM_STATS, &vs) == 0) { v = vs.pressure_level; break; }
         dw_sysinfo(&si);
         u64 pct = si.mem_total ? si.mem_free * 100 / si.mem_total : 100;
         v = pct > 15 ? 1 : pct > 5 ? 2 : 4;

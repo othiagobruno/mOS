@@ -28,6 +28,8 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/vmcomp_ho
     -o /tmp/vmcomp_host
 # filas de futex e prioridade do escalonador (docs/nucleo-plano.md)
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/futexq_host.c kernel/proc/futexq.c -o /tmp/futexq_host
+gcc -O2 -Wall -Wextra -I kernel/include tools/vmpolicy_host.c -o /tmp/vmpolicy_host
+/tmp/vmpolicy_host
 /tmp/futexq_host
 /tmp/vmcomp_host
 # o que o ChatGPT desktop pedia (Spotlight, chave P-256 em PEM, inversa de CATransform3D)

@@ -18,6 +18,7 @@
 #include "account.h"
 #include "fs.h"
 #include "vmcomp.h"
+#include "vmpolicy.h"
 
 #define PTE_P  1ULL
 #define PTE_RW 2ULL
@@ -613,18 +614,134 @@ void vm_pageout_kick(void) {
     if (t && t->state == TH_SLEEPING) t->wake_at = 0;     /* wake_sleepers a acorda no próximo tique */
     sched_deadline_dirty();
 }
+/* ------------------------------------------------------------ limites e jetsam (vmpolicy.h, SYS_VMCTL) */
+static u64 jetsam_kills;
+static int jprio_of(const process_t *p) { return p->jprio_set ? p->jprio : VMP_JPRIO_DEFAULT; }
+static u64 footprint_pages(const process_t *p) { return p->mem_pages + p->swap_pages; }
+
+/* pressão crítica que o compressor não resolve: encerra um processo, como o jetsam do XNU (menor prioridade, maior
+ * footprint). Devolve o pid encerrado ou 0. */
+static int jetsam_one(void) {
+    enum { MAXC = 64 };
+    int pid[MAXC], pr[MAXC], n = 0;
+    unsigned long long fp[MAXC];
+    process_t *who[MAXC];
+    for (process_t *q = procs; q && n < MAXC; q = q->next) {
+        if (q->exited || !q->pml4 || q->pml4_borrowed) continue;
+        pid[n] = q->pid; pr[n] = jprio_of(q); fp[n] = footprint_pages(q); who[n] = q; n++;
+    }
+    int k = vmp_jetsam_pick(n, pid, pr, fp);
+    if (k < 0) return 0;
+    kprintf("jetsam: memória crítica (%llu páginas livres): encerrando %s (pid %d, prioridade %d, %llu MiB)\n",
+            (unsigned long long)pmm_free_pages(), who[k]->name, pid[k], pr[k], fp[k] / 256);
+    jetsam_kills++;
+    finish(who[k], -MOS_SIGKILL);
+    return pid[k];
+}
+
+/* passou do limite de footprint (MOS_VM_SETLIMIT): sai com SIGKILL, como o EXC_RESOURCE fatal do memorystatus */
+static u64 vm_limit_kill(process_t *p, int_frame_t *f) {
+    kprintf("memorystatus: %s (pid %d) passou do limite de %llu MiB (%llu MiB): encerrado\n", p->name, p->pid,
+            (unsigned long long)p->mem_limit / 256, (unsigned long long)footprint_pages(p) / 256);
+    finish(p, -MOS_SIGKILL);
+    return sched_switch(f);
+}
+
 static void pageout_main(void *arg) {
     (void)arg;
+    u64 crit_since = 0;
     for (;;) {
         u64 fl = swap_floor();
         if (fl && pmm_free_pages() < fl + fl / 2) {
             __atomic_store_n(&pageout_req, 0, __ATOMIC_RELAXED);
             u32 before = (u32)pmm_free_pages();
             mem_pressure();
+            u64 now = timer_ticks();
+            /* crítico por 3 s seguidos e o relógio não liberou nada nesta volta: jetsam */
+            if (vmp_pressure_level(pmm_free_pages(), fl) == 4) {
+                if (!crit_since) crit_since = now;
+                else if (now - crit_since >= 3000 && pmm_free_pages() <= before + 16) { jetsam_one(); crit_since = now; }
+            } else crit_since = 0;
             /* nada saiu (tudo quente ou incompressível): espera um pouco para o relógio não girar à toa */
             kthread_sleep(pmm_free_pages() > before ? 10 : 200);
-        } else kthread_sleep(__atomic_load_n(&pageout_req, __ATOMIC_RELAXED) ? 1 : 500);
+        } else { crit_since = 0; kthread_sleep(__atomic_load_n(&pageout_req, __ATOMIC_RELAXED) ? 1 : 500); }
     }
+}
+
+/* rlimit do processo (vmpolicy.h): o padrão enquanto ninguém mudou */
+static void rlim_get(const process_t *p, int res, u64 *cur, u64 *max) {
+    if (p->rlim_set & 1) { *cur = p->rlim_cur[res]; *max = p->rlim_max[res]; return; }
+    unsigned long long c, m;
+    vmp_rlim_default(res, PROC_MAX_FDS, USER_STACK_SIZE, &c, &m);
+    *cur = c; *max = m;
+}
+static void rlim_materialize(process_t *p) {
+    if (p->rlim_set & 1) return;
+    for (int i = 0; i < VMP_RLIMIT_N; i++) {
+        unsigned long long c, m;
+        vmp_rlim_default(i, PROC_MAX_FDS, USER_STACK_SIZE, &c, &m);
+        p->rlim_cur[i] = c; p->rlim_max[i] = m;
+    }
+    p->rlim_set |= 1;
+}
+/* fork, vfork e spawn herdam os limites de recurso (não o limite de footprint nem a prioridade de jetsam) */
+static void vm_inherit(process_t *child, const process_t *par) {
+    if (!child || !par) return;
+    memcpy(child->rlim_cur, par->rlim_cur, sizeof child->rlim_cur);
+    memcpy(child->rlim_max, par->rlim_max, sizeof child->rlim_max);
+    child->rlim_set = par->rlim_set;
+}
+static i64 vmctl(process_t *p, u64 op, u64 a, u64 b) {
+    switch (op) {
+    case MOS_VM_STATS: {
+        mos_vmstats_t st;
+        swap_stats_t sw;
+        memset(&st, 0, sizeof st);
+        swap_stats(&sw);
+        st.page_size = 4096;
+        st.total_pages = pmm_total_pages();
+        st.free_pages = pmm_free_pages();
+        for (process_t *q = procs; q; q = q->next) if (!q->exited && !q->pml4_borrowed) st.resident_pages += q->mem_pages;
+        st.compressed_pages = sw.slots_used;
+        st.compressor_pages = sw.zone_pages;
+        st.pageouts = sw.nout; st.pageins = sw.nin; st.rejected = sw.rejected;
+        st.jetsam_kills = jetsam_kills;
+        st.pressure_level = (unsigned)vmp_pressure_level(st.free_pages, swap_floor());
+        st.memorystatus_level = (unsigned)vmp_memorystatus_level(st.free_pages, st.total_pages);
+        return uvm_copy_out(p, a, &st, sizeof st) ? 0 : -MOS_EFAULT;
+    }
+    case MOS_VM_GETRLIM: {
+        if (a >= VMP_RLIMIT_N) return -MOS_EINVAL;
+        mos_rlim_t r;
+        rlim_get(p, (int)a, (u64 *)&r.cur, (u64 *)&r.max);
+        return uvm_copy_out(p, b, &r, sizeof r) ? 0 : -MOS_EFAULT;
+    }
+    case MOS_VM_SETRLIM: {
+        mos_rlim_t r;
+        if (a >= VMP_RLIMIT_N) return -MOS_EINVAL;
+        if (!uvm_copy_in(p, &r, b, sizeof r)) return -MOS_EFAULT;
+        u64 oc, om;
+        rlim_get(p, (int)a, &oc, &om);
+        unsigned long long cap = a == VMP_RLIMIT_NOFILE ? PROC_MAX_FDS : a == VMP_RLIMIT_STACK ? USER_STACK_SIZE : 0;
+        unsigned long long nc, nm;
+        int e = vmp_rlim_set((int)a, om, r.cur, r.max, p->euid == 0, cap, &nc, &nm);
+        if (e) return e == -1 ? -MOS_EPERM : -MOS_EINVAL;
+        rlim_materialize(p);
+        p->rlim_cur[a] = nc; p->rlim_max[a] = nm;
+        return 0;
+    }
+    case MOS_VM_SETLIMIT: case MOS_VM_SETJPRIO: case MOS_VM_FOOTPRINT: {
+        process_t *q = a ? find((int)a) : p;
+        if (!q || q->exited) return -MOS_ESRCH;
+        if (op == MOS_VM_FOOTPRINT) return (i64)(footprint_pages(q) * 4096);
+        if (q != p && p->euid != 0 && p->euid != q->uid) return -MOS_EPERM;
+        if (op == MOS_VM_SETLIMIT) { q->mem_limit = b ? b * 256 : 0; return 0; }
+        if (b > 210) return -MOS_EINVAL;
+        q->jprio = (u8)b; q->jprio_set = 1;
+        return 0;
+    }
+    }
+    return -MOS_EINVAL;
 }
 void vm_pageout_start(void) {
     if (!pageout_th) pageout_th = kthread_create("vm_pageout", pageout_main, NULL);
@@ -1392,11 +1509,11 @@ static u64 proc_fault_(int_frame_t *f, u64 cr2) {
         if ((f->cs & 3) && swap_floor() && pmm_free_pages() < swap_floor() / 4) mem_pressure();
         u64 *se = walk(p, cr2, false);
         if (se && swap_is(*se)) {
-            if (swap_in(p, se, cr2)) return (u64)f;
+            if (swap_in(p, se, cr2)) return (f->cs & 3) && vmp_over_limit(p->mem_pages, p->swap_pages, p->mem_limit) ? vm_limit_kill(p, f) : (u64)f;
             if (swap_is(*se) && (f->cs & 3)) { mem_pressure(); if (swap_in(p, se, cr2)) return (u64)f; }
         }
         extern bool lazy_fault(process_t *p, u64 va);
-        if (lazy_fault(p, cr2)) return (u64)f;
+        if (lazy_fault(p, cr2)) return (f->cs & 3) && vmp_over_limit(p->mem_pages, p->swap_pages, p->mem_limit) ? vm_limit_kill(p, f) : (u64)f;
     }
     /* falta espúria (SMP): outro núcleo mapeou a página ou quebrou o COW entre a falta e esta trava, ou a TLB deste
      * núcleo ainda tinha a entrada velha. Se a página agora permite o acesso, invalida a entrada local e repete.
@@ -2563,6 +2680,7 @@ static void spawn_finish_cred(process_t *child, thread_t *cur) {
         memcpy(child->sig_tramp, par->sig_tramp, sizeof child->sig_tramp);
         child->sig_restorer = par->sig_restorer;
         child->uid = par->uid; child->euid = par->euid; child->suid = par->suid;
+        vm_inherit(child, par);
         child->gid = par->gid; child->egid = par->egid; child->sgid = par->sgid;
         if (child->main && par->main) child->main->sig_mask = par->main->sig_mask;
     }
@@ -2991,7 +3109,9 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_TIME: r = (i64)timer_ticks(); break;
     case SYS_BRK:
         if (a == 0) r = (i64)p->brk;
-        else if (a >= p->brk_start && a < USER_STACK_TOP - USER_STACK_SIZE - 0x100000 && uvm_map(p, p->brk, a > p->brk ? a - p->brk : 0)) {
+        else if (a >= p->brk_start && a < USER_STACK_TOP - USER_STACK_SIZE - 0x100000 &&
+                 (!(p->rlim_set & 1) || a - p->brk_start <= p->rlim_cur[VMP_RLIMIT_DATA]) &&      /* RLIMIT_DATA */
+                 uvm_map(p, p->brk, a > p->brk ? a - p->brk : 0)) {
             p->brk = a;
             r = (i64)a;
         } else r = -MOS_ENOMEM;
@@ -3475,7 +3595,8 @@ static u64 proc_syscall_(int_frame_t *f) {
         r = 0;
         break;
     }
-    case SYS_FSMETA: r = fsmeta_syscall(p, (int)a, b); break;   /* metadados e xattr (kernel/lib/vfsmeta.c) */
+    case SYS_FSMETA: r = fsmeta_syscall(p, (int)a, b); break;
+    case SYS_VMCTL: r = vmctl(p, a, b, c); break;        /* memória virtual: estatísticas, rlimit, limites (vmpolicy.h) */   /* metadados e xattr (kernel/lib/vfsmeta.c) */
     case SYS_GETUID: r = p->uid; break;
     case SYS_GETEUID: r = p->euid; break;
     case SYS_GETGID: r = p->gid; break;
@@ -3845,6 +3966,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         q->pid = next_pid++;
         q->ppid = p->pid;
         q->uid = p->uid; q->euid = p->euid; q->suid = p->suid;
+        vm_inherit(q, p);
         q->gid = p->gid; q->egid = p->egid; q->sgid = p->sgid;
         memcpy(q->name, p->name, sizeof q->name);
         memcpy(q->path, p->path, sizeof q->path);
@@ -3914,6 +4036,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         q->tty = p->tty;
         if (q->tty) q->tty->refs++;
         q->uid = p->uid; q->euid = p->euid; q->suid = p->suid;
+        vm_inherit(q, p);
         q->gid = p->gid; q->egid = p->egid; q->sgid = p->sgid;
         q->pgid = p->pgid; q->sid = p->sid; q->ctty = p->ctty;   /* mesmo grupo, sessão e terminal de controle */
         machipc_spawn(p, q);                            /* como no macOS: o filho só herda as portas especiais */

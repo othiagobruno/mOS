@@ -696,25 +696,47 @@ int pthread_set_qos_class_self_np(unsigned q, int r) {
 }
 unsigned qos_class_self(void) { return self_qos; }
 unsigned qos_class_main(void) { return 0x21; }
-int pthread_setschedparam(void *t, int pol, const void *p) { (void)t; (void)pol; (void)p; return 0; }
-int pthread_getschedparam(void *t, int *pol, int *p) { (void)t; if (pol) *pol = 1; if (p) *p = 31; return 0; }
+/* prioridade Mach da thread (SYS_THREADCTL MOS_THR_SETPRIO, kernel/proc/sched.c). SCHED_FIFO (4) e SCHED_RR (2)
+ * ficam fixas, sem decaimento; SCHED_OTHER (1) é timeshare. A última escolha de cada thread fica numa tabela pequena
+ * para o getschedparam. */
+extern int cx_pthread_tid(void *t);
+static struct { int tid, pol, pri; } sched_memo[64];
+int pthread_setschedparam(void *t, int pol, const void *p) {
+    if (!p) return CX_EINVAL;
+    int pri = *(const int *)p, tid = t ? cx_pthread_tid(t) : 0;
+    if (pri < 0 || pri > 127 || (pol != 1 && pol != 2 && pol != 4)) return CX_EINVAL;
+    long r = SYS3(60, 8 /* MOS_THR_SETPRIO */, tid, (unsigned)pri | (pol != 1 ? 0x100u : 0));
+    if (r < 0) return (int)-r;
+    int slot = tid & 63;
+    sched_memo[slot].tid = tid; sched_memo[slot].pol = pol; sched_memo[slot].pri = pri;
+    return 0;
+}
+int pthread_getschedparam(void *t, int *pol, int *p) {
+    int tid = t ? cx_pthread_tid(t) : 0, slot = tid & 63;
+    int hit = sched_memo[slot].tid == tid && sched_memo[slot].pri;
+    if (pol) *pol = hit ? sched_memo[slot].pol : 1;
+    if (p) *p = hit ? sched_memo[slot].pri : 31;
+    return 0;
+}
 int sched_get_priority_min(int p) { (void)p; return 15; }
 int sched_get_priority_max(int p) { (void)p; return 47; }
 
 /* ---- limites de recursos */
 typedef struct { u64 cur, max; } cx_rlimit_t;
 #define RLIM_INFINITY 0x7FFFFFFFFFFFFFFFull
+/* SYS_VMCTL (kernel/include/vmpolicy.h): o kernel guarda os limites por processo e o fork/spawn herda */
 int getrlimit(int res, cx_rlimit_t *r) {
     if (!r) { cx_errno = CX_EFAULT; return -1; }
-    switch (res) {
-    case 3: r->cur = r->max = 8u << 20; break;          /* RLIMIT_STACK */
-    case 8: r->cur = r->max = 256; break;               /* RLIMIT_NOFILE: PROC_MAX_FDS do kernel (proc.h) */
-    case 4: r->cur = r->max = 0; break;                 /* RLIMIT_CORE */
-    default: r->cur = r->max = RLIM_INFINITY; break;
-    }
+    long e = SYS3(SYS_VMCTL, MOS_VM_GETRLIM, res, r);
+    if (e < 0) { cx_errno = (int)-e; return -1; }
     return 0;
 }
-int setrlimit(int res, const cx_rlimit_t *r) { (void)res; (void)r; return 0; }
+int setrlimit(int res, const cx_rlimit_t *r) {
+    if (!r) { cx_errno = CX_EFAULT; return -1; }
+    long e = SYS3(SYS_VMCTL, MOS_VM_SETRLIM, res, r);
+    if (e < 0) { cx_errno = (int)-e; return -1; }
+    return 0;
+}
 
 /* MB_CUR_MAX no macOS é ___mb_cur_max() */
 int __mb_cur_max = 4;
