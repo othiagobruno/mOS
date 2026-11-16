@@ -247,6 +247,7 @@ void gl_ctx_destroy(gl_ctx_t *C) {
     free(C->xfbs.v); free(C->xfbs.used);
     free(C->imv);
     free(C->ext_list);
+    { void gl_eval_free(gl_ctx_t *C); gl_eval_free(C); }
     share_free(C);
     free(C);
 }
@@ -709,7 +710,8 @@ static int get_any(gl_ctx_t *C, GLenum p, gv_t *g) {
     case GL_ALPHA_BITS: I1(C->fb_alpha ? 8 : 0); return 1;
     case GL_DEPTH_BITS: I1(C->fb_has_depth ? 24 : 0); return 1;
     case GL_STENCIL_BITS: I1(C->fb_has_stencil ? 8 : 0); return 1;
-    case GL_ACCUM_RED_BITS: case GL_ACCUM_GREEN_BITS: case GL_ACCUM_BLUE_BITS: case GL_ACCUM_ALPHA_BITS: case GL_INDEX_BITS: I1(0); return 1;
+    case GL_ACCUM_RED_BITS: case GL_ACCUM_GREEN_BITS: case GL_ACCUM_BLUE_BITS: case GL_ACCUM_ALPHA_BITS: I1(C->profile_core ? 0 : 32); return 1;
+    case GL_INDEX_BITS: I1(0); return 1;
     case GL_AUX_BUFFERS: I1(0); return 1;
     case GL_RGBA_MODE: gb(g, 1, (u8[]){1}); return 1;
     case GL_INDEX_MODE: gb(g, 1, (u8[]){0}); return 1;

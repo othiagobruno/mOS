@@ -352,6 +352,48 @@ static void t_arrays(void) {
     gl_ctx_destroy(C);
 }
 
+static void t_eval_accum(void) {
+    gl_ctx_t *C = mk(0, 16, 16);
+    /* mapa 2D bilinear cobrindo a janela, com cor do vermelho (embaixo) ao azul (em cima) */
+    float ctl[] = {-1, -1, 0, 1, -1, 0, -1, 1, 0, 1, 1, 0};
+    float col[] = {1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1};
+    glMap2f(GL_MAP2_VERTEX_3, 0, 1, 3, 2, 0, 1, 6, 2, ctl);
+    glMap2f(GL_MAP2_COLOR_4, 0, 1, 4, 2, 0, 1, 8, 2, col);
+    glEnable(GL_MAP2_VERTEX_3);
+    glEnable(GL_MAP2_COLOR_4);
+    glMapGrid2f(4, 0, 1, 4, 0, 1);
+    glEvalMesh2(GL_FILL, 0, 4, 0, 4);
+    u8 o[4];
+    px(8, 1, o);
+    CHECK(o[0] > 200 && o[2] < 40, "avaliador 2D embaixo %d %d %d", o[0], o[1], o[2]);
+    px(8, 14, o);
+    CHECK(o[2] > 200 && o[0] < 40, "avaliador 2D em cima %d %d %d", o[0], o[1], o[2]);
+    GLint ord[2] = {0, 0};
+    glGetMapiv(GL_MAP2_VERTEX_3, GL_ORDER, ord);
+    CHECK(ord[0] == 2 && ord[1] == 2, "glGetMap ordem %d %d", ord[0], ord[1]);
+    CHECK(C->cur_col[0] == 1 && C->cur_col[2] == 1, "a cor corrente não muda com o avaliador");
+    /* curva quadrática de Bézier: ponto do meio */
+    float q[] = {0, 0, 0, 1, 2, 0, 2, 0, 0};
+    glMap1f(GL_MAP1_VERTEX_3, 0, 1, 3, 3, q);
+    glGetMapfv(GL_MAP1_VERTEX_3, GL_COEFF, ctl);
+    CHECK(ctl[4] == 2, "glGetMap coeficientes");
+    /* acumulação: média de vermelho e verde */
+    glDisable(GL_MAP2_VERTEX_3);
+    glClearColor(1, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_ACCUM_BUFFER_BIT);
+    glAccum(GL_LOAD, 0.5f);
+    glClearColor(0, 1, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glAccum(GL_ACCUM, 0.5f);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glAccum(GL_RETURN, 1.0f);
+    px(3, 3, o);
+    CHECK(near(o[0], 128, 1) && near(o[1], 128, 1) && o[2] == 0, "glAccum média %d %d %d", o[0], o[1], o[2]);
+    CHECK(glGetError() == GL_NO_ERROR, "avaliadores e acumulação sem erro");
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks);
 int main(void) {
     t_clear_and_state();
@@ -361,6 +403,7 @@ int main(void) {
     t_fbo();
     t_lists_and_lighting();
     t_arrays();
+    t_eval_accum();
     gl_glsl_host_tests(&fails, &checks);
     printf("gl_host: %d/%d ok\n", checks - fails, checks);
     return fails != 0;
