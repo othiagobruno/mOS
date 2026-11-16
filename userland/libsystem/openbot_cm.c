@@ -835,3 +835,29 @@ id CMTimeRangeCopyAsDictionary(cm_range_wa_t r, void *alloc) {
     if (u) objc_release(u);
     return d;
 }
+
+/* Tempos de saída: o deslocamento do output PTS (CMSampleBufferSetOutputPresentationTimeStamp) vale para
+ * todas as amostras; sem ele são os tempos de entrada. Não há multiplicador de velocidade no mOS. */
+cm_time_t CMTimeAdd(cm_time_t a, cm_time_t b);
+cm_time_t CMTimeSubtract(cm_time_t a, cm_time_t b);
+int CMSampleBufferGetOutputSampleTimingInfoArray(void *s, long entries, cm_timing_t *out, long *need) {
+    sb_t *b = as_sb(s);
+    if (!b) return CM_BAD_SAMPLE;
+    int rc = cm_timing_copy(b->times, b->ns, out, entries, need);
+    if (rc || !out || !b->has_opt || !b->times || b->ns < 1) return rc;
+    if (!(b->times[0].presentationTimeStamp.flags & 1)) return 0;
+    cm_time_t delta = CMTimeSubtract(b->opt, b->times[0].presentationTimeStamp);
+    for (long i = 0; i < b->ns; i++) {
+        if (out[i].presentationTimeStamp.flags & 1) out[i].presentationTimeStamp = CMTimeAdd(out[i].presentationTimeStamp, delta);
+        if (out[i].decodeTimeStamp.flags & 1) out[i].decodeTimeStamp = CMTimeAdd(out[i].decodeTimeStamp, delta);
+    }
+    return 0;
+}
+cm_time_t CMSampleBufferGetOutputDuration(void *s) { return CMSampleBufferGetDuration(s); }
+cm_time_t CMSampleBufferGetOutputDecodeTimeStamp(void *s) {
+    sb_t *b = as_sb(s);
+    if (!b || !b->times) return time_invalid();
+    cm_time_t d = b->times[0].decodeTimeStamp;
+    if (!b->has_opt || !(d.flags & 1) || !(b->times[0].presentationTimeStamp.flags & 1)) return d;
+    return CMTimeAdd(d, CMTimeSubtract(b->opt, b->times[0].presentationTimeStamp));
+}

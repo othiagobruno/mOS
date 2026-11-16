@@ -53,6 +53,8 @@ int VTCopySupportedPropertyDictionaryForEncoder(int w, int h, u32 codec, id spec
     return kVTCouldNotFindVideoEncoderErr;
 }
 void VTRegisterProfessionalVideoWorkflowVideoEncoders(void) {}
+/* Os plug-ins profissionais (ProRes RAW e afins) vêm de pacotes da Apple que o mOS não tem: não há o que registrar. */
+void VTRegisterProfessionalVideoWorkflowVideoDecoders(void) {}
 
 typedef struct { int live; } vtpx_t;
 int VTPixelTransferSessionCreate(void *a, void **out) {
