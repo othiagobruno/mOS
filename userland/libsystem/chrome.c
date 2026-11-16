@@ -96,8 +96,6 @@ K(kVTProfileLevel_HEVC_Main10_AutoLevel, "HEVC_Main10_AutoLevel")
 K(kVTProfileLevel_HEVC_Main42210_AutoLevel, "HEVC_Main42210_AutoLevel")
 K(kVTScalingMode_CropSourceToCleanAperture, "CropSourceToCleanAperture")
 /* CFNetwork / CoreGraphics / outros */
-K(kCFProxyTypeAutoConfigurationJavaScript, "kCFProxyTypeAutoConfigurationJavaScript")
-K(kCFProxyTypeAutoConfigurationURL, "kCFProxyTypeAutoConfigurationURL")
 K(kCGColorClear, "kCGColorClear")
 K(UNErrorDomain, "UNErrorDomain") K(ASWebAuthenticationSessionErrorDomain, "com.apple.AuthenticationServices.WebAuthenticationSession")
 /* Foundation / AppKit (NSString constantes) */

@@ -365,3 +365,21 @@ int mnet_ws_open(mnet_client_t *c, const mnet_req_t *q, const char *protocols, m
 int mnet_wsconn_flush(mnet_wsconn_t *w, int timeout_ms);       /* manda w->ws.out; 0 ok, -1 erro, -2 tempo */
 long mnet_wsconn_poll(mnet_wsconn_t *w, int timeout_ms);       /* lê uma vez e alimenta: >0 bytes, 0 nada (tempo), -1 fim/erro */
 void mnet_wsconn_free(mnet_wsconn_t *w);
+
+/* ---- proxy (regras do CFNetwork): qual proxy usar para uma URL */
+enum { MNET_PX_NONE, MNET_PX_HTTP, MNET_PX_HTTPS, MNET_PX_SOCKS, MNET_PX_PAC_URL, MNET_PX_PAC_JS };
+typedef struct {
+    int http_on, https_on, socks_on, pac_on, exclude_simple;
+    char http_host[256], https_host[256], socks_host[256];
+    int http_port, https_port, socks_port;
+    char *pac_url, *pac_js;          /* malloc */
+    char **exceptions; int nexc;     /* "*.local", "169.254/16", "exemplo.com", "<local>" */
+} mnet_proxy_cfg_t;
+typedef struct { int type; char host[256]; int port; } mnet_proxy_t;
+void mnet_proxy_cfg_free(mnet_proxy_cfg_t *c);
+int mnet_proxy_add_exception(mnet_proxy_cfg_t *c, const char *pattern);
+int mnet_proxy_bypass(const mnet_proxy_cfg_t *c, const char *host);   /* 1 = conexão direta */
+/* lista em ordem de preferência; sempre termina em MNET_PX_NONE (direto). Devolve a quantidade. */
+int mnet_proxy_for_url(const mnet_proxy_cfg_t *c, const char *url, mnet_proxy_t *out, int max);
+/* resultado de um PAC ("PROXY a:1; SOCKS b:2; DIRECT") -> lista; devolve a quantidade */
+int mnet_proxy_parse_pac_result(const char *s, mnet_proxy_t *out, int max);

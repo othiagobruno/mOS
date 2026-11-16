@@ -732,12 +732,47 @@ static void t_ws_node(void) {
     mnet_ws_free(&sv); mnet_buf_free(&rs.got); mnet_buf_free(&resp); mnet_buf_free(&head); mnet_hdrs_free(&hh); free(proto);
 }
 
+/* ---- proxy */
+static void t_proxy(void) {
+    mnet_proxy_cfg_t c; memset(&c, 0, sizeof c);
+    c.http_on = c.https_on = 1;
+    strcpy(c.http_host, "px.local"); c.http_port = 3128;
+    strcpy(c.https_host, "pxs.local"); c.https_port = 3129;
+    mnet_proxy_add_exception(&c, "*.local"); mnet_proxy_add_exception(&c, "169.254/16");
+    mnet_proxy_add_exception(&c, "intranet.exemplo.com"); mnet_proxy_add_exception(&c, "10.0.0.0/8"); mnet_proxy_add_exception(&c, "192.168.1");
+    mnet_proxy_t o[8];
+    int n = mnet_proxy_for_url(&c, "http://www.apple.com/", o, 8);
+    CHECK(n == 2 && o[0].type == MNET_PX_HTTP && !strcmp(o[0].host, "px.local") && o[0].port == 3128 && o[1].type == MNET_PX_NONE);
+    n = mnet_proxy_for_url(&c, "https://www.apple.com/", o, 8);
+    CHECK(n == 2 && o[0].type == MNET_PX_HTTPS && o[0].port == 3129);
+    const char *direct[] = {"http://printer.local/", "http://169.254.3.4/", "http://a.intranet.exemplo.com/", "http://10.9.8.7/",
+                            "http://192.168.1.20/", "http://localhost:8080/", "http://127.0.0.1/", "http://[::1]/"};
+    for (int i = 0; i < 8; i++) { n = mnet_proxy_for_url(&c, direct[i], o, 8); CHECK(n == 1 && o[0].type == MNET_PX_NONE); }
+    n = mnet_proxy_for_url(&c, "http://192.168.2.1/", o, 8);
+    CHECK(o[0].type == MNET_PX_HTTP);
+    CHECK(!mnet_proxy_bypass(&c, "servidor"));
+    c.exclude_simple = 1;
+    CHECK(mnet_proxy_bypass(&c, "servidor"));
+    c.socks_on = 1; strcpy(c.socks_host, "sk"); c.socks_port = 0;
+    c.pac_on = 1; c.pac_url = mnet_strndup("http://wpad/wpad.dat", 20);
+    n = mnet_proxy_for_url(&c, "http://exemplo.org/", o, 8);
+    CHECK(n == 4 && o[0].type == MNET_PX_PAC_URL && o[1].type == MNET_PX_HTTP && o[2].type == MNET_PX_SOCKS && o[2].port == 1080);
+    mnet_proxy_cfg_free(&c);
+    n = mnet_proxy_parse_pac_result("PROXY p1:8080; SOCKS5 s1:1081;HTTPS h1:443 ; DIRECT", o, 8);
+    CHECK(n == 4 && o[0].type == MNET_PX_HTTP && !strcmp(o[0].host, "p1") && o[0].port == 8080 && o[1].type == MNET_PX_SOCKS &&
+          o[1].port == 1081 && o[2].type == MNET_PX_HTTPS && o[3].type == MNET_PX_NONE);
+    n = mnet_proxy_parse_pac_result("PROXY [2001:db8::1]:3128", o, 8);
+    CHECK(n == 1 && !strcmp(o[0].host, "2001:db8::1") && o[0].port == 3128);
+    CHECK(mnet_proxy_parse_pac_result("", o, 8) == 1 && o[0].type == MNET_PX_NONE);
+}
+
 int main(void) {
     t_h1();
     t_dates();
     t_cookies();
     t_hpack();
     t_url();
+    t_proxy();
     t_cache();
     t_decode();
     t_ws();

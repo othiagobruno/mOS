@@ -532,18 +532,6 @@ void __invert_f3(void) {}
 void _nw_content_context_default_message(void) {}
 void endfsent(void) {}
 void getfsent(void) {}
-void *kCFNetworkProxiesExceptionsList;
-void *kCFNetworkProxiesHTTPEnable;
-void *kCFNetworkProxiesHTTPPort;
-void *kCFNetworkProxiesHTTPProxy;
-void *kCFNetworkProxiesHTTPSEnable;
-void *kCFNetworkProxiesHTTPSPort;
-void *kCFNetworkProxiesHTTPSProxy;
-void *kCFNetworkProxiesProxyAutoConfigEnable;
-void *kCFNetworkProxiesProxyAutoConfigJavaScript;
-void *kCFNetworkProxiesProxyAutoConfigURLString;
-void *kCFStreamNetworkServiceType;
-void *kCFStreamNetworkServiceTypeVoIP;
 void *kCFStreamPropertySOCKSProxy;
 void *kCFStreamPropertySOCKSProxyHost;
 void *kCFStreamPropertySOCKSProxyPort;
