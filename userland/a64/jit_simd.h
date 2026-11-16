@@ -1536,7 +1536,10 @@ static int fpv_core_x(T *t, unsigned x86, int fma, int dbl, int q, int d, int n,
     x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 0x01C00000);
     slow_if(t, CC_NE);
     int xm = fma ? 2 : 1;                           /* onde fica o operando m */
-    if (lane < 0) { if (q) s_ld(t, xm, m); else x_movq_ld(B, xm, VO(m)); }
+    if (lane < 0) {
+        if (q) s_ld(t, xm, m); else x_movq_ld(B, xm, VO(m));
+        if (!q && x86 == 0x5E) { s_const2(t, 3, 0, 0x3F8000003F800000ull); s_op(t, 0xEB, xm, 3); }   /* FDIV 2S: 0 / 1 nas lanes de cima */
+    }
     else if (!dbl) { xop2(B, XF_66, 0x70, xm, VO(m)); xe8(B, (a64_u8)(lane * 0x55)); }   /* pshufd: difunde */
     else { x_movq_ld(B, xm, VOE(m, 8 * lane)); s_op(t, 0x6C, xm, xm); }
     if (fma) {
@@ -1842,6 +1845,28 @@ static int s_fmaxmin16(T *t, int q, int mn, int n, int m, int d) {
     s_st(t, d, 0, q);
     return 1;
 }
+/* FRECPS (2 - n*m) e FRSQRTS ((3 - n*m) / 2) vetoriais de S/D com FMA (uma rodada só; a metade é
+ * exata fora dos subnormais). 0 × inf (resultado especial do ARM), exceções do MXCSR e resultado
+ * subnormal/inf/NaN vão ao interpretador. */
+static int s_fstep(T *t, int q, int dbl, int rsq, int n, int m, int d) {
+    if (!jit_g.fma) return 0;
+    int ps = dbl ? XF_66 : 0;
+    fl_clobber(t);
+    mx_clean(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 0x01C00000);
+    slow_if(t, CC_NE);
+    if (q) { s_ld(t, 1, n); s_ld(t, 2, m); } else { x_movq_ld(B, 1, VO(n)); x_movq_ld(B, 2, VO(m)); }
+    s_const(t, 0, dbl ? (rsq ? 0x4008000000000000ull : 0x4000000000000000ull) : (rsq ? 0x4040000040400000ull : 0x4000000040000000ull));
+    vex_fma_r(t, 0xBC, dbl, 0, 1, 2);               /* vfnmadd231: x0 = c - n*m */
+    if (rsq) { s_const(t, 3, dbl ? 0x3FE0000000000000ull : 0x3F0000003F000000ull); xop2(B, ps, 0x59, 0, XR(3)); }
+    xop2(B, 0, 0xAE, 3, XM(XSP, 0));
+    x_test8_mi(B, XM(XSP, 0), 0x1F);
+    slow_if(t, CC_NE);
+    s_lanecheck(t, dbl, q);
+    ixc_if_pe(t);
+    s_st(t, d, 0, q);
+    return 1;
+}
 static int s_fpvec(T *t, a64_u32 w) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), a = (int)BIT(w, 23), dbl = (int)BIT(w, 22), op = (int)BITS(w, 13, 11);
     int m = (int)BITS(w, 20, 16), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
@@ -1853,8 +1878,9 @@ static int s_fpvec(T *t, a64_u32 w) {
     if (!u && !a && op == 3) return fpv_core(t, 0x59, 0, dbl, q, d, n, m, -1);            /* FMULX: 0 × inf dá IE → interpretador */
     if (!u && (op == 0 || op == 6)) return s_fmaxmin_vec(t, q, dbl, a, n, m, d);           /* FMAXNM FMINNM FMAX FMIN */
     if (u && (op == 0 || op == 6)) return s_fmaxmin_x(t, q, dbl, a, n, m, d, 1);          /* FMAXNMP FMINNMP FMAXP FMINP */
+    if (!u && op == 7) return s_fstep(t, q, dbl, a, n, m, d);                              /* FRECPS FRSQRTS */
     if (u && !a && op == 3) return fpv_core(t, 0x59, 0, dbl, q, d, n, m, -1);             /* FMUL */
-    if (u && !a && op == 7) return q ? fpv_core(t, 0x5E, 0, dbl, q, d, n, m, -1) : 0;     /* FDIV (Q=0: 0/0 nas lanes zeradas) */
+    if (u && !a && op == 7) return fpv_core(t, 0x5E, 0, dbl, q, d, n, m, -1);             /* FDIV */
     if (!u && op == 1 && jit_g.fma) return fpv_core(t, a ? 0xBC : 0xB8, 1, dbl, q, d, n, m, -1);   /* FMLS / FMLA */
     if (u && !a && op == 2) {                       /* FADDP: haddps/haddpd (SSE3) dão a mesma ordem */
         if (!q) return s_faddp_lo(t, 0, 0, n, m, d);
