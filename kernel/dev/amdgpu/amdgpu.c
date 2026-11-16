@@ -206,6 +206,23 @@ void amdgpu_vblank_wait(amdgpu_t *a) {
     u64 now = timer_ticks();
     if (a->last_vblank_ms && now - a->last_vblank_ms < 5) return;   /* mesma composição */
     int i = a->pipe;
+    /* com a interrupção de vblank funcionando, espera o contador dela andar (sem ler o OTG em laço); se ela
+     * não vier em dois quadros, volta à leitura da posição */
+    if (a->ih_ok && a->msi_on && a->vblank_irqs) {
+        u32 s0 = __atomic_load_n(&a->vblank_seq, __ATOMIC_ACQUIRE);
+        u64 t0 = timer_ticks();
+        while (__atomic_load_n(&a->vblank_seq, __ATOMIC_ACQUIRE) == s0 && timer_ticks() - t0 < 40) {
+#ifndef MOS_HOST_TEST
+            u64 fl;
+            __asm__ volatile("pushfq; pop %0" : "=r"(fl));
+            if (fl & 0x200) __asm__ volatile("hlt" ::: "memory");   /* interrupções ligadas: dorme até a próxima */
+            else __asm__ volatile("pause");                         /* quem chamou as desligou: não mexe nisso */
+#else
+            amd_host_idle();
+#endif
+        }
+        if (__atomic_load_n(&a->vblank_seq, __ATOMIC_ACQUIRE) != s0) { a->last_vblank_ms = timer_ticks(); return; }
+    }
     u32 f0 = RR(a, R_OTG_STATUS_FRAME_COUNT(i)) & OTG_FRAME_COUNT_MASK;
     u32 vbs = (u32)a->otg[i].vtotal - a->otg[i].vfront;   /* começo do blank vertical */
     for (u32 n = 0; n < 400000; n++) {

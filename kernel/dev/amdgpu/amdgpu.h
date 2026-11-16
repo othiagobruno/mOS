@@ -118,7 +118,9 @@ typedef struct {
     volatile u32 *ih_cpu, *ih_wb;
     u32           ih_dw, ih_rptr;          /* rptr em bytes */
     u64           irqs, ih_entries, ih_overflows, sdma_traps, hpd_events, ih_unknown;
-    volatile u32  hpd_changed;             /* bit i = HPD i mudou desde a última leitura (amdgpu_hpd_take) */
+    volatile u32  hpd_changed;
+    volatile u32  vblank_seq, flip_seq;      /* contadores das interrupções de vblank e de flip da tela */
+    u64           vblank_irqs, flip_irqs;             /* bit i = HPD i mudou desde a última leitura (amdgpu_hpd_take) */
     /* motor 3D (gfx.c): GFXHUB, RLC, CP (PFP/CE/ME) e o anel GFX 0 */
     bool          gfxhub_ok, gfx_ok;
     u32           pfp_fw_version, ce_fw_version, me_fw_version, rlc_fw_version;

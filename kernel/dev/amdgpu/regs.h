@@ -56,6 +56,10 @@
 #define R_OTG_STATUS_POSITION(i)      DCN_REG(0x1B4A + (i) * OTG_STRIDE)
 #define R_OTG_STATUS_FRAME_COUNT(i)   DCN_REG(0x1B4C + (i) * OTG_STRIDE)
 #define R_OTG_MASTER_UPDATE_LOCK(i)   DCN_REG(0x1B8D + (i) * OTG_STRIDE)
+#define R_OTG_GLOBAL_SYNC_STATUS(i)   DCN_REG(0x1B8C + (i) * OTG_STRIDE)
+#define   OTG_VSTARTUP_INT_EN         0x1u
+#define   OTG_VSTARTUP_OCCURRED       0x4u
+#define   OTG_VSTARTUP_CLEAR          0x10u
 #define   OTG_MASTER_EN               0x1u
 #define   OTG_V_BLANK                 0x1u
 #define   OTG_VERT_COUNT_MASK         0x7FFFu
@@ -79,6 +83,9 @@
 #define R_DCSURF_EARLIEST_INUSE(i)    DCN_REG(0x0597 + (i) * HUBP_STRIDE)
 #define R_DCSURF_EARLIEST_INUSE_HI(i) DCN_REG(0x0598 + (i) * HUBP_STRIDE)
 #define R_HUBPRET_CONTROL(i)          DCN_REG(0x05E0 + (i) * HUBP_STRIDE)
+#define R_DCSURF_FLIP_INTERRUPT(i)    DCN_REG(0x0592 + (i) * HUBP_STRIDE)
+#define   FLIP_INT_ENABLE             0x1u
+#define   FLIP_INT_CLEAR              0x100u
 #define   SURFACE_PIXEL_FORMAT_MASK   0x7Fu
 #define   SURFACE_FMT_ARGB8888        8u       /* ARGB e ABGR 8:8:8:8; a ordem sai do crossbar */
 #define   TILING_SW_MODE_MASK         0x1Fu    /* 0 = linear */
@@ -417,6 +424,8 @@
 #define IH_CLIENT_SDMA0   0x08u
 #define IH_SRC_SDMA_TRAP  224u
 #define IH_SRC_DC_HPD     9u          /* contexto (dw4) 0..5 = HPD1..6 */
+#define IH_SRC_DC_VSTARTUP0 0x3Cu     /* OTG0..3: começo de quadro (vblank) */
+#define IH_SRC_DC_FLIP0     0x4Fu     /* HUBP0..3: a troca de superfície aconteceu */
 #define AMD_IH_RING_BYTES (64u * 1024u)
 
 /* ------------------------------------------------------------ GFX 9.1 (gfx.c) */
