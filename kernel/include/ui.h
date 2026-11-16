@@ -282,6 +282,7 @@ void desktop_request_restart(void);    /* reinicia sem perguntar (fim da instala
 void desktop_toggle_spotlight(void);
 void desktop_toggle_control_center(void);
 void desktop_toggle_launcher(void);
+void desktop_request_sleep(void);      /* repouso (acpi_sleep) no laço seguinte, depois de o menu ou o alerta sumirem */
 int  desktop_glass_rects(rect_t *out, int max); /* regiões de vidro sobrepostas (já com a margem de leitura) */
 surface_t *desktop_wallpaper_blur(void);        /* papel de parede inteiro desfocado */
 rect_t dock_icon_rect(app_t *a);

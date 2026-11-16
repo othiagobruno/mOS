@@ -227,7 +227,7 @@ void desktop_wallpaper_thumb(surface_t *dst, int style) {
 
 /* ============================================================ estado de menus */
 enum { MK_NONE, MK_BAR, MK_POPUP, MK_CONTEXT };
-enum { ACT_ABOUT = 1001, ACT_PREFS, ACT_ACTIVITY, ACT_FORCEQUIT, ACT_RESTART, ACT_SHUTDOWN, ACT_LOCK,
+enum { ACT_ABOUT = 1001, ACT_PREFS, ACT_ACTIVITY, ACT_FORCEQUIT, ACT_RESTART, ACT_SHUTDOWN, ACT_LOCK, ACT_SLEEP,
        ACT_APP_ABOUT = 2001, ACT_APP_QUIT, ACT_APP_HIDE, ACT_APP_PREFS,
        ACT_WIN_MIN = 3001, ACT_WIN_ZOOM, ACT_WIN_CLOSE, ACT_WIN_FRONT, ACT_WIN_LEFT, ACT_WIN_RIGHT, ACT_WIN_FILL, ACT_MISSION, ACT_WIN_N = 3100,
        ACT_HELP = 4001, ACT_NET_PREFS = 5001, ACT_BT_PREFS, ACT_SND_PREFS, ACT_DATE_PREFS, ACT_DARK_TOGGLE };
@@ -702,6 +702,7 @@ static void open_bar_menu(int title) {
         add_sep();
         add_item(T.dark ? "Usar Aparência Clara" : "Usar Aparência Escura", NULL, ACT_DARK_TOGGLE, false, false);
         add_sep();
+        add_item("Repouso", NULL, ACT_SLEEP, false, false);
         add_item("Reiniciar…", NULL, ACT_RESTART, false, false);
         add_item("Desligar…", NULL, ACT_SHUTDOWN, false, false);
         add_sep();
@@ -1110,6 +1111,7 @@ static void run_action(int act) {
     case ACT_FORCEQUIT: if (a && strcmp(a->exec, "arquivos")) app_force_quit(a); break;
     case ACT_RESTART: desktop_shutdown_dialog(1); break;
     case ACT_SHUTDOWN: desktop_shutdown_dialog(0); break;
+    case ACT_SLEEP: desktop_request_sleep(); break;
     case ACT_LOCK: login_logout(); break;
     case ACT_DARK_TOGGLE: {
         theme_set(!T.dark, g_accent_index);
@@ -2107,19 +2109,109 @@ static void alert_finish(int i) {
 }
 
 /* ============================================================ desligar / reiniciar */
+/* repouso (dev/pm.c, acpi_sleep: S3 quando o hardware sabe voltar, senão s2idle). Fica para o laço seguinte, para o
+ * menu ou o alerta sumir da tela antes: ao acordar, a primeira imagem é a mesa, não o menu aberto. */
+static u64 sleep_at;
+void desktop_request_sleep(void) { sleep_at = timer_ticks() + 300; }
+static void sleep_tick(void) {
+    if (!sleep_at || timer_ticks() < sleep_at) return;
+    sleep_at = 0;
+    acpi_sleep();
+    wm_damage_all();                              /* acordou: tudo de novo (o vídeo pode ter sido reiniciado) */
+}
+
 static void shutdown_cb(int b, void *ctx) {
     int kind = (int)(i64)ctx;
-    if (b == 1) { shutdown_pending = kind; shutdown_at = timer_ticks() + 400; }
+    if (kind == 0 && b == 1) { desktop_request_sleep(); return; }          /* Cancelar, Repouso, Desligar */
+    if ((kind == 0 && b == 2) || (kind == 1 && b == 1)) { shutdown_pending = kind; shutdown_at = timer_ticks() + 400; }
 }
 
 void desktop_request_restart(void) { shutdown_pending = 1; shutdown_at = timer_ticks() + 400; }
 
 void desktop_shutdown_dialog(int kind) {
-    static const char *btns_off[] = {"Cancelar", "Desligar"};
+    static const char *btns_off[] = {"Cancelar", "Repouso", "Desligar"};
     static const char *btns_rb[] = {"Cancelar", "Reiniciar"};
     alert_show(kind ? "Tem certeza de que deseja reiniciar o computador agora?" : "Tem certeza de que deseja desligar o computador agora?",
                "Os aplicativos abertos serão encerrados. Documentos não salvos no pendrive serão perdidos.",
-               kind ? btns_rb : btns_off, 2, shutdown_cb, (void *)(i64)kind);
+               kind ? btns_rb : btns_off, kind ? 2 : 3, shutdown_cb, (void *)(i64)kind);
+}
+
+/* ============================================================ HUD de volume e teclas de mídia
+ * O volume em si muda no kernel (dev/input.c, input_media_poll); aqui só se mostra o valor atual numa cápsula de
+ * vidro abaixo da barra de menus, que some 1,5 s depois da última tecla. Arte própria: alto-falante e ondas. */
+#define HUD_MS 1500
+static struct { bool on; u64 shown; int vol; } HUD;
+
+static rect_t hud_rect(void) { return rect_make(SW / 2 - 140, MENUBAR_H + 14, 280, 52); }
+
+static void hud_show(void) {
+    HUD.on = true;
+    HUD.shown = timer_ticks();
+    rect_t r = hud_rect();
+    wm_damage(rect_make(r.x + PX() - 30, r.y + PY() - 30, r.w + 60, r.h + 60));
+}
+
+static void hud_tick(void) {
+    if (!HUD.on) return;
+    int v = audio_get_volume();
+    if (v != HUD.vol) hud_show();                     /* o kernel aplicou a tecla depois do desenho anterior */
+    else if (timer_ticks() - HUD.shown > HUD_MS) { hud_show(); HUD.on = false; }
+}
+
+static void draw_speaker(surface_t *s, float x, float y, float h, int vol, u32 c) {
+    /* corpo + cone */
+    float b = h * 0.28f;
+    float pts[] = { x, y + h / 2 - b / 2, x + b * 0.9f, y + h / 2 - b / 2, x + b * 2.0f, y + h * 0.12f,
+                    x + b * 2.0f, y + h * 0.88f, x + b * 0.9f, y + h / 2 + b / 2, x, y + h / 2 + b / 2 };
+    gfx_polygon(s, pts, 6, c);
+    float cx = x + b * 1.9f, cy = y + h / 2;
+    if (vol == 0) {                                   /* mudo: um X no lugar das ondas */
+        float k = h * 0.16f, ox = cx + h * 0.42f;
+        gfx_line(s, ox - k, cy - k, ox + k, cy + k, 2.2f, c);
+        gfx_line(s, ox - k, cy + k, ox + k, cy - k, 2.2f, c);
+        return;
+    }
+    int waves = vol < 34 ? 1 : vol < 67 ? 2 : 3;
+    for (int i = 0; i < waves; i++)
+        gfx_ring_arc(s, cx, cy, h * (0.22f + 0.17f * i), 2.2f, 0.75f, 2.39f, c);
+}
+
+static void draw_volume_hud(surface_t *s) {
+    if (!HUD.on) return;
+    rect_t r = hud_rect();
+    int v = HUD.vol = audio_get_volume();
+    gfx_shadow(s, r.x, r.y, r.w, r.h, r.h / 2.0f, 18, T.dark ? 120 : 50, 6);
+    glass_t g = G[GLASS_CONTROL];
+    gfx_glass(s, r.x, r.y, r.w, r.h, r.h / 2.0f, &g);
+    u32 c = T.glass_text;
+    draw_speaker(s, r.x + 18, r.y + 12, 28, v, c);
+    float tx = r.x + 72, tw = r.w - 72 - 22, ty = r.y + r.h / 2.0f - 3;
+    gfx_round_rect(s, tx, ty, tw, 6, 3, WITH_ALPHA(c, 60));
+    if (v > 0) gfx_round_rect(s, tx, ty, MAX(6.0f, tw * v / 100.0f), 6, 3, c);
+}
+
+/* teclas de mídia (kernel.h). true = tratada aqui; play/próxima/anterior sem a Música aberta seguem para a janela
+ * em foco (um app do macOS recebe a tecla). */
+static bool desktop_media_key(input_event_t *e) {
+    if (e->type != EV_KEY_DOWN && e->type != EV_KEY_UP) return false;
+    bool down = e->type == EV_KEY_DOWN;
+    switch (e->key) {
+    case KEY_VOL_UP: case KEY_VOL_DOWN: case KEY_MUTE:
+        if (down) hud_show();
+        return true;
+    case KEY_PLAY: case KEY_NEXT: case KEY_PREV: case KEY_STOP: {
+        extern app_t app_musica;
+        extern bool musica_media_key(i32 key);
+        if (!app_musica.running) return false;
+        if (down) musica_media_key(e->key);
+        return true;
+    }
+    case KEY_SEARCH: if (down && !login_active() && !setup_active()) desktop_toggle_spotlight(); return true;
+    case KEY_LAUNCHPAD: if (down && !login_active() && !setup_active()) desktop_toggle_launcher(); return true;
+    case KEY_POWER: case KEY_SLEEP: case KEY_EJECT: case KEY_BRIGHT_UP: case KEY_BRIGHT_DOWN:
+        return true;                                  /* energia e repouso: o kernel trata (input_media_poll) */
+    }
+    return false;
 }
 
 /* ============================================================ sobre */
@@ -3184,6 +3276,7 @@ static void desktop_draw_overlay_main(surface_t *s, rect_t D) {
     setup_draw(s);
     draw_alert(s);
     tcc_prompt_draw(s, SW, SH);
+    draw_volume_hud(s);
 }
 
 /* ============================================================ eventos */
@@ -3243,6 +3336,7 @@ bool desktop_handle_event(input_event_t *e) {
     return desktop_handle_event_local(&l);
 }
 static bool desktop_handle_event_local(input_event_t *e) {
+    if (desktop_media_key(e)) return true;
     if (setup_active()) return setup_handle_event(e);            /* assistente de configuração/instalação (tela cheia) */
     if (login_active() && !A.open) return login_handle_event(e);
     /* Shift, Command, Option e Control sozinhos vão para a janela em foco (flagsChanged:), sem atalho */
@@ -3617,6 +3711,8 @@ static bool desktop_handle_event_local(input_event_t *e) {
 static int last_minute = -1;
 
 void desktop_tick(void) {
+    hud_tick();
+    sleep_tick();
     login_tick();
     setup_tick();
     tcc_prompt_tick();

@@ -436,6 +436,12 @@ static void on_menu(app_t *a, int act) {
     menus[1].count = k;
     menus[1].title = "Adicionar à Playlist";
 }
+/* teclas de mídia do teclado (ui/desktop.c): a Música é o "tocando agora" do sistema enquanto está aberta */
+bool musica_media_key(i32 key) {
+    int act = key == KEY_PLAY ? M_PLAY : key == KEY_NEXT ? M_NEXT : key == KEY_PREV ? M_PREV : key == KEY_STOP && MU.playing ? M_PLAY : 0;
+    if (!act) return false;
+    return app_guard_menu(&app_musica, act);
+}
 static void icon(surface_t *s, int x, int y, int sz) { icon_musica(s, x, y, sz); }
 app_t app_musica = {.name = "Música", .exec = "musica", .draw_icon = icon, .launch = launch, .tick = tick, .on_quit = on_quit, .on_menu = on_menu,
                     .menus = menus, .nmenus = 2, .pinned = true, .always_tick = true};
