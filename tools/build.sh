@@ -92,6 +92,10 @@ gcc -O1 tools/sandbox_host.c /tmp/darwin_ls.o -Wl,--unresolved-symbols=ignore-al
 gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/machports.c -o /tmp/machports_ls.o
 gcc -O1 -Wall tools/machports_host.c /tmp/machports_ls.o -o /tmp/machports_host
 /tmp/machports_host | tail -1
+# os_activity, bootstrap_* antigos e _dyld_bind_fully (lacunas do corpus da Renata)
+gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/osactivity.c -o /tmp/osactivity_ls.o
+gcc -O1 -w -pthread tools/osactivity_host.c /tmp/osactivity_ls.o -o /tmp/osactivity_host
+/tmp/osactivity_host | tail -1
 # GPU AMD: display, vsync, troca no vblank, buffer duplo, VRAM, SMU, GART, SDMA e IH contra um Picasso simulado
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/amdgpu.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c \
     kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw_host
