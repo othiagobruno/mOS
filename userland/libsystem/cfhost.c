@@ -3,8 +3,8 @@
  *
  * O binário importa CFHostCreateWithName, StartInfoResolution, GetAddressing, SetClient,
  * ScheduleWithRunLoop, UnscheduleFromRunLoop, CancelInfoResolution e OBJC_CLASS_$_NSHost
- * (currentHost, name, address, localizedName). As constantes kCFStreamErrorDomainNetDB,
- * kCFStreamErrorDomainNetServices e kCFGetAddrInfoFailureKey ficam em postico_cf.c;
+ * (currentHost, name, address, localizedName). kCFStreamErrorDomainNetDB e NetServices (SInt32) ficam em
+ * cfnetstream.c; kCFGetAddrInfoFailureKey fica em postico_cf.c;
  * kCFErrorDomainCFNetwork fica em vscode_consts.c.
  *
  * Funcional: resolução síncrona por getaddrinfo (A e AAAA, sockaddr no layout do macOS),
@@ -35,7 +35,7 @@ long CFDataGetLength(id d);
 void *CFRunLoopGetCurrent(void);
 void CFRunLoopPerformBlock(void *rl, void *mode, void *block);
 
-extern const void *kCFStreamErrorDomainNetDB;
+extern const int kCFStreamErrorDomainNetDB;            /* SInt32 = 12 (cfnetstream.c) */
 int gethostname(char *b, size_t n);
 
 /* addrinfo do macOS: canonname vem antes de addr (sockets_inet.inc). */
