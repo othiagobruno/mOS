@@ -3215,6 +3215,7 @@ static id find_window(int gid) {
 static BOOL menu_shortcut(gui_event_t *g);
 id cx_hover_view(id w);              /* appkit_input.c */
 void cx_set_hover_view(id w, id v);
+int cx_gr_mouse(id view, id ev, int phase);   /* appkit_more.c: NSGestureRecognizer */
 static void dispatch(gui_event_t *g) {
     if (g->type == GEV_QUIT) { MSG(void, NSApp, "terminate:", (id)0); return; }
     if (g->type == GEV_MENU) { perform_menu(g->key); return; }
@@ -3299,16 +3300,29 @@ static void dispatch(gui_event_t *g) {
                                 cx_class_name(v->isa), (int)vs(v)->frame.s.w, (int)vs(v)->frame.s.h, s->first ? cx_class_name(s->first->isa) : "-");
                 }
             }
-            MSG(void, v, "mouseDown:", make_event(1, w, g->x, g->y, g));
-        } else if (g->type == GEV_RIGHT_DOWN) MSG(void, v, "rightMouseDown:", make_event(3, w, g->x, g->y, g));
+            {   /* reconhecedores de gesto da view e dos ancestrais veem o clique antes (appkit_more.c) */
+                id ev = make_event(1, w, g->x, g->y, g);
+                if (!cx_gr_mouse(v, ev, 0)) MSG(void, v, "mouseDown:", ev);
+            }
+        } else if (g->type == GEV_RIGHT_DOWN) {
+            id ev = make_event(3, w, g->x, g->y, g);
+            if (!cx_gr_mouse(v, ev, 3)) MSG(void, v, "rightMouseDown:", ev);
+        }
         else MSG(void, v, "scrollWheel:", make_event(22, w, g->x, g->y, g));
         break;
     }
     case GEV_MOUSE_UP:
-        if (s->mouse_view) { MSG(void, s->mouse_view, "mouseUp:", make_event(2, w, g->x, g->y, g)); s->mouse_view = 0; }
+        if (s->mouse_view) {
+            id ev = make_event(2, w, g->x, g->y, g);
+            if (!cx_gr_mouse(s->mouse_view, ev, 2)) MSG(void, s->mouse_view, "mouseUp:", ev);
+            s->mouse_view = 0;
+        }
         break;
     case GEV_MOUSE_MOVE:
-        if (g->buttons && s->mouse_view) MSG(void, s->mouse_view, "mouseDragged:", make_event(6, w, g->x, g->y, g));
+        if (g->buttons && s->mouse_view) {
+            id ev = make_event(6, w, g->x, g->y, g);
+            if (!cx_gr_mouse(s->mouse_view, ev, 1)) MSG(void, s->mouse_view, "mouseDragged:", ev);
+        }
         else {
             /* sem botão: hover (o Chromium realça botões, mostra dicas e muda o cursor com estes eventos) */
             id v = win_hit_root(w, g->x, g->y);
