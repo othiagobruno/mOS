@@ -89,7 +89,7 @@ flowchart TD
 | 7. Network.framework C | `nwnet.c`: ~250 funções `nw_*`/`sec_protocol_*` (endpoints, parâmetros, pilha, opções TCP/UDP/TLS/WS/IP, conexão TCP/UDP/TLS/WS com send/receive/receive_message e metadados, listener TCP/UDP, monitor de caminho com interfaces reais, contextos, erros); saem os 26 stubs de `sys_zerados.c`, `vscode_network.c` e os de `chrome.c`/`security.c`. Falta `nw_browser` (Bonjour), `nw_framer` e TLS de servidor no listener | só compilado (x86_64/arm64): objetos ObjC com blocos, sem harness de host; o primeiro teste é o build final |
 | 8. libcurl | `libcurl.c` sobre o mnet (substitui `libcurl_easy.c`): easy, multi (callbacks no fio do chamador), share de cookies, URL API, MIME, `curl_easy_header`, escape, versão; Basic/Digest (`mnet_auth.c`), proxy por opção e por ambiente | `tools/libcurl_mnet_test.c`: 42/42 (GET/POST/PUT por READFUNCTION, redirects e limite, gzip com e sem ACCEPT_ENCODING, cookies em arquivo Netscape, FAILONERROR, Basic, Digest conferido pelo servidor, tempo, HEAD, MIME, multi com 3 transferências, URL API, escape; com `rede`: HTTP/2 em example.com e recusa de certificado vencido) |
 | 9a. Streams (CFStream/NSStream) | `mnet_stream.c` (núcleo) + `cfnetstream.c`: `NSStream`/`NSInputStream`/`NSOutputStream` (memória, arquivo, buffer, URL), `CFReadStream*`/`CFWriteStream*` com cliente, run loop e fila reais, `CFStreamCreateBoundPair`, pares de socket (host, `CFHost`, fd nativo, assinatura) com TLS antes ou depois do open e SOCKS4a/5, `+getStreamsToHostWithName:`, constantes reais (saem os nulos de `sys_zerados.c`, `cfstream.c`, o par de `cf_public.c` e o `NSInputStream` de `slack_frameworks.c`, combinado com o Eduardo) | `tools/mnet_stream_test.c` 150/150 com ASan/UBSan: regras de evento do CFStream, arquivo com append e offset, 1 MiB por par de 4 KiB entre fios, EPIPE, socket com eco local (com e sem `wait`), ECONNREFUSED, NetDB, fd nativo, SOCKS4a/5 com senha e recusas; com `rede`: TLS no example.com no open e por STARTTLS. Classes ObjC só compiladas |
-| 9b. CFHTTPMessage, stream HTTP, CFHost assíncrono | não iniciado | — |
+| 9b. CFHTTPMessage, stream HTTP, CFHost | `mnet_msg.c` (mensagem solta: montar, ler aos pedaços com obs-fold e LF puro, serializar na forma de origem) + `cfhttp.c`: `CFHTTPMessage*` completo, `CFHTTPAuthentication*` (Basic, Digest MD5/SHA-256, domínios, realm), `CFHTTPMessageApplyCredentials`/`AddAuthentication`, `CFReadStreamCreateForHTTPRequest`/`ForStreamedHTTPRequest` (fio com `mnet_fetch` escrevendo num par; `kCFStreamPropertyHTTPResponseHeader`, `FinalURL`, `FinalRequest`, `ShouldAutoredirect`, `HTTPProxy`, `RequestBytesWrittenCount`); `cfhost.c` reescrito: resolução assíncrona num fio com callback pelo run loop, cancelamento, `kCFHostNames` por PTR, `kCFHostReachability`, `CreateWithAddress`/`CreateCopy`, NSHost com IPv6 e nomes reversos | `mnet_host_test` 824/824 (mensagens, desafios, PTR com compressão, laço de ponteiros, NXDOMAIN); `mnet_stream_test` 162/162: 600 KiB por fetch → par de 256 KiB → leitor, 404 com cabeçalho, app largando no meio (fetch cancelado), conexão recusada chegando ao leitor; com `rede`, PTR real de 8.8.8.8 = dns.google. Classes ObjC só compiladas |
 | 10 | não iniciado | — |
 
 ### Etapa 1 — o que está no código
@@ -210,3 +210,12 @@ Ainda não ligado a nenhuma API pública: isso entra nas etapas 2–4.
   `kCFStreamErrorDomainNetDB`/`NetServices` agora são SInt32 (eram CFString em `postico_cf.c`).
 - Limite: `kCFStreamSSLValidatesCertificateChain = false` e `kCFStreamSSLPeerName = kCFNull` não desligam a verificação
   (o motor TLS do kernel sempre verifica; item TLS da frente).
+
+### Etapa 9b — CFHTTPMessage, stream HTTP e CFHost
+
+- `CFHTTPMessageCopyAllHeaderFields` junta repetidos com ", " e mantém a caixa do primeiro nome; `CopyBody` devolve NULL
+  sem corpo; resposta sem frase usa a da RFC 9110. `AppendBytes` não tira o chunked do corpo (igual ao CFNetwork).
+- Stream HTTP: sem redirect automático, sem cookies e sem proxy do sistema por padrão, como no CFNetwork; gzip/deflate/br
+  decodificados. Erros: `kCFStreamErrorDomainHTTP` (-1 resposta inválida, -2 laço de redirect, -3 URL inválida), POSIX,
+  NetDB e SSL. Corpo em fluxo não volta: redirect 307/308 com corpo em fluxo falha.
+- `CFHost`: sem cliente, resolve na hora; com cliente, num fio, e o callback chega no run loop agendado.

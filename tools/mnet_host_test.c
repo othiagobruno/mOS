@@ -800,6 +800,131 @@ static void t_auth(void) {
     mnet_hdrs_free(&h);
 }
 
+static void t_auth_param(void) {
+    char v[64];
+    CHECK(mnet_auth_param("Digest realm=\"r x\", nonce=\"n1\", domain=\"/a /b\"", "realm", v, sizeof v) && !strcmp(v, "r x"));
+    CHECK(mnet_auth_param("Digest realm=\"r x\", nonce=\"n1\", domain=\"/a /b\"", "domain", v, sizeof v) && !strcmp(v, "/a /b"));
+    CHECK(mnet_auth_param("Basic realm=x", "realm", v, sizeof v) && !strcmp(v, "x"));
+    CHECK(!mnet_auth_param("Basic realm=x", "nonce", v, sizeof v));
+}
+static void t_msg(void) {
+    mnet_msg_t m, c;
+    mnet_buf_t o = {0};
+    int maj, min;
+    CHECK(!mnet_msg_parse_version("HTTP/1.0", &maj, &min) && maj == 1 && min == 0);
+    CHECK(!mnet_msg_parse_version("HTTP/2", &maj, &min) && maj == 2 && min == 0);
+    CHECK(mnet_msg_parse_version("HTTX/1.1", &maj, &min) == -1 && mnet_msg_parse_version("HTTP/1.12", &maj, &min) == -1);
+    /* pedido montado pelo app: alvo na forma de origem */
+    CHECK(!mnet_msg_init_request(&m, "POST", "https://u:s@exemplo.com:8443/a/b?x=1&y=2#frag", "HTTP/1.1"));
+    mnet_hdrs_set(&m.hdrs, "Content-Type", "text/plain");
+    mnet_hdrs_set(&m.hdrs, "X-Um", "1");
+    mnet_buf_put(&m.body, "oi", 2);
+    CHECK(!mnet_msg_serialize(&m, &o));
+    CHECK(o.n == strlen("POST /a/b?x=1&y=2 HTTP/1.1\r\nContent-Type: text/plain\r\nX-Um: 1\r\n\r\noi") &&
+          !memcmp(o.p, "POST /a/b?x=1&y=2 HTTP/1.1\r\nContent-Type: text/plain\r\nX-Um: 1\r\n\r\noi", o.n));
+    CHECK(!mnet_msg_copy(&c, &m) && !strcmp(c.method, "POST") && c.hdrs.n == 2 && c.body.n == 2);
+    mnet_msg_free(&c);
+    mnet_msg_free(&m);
+    o.n = 0;
+    /* resposta montada: frase padrão quando o app não dá uma */
+    mnet_msg_init_response(&m, 404, 0, "HTTP/1.0");
+    CHECK(!mnet_msg_serialize(&m, &o) && o.n == 26 && !memcmp(o.p, "HTTP/1.0 404 Not Found\r\n\r\n", 26));
+    mnet_msg_free(&m);
+    o.n = 0;
+    mnet_msg_init_response(&m, 299, "Meu Motivo", 0);
+    CHECK(!mnet_msg_serialize(&m, &o) && !memcmp(o.p, "HTTP/1.1 299 Meu Motivo\r\n", 25));
+    mnet_msg_free(&m);
+    o.n = 0;
+    /* resposta lida byte a byte, com dobra e LF puro no fim */
+    const char *raw = "HTTP/1.1 200 Tudo certo\r\nContent-Length: 5\r\nX-Longo: a\r\n  b\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\n\nolá!";
+    mnet_msg_init_empty(&m, 0);
+    size_t rl = strlen(raw);
+    int ok = 1;
+    for (size_t i = 0; i < rl; i++) {
+        if (mnet_msg_append(&m, (const uint8_t *)raw + i, 1)) ok = 0;
+        if (i < 100 && m.head_done && raw[i] != '\n' && i < (size_t)(strstr(raw, "\n\n") - raw)) ok = 0;
+    }
+    CHECK(ok && m.head_done);
+    CHECK(m.status == 200 && !strcmp(m.reason, "Tudo certo") && m.ver_major == 1 && m.ver_minor == 1);
+    CHECK(!strcmp(mnet_hdrs_get(&m.hdrs, "content-length"), "5"));
+    CHECK(!strcmp(mnet_hdrs_get(&m.hdrs, "x-longo"), "a b"));
+    CHECK(m.hdrs.n == 4 && !strcmp(m.hdrs.v[0].name, "Content-Length"));
+    CHECK(m.body.n == strlen("olá!") && !memcmp(m.body.p, "olá!", m.body.n));
+    CHECK(!mnet_msg_append(&m, (const uint8_t *)"++", 2) && m.body.n == strlen("olá!") + 2);
+    mnet_msg_free(&m);
+    /* pedido lido (servidor): linhas vazias antes, alvo com espaço duplo, método inválido */
+    mnet_msg_init_empty(&m, 1);
+    const char *rq = "\r\nGET  /caminho?q=1  HTTP/1.0\r\nHost: h\r\n\r\ncorpo";
+    CHECK(!mnet_msg_append(&m, (const uint8_t *)rq, strlen(rq)) && m.head_done);
+    CHECK(!strcmp(m.method, "GET") && !strcmp(m.target, "/caminho?q=1") && m.ver_minor == 0);
+    char *tg = mnet_msg_request_target(&m);
+    CHECK(tg && !strcmp(tg, "/caminho?q=1"));
+    free(tg);
+    CHECK(m.body.n == 5);
+    mnet_msg_free(&m);
+    mnet_msg_init_empty(&m, 1);
+    CHECK(mnet_msg_append(&m, (const uint8_t *)"G(T / HTTP/1.1\r\n\r\n", 18) == -1 && !m.head_done);
+    CHECK(mnet_msg_append(&m, (const uint8_t *)"x", 1) == -1);
+    mnet_msg_free(&m);
+    mnet_msg_init_empty(&m, 0);
+    CHECK(mnet_msg_append(&m, (const uint8_t *)"HTTP/1.1 2x0 OK\r\n\r\n", 19) == -1);
+    mnet_msg_free(&m);
+    mnet_msg_init_empty(&m, 0);
+    CHECK(mnet_msg_append(&m, (const uint8_t *)"HTTP/1.1 200 OK\r\nSem-dois-pontos\r\n\r\n", 36) == -1);
+    mnet_msg_free(&m);
+    mnet_msg_init_empty(&m, 0);
+    CHECK(!mnet_msg_append(&m, (const uint8_t *)"HTTP/1.1 204\r\n\r\n", 16) && m.status == 204 && m.reason && !*m.reason);
+    mnet_msg_free(&m);
+    /* ida e volta: o que sai serializado é lido igual */
+    mnet_msg_init_request(&m, "PUT", "http://h/x", "HTTP/1.1");
+    mnet_hdrs_set(&m.hdrs, "A", "1"); mnet_buf_put(&m.body, "zz", 2);
+    mnet_msg_serialize(&m, &o);
+    mnet_msg_init_empty(&c, 1);
+    CHECK(!mnet_msg_append(&c, o.p, o.n) && !strcmp(c.method, "PUT") && !strcmp(c.target, "/x") && c.body.n == 2);
+    mnet_msg_free(&c); mnet_msg_free(&m); mnet_buf_free(&o);
+    CHECK(!strcmp(mnet_status_text(418), "") && !strcmp(mnet_status_text(503), "Service Unavailable"));
+}
+
+static void t_dns_ptr(void) {
+    char q[100], out[100];
+    uint8_t v4[16] = {16, 2, 0, 0, 192, 168, 0, 10};
+    CHECK(!mnet_dns_ptr_name(v4, 16, q, sizeof q) && !strcmp(q, "10.0.168.192.in-addr.arpa"));
+    uint8_t v6[28] = {28, 30}; v6[8] = 0x20; v6[9] = 0x01; v6[10] = 0x0d; v6[11] = 0xb8; v6[23] = 0x01;
+    CHECK(!mnet_dns_ptr_name(v6, 28, q, sizeof q) &&
+          !strcmp(q, "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa"));
+    CHECK(mnet_dns_ptr_name(v4, 16, q, 10) == -1);
+    uint8_t bad[16] = {16, 9};
+    CHECK(mnet_dns_ptr_name(bad, 16, q, sizeof q) == -1);
+    /* resposta: pergunta 4.3.2.1.in-addr.arpa PTR; um CNAME e depois o PTR "host.exemplo.com" com compressão */
+    uint8_t m[512]; size_t n = 0;
+    const uint8_t hdr[12] = {0x12, 0x34, 0x81, 0x80, 0, 1, 0, 2, 0, 0, 0, 0};
+    memcpy(m, hdr, 12); n = 12;
+    const uint8_t qname[] = {1, '4', 1, '3', 1, '2', 1, '1', 7, 'i', 'n', '-', 'a', 'd', 'd', 'r', 4, 'a', 'r', 'p', 'a', 0};
+    memcpy(m + n, qname, sizeof qname); n += sizeof qname;
+    m[n++] = 0; m[n++] = 12; m[n++] = 0; m[n++] = 1;
+    /* CNAME: nome = ponteiro para 12, tipo 5, rdata = "x" + ponteiro */
+    m[n++] = 0xc0; m[n++] = 12; m[n++] = 0; m[n++] = 5; m[n++] = 0; m[n++] = 1; m[n++] = 0; m[n++] = 0; m[n++] = 0; m[n++] = 60;
+    m[n++] = 0; m[n++] = 4; m[n++] = 1; m[n++] = 'x'; m[n++] = 0xc0; m[n++] = 12;
+    /* PTR: rdata = "host" + "exemplo" + ponteiro para "com" que vem logo depois */
+    m[n++] = 0xc0; m[n++] = 12; m[n++] = 0; m[n++] = 12; m[n++] = 0; m[n++] = 1; m[n++] = 0; m[n++] = 0; m[n++] = 0; m[n++] = 60;
+    size_t rdl = n; m[n++] = 0; m[n++] = 0;
+    size_t rd0 = n;
+    m[n++] = 4; memcpy(m + n, "host", 4); n += 4;
+    m[n++] = 7; memcpy(m + n, "exemplo", 7); n += 7;
+    m[n] = 0xc0; m[n + 1] = (uint8_t)(n + 2); n += 2;
+    m[n++] = 3; memcpy(m + n, "com", 3); n += 3; m[n++] = 0;
+    m[rdl] = 0; m[rdl + 1] = (uint8_t)(n - rd0);
+    CHECK(!mnet_dns_first_ptr(m, n, out, sizeof out) && !strcmp(out, "host.exemplo.com"));
+    CHECK(mnet_dns_first_ptr(m, n, out, 8) == -1);                 /* não cabe */
+    CHECK(mnet_dns_first_ptr(m, 40, out, sizeof out) == -1);       /* truncada */
+    m[3] = 0x83;                                                    /* NXDOMAIN */
+    CHECK(mnet_dns_first_ptr(m, n, out, sizeof out) == -1);
+    m[3] = 0x80;
+    uint8_t loop[40]; memcpy(loop, hdr, 12); loop[7] = 1; loop[5] = 0;
+    loop[12] = 0xc0; loop[13] = 12;                                 /* ponteiro para si mesmo */
+    CHECK(mnet_dns_first_ptr(loop, 40, out, sizeof out) == -1);
+}
+
 int main(void) {
     t_h1();
     t_dates();
@@ -807,6 +932,9 @@ int main(void) {
     t_hpack();
     t_url();
     t_auth();
+    t_msg();
+    t_auth_param();
+    t_dns_ptr();
     t_proxy();
     t_cache();
     t_decode();

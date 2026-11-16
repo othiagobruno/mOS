@@ -738,3 +738,19 @@ void mnet_stream_fail(mnet_stream_t *s, int domain, long code, const char *msg) 
     ping(s);
     if (s->sh) { wake(s->sh); ulk(s->sh); }
 }
+/* produtor pelo lado do escritor: marca o erro no leitor do par, se ele ainda existe */
+void mnet_stream_fail_peer(mnet_stream_t *w, int domain, long code, const char *msg) {
+    if (!w || w->kind != K_PAIR_OUT) return;
+    ms_shared_t *h = w->sh;
+    lk(h);
+    if (h->rd && h->rd->status != MNET_SS_CLOSED) { set_err(h->rd, domain, code, msg); ping(h->rd); }
+    wake(h);
+    ulk(h);
+}
+int mnet_stream_peer_gone(mnet_stream_t *w) {
+    if (!w || !w->sh) return 1;
+    lk(w->sh);
+    int gone = !w->sh->rd || w->sh->r_closed;
+    ulk(w->sh);
+    return gone;
+}

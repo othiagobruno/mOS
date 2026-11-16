@@ -393,6 +393,8 @@ int mnet_proxy_parse_pac_result(const char *s, mnet_proxy_t *out, int max);
 
 /* ---- autenticação HTTP (RFC 7617 Basic, RFC 7616 Digest MD5/SHA-256/-sess, qop=auth) */
 /* escolhe o melhor desafio dos cabeçalhos (www-authenticate ou proxy-authenticate): 1 Basic, 2 Digest MD5, 3 Digest SHA-256 */
+/* parâmetro de um desafio ("Digest realm=\"x\", nonce=..."): 1 achou */
+int mnet_auth_param(const char *challenge, const char *name, char *out, size_t n);
 const char *mnet_auth_pick(const mnet_hdrs_t *h, const char *field, int *score);
 /* valor de Authorization para o desafio; cnonce de 16 bytes aleatórios (NULL = gerado com rnd) */
 char *mnet_auth_value(const char *challenge, const char *user, const char *pass, const char *method, const char *uri,
@@ -447,3 +449,30 @@ void *mnet_stream_conn(mnet_stream_t *s);
 int mnet_stream_tls_active(mnet_stream_t *s);
 int mnet_stream_starttls(mnet_stream_t *s);                                  /* TLS depois do open */
 void mnet_stream_fail(mnet_stream_t *s, int domain, long code, const char *msg);
+void mnet_stream_fail_peer(mnet_stream_t *w, int domain, long code, const char *msg);   /* erro no leitor do par */
+int mnet_stream_peer_gone(mnet_stream_t *w);                                 /* leitor do par fechou ou saiu */
+
+/* ---- mensagem HTTP solta (CFHTTPMessage), mnet_msg.c */
+typedef struct {
+    int is_request, ver_major, ver_minor, status;
+    char *method, *target, *reason;          /* target: URL do pedido montado ou o alvo lido da linha */
+    mnet_hdrs_t hdrs;
+    mnet_buf_t body;
+    mnet_buf_t in;                           /* cabeça parcial (AppendBytes) */
+    int head_done, bad;
+} mnet_msg_t;
+int mnet_msg_parse_version(const char *v, int *maj, int *min);
+int mnet_msg_init_request(mnet_msg_t *m, const char *method, const char *url, const char *version);
+int mnet_msg_init_response(mnet_msg_t *m, int status, const char *reason, const char *version);
+void mnet_msg_init_empty(mnet_msg_t *m, int is_request);
+int mnet_msg_copy(mnet_msg_t *dst, const mnet_msg_t *src);
+void mnet_msg_free(mnet_msg_t *m);
+int mnet_msg_append(mnet_msg_t *m, const uint8_t *d, size_t n);             /* -1: mensagem inválida */
+int mnet_msg_version(const mnet_msg_t *m, char out[12]);                     /* "HTTP/1.1" */
+char *mnet_msg_request_target(const mnet_msg_t *m);                          /* malloc */
+int mnet_msg_serialize(const mnet_msg_t *m, mnet_buf_t *out);
+const char *mnet_status_text(int status);
+
+/* ---- DNS reverso (mnet_util.c): nome PTR de um sockaddr do macOS e o primeiro PTR de uma resposta */
+int mnet_dns_ptr_name(const uint8_t *sa, size_t n, char *q, size_t qn);
+int mnet_dns_first_ptr(const uint8_t *msg, size_t len, char *out, size_t on);
