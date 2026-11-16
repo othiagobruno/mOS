@@ -3698,7 +3698,7 @@ static const void *dt_bytes(id self, SEL c) { (void)c; return ((nsdata_t *)self)
 static u64 dt_length(id self, SEL c) { (void)c; return ((nsdata_t *)self)->len; }
 static BOOL dt_write(id self, SEL c, id path, BOOL at) { (void)c; (void)at; FILE_ *f = fopen(cx_cstr(path), "w"); if (!f) return NO; fwrite(((nsdata_t *)self)->bytes, 1, ((nsdata_t *)self)->len, f); fclose(f); return YES; }
 
-typedef struct { int w, h; u32 *px; double dw, dh; } imgst_t;
+typedef struct { int w, h; u32 *px; double dw, dh; void *cg; } imgst_t;   /* cg: CGImage em cache (CGImageForProposedRect:) */
 static imgst_t *im(id o) { if (!ST(o)) ST(o) = calloc(1, sizeof(imgst_t)); return ST(o); }
 static BOOL decode_into(id img, const u8 *data, u64 n) {
     long need = SYS4(GUI_DECODE_IMAGE, data, n, 0, 0);
@@ -3713,6 +3713,48 @@ static BOOL decode_into(id img, const u8 *data, u64 n) {
     s->dw = s->w; s->dh = s->h;
     free(out);
     return YES;
+}
+/* ---- ponte com o Core Graphics: -initWithCGImage:size: e -CGImageForProposedRect:context:hints: */
+#include "appkit_image_core.h"
+int cx_cgimage_src(const void *img, const u8 **px, long *bpr, int *w, int *h, int *premul);   /* coregraphics.c */
+void *CGImageCreate(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, const void *space, u32 info,
+                    void *provider, const void *decode, _Bool interp, int intent);
+void *CGDataProviderCreateWithData(void *info, const void *data, size_t size, void (*release)(void *, const void *, size_t));
+void CGDataProviderRelease(void *p);
+void *CGColorSpaceCreateDeviceRGB(void);
+void CGColorSpaceRelease(void *s);
+static id im_init_cg(id self, SEL c, void *cg, NSSize z) {
+    (void)c;
+    const u8 *src; long bpr; int w, h, premul;
+    if (!cg || !cx_cgimage_src(cg, &src, &bpr, &w, &h, &premul) || w <= 0 || h <= 0) return 0;
+    imgst_t *s = im(self);
+    u32 *px = malloc((size_t)w * (size_t)h * 4);
+    if (!px) return 0;
+    cx_px_import(src, bpr, w, h, premul, px);
+    free(s->px);
+    s->px = px; s->w = w; s->h = h;
+    cx_px_size(z.w, z.h, w, h, &s->dw, &s->dh);
+    s->cg = 0;
+    return self;
+}
+static void im_cg_release(void *info, const void *data, size_t n) { (void)info; (void)n; free((void *)data); }
+/* o CGImage pertence à imagem (como no Cocoa, quem chama não libera); ARGB sem pré-multiplicar, 32 bits little */
+static void *im_cg_for_rect(id self, SEL c, NSRect *proposed, id ctx, id hints) {
+    (void)c; (void)proposed; (void)ctx; (void)hints;
+    imgst_t *s = im(self);
+    if (s->cg) return s->cg;
+    if (!s->px || s->w <= 0 || s->h <= 0) return 0;
+    size_t n = (size_t)s->w * (size_t)s->h * 4;
+    u32 *copy = malloc(n);
+    if (!copy) return 0;
+    memcpy(copy, s->px, n);
+    void *prov = CGDataProviderCreateWithData(0, copy, n, im_cg_release);
+    if (!prov) { free(copy); return 0; }
+    void *space = CGColorSpaceCreateDeviceRGB();
+    s->cg = CGImageCreate((size_t)s->w, (size_t)s->h, 8, 32, (size_t)s->w * 4, space, 4u | (2u << 12), prov, 0, 1, 0);
+    CGDataProviderRelease(prov);
+    CGColorSpaceRelease(space);
+    return s->cg;
 }
 static id im_init_file(id self, SEL c, id path) { (void)c; u64 n; u8 *b = read_whole(cx_cstr(path), &n); BOOL ok = b && decode_into(self, b, n); free(b); return ok ? self : 0; }
 static id im_init_data(id self, SEL c, id data) { (void)c; nsdata_t *d = (nsdata_t *)data; return d && decode_into(self, d->bytes, d->len) ? self : 0; }
@@ -5428,6 +5470,7 @@ void cx_appkit_init(void) {
     CM(NSWorkspace, "sharedWorkspace", generic_singleton); M(NSWorkspace, "openURL:", ws_open_url);
     DEF(NSImage, NSObject);
     CM(NSImage, "imageNamed:", im_named); CM(NSImage, "imageWithSystemSymbolName:accessibilityDescription:", noop_ret_nil);
+    M(NSImage, "initWithCGImage:size:", im_init_cg); M(NSImage, "CGImageForProposedRect:context:hints:", im_cg_for_rect);
     M(NSImage, "initWithContentsOfFile:", im_init_file); M(NSImage, "initWithData:", im_init_data); M(NSImage, "initWithSize:", im_init_size);
     M(NSImage, "size", im_size); M(NSImage, "setSize:", im_set_size); M(NSImage, "isValid", im_valid); M(NSImage, "drawInRect:", im_draw_in);
     M(NSImage, "drawInRect:fromRect:operation:fraction:", im_draw_in_frac); M(NSImage, "drawAtPoint:fromRect:operation:fraction:", im_draw_at);
