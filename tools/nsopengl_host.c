@@ -277,6 +277,20 @@ int main(void) {
         CGLFlushDrawable(cctx);
         expect("offscreen recebe o quadro (BGRA)", buf[2] == 255 && buf[0] == 0 && buf[3] == 255);
     }
+    /* opções globais do NSOpenGL/CGL */
+    {
+        extern void NSOpenGLSetOption(int, int), NSOpenGLGetOption(int, int *), NSOpenGLGetVersion(int *, int *);
+        int v = -1, ma = 0, mi = 0;
+        NSOpenGLGetOption(501, &v);
+        expect("NSOpenGLGOFormatCacheSize padrão 5", v == 5);
+        NSOpenGLSetOption(503, 1);
+        NSOpenGLGetOption(503, &v);
+        expect("NSOpenGLGORetainRenderers guardado", v == 1);
+        NSOpenGLGetOption(77, &v);
+        expect("opção inválida devolve 0", v == 0);
+        NSOpenGLGetVersion(&ma, &mi);
+        expect("NSOpenGLGetVersion", ma == 1 && mi >= 0);
+    }
     /* CVOpenGLTextureCache: 2vuy (Cb Y0 Cr Y1) e 420v viram textura retangular BGRA */
     {
         extern cx_class_t CVPixelBuffer_c __asm__("OBJC_CLASS_$_CVPixelBuffer");
