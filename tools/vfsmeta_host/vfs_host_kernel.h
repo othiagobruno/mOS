@@ -9,3 +9,4 @@ typedef struct { u32 file_count; boot_file_t files[4]; } boot_info_t;
 extern boot_info_t *g_boot;
 u64  timer_ticks(void);
 static inline bool kmalloc_is_pages(const void *p) { (void)p; return false; }
+typedef struct pci_dev pci_dev_t;   /* storage.h (só o tipo) */

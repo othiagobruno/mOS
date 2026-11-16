@@ -32,6 +32,7 @@ typedef struct vnode {
     i64 atime_ns, mtime_ns, ctime_ns, btime_ns; /* ns desde 1970; 0 = desconhecido (usa a hora do boot) */
     vxattr_t *xattr;
     u64 xattr_bytes;
+    bool xattr_loaded;  /* xattrs de um volume de /Volumes já lidos do driver (vfs_bridge.c) */
 } vnode_t;
 
 /* ---- metadados (kernel/lib/vfsmeta.c) */
@@ -70,6 +71,10 @@ i64  vfs_xattr_list(vnode_t *n, char *buf, u64 cap);  /* bytes ("a\0b\0") ou -er
 int  vfs_xattr_remove(vnode_t *n, const char *name);
 vxattr_t *vfs_xattr_find(vnode_t *n, const char *name);
 void vfs_xattr_free(vnode_t *n);
+void vfs_xattr_attach(vnode_t *n, const char *name, const void *val, u64 len);   /* carga do disco: sem evento nem write-through */
+/* ganchos dos volumes (vfs_bridge.c; padrão = nada): ler os xattrs do driver e gravar através dele */
+void vfs_xattr_load(vnode_t *n);
+int  vol_xattr_write(vnode_t *n, const char *name, const void *val, u64 len, bool remove);   /* 0 ou -errno */
 bool vfs_xattr_copy(vnode_t *dst, const vnode_t *src);
 bool vfs_immutable(vnode_t *n);                    /* uchg/schg: não pode mudar conteúdo, nome nem metadados */
 bool vfs_append_only(vnode_t *n);                  /* uappnd/sappnd: só acrescentar */

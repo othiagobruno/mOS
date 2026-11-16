@@ -145,6 +145,12 @@ typedef struct dfs_ops {
     bool (*rename)(struct dmount *m, const char *from, const char *to);/* mover/renomear no mesmo volume */
     bool (*sync)(struct dmount *m);                                    /* grava caches; true = tudo no disco */
     bool (*enable_write)(struct dmount *m);                            /* o usuário permitiu gravar neste volume (vfs_bridge.c: vol_enable_write); NULL = não suporta */
+    /* atributos estendidos (NULL = o volume não tem). Leitura pelo nó; gravação pelo caminho, como write_file.
+     * com.apple.FinderInfo e com.apple.ResourceFork são os campos do próprio arquivo no HFS+. */
+    i64  (*getxattr)(struct dmount *m, struct dnode *n, const char *name, void *buf, u64 cap);  /* bytes, -1 ausente, -2 buffer pequeno */
+    i64  (*listxattr)(struct dmount *m, struct dnode *n, char *buf, u64 cap);                  /* bytes ("a\0b\0"), -1 erro */
+    bool (*setxattr)(struct dmount *m, const char *path, const char *name, const void *val, u64 len);
+    bool (*removexattr)(struct dmount *m, const char *path, const char *name);
 } dfs_ops_t;
 
 /* uma imagem aberta: disco virtual + partições; vive enquanto houver volume montado dela */

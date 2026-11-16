@@ -89,6 +89,7 @@ typedef struct hfs_wr {
     txent_t *tx;
     int ntx, captx;
     struct { u32 start, count; } trim[64];   /* blocos soltos nesta transação: TRIM depois do tx_commit */
+    bool attr_new;                           /* a árvore de atributos foi criada nesta transação */
     int ntrim;
 } hfs_wr_t;
 
@@ -649,6 +650,8 @@ static bool tx_commit(hfs_wr_t *w) {
         memset(w->bm_dirty, 0, w->bm_pages);
         w->vh_dirty = false;
         if (w->ntrim) trim_flush(w);                       /* a transação (bitmap incluso) já está no lugar */
+        w->attr_new = false;
+        for (int i = 0; i < 8; i++) w->h->ncache[i].tree = -1;   /* a leitura (hfsplus.c) relê os nós novos */
     } else { kprintf("hfs+: falha ao gravar a transação\n"); w->ntrim = 0; }
     tx_clear(w);
     nodes_drop(w);
@@ -658,6 +661,12 @@ static bool tx_commit(hfs_wr_t *w) {
 /* desfaz uma operação que falhou no meio: nada ainda foi para o disco além de dados em blocos livres */
 static void tx_abort(hfs_wr_t *w) {
     w->ntrim = 0;                                          /* o que seria solto continua em uso no disco */
+    if (w->attr_new) {                                     /* a árvore criada nesta transação não existe no disco */
+        kfree(w->h->attr.ext);
+        w->h->attr.ext = NULL; w->h->attr.size = 0; w->h->attr.n = 0;
+        w->bt[T_ATTR].ns = 0; w->h->attr_ns = 0; w->h->attr_root = 0;
+        w->attr_new = false;
+    }
     tx_clear(w);
     nodes_drop(w);
     u8 vh[512];
@@ -1277,9 +1286,11 @@ static bool attrs_delete(hfs_wr_t *w, u32 file_id, const char *only) {
     for (int i = 0; ok && i < c.n; i++) {
         u8 *key = c.keys[i];
         if (only) {
-            u32 nl = be16(key + 12), ol = (u32)strlen(only);
-            bool same = nl == ol;
-            for (u32 j = 0; same && j < nl; j++) same = be16(key + 14 + j * 2) == (u8)only[j];
+            u16 o16[128];
+            int ol = hfs_name16(only, o16, 127);
+            u32 nl = be16(key + 12);
+            bool same = ol >= 0 && nl == (u32)ol;
+            for (u32 j = 0; same && j < nl; j++) same = be16(key + 14 + j * 2) == o16[j];
             if (!same) continue;
         }
         u32 dlen;
@@ -1681,6 +1692,263 @@ bool hfs_wr_sync(dmount_t *m) {
 
 /* ================================================================ journal: replay e abertura */
 typedef struct { u64 joff, jsize; u32 flags; } jib_t;
+
+/* ================================================================ atributos estendidos (árvore de atributos)
+ * Chave: u16 tamanho, u16 0, u32 fileID, u32 startBlock, u16 nº de unidades, nome em UTF-16 big-endian.
+ * Registro inline (0x10): u32 tipo, 8 bytes reservados, u32 tamanho, dados. Grande (0x20): u32 tipo, u32 0,
+ * HFSPlusForkData; extents além de 8 em registros 0x30 com startBlock = blocos já cobertos. O catálogo marca
+ * kHFSHasAttributesMask (0x0004) e, para a ACL, kHFSHasSecurityMask (0x0008). FinderInfo e ResourceFork não são
+ * atributos no HFS+: ficam no registro do catálogo (bytes 48..79) e no fork de recurso. */
+#define F_HAS_ATTRS    0x0004
+#define F_HAS_SECURITY 0x0008
+static bool bt_setup(hfs_wr_t *w, int t, fork_t *f, u32 vh_off, u32 file_id);
+
+int hfs_name16(const char *s, u16 *out, int max) {
+    int n = 0;
+    const u8 *p = (const u8 *)s;
+    while (*p) {
+        u32 c = *p++;
+        if (c >= 0x80) {
+            int extra = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : -1;
+            if (extra < 0) return -1;
+            c &= 0x3F >> extra;
+            for (int i = 0; i < extra; i++) { if ((*p & 0xC0) != 0x80) return -1; c = c << 6 | (*p++ & 0x3F); }
+        }
+        if (c >= 0x10000) {
+            if (n + 2 > max) return -1;
+            c -= 0x10000;
+            out[n++] = (u16)(0xD800 | (c >> 10));
+            out[n++] = (u16)(0xDC00 | (c & 0x3FF));
+        } else {
+            if (n + 1 > max) return -1;
+            out[n++] = (u16)c;
+        }
+    }
+    return n;
+}
+static u32 xkey(u8 *k, u32 id, const u16 *nm, int n, u32 start) {
+    memset(k, 0, 268);
+    put16(k, (u16)(12 + 2 * n));
+    put32(k + 4, id);
+    put32(k + 8, start);
+    put16(k + 12, (u16)n);
+    for (int i = 0; i < n; i++) put16(k + 14 + 2 * i, nm[i]);
+    return 14 + 2u * (u32)n;
+}
+
+/* volume sem árvore de atributos: cria uma (nós de 8 KiB, como o newfs_hfs), toda nesta transação */
+static bool attr_tree_create(hfs_wr_t *w) {
+    if (w->bt[T_ATTR].ns) return true;
+    u32 bs = w->h->bs, ns = 8192, nodes = 32;
+    if (bs > ns) ns = bs;
+    u32 blocks = (u32)(((u64)ns * nodes + bs - 1) / bs);
+    ext_t *e = NULL;
+    int ne = blocks_alloc(w, blocks, &e, 0);
+    if (ne != 1) {
+        if (ne > 1) for (int i = 0; i < ne; i++) blocks_mark(w, e[i].start, e[i].count, false);
+        kfree(e);
+        kprintf("hfs+: sem espaço contíguo para a árvore de atributos\n");
+        return false;
+    }
+    /* nó de cabeçalho e o resto zerado, direto nos blocos novos (o cabeçalho do volume só aponta no commit) */
+    u8 *buf = kcalloc(1, (u64)blocks * bs);
+    bool ok = buf != NULL;
+    if (ok) {
+        u8 *n = buf;
+        n[8] = 1;                              /* kBTHeaderNode */
+        put16(n + 10, 3);
+        u8 *hd = n + 14;
+        put16(hd + 18, (u16)ns);               /* nodeSize */
+        put16(hd + 20, 266);                   /* maxKeyLength */
+        put32(hd + 22, nodes);                 /* totalNodes */
+        put32(hd + 26, nodes - 1);             /* freeNodes */
+        put32(hd + 32, ns * nodes);            /* clumpSize */
+        put32(hd + 38, 0x6);                   /* kBTBigKeysMask | kBTVariableIndexKeysMask */
+        n[248] = 0x80;                         /* mapa: nó 0 em uso */
+        put16(n + ns - 2, 14); put16(n + ns - 4, 120); put16(n + ns - 6, 248); put16(n + ns - 8, (u16)(ns - 8));
+        ok = blk_write(w->h->dev, (u64)e->start * bs, buf, (u64)blocks * bs);
+    }
+    kfree(buf);
+    fork_t *f = &w->h->attr;
+    u8 *fd = w->vh + 352;
+    if (ok) {
+        memset(fd, 0, 80);
+        f->size = 0; f->n = 0;
+        put32(fd + 8, ns * nodes);             /* clumpSize */
+        ok = fork_append(w, f, fd, e->start, e->count);
+    }
+    if (ok) ok = bt_setup(w, T_ATTR, f, 352, 8);
+    if (ok) { w->h->attr_ns = ns; w->h->attr_root = 0; w->attr_new = true; }
+    else { blocks_mark(w, e->start, e->count, false); memset(fd, 0, 80); f->size = 0; f->n = 0; w->bt[T_ATTR].ns = 0; }
+    kfree(e);
+    return ok;
+}
+
+/* registro do catálogo do caminho (seguindo hard link para o inode): chave em k, dados atuais em rec */
+static bool xattr_target(hfs_wr_t *w, const char *path, u8 *k, u32 *kl, u32 *id) {
+    while (*path == '/') path++;
+    if (!*path) {                                          /* a raiz do volume */
+        catrec_t r;
+        if (!cat_by_id(w, CNID_ROOT, k, kl, &r)) return false;
+        *id = CNID_ROOT;
+        return true;
+    }
+    u32 parent;
+    u16 leaf[255];
+    int ln;
+    if (!resolve_parent(w, path, &parent, leaf, &ln)) return false;
+    *kl = cat_key(k, parent, leaf, ln);
+    u32 dlen;
+    u8 *d = bt_lookup(w, T_CAT, k, &dlen, NULL);
+    if (!d) return false;
+    u16 type = be16(d);
+    if (type == REC_FILE) {
+        u8 ik[520];
+        if (dlen >= 248 && hardlink_inode_key(w, d, ik)) { memcpy(k, ik, sizeof ik); d = bt_lookup(w, T_CAT, k, &dlen, NULL); if (!d) return false; }
+    } else if (type != REC_FOLDER) return false;
+    *id = be32(d + 8);
+    return true;
+}
+/* o arquivo ainda tem algum atributo na árvore? */
+static bool has_attrs(hfs_wr_t *w, u32 id) {
+    if (!w->bt[T_ATTR].ns || !w->h->attr_root) return false;
+    u8 k[300] = {0};
+    put16(k, 12);
+    put32(k + 4, id);
+    attrcol_t c = {id, NULL, 0, 0};
+    bt_iter(w, T_ATTR, k, attr_collect, &c);
+    kfree(c.keys);
+    return c.n > 0;
+}
+static bool cat_flags(hfs_wr_t *w, const u8 *k, u16 set, u16 clear) {
+    u32 dlen, node;
+    u8 *d = bt_lookup(w, T_CAT, k, &dlen, &node);
+    if (!d) return false;
+    u16 f = (u16)((be16(d + 2) | set) & ~clear);
+    put16(d + 2, f);
+    put32(d + 20, hfs_now());                              /* attributeModDate */
+    node_dirty(w, T_CAT, node);
+    return true;
+}
+
+static bool xattr_insert(hfs_wr_t *w, u32 id, const u16 *nm, int nl, const u8 *val, u64 len) {
+    u8 k[268];
+    u32 kl = xkey(k, id, nm, nl, 0);
+    u32 ns = w->bt[T_ATTR].ns;
+    u32 maxrec = (ns - 14) / 2 - 8;
+    if (kl + 16 + ((len + 1) & ~1ull) <= maxrec) {         /* inline */
+        u32 dl = 16 + (u32)((len + 1) & ~1ull);
+        u8 *d = kcalloc(1, dl);
+        if (!d) return false;
+        put32(d, 0x10);
+        put32(d + 12, (u32)len);
+        memcpy(d + 16, val, len);
+        bool ok = bt_insert(w, T_ATTR, k, kl, d, dl);
+        kfree(d);
+        return ok;
+    }
+    /* grande: blocos próprios (conteúdo antes dos metadados, como os arquivos) */
+    u32 bs = w->h->bs;
+    u64 nb = (len + bs - 1) / bs;
+    if (nb > 0xFFFFFFFFull) return false;
+    ext_t *e = NULL;
+    int ne = blocks_alloc(w, (u32)nb, &e, 0);
+    if (ne < 0) { kprintf("hfs+: sem espaço para um atributo de %llu bytes\n", len); return false; }
+    bool ok = true;
+    u64 done = 0;
+    u8 *pad = kmalloc(bs);
+    for (int i = 0; ok && i < ne; i++) {
+        u64 n = MIN((u64)e[i].count * bs, len - done), whole = n / bs * bs;
+        if (whole) ok = blk_write(w->h->dev, (u64)e[i].start * bs, val + done, whole);
+        if (ok && n > whole) { ok = pad != NULL; if (ok) { memset(pad, 0, bs); memcpy(pad, val + done + whole, n - whole); ok = blk_write(w->h->dev, (u64)e[i].start * bs + whole, pad, bs); } }
+        done += n;
+    }
+    kfree(pad);
+    u8 d[88] = {0};
+    put32(d, 0x20);
+    put64(d + 8, len);
+    put32(d + 20, (u32)nb);
+    u32 covered = 0;
+    for (int i = 0; i < ne && i < 8; i++) { put32(d + 24 + i * 8, e[i].start); put32(d + 28 + i * 8, e[i].count); covered += e[i].count; }
+    ok = ok && bt_insert(w, T_ATTR, k, kl, d, 88);
+    for (int i = 8; ok && i < ne; i += 8) {
+        u8 ek[268], ed[72] = {0};
+        u32 ekl = xkey(ek, id, nm, nl, covered);
+        put32(ed, 0x30);
+        for (int j = 0; j < 8 && i + j < ne; j++) { put32(ed + 8 + j * 8, e[i + j].start); put32(ed + 12 + j * 8, e[i + j].count); covered += e[i + j].count; }
+        ok = bt_insert(w, T_ATTR, ek, ekl, ed, 72);
+    }
+    if (!ok) for (int i = 0; i < ne; i++) blocks_mark(w, e[i].start, e[i].count, false);
+    kfree(e);
+    return ok;
+}
+
+/* FinderInfo: os 32 bytes do registro do catálogo */
+static bool finfo_write(hfs_wr_t *w, const u8 *k, const u8 *fi) {
+    u32 dlen, node;
+    u8 *d = bt_lookup(w, T_CAT, k, &dlen, &node);
+    if (!d || dlen < 80) return false;
+    if (fi) memcpy(d + 48, fi, 32); else memset(d + 48, 0, 32);
+    put32(d + 20, hfs_now());
+    node_dirty(w, T_CAT, node);
+    return true;
+}
+/* ResourceFork: o fork de recurso do arquivo (blocos novos antes de soltar os velhos) */
+static bool rsrc_write(hfs_wr_t *w, const u8 *k, u32 id, const u8 *val, u64 len) {
+    u32 dlen, node;
+    u8 *d = bt_lookup(w, T_CAT, k, &dlen, &node);
+    if (!d || be16(d) != REC_FILE || dlen < 248) return false;
+    u8 old[80], nfd[80];
+    memcpy(old, d + 168, 80);
+    bool ok = val ? fork_create(w, id, 0xFF, val, len, nfd) : (memset(nfd, 0, 80), true);
+    ok = ok && fork_free(w, old, id, 0xFF);
+    d = ok ? bt_lookup(w, T_CAT, k, &dlen, &node) : NULL;
+    if (!d) return false;
+    memcpy(d + 168, nfd, 80);
+    put32(d + 20, hfs_now());
+    node_dirty(w, T_CAT, node);
+    return true;
+}
+
+bool hfs_wr_setxattr(dmount_t *m, const char *path, const char *name, const void *val, u64 len) {
+    hfs_wr_t *w = wr_of(m);
+    u16 nm[128];
+    int nl = hfs_name16(name, nm, 127);
+    if (!w || nl <= 0) return false;
+    begin_op(w);
+    u8 k[520];
+    u32 kl, id;
+    if (!xattr_target(w, path, k, &kl, &id)) { tx_abort(w); return false; }
+    bool ok;
+    if (!strcmp(name, "com.apple.FinderInfo")) ok = len == 32 && finfo_write(w, k, val);
+    else if (!strcmp(name, "com.apple.ResourceFork")) ok = rsrc_write(w, k, id, val, len);
+    else {
+        ok = attr_tree_create(w) && attrs_delete(w, id, name) && xattr_insert(w, id, nm, nl, val, len);
+        ok = ok && cat_flags(w, k, (u16)(F_HAS_ATTRS | (!strcmp(name, "com.apple.system.Security") ? F_HAS_SECURITY : 0)), 0);
+    }
+    if (!ok) { tx_abort(w); return false; }
+    return tx_commit(w);
+}
+
+bool hfs_wr_removexattr(dmount_t *m, const char *path, const char *name) {
+    hfs_wr_t *w = wr_of(m);
+    if (!w) return false;
+    begin_op(w);
+    u8 k[520];
+    u32 kl, id;
+    if (!xattr_target(w, path, k, &kl, &id)) { tx_abort(w); return false; }
+    bool ok;
+    if (!strcmp(name, "com.apple.FinderInfo")) ok = finfo_write(w, k, NULL);
+    else if (!strcmp(name, "com.apple.ResourceFork")) ok = rsrc_write(w, k, id, NULL, 0);
+    else {
+        ok = attrs_delete(w, id, name);
+        u16 clear = (u16)(!strcmp(name, "com.apple.system.Security") ? F_HAS_SECURITY : 0);
+        if (ok && !has_attrs(w, id)) clear |= F_HAS_ATTRS;
+        ok = ok && cat_flags(w, k, 0, clear);
+    }
+    if (!ok) { tx_abort(w); return false; }
+    return tx_commit(w);
+}
 
 static bool read_jib(blkdev_t *dev, const u8 *vh, jib_t *j) {
     u32 bs = be32(vh + 40), blk = be32(vh + 12);

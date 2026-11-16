@@ -117,7 +117,19 @@ static int check_name(const char *name) {
 static bool is_rsrc(const char *name) { return !strcmp(name, "com.apple.ResourceFork"); }
 static bool is_finfo(const char *name) { return !strcmp(name, "com.apple.FinderInfo"); }
 
+__attribute__((weak)) void vfs_xattr_load(vnode_t *n) { (void)n; }
+__attribute__((weak)) int vol_xattr_write(vnode_t *n, const char *name, const void *val, u64 len, bool remove) {
+    (void)n; (void)name; (void)val; (void)len; (void)remove;
+    return 0;
+}
+/* nó de um volume: os xattrs vêm do disco no primeiro uso */
+static void xload(vnode_t *n) {
+    if (!n || n->xattr_loaded) return;
+    n->xattr_loaded = true;
+    vfs_xattr_load(n);
+}
 vxattr_t *vfs_xattr_find(vnode_t *n, const char *name) {
+    xload(n);
     for (vxattr_t *x = n ? n->xattr : NULL; x; x = x->next) if (!strcmp(x->name, name)) return x;
     return NULL;
 }
@@ -174,6 +186,8 @@ int vfs_xattr_set(vnode_t *n, const char *name, const void *val, u64 len, u64 po
         if (x) memcpy(nv, x->val, x->len);
         memcpy(nv + pos, val, len);
     } else if (len) memcpy(nv, val, len);
+    int we = vol_xattr_write(n, name, nv, newlen, false);  /* volume de /Volumes: no disco antes da RAM */
+    if (we) { kfree(nv); return we; }
     if (!x) {
         x = kcalloc(1, sizeof *x);
         if (!x) { kfree(nv); return -E_NOMEM; }
@@ -194,6 +208,7 @@ int vfs_xattr_set(vnode_t *n, const char *name, const void *val, u64 len, u64 po
 
 i64 vfs_xattr_list(vnode_t *n, char *buf, u64 cap) {
     u64 need = 0;
+    xload(n);
     for (vxattr_t *x = n ? n->xattr : NULL; x; x = x->next) {
         if (is_finfo(x->name) && finfo_empty(x)) continue;
         if (!strcmp(x->name, VFS_XATTR_SECURITY)) continue;          /* a ACL não é listada (xnu) */
@@ -211,10 +226,12 @@ int vfs_xattr_remove(vnode_t *n, const char *name) {
     int e = check_name(name);
     if (e) return e;
     if (!n) return -E_INVAL;
+    xload(n);
     for (vxattr_t **pp = &n->xattr; *pp; pp = &(*pp)->next) {
         vxattr_t *x = *pp;
         if (strcmp(x->name, name)) continue;
         bool empty = is_finfo(name) && finfo_empty(x);
+        if (!empty) { int we = vol_xattr_write(n, name, NULL, 0, true); if (we) return we; }
         *pp = x->next;
         n->xattr_bytes -= x->len;
         kfree(x->val);
@@ -226,6 +243,22 @@ int vfs_xattr_remove(vnode_t *n, const char *name) {
         return 0;
     }
     return -E_NOATTR;
+}
+
+/* carga do disco (vfs_bridge.c): entra na lista sem evento, sem ctime e sem gravar de volta */
+void vfs_xattr_attach(vnode_t *n, const char *name, const void *val, u64 len) {
+    if (!n || check_name(name) || len > VFS_XATTR_VAL_MAX) return;
+    if (vfs_xattr_find(n, name)) return;
+    vxattr_t *x = kcalloc(1, sizeof *x);
+    u8 *v = kmalloc(len ? len : 1);
+    if (!x || !v) { kfree(x); kfree(v); return; }
+    strcpy(x->name, name);
+    if (len) memcpy(v, val, len);
+    x->val = v;
+    x->len = (u32)len;
+    link_sorted(n, x);
+    n->xattr_bytes += len;
+    if (is_finfo(name) && len == 32 && (v[8] & 0x40)) n->flags |= VFS_UF_HIDDEN;
 }
 
 void vfs_xattr_free(vnode_t *n) {
