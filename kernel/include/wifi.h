@@ -101,3 +101,23 @@ bool wpa_ccm_decrypt(const u8 key[16], const u8 nonce[13], const u8 *aad, usize 
 /* ---------------- CCMP sobre quadros 802.11 (kernel/wifi/ieee80211.c) */
 u16  ccmp_encrypt_frame(const u8 tk[16], u64 pn, int keyid, const u8 *in, u16 len, u8 *out);  /* devolve o novo tamanho */
 int  ccmp_decrypt_frame(const u8 tk[16], const u8 *in, u16 len, u8 *out, u64 *pn);            /* -1 se falhar */
+
+/* ---------------- WPA3-SAE (kernel/wifi/sae.c), grupo 19; escalares e pontos em big-endian */
+#include "p256.h"
+typedef struct {
+    p256_fe pwe_x, pwe_y;
+    u32  rand[8];
+    u8   scalar[32], elem[64];           /* o nosso commit */
+    u8   peer_scalar[32], peer_elem[64];
+    u8   kck[32], pmk[32], pmkid[16];
+    u16  send_confirm;
+} sae_t;
+bool sae_pwe_hnp(sae_t *s, const u8 own[6], const u8 peer[6], const char *pw);
+bool sae_derive_pt(u8 pt[64], const u8 *ssid, usize ssid_len, const char *pw, const char *ident);
+bool sae_pwe_h2e(sae_t *s, const u8 pt[64], const u8 own[6], const u8 peer[6]);
+bool sae_commit(sae_t *s, const u8 *rand_be, const u8 *mask_be);   /* NULL = aleatórios */
+bool sae_process_commit(sae_t *s, const u8 *peer_scalar, const u8 *peer_elem);
+u16  sae_confirm(sae_t *s, u8 out[32]);
+bool sae_check_confirm(const sae_t *s, u16 peer_sc, const u8 conf[32]);
+void wpa_kdf_sha256(const u8 *key, usize klen, const char *label, const u8 *ctx, usize clen, u8 *out, usize bits);
+void aes_cmac(const u8 key[16], const u8 *m, usize len, u8 out[16]);   /* kernel/bt/smp_crypto.c */

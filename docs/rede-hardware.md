@@ -45,7 +45,7 @@ kernel/wifi/rtw88/        driver RTL8821CE que implementa wifi_radio_t
 
 ### Pilha 802.11 (`kernel/wifi/ieee80211.c`)
 10. [ ] HT/VHT na associação (IEs de capacidade), A-MPDU RX (ADDBA, reordenação), QoS data.
-11. [ ] WPA3-SAE (hunting-and-pecking e H2E sobre P-256), PMF/802.11w (BIP-CMAC, SA query) — obrigatório no WPA3.
+11. [~] WPA3-SAE (criptografia pronta: `kernel/wifi/sae.c`, teste `tools/sae_host.c` 16/16 com os vetores J.10; falta ligar na pilha de estação) (hunting-and-pecking e H2E sobre P-256), PMF/802.11w (BIP-CMAC, SA query) — obrigatório no WPA3.
 12. [ ] Roaming: varredura em segundo plano por RSSI, reassociação no mesmo ESS, PMKSA cache.
 13. [ ] Economia de energia: bit PM, null data, LPS do firmware, DTIM.
 14. [ ] Varredura de 5 GHz (canais 36–165, passivo nos DFS) e regulatório.
