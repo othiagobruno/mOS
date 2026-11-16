@@ -604,9 +604,11 @@ static id system_roots(void) {
 }
 
 enum { kSecTrustSettingsDomainUser, kSecTrustSettingsDomainAdmin, kSecTrustSettingsDomainSystem };
+OSStatus cx_ts_copy_certs(int domain, id *certs);                 /* seccert.c: usuário e admin */
+OSStatus cx_ts_copy_settings(id cert, int domain, id *settings);
 OSStatus SecTrustSettingsCopyCertificates(int domain, id *certs) {
     if (certs) *certs = 0;
-    if (domain != kSecTrustSettingsDomainSystem) return errSecNoTrustSettings;
+    if (domain != kSecTrustSettingsDomainSystem) return cx_ts_copy_certs(domain, certs);
     id roots = system_roots();
     if (!roots || !CFArrayGetCount(roots)) return errSecNoTrustSettings;
     if (certs) {
@@ -627,7 +629,8 @@ OSStatus SecTrustCopyAnchorCertificates(id *anchors) {
 /* raiz do sistema sem ajuste específico = array vazio ("confiar como raiz"), o que o rustls-native-certs espera */
 OSStatus SecTrustSettingsCopyTrustSettings(id cert, int domain, id *settings) {
     if (settings) *settings = 0;
-    if (!cert || domain != kSecTrustSettingsDomainSystem) return errSecNoTrustSettings;
+    if (cert && domain != kSecTrustSettingsDomainSystem) return cx_ts_copy_settings(cert, domain, settings);
+    if (!cert) return errSecNoTrustSettings;
     if (settings) *settings = CFArrayCreateMutable(0, 0, 0);
     return errSecSuccess;
 }

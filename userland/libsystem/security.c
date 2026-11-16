@@ -142,7 +142,10 @@ const void *kSecRandomDefault = 0;              /* SecRandomRef: NULL = gerador 
 /* ================================================================ Keychain de senhas
  * Um item = classe (genp/inet) + atributos de texto + segredo. A identidade do item (para SecItemAdd recusar
  * duplicatas, como o macOS) é classe + serviço/servidor + conta. */
-enum { F_SVCE, F_ACCT, F_LABL, F_DESC, F_GENA, F_SRVR, F_AGRP, NFIELD };
+/* os 7 primeiros são os do formato antigo; os seguintes são opcionais no arquivo (uma linha antiga para antes deles) */
+enum { F_SVCE, F_ACCT, F_LABL, F_DESC, F_GENA, F_SRVR, F_AGRP, F_ATAG, F_KCLS, F_KTYP, F_KLBL, F_SUBJ, F_ISSR, F_SLNR, NFIELD };
+#define NFIELD_V1 7
+static int field_binary(int i) { return i == F_GENA || i == F_ATAG || i == F_KLBL || i == F_SUBJ || i == F_ISSR || i == F_SLNR; }
 static const void *const *field_key[NFIELD];
 typedef struct {
     int used;
@@ -165,7 +168,9 @@ static void unlock(void) { __sync_lock_release(&klock); }
 static void init_keys(void) {
     field_key[F_SVCE] = &kSecAttrService; field_key[F_ACCT] = &kSecAttrAccount; field_key[F_LABL] = &kSecAttrLabel;
     field_key[F_DESC] = &kSecAttrDescription; field_key[F_GENA] = &kSecAttrGeneric; field_key[F_SRVR] = &kSecAttrServer_;
-    field_key[F_AGRP] = &kSecAttrAccessGroup;
+    field_key[F_AGRP] = &kSecAttrAccessGroup; field_key[F_ATAG] = &kSecAttrApplicationTag; field_key[F_KCLS] = &kSecAttrKeyClass;
+    field_key[F_KTYP] = &kSecAttrKeyType; field_key[F_KLBL] = &kSecAttrApplicationLabel; field_key[F_SUBJ] = &kSecAttrSubject;
+    field_key[F_ISSR] = &kSecAttrIssuer; field_key[F_SLNR] = &kSecAttrSerialNumber;
 }
 
 static int keychain_path(char *buf, size_t n, int mk) {
@@ -310,7 +315,14 @@ static void load(void) {
             it->cdat = (double)get_num(&q, eol);
             it->mdat = (double)get_num(&q, eol);
             int ok = get_hex(&q, eol, &it->data, &it->dlen);
-            for (int i = 0; ok && i < NFIELD; i++) ok = get_hex(&q, eol, &it->f[i], &it->fl[i]);
+            for (int i = 0; ok && i < NFIELD; i++) {
+                if (i >= NFIELD_V1) {                       /* linha de antes dos campos de chave/certificado */
+                    const char *t = q;
+                    while (t < eol && *t == ' ') t++;
+                    if (t >= eol) break;
+                }
+                ok = get_hex(&q, eol, &it->f[i], &it->fl[i]);
+            }
             if (!ok || !it->id) { free_item(it); nitems--; }
             else if (it->id >= next_id) next_id = it->id + 1;
         }
@@ -375,10 +387,17 @@ static OSStatus save(void) {
 typedef struct {
     char cls[5];
     id_ f[NFIELD];          /* valores pedidos (NSString ou NSData), NULL = não filtra */
+    u8 *ref; u32 refn;      /* kSecValueRef de chave/certificado: o item tem de ter estes bytes */
+    int has_ref;
 } query_t;
+static int ref_bytes(id_ ref, u8 **out, u32 *n);
+static int is_blob_class(const char *c);
+u64 CFArrayGetTypeID(void);
 /* bytes de um valor de atributo: CFString (UTF-8) ou CFData */
+u64 CFNumberGetTypeID(void);
 static const u8 *val_bytes(id_ v, u32 *n) {
     if (!v) { *n = 0; return 0; }
+    if (CFGetTypeID(v) == CFNumberGetTypeID()) v = MSG0(id_, v, "stringValue");   /* "42", "73", "1"... */
     if (CFGetTypeID(v) == CFDataGetTypeID()) { *n = (u32)CFDataGetLength(v); return CFDataGetBytePtr(v); }
     const char *s = utf8(v);
     *n = s ? (u32)strlen(s) : 0;
@@ -395,12 +414,41 @@ static void parse_query(id_ q, query_t *x) {
     if (!q) return;
     cls_of(CFDictionaryGetValue(q, K_(kSecClass)), x->cls);
     for (int i = 0; i < NFIELD; i++) x->f[i] = CFDictionaryGetValue(q, (id_)*field_key[i]);
+    id_ r = CFDictionaryGetValue(q, K_(kSecValueRef));
+    /* os bytes ficam num buffer só, válido enquanto o lock do Keychain estiver com quem consultou */
+    static u8 *qref;
+    if (r && is_blob_class(x->cls)) {
+        u8 *b = 0;
+        u32 n = 0;
+        if (ref_bytes(r, &b, &n) == 0) {
+            if (qref) free(qref);
+            qref = b;
+            x->ref = b; x->refn = n; x->has_ref = 1;
+        } else x->has_ref = -1;
+    }
+}
+/* bytes guardados de uma referência: certificado = DER; chave = formato externo (PKCS#1 / X9.63) */
+u64 SecKeyGetTypeID(void);
+id_ SecKeyCopyExternalRepresentation(id_ key, id_ *err);
+static int ref_bytes(id_ ref, u8 **out, u32 *n) {
+    id_ d = 0;
+    if (CFGetTypeID(ref) == CFDataGetTypeID()) d = CFRetain(ref);
+    else if (CFGetTypeID(ref) == SecKeyGetTypeID()) d = SecKeyCopyExternalRepresentation(ref, 0);
+    if (!d) return -1;
+    *n = (u32)CFDataGetLength(d);
+    *out = malloc(*n ? *n : 1);
+    if (*out) memcpy(*out, CFDataGetBytePtr(d), *n);
+    CFRelease(d);
+    return *out ? 0 : -1;
 }
 static int is_password_class(const char *c) { return !strcmp(c, "genp") || !strcmp(c, "inet"); }
 static int is_identity_class(const char *c) { return !strcmp(c, "idnt"); }
-static int is_stored_class(const char *c) { return is_password_class(c) || is_identity_class(c); }
+static int is_blob_class(const char *c) { return !strcmp(c, "keys") || !strcmp(c, "cert"); }
+static int is_stored_class(const char *c) { return is_password_class(c) || is_identity_class(c) || is_blob_class(c); }
 static int matches(kitem_t *it, query_t *x) {
     if (!it->used || strcmp(it->cls, x->cls)) return 0;
+    if (x->has_ref < 0) return 0;
+    if (x->has_ref && (it->dlen != x->refn || memcmp(it->data, x->ref, x->refn))) return 0;
     for (int i = 0; i < NFIELD; i++) {
         if (!x->f[i]) continue;
         u32 n;
@@ -451,6 +499,20 @@ static kitem_t *item_from_ref(id_ ref) {
     return 0;
 }
 
+/* kSecReturnRef de chaves e certificados: o SecKeyRef / SecCertificateRef de verdade */
+id_ cx_seckey_import(const u8 *der, u32 n, int priv);
+static int is_blob_class(const char *c);
+int cx_cert_fields(const u8 *der, u32 n, const u8 **subj, u32 *sl, const u8 **issr, u32 *il, const u8 **ser, u32 *snl,
+                   char *label, u32 lcap);
+int cx_seckey_describe(const u8 *ext, u32 n, int *priv, int *type, u8 klbl[20]);
+static id_ item_object(kitem_t *it) {
+    if (!strcmp(it->cls, "cert")) return cx_data_new(it->data, it->dlen);
+    if (!strcmp(it->cls, "keys")) {
+        int priv = it->f[F_KCLS] && it->fl[F_KCLS] == 1 && it->f[F_KCLS][0] == '1';
+        return cx_seckey_import(it->data, it->dlen, priv);
+    }
+    return item_ref(it);
+}
 static id_ item_attrs(kitem_t *it, int with_data, int with_ref) {
     id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
     id_ c = str_n(it->cls, 4);
@@ -459,14 +521,14 @@ static id_ item_attrs(kitem_t *it, int with_data, int with_ref) {
     for (int i = 0; i < NFIELD; i++) {
         if (!it->f[i]) continue;
         /* gena (genérico) é binário; os demais são texto */
-        id_ v = i == F_GENA ? cx_data_new(it->f[i], it->fl[i]) : str_n((const char *)it->f[i], it->fl[i]);
+        id_ v = field_binary(i) ? cx_data_new(it->f[i], it->fl[i]) : str_n((const char *)it->f[i], it->fl[i]);
         if (v) { CFDictionarySetValue(d, (id_)*field_key[i], v); CFRelease(v); }
     }
     id_ cd = CFDateCreate(0, it->cdat), md = CFDateCreate(0, it->mdat);
     if (cd) { CFDictionarySetValue(d, K_(kSecAttrCreationDate), cd); CFRelease(cd); }
     if (md) { CFDictionarySetValue(d, K_(kSecAttrModificationDate), md); CFRelease(md); }
     if (with_data) { id_ v = cx_data_new(it->data, it->dlen); CFDictionarySetValue(d, K_(kSecValueData), v); CFRelease(v); }
-    if (with_ref) { id_ r = item_ref(it); CFDictionarySetValue(d, K_(kSecValueRef), r); CFRelease(r); }
+    if (with_ref) { id_ r = item_object(it); if (r) { CFDictionarySetValue(d, K_(kSecValueRef), r); CFRelease(r); } }
     return d;
 }
 static int flag(id_ q, const void *key) { id_ v = CFDictionaryGetValue(q, K_(key)); return v && CFBooleanGetValue(v); }
@@ -491,7 +553,8 @@ OSStatus SecItemCopyMatching(id_ query, id_ *result) {
         id_ r = 0;
         if (ra || (rd + rr + rp) > 1) r = item_attrs(it, rd, rr || rp);
         else if (rd) r = cx_data_new(it->data, it->dlen);
-        else if (rr || rp) r = item_ref(it);
+        else if (rr) r = item_object(it);
+        else if (rp) r = item_ref(it);
         if (all) { if (r) { CFArrayAppendValue(arr, r); CFRelease(r); } }
         else { one = r; break; }
     }
@@ -508,10 +571,37 @@ OSStatus SecItemAdd(id_ attrs, id_ *result) {
     lock(); load();
     parse_query(attrs, &x);
     if (!x.cls[0]) { unlock(); return errSecParam; }
-    if (!is_stored_class(x.cls)) { unlock(); return errSecUnimplemented; }   /* chaves e certificados soltos: ainda não */
+    if (!is_stored_class(x.cls)) { unlock(); return errSecUnimplemented; }
     u32 idn = 0;
     const u8 *idb = val_bytes(CFDictionaryGetValue(attrs, K_(kSecValueData)), &idn);
-    if (is_identity_class(x.cls)) {
+    /* chave ou certificado: os bytes vêm do kSecValueRef (ou de kSecValueData) e os atributos de busca
+     * (classe/tipo/rótulo da chave; emissor/assunto/série do certificado) são preenchidos aqui, como o macOS faz */
+    const u8 *auto_b[NFIELD] = {0};
+    u32 auto_n[NFIELD] = {0};
+    u8 kcls_s[2], ktyp_s[3], klbl[20];
+    char clabel[128];
+    if (is_blob_class(x.cls)) {
+        if (x.has_ref == -1) { unlock(); return errSecParam; }
+        if (x.has_ref) { idb = x.ref; idn = x.refn; }
+        if (!idb || idn < 2) { unlock(); return errSecParam; }
+        if (!strcmp(x.cls, "cert")) {
+            if (cx_cert_fields(idb, idn, &auto_b[F_SUBJ], &auto_n[F_SUBJ], &auto_b[F_ISSR], &auto_n[F_ISSR],
+                               &auto_b[F_SLNR], &auto_n[F_SLNR], clabel, sizeof clabel)) { unlock(); return errSecParam; }
+            if (clabel[0]) { auto_b[F_LABL] = (const u8 *)clabel; auto_n[F_LABL] = (u32)strlen(clabel); }
+        } else {
+            int priv, type;
+            if (cx_seckey_describe(idb, idn, &priv, &type, klbl)) { unlock(); return errSecParam; }
+            kcls_s[0] = priv ? '1' : '0';
+            auto_b[F_KCLS] = kcls_s; auto_n[F_KCLS] = 1;
+            ktyp_s[0] = type == 1 ? '4' : '7'; ktyp_s[1] = type == 1 ? '2' : '3';
+            auto_b[F_KTYP] = ktyp_s; auto_n[F_KTYP] = 2;
+            auto_b[F_KLBL] = klbl; auto_n[F_KLBL] = 20;
+        }
+        for (int i = 0; i < nitems; i++) {
+            kitem_t *it = &items[i];
+            if (it->used && !strcmp(it->cls, x.cls) && it->dlen == idn && !memcmp(it->data, idb, idn)) { unlock(); return errSecDuplicateItem; }
+        }
+    } else if (is_identity_class(x.cls)) {
         if (!idb || idn < 2 || idb[0] != 0x30) { unlock(); return errSecParam; }
         for (int i = 0; i < nitems; i++) {
             kitem_t *it = &items[i];
@@ -528,16 +618,22 @@ OSStatus SecItemAdd(id_ attrs, id_ *result) {
     memcpy(it->cls, x.cls, 5);
     it->id = next_id++;
     it->cdat = it->mdat = CFAbsoluteTimeGetCurrent();
-    for (int i = 0; i < NFIELD; i++) if (x.f[i]) { u32 n; const u8 *b = val_bytes(x.f[i], &n); set_field(it, i, b, n); }
-    u32 n = 0;
-    const u8 *b = val_bytes(CFDictionaryGetValue(attrs, K_(kSecValueData)), &n);
-    set_data(it, b, n);
+    for (int i = 0; i < NFIELD; i++) {
+        if (x.f[i]) { u32 n; const u8 *b = val_bytes(x.f[i], &n); set_field(it, i, b, n); }
+        else if (auto_b[i]) set_field(it, i, auto_b[i], auto_n[i]);
+    }
+    if (is_blob_class(x.cls)) set_data(it, idb, idn);
+    else {
+        u32 n = 0;
+        const u8 *b = val_bytes(CFDictionaryGetValue(attrs, K_(kSecValueData)), &n);
+        set_data(it, b, n);
+    }
     OSStatus st = save();
     if (st == errSecSuccess && result) {
         int rd = flag(attrs, kSecReturnData), ra = flag(attrs, kSecReturnAttributes), rr = flag(attrs, kSecReturnRef);
         if (ra) *result = item_attrs(it, rd, rr);
         else if (rd) *result = cx_data_new(it->data, it->dlen);
-        else if (rr) *result = item_ref(it);
+        else if (rr) *result = item_object(it);
     }
     if (st != errSecSuccess) { free_item(it); nitems--; }
     unlock();
@@ -879,22 +975,101 @@ id_ SecCertificateCreateWithData(void *alloc, id_ der) {
     return cx_data_new(b, (u64)CFDataGetLength(der));
 }
 id_ SecCertificateCopyData(id_ cert) { return cert ? cx_data_new(CFDataGetBytePtr(cert), (u64)CFDataGetLength(cert)) : 0; }
-id_ SecCertificateCopySubjectSummary(id_ cert) { (void)cert; return 0; }
-OSStatus SecCertificateCopyCommonName(id_ cert, id_ *cn) { (void)cert; if (cn) *cn = 0; return errSecUnimplemented; }
-id_ SecCertificateCopyNormalizedIssuerSequence(id_ cert) { (void)cert; return 0; }
-id_ SecCertificateCopySerialNumberData(id_ cert, id_ *err) { (void)cert; if (err) *err = 0; return 0; }
-id_ SecCertificateCopyValues(id_ cert, id_ keys, id_ *err) { (void)cert; (void)keys; if (err) *err = 0; return 0; }
 
-id_ SecPolicyCreateSSL(Boolean server, id_ host) { (void)server; (void)host; return str_n("mOS-policy:ssl", 14); }
-id_ SecPolicyCreateBasicX509(void) { return str_n("mOS-policy:x509", 15); }
-id_ SecPolicyCreateRevocation(u64 flags) { (void)flags; return str_n("mOS-policy:revocation", 21); }
-id_ SecPolicyCopyProperties(id_ policy) { (void)policy; return CFDictionaryCreateMutable(0, 0, 0, 0); }
+/* SecPolicy: um CFString "mOS-policy:<tipo>:<host>" (CFGetTypeID dele é o de CFString; SecPolicyGetTypeID
+ * continua distinto, como os apps só comparam com o resultado de SecPolicyCreate*). tipo: ssl, sslc (cliente),
+ * x509, rev. */
+static id_ policy_new(const char *kind, id_ host) {
+    char b[300];
+    const char *h = host ? utf8(host) : 0;
+    int n = cx_snprintf(b, sizeof b, "mOS-policy:%s:%s", kind, h ? h : "");
+    return str_n(b, (u64)n);
+}
+id_ SecPolicyCreateSSL(Boolean server, id_ host) { return policy_new(server ? "ssl" : "sslc", host); }
+id_ SecPolicyCreateBasicX509(void) { return policy_new("x509", 0); }
+id_ SecPolicyCreateRevocation(u64 flags) { (void)flags; return policy_new("rev", 0); }
+extern const void *kSecPolicyAppleSSL, *kSecPolicyAppleX509Basic, *kSecPolicyAppleRevocation, *kSecPolicyName,
+    *kSecPolicyClient, *kSecPolicyOid;
+id_ SecPolicyCreateWithProperties(id_ type, id_ props) {
+    id_ name = props ? CFDictionaryGetValue(props, K_(kSecPolicyName)) : 0;
+    id_ cl = props ? CFDictionaryGetValue(props, K_(kSecPolicyClient)) : 0;
+    if (type && CFEqual(type, K_(kSecPolicyAppleSSL))) return policy_new(cl && CFBooleanGetValue(cl) ? "sslc" : "ssl", name);
+    if (type && CFEqual(type, K_(kSecPolicyAppleRevocation))) return policy_new("rev", 0);
+    return policy_new("x509", 0);
+}
+static int policy_kind(id_ p, char *host, size_t hn) {   /* -1 = não é política; 0 x509, 1 ssl, 2 sslc, 3 rev */
+    const char *s = p ? utf8(p) : 0;
+    if (host && hn) host[0] = 0;
+    if (!s || memcmp(s, "mOS-policy:", 11)) return -1;
+    s += 11;
+    int k = !memcmp(s, "sslc:", 5) ? 2 : !memcmp(s, "ssl:", 4) ? 1 : !memcmp(s, "rev:", 4) ? 3 : 0;
+    const char *c = s;
+    while (*c && *c != ':') c++;
+    if (*c == ':' && host) { size_t i = 0; for (c++; *c && i + 1 < hn; c++) host[i++] = *c; host[i] = 0; }
+    return k;
+}
+id_ SecPolicyCopyProperties(id_ policy) {
+    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    char host[256];
+    int k = policy_kind(policy, host, sizeof host);
+    CFDictionarySetValue(d, K_(kSecPolicyOid), k == 1 || k == 2 ? K_(kSecPolicyAppleSSL) : k == 3 ? K_(kSecPolicyAppleRevocation)
+                                                                                             : K_(kSecPolicyAppleX509Basic));
+    if (host[0]) { id_ h = str_n(host, strlen(host)); CFDictionarySetValue(d, K_(kSecPolicyName), h); CFRelease(h); }
+    if (k == 2) CFDictionarySetValue(d, K_(kSecPolicyClient), (id_)kCFBooleanTrue);
+    return d;
+}
 
-/* SecTrust: guarda os certificados; a avaliação diz "não confiável" (o mOS não tem raízes do sistema) */
-typedef struct { id_ certs; } trust_box_t;
+/* SecTrust: o objeto é o CFArray dos certificados; o estado de cada um fica numa tabela ao lado */
+typedef struct {
+    id_ t;
+    int policy;                 /* 0 x509, 1 ssl, 2 sslc */
+    char host[256];
+    id_ anchors;                /* CFArray retido ou NULL */
+    int anchors_only;           /* SecTrustSetAnchorCertificates liga; SetAnchorCertificatesOnly(false) desliga */
+    int has_date; double date;  /* CFAbsoluteTime */
+    int evaluated; u32 result; int xerr; char msg[160];
+    id_ policies;
+} tstate_t;
+static tstate_t g_ts[128];
+static volatile int g_tslock;
+static void ts_lock(void) { while (__sync_lock_test_and_set(&g_tslock, 1)) ; }
+static void ts_unlock(void) { __sync_lock_release(&g_tslock); }
+static tstate_t *ts_get(id_ t, int create) {
+    tstate_t *free_ = 0;
+    for (int i = 0; i < 128; i++) {
+        if (g_ts[i].t == t) return &g_ts[i];
+        if (!g_ts[i].t && !free_) free_ = &g_ts[i];
+    }
+    if (!create) return 0;
+    if (!free_) {                                  /* tabela cheia: recicla a entrada mais antiga */
+        static int rr;
+        free_ = &g_ts[rr++ % 128];
+        if (free_->anchors) CFRelease(free_->anchors);
+        if (free_->policies) CFRelease(free_->policies);
+    }
+    for (size_t i = 0; i < sizeof *free_; i++) ((u8 *)free_)[i] = 0;
+    free_->t = t;
+    return free_;
+}
+static void ts_apply_policies(tstate_t *st, id_ policies) {
+    st->policy = 0;
+    st->host[0] = 0;
+    if (!policies) return;
+    long n = CFGetTypeID(policies) == CFArrayGetTypeID() ? CFArrayGetCount(policies) : -1;
+    for (long i = n < 0 ? -1 : 0; i < (n < 0 ? 0 : n); i++) {
+        id_ p = n < 0 ? policies : CFArrayGetValueAtIndex(policies, i);
+        char h[256];
+        int k = policy_kind(p, h, sizeof h);
+        if (k == 1 || k == 2) {
+            st->policy = k;
+            memcpy(st->host, h, sizeof h);
+        }
+    }
+    if (st->policies) CFRelease(st->policies);
+    st->policies = CFRetain(policies);
+}
 static void trust_unmark(id_ t);
 OSStatus SecTrustCreateWithCertificates(id_ certs, id_ policies, id_ *trust) {
-    (void)policies;
     if (!trust) return errSecParam;
     *trust = 0;
     if (!certs) return errSecParam;
@@ -902,9 +1077,14 @@ OSStatus SecTrustCreateWithCertificates(id_ certs, id_ policies, id_ *trust) {
     if (CFGetTypeID(certs) == CFDataGetTypeID()) CFArrayAppendValue(arr, certs);   /* um certificado só */
     else for (long i = 0; i < CFArrayGetCount(certs); i++) CFArrayAppendValue(arr, CFArrayGetValueAtIndex(certs, i));
     trust_unmark(arr);                                /* endereço reaproveitado de uma confiança antiga */
+    ts_lock();
+    tstate_t *st = ts_get(arr, 1);
+    ts_apply_policies(st, policies);
+    ts_unlock();
     *trust = arr;
     return errSecSuccess;
 }
+OSStatus SecTrustCreateWithCertificatesAndPolicies(id_ certs, id_ policies, id_ *trust) { return SecTrustCreateWithCertificates(certs, policies, trust); }
 u64 CFArrayGetTypeID(void);
 /* o SecTrust do mOS é o CFArray dos certificados (acima): CFGetTypeID(trust) == SecTrustGetTypeID() */
 u64 SecTrustGetTypeID(void) { return CFArrayGetTypeID(); }
@@ -916,36 +1096,88 @@ id_ SecTrustCopyCertificateChain(id_ trust) {
     for (long i = 0; i < CFArrayGetCount(trust); i++) CFArrayAppendValue(arr, CFArrayGetValueAtIndex(trust, i));
     return arr;
 }
-id_ SecTrustCopyResult(id_ trust) { (void)trust; return 0; }
-OSStatus SecTrustSetPolicies(id_ trust, id_ p) { (void)trust; (void)p; return errSecSuccess; }
-OSStatus SecTrustSetAnchorCertificates(id_ trust, id_ a) { (void)trust; (void)a; return errSecSuccess; }
-OSStatus SecTrustSetAnchorCertificatesOnly(id_ trust, Boolean only) { (void)trust; (void)only; return errSecSuccess; }
-OSStatus SecTrustSetVerifyDate(id_ trust, id_ d) { (void)trust; (void)d; return errSecSuccess; }
-OSStatus SecTrustSetNetworkFetchAllowed(id_ trust, Boolean on) { (void)trust; (void)on; return errSecSuccess; }
-OSStatus SecTrustSetOCSPResponse(id_ trust, id_ r) { (void)trust; (void)r; return errSecSuccess; }
+static void ts_dirty(tstate_t *st) { if (st) st->evaluated = 0; }
+OSStatus SecTrustSetPolicies(id_ trust, id_ p) {
+    if (!trust) return errSecParam;
+    ts_lock(); tstate_t *st = ts_get(trust, 1); ts_apply_policies(st, p); ts_dirty(st); ts_unlock();
+    return errSecSuccess;
+}
+OSStatus SecTrustCopyPolicies(id_ trust, id_ *out) {
+    if (!trust || !out) return errSecParam;
+    ts_lock();
+    tstate_t *st = ts_get(trust, 0);
+    id_ p = st && st->policies ? st->policies : 0;
+    if (p) CFRetain(p);
+    ts_unlock();
+    if (!p) { id_ a = CFArrayCreateMutable(0, 0, 0); id_ b = SecPolicyCreateBasicX509(); CFArrayAppendValue(a, b); CFRelease(b); p = a; }
+    else if (CFGetTypeID(p) != CFArrayGetTypeID()) { id_ a = CFArrayCreateMutable(0, 0, 0); CFArrayAppendValue(a, p); CFRelease(p); p = a; }
+    *out = p;
+    return errSecSuccess;
+}
+OSStatus SecTrustSetAnchorCertificates(id_ trust, id_ a) {
+    if (!trust) return errSecParam;
+    ts_lock();
+    tstate_t *st = ts_get(trust, 1);
+    if (st->anchors) CFRelease(st->anchors);
+    st->anchors = a ? CFRetain(a) : 0;
+    st->anchors_only = a != 0;                         /* como o macOS: âncoras próprias desligam as do sistema */
+    ts_dirty(st);
+    ts_unlock();
+    return errSecSuccess;
+}
+OSStatus SecTrustCopyCustomAnchorCertificates(id_ trust, id_ *out) {
+    if (!trust || !out) return errSecParam;
+    ts_lock();
+    tstate_t *st = ts_get(trust, 0);
+    *out = st && st->anchors ? CFRetain(st->anchors) : 0;
+    ts_unlock();
+    return errSecSuccess;
+}
+OSStatus SecTrustSetAnchorCertificatesOnly(id_ trust, Boolean only) {
+    if (!trust) return errSecParam;
+    ts_lock(); tstate_t *st = ts_get(trust, 1); st->anchors_only = only != 0; ts_dirty(st); ts_unlock();
+    return errSecSuccess;
+}
+double CFDateGetAbsoluteTime(id_ d);
+OSStatus SecTrustSetVerifyDate(id_ trust, id_ d) {
+    if (!trust || !d) return errSecParam;
+    ts_lock(); tstate_t *st = ts_get(trust, 1); st->has_date = 1; st->date = CFDateGetAbsoluteTime(d); ts_dirty(st); ts_unlock();
+    return errSecSuccess;
+}
+double SecTrustGetVerifyTime(id_ trust) {
+    ts_lock();
+    tstate_t *st = ts_get(trust, 0);
+    double v = st && st->has_date ? st->date : CFAbsoluteTimeGetCurrent();
+    ts_unlock();
+    return v;
+}
+/* rede: o mOS não busca intermediários nem OCSP/CRL pela rede (AIA); o valor só é guardado */
+static Boolean g_netfetch = 1;
+OSStatus SecTrustSetNetworkFetchAllowed(id_ trust, Boolean on) { if (!trust) return errSecParam; g_netfetch = on; return errSecSuccess; }
+OSStatus SecTrustGetNetworkFetchAllowed(id_ trust, Boolean *on) { if (!trust || !on) return errSecParam; *on = g_netfetch; return errSecSuccess; }
+OSStatus SecTrustSetOCSPResponse(id_ trust, id_ r) { (void)r; return trust ? errSecSuccess : errSecParam; }
+OSStatus SecTrustSetSignedCertificateTimestamps(id_ trust, id_ s) { (void)s; return trust ? errSecSuccess : errSecParam; }
+#define kSecTrustResultInvalid 0
+#define kSecTrustResultProceed 1
+#define kSecTrustResultDeny 3
 #define kSecTrustResultUnspecified 4
 #define kSecTrustResultRecoverableTrustFailure 5
+#define kSecTrustResultFatalTrustFailure 6
 /* confianças que o SecureTransport devolveu (SSLCopyPeerTrust) depois de o kernel validar a cadeia, as datas e o
- * nome: essas avaliam como válidas; as demais continuam "não confiável" (o mOS não reavalia cadeias aqui) */
+ * nome: essas avaliam como válidas sem refazer a conta (a cadeia que o kernel viu pode ter vindo incompleta) */
 static id_ g_verified[64];
 static unsigned g_nverified;
-static struct { id_ t; char host[256]; } g_thost[64];
 void cx_trust_mark_verified(id_ t) { g_verified[g_nverified++ % 64] = t; }
 void cx_trust_set_host(id_ t, const char *host) {
     if (!t) return;
-    unsigned slot = 0;
-    for (unsigned i = 0; i < 64; i++) if (g_thost[i].t == t || !g_thost[i].t) { slot = i; break; }
-    g_thost[slot].t = t;
-    g_thost[slot].host[0] = 0;
-    if (host) {
-        unsigned n = 0;
-        while (host[n] && n + 1 < sizeof g_thost[slot].host) { g_thost[slot].host[n] = host[n]; n++; }
-        g_thost[slot].host[n] = 0;
-    }
-}
-static const char *trust_host(id_ t) {
-    for (unsigned i = 0; i < 64; i++) if (g_thost[i].t == t) return g_thost[i].host;
-    return "";
+    ts_lock();
+    tstate_t *st = ts_get(t, 1);
+    st->policy = 1;
+    unsigned n = 0;
+    while (host && host[n] && n + 1 < sizeof st->host) { st->host[n] = host[n]; n++; }
+    st->host[n] = 0;
+    ts_dirty(st);
+    ts_unlock();
 }
 /* Exceções (SecTrustCopyExceptions/SetExceptions): o app guarda o "confiar neste certificado" do usuário.
  * O dado é "mOS-exc" seguido do DER do certificado folha; vale só para a confiança cuja folha é esse DER. */
@@ -970,6 +1202,7 @@ id_ SecTrustCopyExceptions(id_ trust) {
 Boolean SecTrustSetExceptions(id_ trust, id_ exceptions) {
     if (!trust) return 0;
     trust_exc_clear(trust);
+    ts_lock(); ts_dirty(ts_get(trust, 0)); ts_unlock();
     if (!exceptions) return 0;
     id_ leaf = trust_leaf(trust);
     if (!leaf || CFGetTypeID(exceptions) != CFDataGetTypeID()) return 0;
@@ -984,38 +1217,215 @@ Boolean SecTrustSetExceptions(id_ trust, id_ exceptions) {
 static void trust_unmark(id_ t) {
     trust_exc_clear(t);
     for (int i = 0; i < 64; i++) if (g_verified[i] == t) g_verified[i] = 0;
-    for (int i = 0; i < 64; i++) if (g_thost[i].t == t) g_thost[i].t = 0;
+    ts_lock();
+    tstate_t *st = ts_get(t, 0);
+    if (st) {
+        if (st->anchors) CFRelease(st->anchors);
+        if (st->policies) CFRelease(st->policies);
+        for (size_t i = 0; i < sizeof *st; i++) ((u8 *)st)[i] = 0;
+    }
+    ts_unlock();
 }
 static int trust_verified(id_ t) { for (int i = 0; t && i < 64; i++) if (g_verified[i] == t) return 1; return 0; }
-extern int cx_sectrust_verify(const u8 *const *ders, const u32 *lens, unsigned n, const char *host);
-OSStatus SecTrustEvaluate(id_ trust, u32 *result) {
-    int ok = 0;
+extern int cx_sectrust_eval(const u8 *const *ders, const u32 *lens, unsigned n, const u8 *const *anc, const u32 *alens,
+                            unsigned na, int use_system, int policy, const char *host, long long at_unix, char *err,
+                            unsigned errlen);
+enum { X_OK = 0, X_PARSE, X_UNKNOWN_ISSUER, X_SELF_SIGNED, X_UNTRUSTED_ROOT, X_EXPIRED, X_NOT_YET_VALID, X_BAD_SIG,
+       X_UNSUPPORTED, X_NOT_CA, X_PATHLEN, X_NAME, X_KEY_USAGE, X_WEAK_KEY, X_CRITICAL_EXT, X_TOO_LONG, X_NO_MEM };
+#define errSecNotTrusted (-67843)
+#define errSecCertificateExpired (-67818)
+#define errSecCertificateNotValidYet (-67819)
+#define errSecHostNameMismatch (-67602)
+#define errSecInvalidSignature (-67688)
+#define errSecInvalidExtendedKeyUsage (-67609)
+#define errSecUnknownCriticalExtensionFlag (-67603)
+static OSStatus xerr_status(int e) {
+    switch (e) {
+    case X_EXPIRED: return errSecCertificateExpired;
+    case X_NOT_YET_VALID: return errSecCertificateNotValidYet;
+    case X_NAME: return errSecHostNameMismatch;
+    case X_BAD_SIG: return errSecInvalidSignature;
+    case X_KEY_USAGE: return errSecInvalidExtendedKeyUsage;
+    case X_CRITICAL_EXT: return errSecUnknownCriticalExtensionFlag;
+    default: return errSecNotTrusted;
+    }
+}
+int cx_ts_anchors(const u8 **ders, u32 *lens, int max, u8 ***own);
+int cx_ts_denied(const u8 *der, u32 n);
+/* avalia e guarda o resultado (kSecTrustResult*) no estado */
+static void trust_run(id_ trust, tstate_t *snap) {
     long n = trust ? CFArrayGetCount(trust) : 0;
-    if (n > 0 && n <= 8) {
-        const u8 *ders[8];
-        u32 lens[8];
-        int good = 1;
-        for (long i = 0; i < n; i++) {
-            id_ c = CFArrayGetValueAtIndex(trust, i);
-            if (!c || CFGetTypeID(c) != CFDataGetTypeID() || CFDataGetLength(c) < 4) { good = 0; break; }
-            ders[i] = CFDataGetBytePtr(c);
-            lens[i] = (u32)CFDataGetLength(c);
+    snap->result = kSecTrustResultRecoverableTrustFailure;
+    snap->xerr = X_UNKNOWN_ISSUER;
+    snap->msg[0] = 0;
+    if (trust_verified(trust)) { snap->result = kSecTrustResultUnspecified; snap->xerr = 0; return; }
+    if (n <= 0 || n > 10) { snap->result = kSecTrustResultInvalid; snap->xerr = X_PARSE; return; }
+    const u8 *ders[10]; u32 lens[10];
+    for (long i = 0; i < n; i++) {
+        id_ c = CFArrayGetValueAtIndex(trust, i);
+        if (!c || CFGetTypeID(c) != CFDataGetTypeID() || CFDataGetLength(c) < 4) { snap->result = kSecTrustResultInvalid; snap->xerr = X_PARSE; return; }
+        ders[i] = CFDataGetBytePtr(c);
+        lens[i] = (u32)CFDataGetLength(c);
+    }
+    const u8 *anc[64]; u32 alens[64];
+    unsigned na = 0;
+    if (snap->anchors) {
+        long m = CFGetTypeID(snap->anchors) == CFArrayGetTypeID() ? CFArrayGetCount(snap->anchors) : 0;
+        for (long i = 0; i < m && na < 64; i++) {
+            id_ c = CFArrayGetValueAtIndex(snap->anchors, i);
+            if (c && CFGetTypeID(c) == CFDataGetTypeID()) { anc[na] = CFDataGetBytePtr(c); alens[na] = (u32)CFDataGetLength(c); na++; }
         }
-        if (good) ok = cx_sectrust_verify(ders, lens, (unsigned)n, trust_host(trust));
-    } else ok = trust_verified(trust);
-    if (!ok && trust_excepted(trust)) ok = 1;
-    if (result) *result = ok ? kSecTrustResultUnspecified : kSecTrustResultRecoverableTrustFailure;
+    }
+    /* âncoras e negações do usuário/admin (SecTrustSettings), exceto com "só minhas âncoras" */
+    u8 **own = 0;
+    int nown = 0;
+    if (!snap->anchors_only) {
+        nown = cx_ts_anchors(anc + na, alens + na, (int)(64 - na), &own);
+        na += (unsigned)nown;
+    }
+    for (long i = 0; i < n; i++)
+        if (cx_ts_denied(ders[i], lens[i])) {
+            for (int j = 0; j < nown; j++) free(own[j]);
+            free(own);
+            snap->result = kSecTrustResultDeny;
+            snap->xerr = X_UNTRUSTED_ROOT;
+            cx_snprintf(snap->msg, sizeof snap->msg, "certificado marcado como \"Nunca confiar\" nos ajustes de confiança");
+            return;
+        }
+    long long at = snap->has_date ? (long long)(snap->date + 978307200.0) : -1;
+    int e = cx_sectrust_eval(ders, lens, (unsigned)n, anc, alens, na, !snap->anchors_only, snap->policy,
+                             snap->host[0] ? snap->host : 0, at, snap->msg, sizeof snap->msg);
+    for (int j = 0; j < nown; j++) free(own[j]);
+    free(own);
+    snap->xerr = e;
+    snap->result = e == X_OK ? kSecTrustResultUnspecified
+                 : e == X_PARSE || e == X_NO_MEM ? kSecTrustResultFatalTrustFailure : kSecTrustResultRecoverableTrustFailure;
+}
+static void trust_eval_cached(id_ trust, u32 *result, int *xerr, char *msg, size_t mn) {
+    tstate_t snap;
+    ts_lock();
+    tstate_t *st = ts_get(trust, 1);
+    snap = *st;
+    if (snap.anchors) CFRetain(snap.anchors);
+    ts_unlock();
+    if (!snap.evaluated) trust_run(trust, &snap);
+    if (snap.result != kSecTrustResultUnspecified && trust_excepted(trust)) { snap.result = kSecTrustResultProceed; snap.xerr = 0; }
+    ts_lock();
+    st = ts_get(trust, 1);
+    st->evaluated = 1; st->result = snap.result; st->xerr = snap.xerr;
+    memcpy(st->msg, snap.msg, sizeof st->msg);
+    ts_unlock();
+    if (snap.anchors) CFRelease(snap.anchors);
+    if (result) *result = snap.result;
+    if (xerr) *xerr = snap.xerr;
+    if (msg && mn) { size_t i = 0; for (; i + 1 < mn && snap.msg[i]; i++) msg[i] = snap.msg[i]; msg[i] = 0; }
+}
+OSStatus SecTrustEvaluate(id_ trust, u32 *result) {
+    if (!trust) return errSecParam;
+    ts_lock(); ts_dirty(ts_get(trust, 1)); ts_unlock();
+    trust_eval_cached(trust, result, 0, 0, 0);
     return errSecSuccess;
 }
-OSStatus SecTrustGetTrustResult(id_ trust, u32 *result) { return SecTrustEvaluate(trust, result); }
-Boolean SecTrustEvaluateWithError(id_ trust, id_ *err) {
-    u32 result = 0;
-    SecTrustEvaluate(trust, &result);
-    if (err) *err = 0;
-    return result == kSecTrustResultUnspecified;
+OSStatus SecTrustGetTrustResult(id_ trust, u32 *result) {
+    if (!trust || !result) return errSecParam;
+    ts_lock(); tstate_t *st = ts_get(trust, 0); int ev = st && st->evaluated; u32 r = ev ? st->result : 0; ts_unlock();
+    *result = ev ? r : kSecTrustResultInvalid;
+    return errSecSuccess;
 }
-OSStatus SecTrustEvaluateAsync(id_ trust, void *queue, void *block) { (void)trust; (void)queue; (void)block; return errSecUnimplemented; }
-OSStatus SecTrustEvaluateAsyncWithError(id_ trust, void *queue, void *block) { (void)trust; (void)queue; (void)block; return errSecUnimplemented; }
+id_ CFErrorCreate(void *alloc, id_ domain, long code, id_ info);
+extern const void *kCFErrorDomainOSStatus, *kCFErrorLocalizedDescriptionKey;
+static id_ trust_error(int xerr, const char *msg) {
+    id_ info = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ m = str_n(msg && msg[0] ? msg : "certificado não confiável", strlen(msg && msg[0] ? msg : "certificado não confiável"));
+    CFDictionarySetValue(info, K_(kCFErrorLocalizedDescriptionKey), m);
+    CFRelease(m);
+    id_ e = CFErrorCreate(0, K_(kCFErrorDomainOSStatus), xerr_status(xerr), info);
+    CFRelease(info);
+    return e;
+}
+Boolean SecTrustEvaluateWithError(id_ trust, id_ *err) {
+    if (err) *err = 0;
+    if (!trust) return 0;
+    u32 result = 0;
+    int xerr = 0;
+    char msg[160];
+    ts_lock(); ts_dirty(ts_get(trust, 1)); ts_unlock();
+    trust_eval_cached(trust, &result, &xerr, msg, sizeof msg);
+    int ok = result == kSecTrustResultUnspecified || result == kSecTrustResultProceed;
+    if (!ok && err) *err = trust_error(xerr, msg);
+    return (Boolean)ok;
+}
+extern const void *kSecTrustResultValue, *kSecTrustEvaluationDate, *kSecPropertyKeyType, *kSecPropertyKeyValue,
+    *kSecPropertyTypeError;
+id_ cx_num_i(long long v);
+id_ SecTrustCopyResult(id_ trust) {
+    if (!trust) return 0;
+    u32 r = 0;
+    SecTrustGetTrustResult(trust, &r);
+    if (r == kSecTrustResultInvalid) trust_eval_cached(trust, &r, 0, 0, 0);
+    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ n = cx_num_i(r);
+    CFDictionarySetValue(d, K_(kSecTrustResultValue), n);
+    objc_release(n);
+    id_ dt = CFDateCreate(0, CFAbsoluteTimeGetCurrent());
+    CFDictionarySetValue(d, K_(kSecTrustEvaluationDate), dt);
+    CFRelease(dt);
+    return d;
+}
+id_ SecTrustCopyProperties(id_ trust) {
+    if (!trust) return 0;
+    u32 r = 0;
+    char msg[160];
+    trust_eval_cached(trust, &r, 0, msg, sizeof msg);
+    id_ a = CFArrayCreateMutable(0, 0, 0);
+    if (r != kSecTrustResultUnspecified && r != kSecTrustResultProceed) {
+        id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+        id_ m = str_n(msg, strlen(msg));
+        CFDictionarySetValue(d, K_(kSecPropertyKeyType), K_(kSecPropertyTypeError));
+        CFDictionarySetValue(d, K_(kSecPropertyKeyValue), m);
+        CFRelease(m);
+        CFArrayAppendValue(a, d);
+        CFRelease(d);
+    }
+    return a;
+}
+/* assíncrono: avalia na fila pedida e chama o bloco lá (como o trustd, mas sem processo à parte) */
+void *_Block_copy(const void *b);
+void _Block_release(const void *b);
+void dispatch_async_f(void *queue, void *ctx, void (*fn)(void *));
+typedef struct { void *isa; int flags, reserved; void *invoke; } blk_t;
+typedef struct { id_ trust; void *block; int with_error; } async_t;
+static void trust_async_run(void *p) {
+    async_t *a = p;
+    blk_t *b = a->block;
+    if (a->with_error) {
+        id_ err = 0;
+        Boolean ok = SecTrustEvaluateWithError(a->trust, &err);
+        ((void (*)(void *, id_, Boolean, id_))b->invoke)(b, a->trust, ok, err);
+        if (err) CFRelease(err);
+    } else {
+        u32 r = 0;
+        SecTrustEvaluate(a->trust, &r);
+        ((void (*)(void *, id_, u32))b->invoke)(b, a->trust, r);
+    }
+    _Block_release(a->block);
+    CFRelease(a->trust);
+    free(a);
+}
+static OSStatus trust_async(id_ trust, void *queue, void *block, int with_error) {
+    if (!trust || !queue || !block) return errSecParam;
+    async_t *a = malloc(sizeof *a);
+    if (!a) return errSecAllocate;
+    a->trust = CFRetain(trust);
+    a->block = _Block_copy(block);
+    a->with_error = with_error;
+    dispatch_async_f(queue, a, trust_async_run);
+    return errSecSuccess;
+}
+OSStatus SecTrustEvaluateAsync(id_ trust, void *queue, void *block) { return trust_async(trust, queue, block, 0); }
+OSStatus SecTrustEvaluateAsyncWithError(id_ trust, void *queue, void *block) { return trust_async(trust, queue, block, 1); }
+id_ SecTrustCopyKey(id_ trust);
+id_ SecTrustCopyPublicKey(id_ trust);
 
 /* ================================================================ chaves, identidades, PKCS#12, transforms */
 /* SecKey*: seckey.c (núcleo em seckey_core.inc) */
@@ -1080,12 +1490,7 @@ OSStatus SecIdentityCopyPrivateKey(id_ ident, id_ *key) {
 }
 id_ SecIdentityCopyPreferred(id_ name, id_ usage, id_ names) { (void)name; (void)usage; (void)names; return 0; }
 OSStatus SecIdentitySetPreferred(id_ ident, id_ name, id_ usage) { (void)ident; (void)name; (void)usage; return errSecUnimplemented; }
-OSStatus SecPKCS12Import(id_ data, id_ opts, id_ *items_) { (void)data; (void)opts; if (items_) *items_ = 0; return errSecUnimplemented; }
-OSStatus SecItemImport(id_ data, id_ ext, u32 *fmt, u32 *type, u32 flags, const void *params, void *kc, id_ *out) {
-    (void)data; (void)ext; (void)fmt; (void)type; (void)flags; (void)params; (void)kc;
-    if (out) *out = 0;
-    return errSecUnimplemented;
-}
+/* SecPKCS12Import, SecItemImport e SecItemExport: seccert.c */
 id_ SecDigestTransformCreate(id_ type, long len, id_ *err) { (void)type; (void)len; if (err) *err = 0; return 0; }
 id_ SecSignTransformCreate(id_ key, id_ *err) { (void)key; if (err) *err = 0; return 0; }
 id_ SecVerifyTransformCreate(id_ key, id_ sig, id_ *err) { (void)key; (void)sig; if (err) *err = 0; return 0; }

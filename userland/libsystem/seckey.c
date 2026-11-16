@@ -8,8 +8,8 @@
  * Teste do núcleo: tools/seckeytest.c + tools/seckeytest.py (contra o OpenSSL).
  *
  * Não há Secure Enclave: kSecAttrTokenIDSecureEnclave devolve errSecUnimplemented (-4), como num Mac sem T2.
- * ECIES e OAEP+AESGCM ainda não (SecKeyIsAlgorithmSupported diz não). Chave permanente (kSecAttrIsPermanent)
- * no Keychain é a fase 2 do plano (docs/servicos-seguranca-plano.md): por ora a chave vive só na memória.
+ * ECIES e OAEP+AESGCM ainda não (SecKeyIsAlgorithmSupported diz não). kSecAttrIsPermanent grava as metades no
+ * Keychain (classe kSecClassKey de security.c); SecItemCopyMatching com kSecReturnRef devolve o SecKey.
  */
 #define MOS_HOST_TEST 1                    /* cabeçalhos do kernel pelo shim de userland/libsystem/kshim */
 #include "sys.h"
@@ -121,6 +121,25 @@ static sk_key *unwrap(id_ key) {
     if (!key || object_getClass(key) != key_class()) return 0;
     return ((seckey_obj *)key)->k;
 }
+/* para security.c (SecItemAdd de kSecClassKey): classe, tipo (1 RSA, 2 EC) e kSecAttrApplicationLabel
+ * (SHA-1 do formato externo da pública) a partir do formato externo guardado */
+int cx_seckey_describe(const u8 *ext, u32 n, int *priv, int *type, u8 klbl[20]) {
+    sk_key *k = sk_import(ext, n, 0, -1);
+    if (!k) return -1;
+    *priv = k->priv;
+    *type = k->type;
+    sk_key *pub = k->priv ? sk_public_of(k) : 0;
+    u8 *b;
+    usize bn;
+    int r = sk_export(pub ? pub : k, &b, &bn);
+    if (!r) { sha1(b, bn, klbl); free(b); }
+    sk_free(pub);
+    sk_free(k);
+    return r;
+}
+/* para seccert.c (SecItemExport) */
+int cx_seckey_spki(id_ key, u8 **out, u32 *n) { sk_key *k = unwrap(key); usize m; if (!k || sk_export_spki(k, out, &m)) return -1; *n = (u32)m; return 0; }
+int cx_seckey_pkcs8(id_ key, u8 **out, u32 *n) { sk_key *k = unwrap(key); usize m; if (!k || sk_export_pkcs8(k, out, &m)) return -1; *n = (u32)m; return 0; }
 /* para security.c (identidades, certificados) */
 id_ cx_seckey_from_spki(const u8 *der, u32 n) { return wrap(sk_from_spki(der, n)); }
 id_ cx_seckey_import(const u8 *der, u32 n, int priv) { return wrap(sk_import(der, n, 0, priv)); }
@@ -140,6 +159,35 @@ static int type_of(id_ v) {
 static long num_of(id_ v) { return v ? MSG0(long, v, "integerValue") : 0; }
 
 /* ================================================================ criar */
+OSStatus SecItemAdd(id_ attrs, id_ *result);
+extern const void *kSecValueRef, *kSecPublicKeyAttrs, *kSecAttrApplicationTag, *kSecAttrLabel, *kSecAttrAccessGroup;
+static int flag_of(id_ d, const void *k) { id_ v = d ? CFDictionaryGetValue(d, K_(k)) : 0; return v && MSG0(Boolean, v, "boolValue"); }
+static id_ attr_of(id_ sub, id_ top, const void *k) {
+    id_ v = sub ? CFDictionaryGetValue(sub, K_(k)) : 0;
+    return v ? v : top ? CFDictionaryGetValue(top, K_(k)) : 0;
+}
+id_ SecKeyCopyPublicKey(id_ key);
+/* kSecAttrIsPermanent (no topo ou em kSecPrivateKeyAttrs/kSecPublicKeyAttrs): grava as duas metades no Keychain
+ * com a tag, o rótulo e o grupo pedidos, como o SecKeyCreateRandomKey do macOS */
+static OSStatus persist(id_ key, id_ params) {
+    id_ pa = CFDictionaryGetValue(params, K_(kSecPrivateKeyAttrs)), ua = CFDictionaryGetValue(params, K_(kSecPublicKeyAttrs));
+    int top = flag_of(params, kSecAttrIsPermanent), p_priv = top || flag_of(pa, kSecAttrIsPermanent), p_pub = top || flag_of(ua, kSecAttrIsPermanent);
+    for (int half = 0; half < 2; half++) {
+        if (!(half ? p_pub : p_priv)) continue;
+        id_ sub = half ? ua : pa;
+        id_ obj = half ? SecKeyCopyPublicKey(key) : objc_retain(key);
+        id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+        CFDictionarySetValue(d, K_(kSecClass), K_(kSecClassKey));
+        CFDictionarySetValue(d, K_(kSecValueRef), obj);
+        const void *keys[] = {kSecAttrApplicationTag, kSecAttrLabel, kSecAttrAccessGroup};
+        for (int i = 0; i < 3; i++) { id_ v = attr_of(sub, params, keys[i]); if (v) CFDictionarySetValue(d, K_(keys[i]), v); }
+        OSStatus st = SecItemAdd(d, 0);
+        CFRelease(d);
+        objc_release(obj);
+        if (st && st != -25299) return st;            /* errSecDuplicateItem: a mesma chave já estava lá */
+    }
+    return errSecSuccess;
+}
 id_ SecKeyCreateRandomKey(id_ params, id_ *err) {
     if (err) *err = 0;
     if (!params || CFGetTypeID(params) != CFDictionaryGetTypeID()) { set_err(err, errSecParam); return 0; }
@@ -151,7 +199,12 @@ id_ SecKeyCreateRandomKey(id_ params, id_ *err) {
     if (!bits) bits = t == SK_RSA ? 2048 : 256;
     sk_key *k = t == SK_RSA ? sk_rsa_generate((u32)bits) : sk_ec_generate((u32)bits);
     if (!k) { set_err(err, errSecParam); return 0; }
-    return wrap(k);
+    id_ key = wrap(k);
+    if (key) {
+        OSStatus st = persist(key, params);
+        if (st) { objc_release(key); set_err(err, st); return 0; }
+    }
+    return key;
 }
 OSStatus SecKeyGeneratePair(id_ params, id_ *pub, id_ *priv) {
     if (pub) *pub = 0;

@@ -130,10 +130,11 @@ int main(int argc, char **argv) {
         spit(argv[4], b, n);
         return 0;
     }
-    if ((!strcmp(c, "pub") || !strcmp(c, "spki") || !strcmp(c, "import")) && argc == 4) {
+    if ((!strcmp(c, "pub") || !strcmp(c, "spki") || !strcmp(c, "pkcs8") || !strcmp(c, "import")) && argc == 4) {
         sk_key *k = load(argv[2]);
         u8 *b; usize n;
         if (!strcmp(c, "spki")) { if (sk_export_spki(k, &b, &n)) return 5; }
+        else if (!strcmp(c, "pkcs8")) { if (sk_export_pkcs8(k, &b, &n)) return 5; }
         else {
             sk_key *p = !strcmp(c, "pub") ? sk_public_of(k) : k;
             if (sk_export(p, &b, &n)) return 5;

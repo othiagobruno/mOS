@@ -655,8 +655,6 @@ OSStatus SecTrustedApplicationCreateFromRequirement(const char *req, void **app)
 OSStatus SSLCopyDistinguishedNames(void *ctx, id *names) { (void)ctx; if (names) *names = 0; return 0; }
 OSStatus SSLSetCertificateAuthorities(void *ctx, id certs, u8 replace) { (void)ctx; (void)certs; (void)replace; return 0; }
 OSStatus SSLSetClientSideAuthenticate(void *ctx, int auth) { (void)ctx; (void)auth; return 0; }
-OSStatus SecCertificateAddToKeychain(void *cert, void *kc) { (void)cert; (void)kc; return 0; }
-OSStatus SecItemExport(id item, u32 fmt, u32 flags, const void *params, id *out) { (void)item; (void)fmt; (void)flags; (void)params; if (out) *out = 0; return errSecUnimplemented; }
 /* o mOS tem um só keychain (security.c): abrir/criar devolvem uma referência a ele */
 OSStatus SecKeychainOpen(const char *path, void **kc) { (void)path; if (kc) *kc = (void *)token(); return 0; }
 OSStatus SecKeychainCreate(const char *path, u32 plen, const void *pw, u8 prompt, void *access, void **kc) { (void)path; (void)plen; (void)pw; (void)prompt; (void)access; if (kc) *kc = (void *)token(); return 0; }
