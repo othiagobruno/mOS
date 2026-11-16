@@ -308,6 +308,35 @@ i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
         kfree(tmp);
         return need;
     }
+    if (op == MOS_NET_IFLIST) {
+        int n = net_device_count();
+        if (!a) return n;
+        u64 max = b;
+        u64 k = 0;
+        for (int i = 0; i < n && k < max; i++, k++) {
+            netdev_t *d = net_device_at(i);
+            mos_net_if_t e;
+            memset(&e, 0, sizeof e);
+            const char *nm = d && d->name ? d->name : "?";
+            usize l = strlen(nm);
+            memcpy(e.name, nm, l < sizeof e.name - 1 ? l : sizeof e.name - 1);
+            if (d) memcpy(e.mac, d->mac, 6);
+            if (d && (strstr(nm, "Wi-Fi") || strstr(nm, "wlan"))) e.flags |= MOS_NET_IF_WIFI;
+            if (d && (!d->link_up || d->link_up())) e.flags |= MOS_NET_IF_LINK;
+            extern netdev_t *g_netdev;
+            if (d && d == g_netdev) {
+                net_info_t *ni = net_info();
+                net6_info_t *n6 = net6_info();
+                e.flags |= MOS_NET_IF_ACTIVE | (ni->configured ? MOS_NET_IF_CONF : 0);
+                if (ni->configured) { e.ip = ni->ip; e.mask = ni->mask; e.gw = ni->gw; e.dns = ni->dns; }
+                if (n6 && n6->ll_ok) { e.flags |= MOS_NET_IF_V6; memcpy(e.ll6, n6->ll, 16); }
+                if (n6 && n6->global_ok) { e.flags |= MOS_NET_IF_V6G; memcpy(e.global6, n6->global, 16); e.prefix6 = n6->prefix_len; }
+                e.rx_bytes = ni->rx_bytes; e.tx_bytes = ni->tx_bytes; e.rx_packets = ni->rx_packets; e.tx_packets = ni->tx_packets;
+            }
+            if (!uvm_copy_out(p, a + k * sizeof e, &e, sizeof e)) return -MOS_EFAULT;
+        }
+        return (i64)k;
+    }
     if (op == MOS_NET_TLS_ALPN) {
         u8 list[128];
         if (c > sizeof list) return -MOS_EINVAL;

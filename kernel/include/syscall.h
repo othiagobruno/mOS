@@ -636,7 +636,23 @@ enum {
                             * u32 quantidade, depois u32 tamanho + DER de cada certificado. */
     MOS_NET_TLS_ALPN,      /* (sessão, lista, n) -> 0 | -errno   lista ALPN no formato do fio, antes do 1º HANDSHAKE */
     MOS_NET_TLS_INFO,      /* (sessão, mos_net_tls_info_t *) -> 0 | -errno   versão, cifra e ALPN escolhidos */
+    MOS_NET_IFLIST,        /* (mos_net_if_t *buf, max) -> quantidade de placas (buf 0: só conta). Ordem de registro. */
 };
+#define MOS_NET_IF_LINK   1  /* mos_net_if_t.flags: cabo/associação de pé */
+#define MOS_NET_IF_ACTIVE 2  /* é a interface por onde a pilha fala (ip/máscara/gateway/dns valem) */
+#define MOS_NET_IF_WIFI   4  /* 802.11 */
+#define MOS_NET_IF_CONF   8  /* configurada por DHCP */
+#define MOS_NET_IF_V6     16 /* ll6 válido; global6 vale com MOS_NET_IF_V6G */
+#define MOS_NET_IF_V6G    32
+typedef struct {
+    char name[48];               /* nome do driver ("Wi-Fi (wlan0)", "Realtek RTL8168"...) */
+    unsigned char mac[6], pad[2];
+    unsigned int flags;
+    unsigned int ip, mask, gw, dns;            /* ordem de host; só na ativa */
+    unsigned char ll6[16], global6[16];        /* só na ativa */
+    unsigned int prefix6, pad2;
+    unsigned long long rx_bytes, tx_bytes, rx_packets, tx_packets;   /* só na ativa */
+} mos_net_if_t;
 typedef struct {
     unsigned int version;        /* 0x0304 (1.3), 0x0303 (1.2), 0 = handshake não terminou */
     unsigned int suite;          /* código IANA da cifra */

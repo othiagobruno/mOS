@@ -251,12 +251,6 @@ int gethostuuid(u8 *uuid, const void *timeout) {
     return 0;
 }
 int getpeereid(int fd, unsigned *uid, unsigned *gid) { (void)fd; if (uid) *uid = 501; if (gid) *gid = 20; return 0; }
-unsigned if_nametoindex(const char *name) {
-    if (!name) return 0;
-    if (!strcmp(name, "lo0")) return 1;
-    if (!strcmp(name, "en0")) return 4;
-    return 0;
-}
 /* gerência de energia: aceita (o mOS não dorme sozinho com apps abertos) */
 int IOPMAssertionCreateWithName(void *type, u32 level, void *name, u32 *id) { (void)type; (void)level; (void)name; if (id) *id = 1; return 0; }
 int IOPMAssertionRelease(u32 id) { (void)id; return 0; }

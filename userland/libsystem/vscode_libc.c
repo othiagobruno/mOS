@@ -326,40 +326,7 @@ void *tmpfile(void) {
 typedef struct { u8 b[16]; } vs_in6_addr_t;
 const vs_in6_addr_t in6addr_any = {{0}};
 const vs_in6_addr_t in6addr_loopback = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}};
-typedef struct { u8 len, family; u16 port; u32 addr; u8 zero[8]; } vs_sin_t;
-typedef struct vs_ifaddrs {
-    struct vs_ifaddrs *next; char *name; u32 flags; void *addr, *netmask, *dstaddr; void *data;
-} vs_ifaddrs_t;
-/* só a interface de loopback e a da rede (virtio/e1000 do mOS, 10.0.2.15 como no QEMU usermode) */
-int getifaddrs(vs_ifaddrs_t **out) {
-    static const struct { const char *name; u32 flags; u32 ip, mask; } ifs[] = {
-        {"lo0", 0x8049 /* UP|LOOPBACK|RUNNING|MULTICAST */, 0x0100007Fu, 0x000000FFu},
-        {"en0", 0x8863 /* UP|BROADCAST|RUNNING|SIMPLEX|MULTICAST */, 0x0F02000Au, 0x00FFFFFFu},
-    };
-    vs_ifaddrs_t *head = 0, **tail = &head;
-    for (unsigned i = 0; i < sizeof ifs / sizeof ifs[0]; i++) {
-        vs_ifaddrs_t *a = calloc(1, sizeof *a + 2 * sizeof(vs_sin_t));
-        if (!a) break;
-        vs_sin_t *ad = (vs_sin_t *)(a + 1), *mk = ad + 1;
-        ad->len = mk->len = 16; ad->family = mk->family = 2;
-        ad->addr = ifs[i].ip; mk->addr = ifs[i].mask;
-        a->name = strdup(ifs[i].name);
-        a->flags = ifs[i].flags;
-        a->addr = ad; a->netmask = mk;
-        *tail = a; tail = &a->next;
-    }
-    *out = head;
-    return 0;
-}
-void freeifaddrs(vs_ifaddrs_t *a) {
-    while (a) { vs_ifaddrs_t *n = a->next; free(a->name); free(a); a = n; }
-}
-char *if_indextoname(unsigned idx, char *buf) {
-    const char *n = idx == 1 ? "lo0" : idx == 2 ? "en0" : 0;
-    if (!n) { set_errno(6 /* ENXIO */); return 0; }
-    strlcpy(buf, n, 16);
-    return buf;
-}
+/* getifaddrs, freeifaddrs, if_indextoname e if_nametoindex: netif.c (lista real do kernel) */
 /* recvmsg_x/sendmsg_x (lotes do QUIC): o Chromium cai para recvmsg/sendmsg com ENOSYS */
 ssize_t recvmsg_x(int s, void *msgp, u32 cnt, int flags) { (void)s; (void)msgp; (void)cnt; (void)flags; set_errno(E_NOSYS); return -1; }
 ssize_t sendmsg_x(int s, const void *msgp, u32 cnt, int flags) { (void)s; (void)msgp; (void)cnt; (void)flags; set_errno(E_NOSYS); return -1; }
