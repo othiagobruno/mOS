@@ -12,6 +12,12 @@ int mp4w_add_aac(mp4w_t *m, int rate, int channels, const uint8_t *asc, uint32_t
 int mp4w_add_opus(mp4w_t *m, int channels, uint32_t preskip, uint32_t in_rate);
 /* PCM inteiro com sinal, little-endian (MOV 'sowt' / MP4 'ipcm'); bits 16/24/32 */
 int mp4w_add_lpcm(mp4w_t *m, int rate, int channels, int bits);
+/* faixas podem ser criadas depois das amostras de outras. Sessão do AVAssetWriter, no timescale da faixa: delay = tempo
+ * vazio antes da faixa no filme, skip = mídia cortada do começo (além do priming / atraso de quadros B), limit = duração
+ * máxima apresentada (< 0 sem limite) */
+int mp4w_set_edit(mp4w_t *m, int track, int64_t delay, int64_t skip, int64_t limit);
+/* matriz do tkhd (a, b, u, c, d, v, tx, ty, w; 16.16 e 2.30 como no QuickTime) — preferredTransform / transform */
+int mp4w_set_matrix(mp4w_t *m, int track, const int32_t mtx[9]);
 /* uma amostra; tempos no timescale da faixa; sync = quadro-chave (áudio: sempre 1) */
 int mp4w_write(mp4w_t *m, int track, const uint8_t *data, uint32_t size, int64_t pts, int64_t dts, uint32_t dur, int sync);
 /* grava o moov e fecha; 0 ok */

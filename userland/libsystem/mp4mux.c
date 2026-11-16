@@ -38,6 +38,9 @@ typedef struct {
     wchunk_t *c; uint32_t nc, cc;
     int64_t first_dts;
     int has_cto;
+    int64_t delay, skip, limit;   /* edit list da sessão (mp4w_set_edit) */
+    int32_t mtx[9]; int has_mtx;
+    uint64_t pcm_frames;          /* LPCM: cada quadro de áudio é uma amostra de tamanho fixo (stsz constante) */
 } wtrack_t;
 struct mp4w {
     void *f;
@@ -110,11 +113,11 @@ mp4w_t *mp4w_open(const char *path, int kind, int faststart) {
 
 static wtrack_t *newtrack(mp4w_t *m, int kind) {
     if (!m || m->failed || m->nt >= 8) return 0;
-    for (int i = 0; i < m->nt; i++) if (m->t[i].ns) return 0;   /* faixas só antes da primeira amostra */
-    wtrack_t *t = &m->t[m->nt];
+    wtrack_t *t = &m->t[m->nt];   /* pode chegar depois das amostras das outras (o avcC do codificador só sai no 1º quadro) */
     memset(t, 0, sizeof *t);
     t->kind = kind;
     t->first_dts = -1;
+    t->limit = -1;
     return t;
 }
 static int setcfg(wtrack_t *t, const uint8_t *d, uint32_t n) {
@@ -152,9 +155,40 @@ int mp4w_add_lpcm(mp4w_t *m, int rate, int channels, int bits) {
     return m->nt++;
 }
 
+int mp4w_set_edit(mp4w_t *m, int track, int64_t delay, int64_t skip, int64_t limit) {
+    if (!m || track < 0 || track >= m->nt || delay < 0 || skip < 0) return -1;
+    m->t[track].delay = delay; m->t[track].skip = skip; m->t[track].limit = limit;
+    return 0;
+}
+int mp4w_set_matrix(mp4w_t *m, int track, const int32_t mtx[9]) {
+    if (!m || track < 0 || track >= m->nt || !mtx) return -1;
+    memcpy(m->t[track].mtx, mtx, sizeof m->t[track].mtx);
+    m->t[track].has_mtx = 1;
+    return 0;
+}
+
 int mp4w_write(mp4w_t *m, int track, const uint8_t *data, uint32_t size, int64_t pts, int64_t dts, uint32_t dur, int sync) {
     if (!m || m->failed || track < 0 || track >= m->nt || !data || !size) return -1;
     wtrack_t *t = &m->t[track];
+    uint32_t bpf = (uint32_t)(t->channels * t->bits / 8);
+    if (t->kind == 4) {   /* LPCM: o bloco vira size/bpf amostras de um quadro no chunk */
+        if (!bpf || size % bpf) return -1;
+        if (m->last_track != track || !t->nc) {
+            if (t->nc == t->cc) {
+                uint32_t nc = t->cc ? t->cc * 2 : 64;
+                wchunk_t *x = realloc(t->c, nc * sizeof *x);
+                if (!x) { m->failed = 1; return -1; }
+                t->c = x; t->cc = nc;
+            }
+            t->c[t->nc].off = m->pos;
+            t->c[t->nc].count = 0;
+            t->nc++;
+        }
+        t->c[t->nc - 1].count += size / bpf;
+        t->pcm_frames += size / bpf;
+        m->last_track = track;
+        return fw(m, data, size);
+    }
     if (t->ns == t->cs) {
         uint32_t nc = t->cs ? t->cs * 2 : 256;
         wsample_t *x = realloc(t->s, nc * sizeof *x);
@@ -233,17 +267,35 @@ static void sample_entry(buf_t *b, const mp4w_t *m, const wtrack_t *t) {
     (void)m;
     end(b, at);
 }
-static uint64_t media_duration(const wtrack_t *t) { uint64_t d = 0; for (uint32_t i = 0; i < t->ns; i++) d += t->s[i].dur; return d; }
+static uint64_t media_duration(const wtrack_t *t) { if (t->kind == 4) return t->pcm_frames; uint64_t d = 0; for (uint32_t i = 0; i < t->ns; i++) d += t->s[i].dur; return d; }
+/* edit list de uma faixa: [vazio de delay] + (pd a partir de media_time). lead = atraso dos quadros B (vídeo) ou priming
+ * (áudio); a sessão (mp4w_set_edit) soma o corte do começo e limita a duração. 1 se a faixa precisa de edts. */
+static int track_edit(const wtrack_t *t, int64_t *media_time, uint64_t *pd) {
+    uint64_t md = media_duration(t);
+    int64_t lead = (int64_t)t->priming;
+    if (t->kind == 1 && t->has_cto) {   /* menor tempo de composição (em geral o do 1º quadro-chave) */
+        int64_t d = 0;
+        lead = INT64_MAX;
+        for (uint32_t k = 0; k < t->ns; k++) { if (d + t->s[k].cto < lead) lead = d + t->s[k].cto; d += t->s[k].dur; }
+    }
+    if (lead < 0) lead = 0;
+    /* atraso de quadros B: a apresentação dura a mídia inteira (só desloca); priming de áudio: some do começo */
+    uint64_t nat = t->kind == 1 ? md : md > (uint64_t)lead ? md - (uint64_t)lead : 0;
+    uint64_t p = nat > (uint64_t)t->skip ? nat - (uint64_t)t->skip : 0;
+    if (t->limit >= 0 && p > (uint64_t)t->limit) p = (uint64_t)t->limit;
+    *media_time = lead + t->skip;
+    *pd = p;
+    return *media_time > 0 || t->delay > 0 || p != nat;
+}
+static uint64_t to_movie(uint64_t v, uint32_t ts, uint32_t mts) { return ts ? (v * mts + ts / 2) / ts : 0; }
 static int write_moov(mp4w_t *m, buf_t *b, int64_t shift, int co64) {
     uint32_t mts = 1000;
     uint64_t movie_dur = 0;
     for (int i = 0; i < m->nt; i++) {
         const wtrack_t *t = &m->t[i];
-        uint64_t md = media_duration(t);
-        int64_t lead = t->kind == 1 && t->has_cto ? t->s[0].cto : (int64_t)t->priming;   /* início da apresentação */
-        /* atraso de quadros B: a apresentação dura a mídia inteira (só desloca); priming de áudio: some do começo */
-        uint64_t pd = t->kind == 1 ? md : md > (uint64_t)lead ? md - (uint64_t)lead : 0;
-        uint64_t d = t->timescale ? pd * mts / t->timescale : 0;
+        int64_t mt; uint64_t pd;
+        track_edit(t, &mt, &pd);
+        uint64_t d = to_movie((uint64_t)t->delay, t->timescale, mts) + to_movie(pd, t->timescale, mts);
         if (d > movie_dur) movie_dur = d;
     }
     size_t_ moov = box(b, "moov");
@@ -254,20 +306,23 @@ static int write_moov(mp4w_t *m, buf_t *b, int64_t shift, int co64) {
     for (int i = 0; i < m->nt; i++) {
         const wtrack_t *t = &m->t[i];
         uint64_t md = media_duration(t);
-        int64_t lead = t->kind == 1 && t->has_cto ? t->s[0].cto : (int64_t)t->priming;
-        if (lead < 0) lead = 0;
-        uint64_t pd = t->kind == 1 ? md : md > (uint64_t)lead ? md - (uint64_t)lead : 0;
+        int64_t mt; uint64_t pd;
+        int need_edts = track_edit(t, &mt, &pd);
+        uint64_t dly = to_movie((uint64_t)t->delay, t->timescale, mts), pdm = to_movie(pd, t->timescale, mts);
         size_t_ trak = box(b, "trak");
         at = fullbox(b, "tkhd", 1, 3);                        /* habilitada, no filme */
-        w64(b, 0); w64(b, 0); w32(b, (uint32_t)i + 1); w32(b, 0); w64(b, t->timescale ? pd * mts / t->timescale : 0);
+        w64(b, 0); w64(b, 0); w32(b, (uint32_t)i + 1); w32(b, 0); w64(b, dly + pdm);
         zeros(b, 8); w16(b, 0); w16(b, t->kind == 1 ? 0 : 1); w16(b, t->kind == 1 ? 0 : 0x100); w16(b, 0);
-        matrix(b);
+        if (t->has_mtx) for (int k = 0; k < 9; k++) w32(b, (uint32_t)t->mtx[k]);
+        else matrix(b);
         w32(b, t->kind == 1 ? (uint32_t)t->width << 16 : 0); w32(b, t->kind == 1 ? (uint32_t)t->height << 16 : 0);
         end(b, at);
-        if (lead > 0) {   /* edit list: a apresentação começa depois do priming / do atraso dos quadros B */
+        if (need_edts) {   /* edit list: vazio do começo da sessão; depois do priming / do atraso dos quadros B / do corte */
             size_t_ ed = box(b, "edts");
             at = fullbox(b, "elst", 1, 0);
-            w32(b, 1); w64(b, t->timescale ? pd * mts / t->timescale : 0); w64(b, (uint64_t)lead); w16(b, 1); w16(b, 0);
+            w32(b, dly ? 2 : 1);
+            if (dly) { w64(b, dly); w64(b, (uint64_t)-1); w16(b, 1); w16(b, 0); }
+            w64(b, pdm); w64(b, (uint64_t)mt); w16(b, 1); w16(b, 0);
             end(b, at); end(b, ed);
         }
         size_t_ mdia = box(b, "mdia");
@@ -292,6 +347,7 @@ static int write_moov(mp4w_t *m, buf_t *b, int64_t shift, int co64) {
         at = fullbox(b, "stts", 0, 0);
         size_t_ cnt = b->n; w32(b, 0);
         uint32_t ne = 0;
+        if (t->kind == 4 && t->pcm_frames) { w32(b, (uint32_t)t->pcm_frames); w32(b, 1); ne = 1; }
         for (uint32_t k = 0; k < t->ns;) {
             uint32_t r = 1;
             while (k + r < t->ns && t->s[k + r].dur == t->s[k].dur) r++;
@@ -328,7 +384,8 @@ static int write_moov(mp4w_t *m, buf_t *b, int64_t shift, int co64) {
         if (!b->err) { b->b[cnt] = (uint8_t)(ne >> 24); b->b[cnt + 1] = (uint8_t)(ne >> 16); b->b[cnt + 2] = (uint8_t)(ne >> 8); b->b[cnt + 3] = (uint8_t)ne; }
         end(b, at);
         at = fullbox(b, "stsz", 0, 0);
-        w32(b, 0); w32(b, t->ns);
+        if (t->kind == 4) { w32(b, (uint32_t)(t->channels * t->bits / 8)); w32(b, (uint32_t)t->pcm_frames); }
+        else { w32(b, 0); w32(b, t->ns); }
         for (uint32_t k = 0; k < t->ns; k++) w32(b, t->s[k].size);
         end(b, at);
         at = fullbox(b, co64 ? "co64" : "stco", 0, 0);
