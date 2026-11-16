@@ -98,4 +98,20 @@ typedef NS_ENUM(NSInteger, NSPopoverBehavior) {
 - (void)close;
 @end
 
+@class NSApplication;
+/* NSApplication do libSystem (appkit.c); o SwiftUI só usa o delegate (@NSApplicationDelegateAdaptor) */
+@protocol NSApplicationDelegate <NSObject>
+@optional
+- (void)applicationWillFinishLaunching:(NSNotification *)notification;
+- (void)applicationDidFinishLaunching:(NSNotification *)notification;
+- (void)applicationWillTerminate:(NSNotification *)notification;
+- (void)applicationDidBecomeActive:(NSNotification *)notification;
+- (void)applicationDidResignActive:(NSNotification *)notification;
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender;
+@end
+@interface NSApplication : NSResponder
+@property (class, readonly, strong) NSApplication *sharedApplication;
+@property (nullable, weak) id<NSApplicationDelegate> delegate;
+@end
+
 NS_ASSUME_NONNULL_END

@@ -3,10 +3,11 @@
 //  OpenSwiftUICore
 //
 //  mOS: cópia do upstream com respondedores de view ligados, `mosInterfaceProvider` (EventGraphHost/FocusHost
-//  por `as(_:)`) e `mosRequestUpdate`. Só isso muda; o resto é o original.
+//  por `as(_:)`), `mosRequestUpdate` e `mosSetRootView`/`mosSetSurface` (raiz e tamanho novos sem recriar o
+//  grafo). Só isso muda; o resto é o original.
 
 #if !OPENSWIFTUI_SWIFTUI_RENDERER
-import Foundation
+package import Foundation   // CGSize em mosSetSurface
 
 // MARK: - StdoutRendererHost
 
@@ -15,9 +16,9 @@ final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRend
 
     package let viewGraph: ViewGraph
     package let renderer: DisplayList.ViewRenderer
-    package let rootView: Content
+    package private(set) var rootView: Content
     package let environment: EnvironmentValues
-    package let options: _RendererConfiguration.StdoutOptions
+    package private(set) var options: _RendererConfiguration.StdoutOptions
 
     package var currentTimestamp: Time = .zero
     package var propertiesNeedingUpdate: ViewRendererHostProperties = .all
@@ -47,6 +48,20 @@ final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRend
         renderer.host = self
         initializeViewGraph()
         Update.end()
+    }
+
+    /// mOS: troca a raiz sem recriar o grafo (o @State das views que continuam na árvore fica)
+    package func mosSetRootView(_ view: Content) {
+        rootView = view
+        invalidateProperties(.rootView, mayDeferUpdate: false)
+    }
+
+    /// mOS: novo tamanho da superfície (redimensionar a janela não recria o grafo)
+    package func mosSetSurface(_ size: CGSize) {
+        guard size != options.surface else { return }
+        options.surface = size
+        renderer.configuration = .stdout(options)
+        invalidateProperties([.size, .containerSize], mayDeferUpdate: false)
     }
 
     package func renderOnce() {
