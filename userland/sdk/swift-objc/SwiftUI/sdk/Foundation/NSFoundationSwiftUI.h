@@ -115,23 +115,9 @@ typedef NS_OPTIONS(NSUInteger, NSCalendarUnit) {
     NSCalendarUnitTimeZone = (1UL << 21),
 } NS_SWIFT_NAME(NSCalendar.Unit);
 
-@interface NSCalendar : NSObject <NSCopying, NSSecureCoding>
+/* NSCalendar, NSRunLoop e NSTimer vêm do Foundation.h desta variante (PR #368); aqui só o que ele não declara */
+@interface NSCalendar (MOSSwiftUI)
 @property (class, readonly, copy) NSCalendar *currentCalendar;
-@end
-
-typedef NSString *NSRunLoopMode NS_SWIFT_NAME(RunLoop.Mode) __attribute__((swift_wrapper(struct)));
-FOUNDATION_EXPORT NSRunLoopMode const NSDefaultRunLoopMode NS_SWIFT_NAME(RunLoop.Mode.default);
-FOUNDATION_EXPORT NSRunLoopMode const NSRunLoopCommonModes NS_SWIFT_NAME(RunLoop.Mode.common);
-NS_SWIFT_NAME(RunLoop) @interface NSRunLoop : NSObject
-- (void)addTimer:(NSTimer *)timer forMode:(NSRunLoopMode)mode;
-- (void)performInModes:(NSArray<NSRunLoopMode> *)modes block:(void (^)(void))block;
-- (void)performBlock:(void (^)(void))block;
-@property (nullable, readonly, copy) NSRunLoopMode currentMode;
-- (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)limitDate NS_SWIFT_NAME(run(mode:before:));
-@property (class, readonly, strong) NSRunLoop *currentRunLoop;
-@property (class, readonly, strong) NSRunLoop *mainRunLoop;
-- (void)run;
-- (void)runUntilDate:(NSDate *)limitDate;
 @end
 
 NS_SWIFT_NAME(UserDefaults) @interface NSUserDefaults : NSObject
@@ -179,14 +165,6 @@ NS_SWIFT_NAME(JSONSerialization) @interface NSJSONSerialization : NSObject
 + (BOOL)isValidJSONObject:(id)obj;
 + (nullable NSData *)dataWithJSONObject:(id)obj options:(NSJSONWritingOptions)opt error:(NSError **)error;
 + (nullable id)JSONObjectWithData:(NSData *)data options:(NSJSONReadingOptions)opt error:(NSError **)error;
-@end
-
-NS_SWIFT_NAME(Timer) @interface NSTimer : NSObject
-+ (NSTimer *)scheduledTimerWithTimeInterval:(double)interval repeats:(BOOL)repeats block:(void (^)(NSTimer *timer))block;
-+ (NSTimer *)timerWithTimeInterval:(double)interval repeats:(BOOL)repeats block:(void (^)(NSTimer *timer))block;
-- (void)invalidate;
-- (void)fire;
-@property (readonly, getter=isValid) BOOL valid;
 @end
 
 @interface NSLock : NSObject

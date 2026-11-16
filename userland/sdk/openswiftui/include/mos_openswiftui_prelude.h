@@ -25,3 +25,12 @@ CFTypeRef CFAutorelease(CFTypeRef cf);   /* cf_mos.cpp (falta no CoreFoundation 
 #define CFRetain mos_oag_CFRetain
 #define CFRelease mos_oag_CFRelease
 #define CFGetRetainCount mos_oag_CFGetRetainCount
+
+/* o math.h de Darwin do zig, em C++ com módulos, espera INFINITY/NAN do float.h, que só os define em C23 */
+#include <math.h>
+#ifndef INFINITY
+#define INFINITY __builtin_inff()
+#endif
+#ifndef NAN
+#define NAN __builtin_nanf("")
+#endif
