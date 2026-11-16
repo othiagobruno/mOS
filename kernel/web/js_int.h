@@ -235,6 +235,8 @@ typedef struct jsrealm {
     jsobj *p_node, *p_elem, *p_doc, *p_text, *p_event, *p_style, *p_classlist, *p_storage, *p_location, *p_response, *p_xhr;
     jsobj *jobs;              /* fila de microtarefas: vetor [fn, a0, a1, kind, ...] */
     jsobj *p_abuf, *p_dview, *p_typed, *p_ta[11];   /* ArrayBuffer, DataView, %TypedArray% e um por tipo */
+    /* Canvas 2D (canvas_js.c) e DOMException */
+    jsobj *p_domexc, *p_canvas, *p_ctx2d, *p_cgrad, *p_cpat, *p_path2d, *p_imgdata, *p_tmetrics, *p_dommatrix;
     u32 jobpos;
     struct js_page *page;
     struct jsrealm *next;
@@ -551,6 +553,15 @@ int     rx_exec(rxprog *p, const char *s, int len, int start, int *caps, bool st
 
 /* ============================================================ DOM (js_dom.c) */
 void   js_dom_init(jsrealm *r);
+/* ponte DOM ↔ Canvas 2D (js_dom.c / canvas_js.c) */
+void   js_canvas_init(jsrealm *r);
+void   js_canvas_attr_changed(struct js_page *p, node_t *n);
+jsv    js_dom_wrapv(struct js_page *p, node_t *n);
+doc_t *js_page_doc(struct js_page *p);
+void   js_page_repaint(struct js_page *p);
+struct js_page *js_cur_page(void);
+node_t *js_page_focus(struct js_page *p);
+jsv    js_throw_dom(const char *name, const char *msg);   /* lança um DOMException */
 void   js_mark_page(struct js_page *p);
 extern void (*js_host_finalize_hook)(jsobj *o);
 extern int  (*js_host_delete_hook)(jsobj *o, jsstr *k);

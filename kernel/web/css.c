@@ -1218,7 +1218,7 @@ static const char ua_css[] =
     "listing,xmp,plaintext,dialog,search,optgroup{display:block}"
     "li{display:list-item}"
     "iframe{border:2px inset #767676}"
-    "head,script,style,title,meta,link,base,template,noembed,noframes,math,object,embed,video,audio,canvas,"
+    "head,script,style,title,meta,link,base,template,noembed,noframes,math,object,embed,video,audio,"
     "param,source,track,datalist,area,map,frameset,frame,option,col,colgroup,[hidden],input[type=hidden]{display:none}"
     "table{display:table;border-spacing:2px;border-collapse:separate;text-align:start}"
     "tr{display:table-row;vertical-align:inherit}thead,tbody,tfoot{display:table-row-group;vertical-align:middle}"

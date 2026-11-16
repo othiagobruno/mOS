@@ -67,7 +67,17 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    leitura do Array, índices inteiros no núcleo (`js_core.c`), DataView com as duas ordens de bytes, UTF-8 do WHATWG
    no TextDecoder (`fatal`, BOM). Base do JavaScriptCore (`JSObjectMakeTypedArrayWithBytesNoCopy`) e do canvas.
    Teste: `tools/web_host_typed.c` (33 expressões).
-6. **Canvas 2D** (`<canvas>`, `getContext('2d')`, caminhos, texto, imagens, `getImageData`/`toDataURL`).
+6. ✅ **Canvas 2D** (`kernel/web/canvas.c` + `canvas_js.c`, rasterizador comum com o SVG em `raster.c`): `<canvas>`
+   como elemento substituído (300×150 padrão, reserva não pintada, width/height recriam o bitmap), contexto 2D
+   completo (estado com save/restore/reset, transformações e `DOMMatrix`, caminhos com arc/arcTo/ellipse/roundRect,
+   `Path2D` com texto SVG e `addPath`, fill/stroke/clip com nonzero/evenodd, `isPointInPath`/`isPointInStroke`,
+   tracejado, tampas e junções, gradientes linear/radial de dois círculos/cônico, padrões com repetição e
+   `setTransform`, 26 operações de composição (Porter-Duff e modos de mistura), `globalAlpha`, sombra com desfoque
+   gaussiano, `drawImage` de `<img>`/`<canvas>` com suavização e filtro de área na redução, texto com fonte CSS,
+   alinhamento, linha de base, `maxWidth`, `letterSpacing` e transformação, `strokeText`, `measureText` completo,
+   `ImageData`/`getImageData`/`putImageData`, `toDataURL` em PNG com deflate próprio, `DOMException`).
+   Teste: `tools/web_host_canvas.c` (9 casos, 105 verificações; ASan/UBSan limpos). Falta: `toBlob` (sem `Blob`
+   no motor), `createImageBitmap`, `OffscreenCanvas` e `filter`.
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.
