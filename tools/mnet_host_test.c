@@ -1,5 +1,5 @@
 /* Teste de host do núcleo mnet (docs/rede-apps.md): HTTP/1.1, cookies, datas e HPACK.
- *   gcc -std=c11 -Wall -Wextra -DMNET_HOST -I userland/libsystem userland/libsystem/mnet_*.c \
+ *   gcc -std=gnu11 -Wall -Wextra -DMNET_HOST -I userland/libsystem userland/libsystem/mnet_*.c \
  *       tools/mnet_host_test.c -o /tmp/mnet_host_test && /tmp/mnet_host_test
  */
 #include <stdio.h>
@@ -7,6 +7,10 @@
 #include <string.h>
 #include "mnet.h"
 #include "mnet_hpack_vec.h"
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 static int fails, checks;
 #define CHECK(c) do { checks++; if (!(c)) { fails++; printf("FALHOU %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
@@ -273,11 +277,182 @@ static void t_hpack(void) {
     mnet_buf_free(&hb); mnet_buf_free(&back);
 }
 
+/* ---- HTTP/2: cliente e servidor do mnet ligados em memória */
+typedef struct { mnet_h2_t *c; int is_srv; mnet_buf_t body; int status, closed, close_code, trailers, heads, pings; long long body_want; } peer_t;
+static void h2_on_headers(void *ctx, mnet_h2_stream_t *st, const mnet_hdrs_t *h, int end) {
+    peer_t *p = ctx;
+    p->heads++;
+    if (!p->is_srv) {
+        const char *v = mnet_hdrs_get(h, ":status");
+        if (!v) p->trailers++;
+        else if (v[0] != '1') p->status = atoi(v);
+        return;
+    }
+    /* servidor: responde ao GET com um corpo grande (passa das janelas) e trailers */
+    (void)end;
+    mnet_hdrs_t r = {0};
+    mnet_hdrs_add(&r, ":status", 7, "103", 3);
+    mnet_h2_respond(p->c, st, &r, 0);
+    mnet_hdrs_free(&r);
+    mnet_hdrs_add(&r, ":status", 7, "200", 3);
+    char big[20000]; memset(big, 'v', sizeof big - 1); big[sizeof big - 1] = 0;
+    mnet_hdrs_add(&r, "x-grande", 8, big, strlen(big));             /* força CONTINUATION */
+    mnet_h2_respond(p->c, st, &r, 0);
+    mnet_hdrs_free(&r);
+    st->user = (void *)1;
+}
+static int h2_on_data(void *ctx, mnet_h2_stream_t *st, const uint8_t *d, size_t n, int end) {
+    (void)st; (void)end;
+    peer_t *p = ctx;
+    return mnet_buf_put(&p->body, d, n);
+}
+static void h2_on_close(void *ctx, mnet_h2_stream_t *st, int code) { (void)st; peer_t *p = ctx; p->closed++; p->close_code = code; }
+static void h2_on_ping(void *ctx, const uint8_t *o) { (void)o; ((peer_t *)ctx)->pings++; }
+static int pump(mnet_h2_t *a, mnet_h2_t *b) {
+    int moved = 0;
+    if (a->out.n) { size_t n = a->out.n; uint8_t *cp = malloc(n); memcpy(cp, a->out.p, n); a->out.n = 0; mnet_h2_feed(b, cp, n); free(cp); moved = 1; }
+    if (b->out.n) { size_t n = b->out.n; uint8_t *cp = malloc(n); memcpy(cp, b->out.p, n); b->out.n = 0; mnet_h2_feed(a, cp, n); free(cp); moved = 1; }
+    return moved;
+}
+static void t_h2(void) {
+    mnet_h2_t cl = {0}, sv = {0};
+    peer_t pc = {&cl, 0, {0}, 0, 0, 0, 0, 0, 0, 0}, ps = {&sv, 1, {0}, 0, 0, 0, 0, 0, 0, 0};
+    cl.ctx = &pc; cl.on_headers = h2_on_headers; cl.on_data = h2_on_data; cl.on_close = h2_on_close; cl.on_ping_ack = h2_on_ping;
+    sv.ctx = &ps; sv.on_headers = h2_on_headers; sv.on_data = h2_on_data; sv.on_close = h2_on_close;
+    CHECK(mnet_h2_init(&cl, 0) == 0 && mnet_h2_init(&sv, 1) == 0);
+    mnet_hdrs_t h = {0};
+    mnet_hdrs_add(&h, ":method", 7, "GET", 3); mnet_hdrs_add(&h, ":scheme", 7, "https", 5);
+    mnet_hdrs_add(&h, ":authority", 10, "exemplo.com", 11); mnet_hdrs_add(&h, ":path", 5, "/", 1);
+    mnet_h2_stream_t *st = mnet_h2_request(&cl, &h, 1);
+    CHECK(st && st->id == 1);
+    uint8_t ping[8] = "mOSping";
+    mnet_h2_ping(&cl, ping);
+    /* o servidor manda 9 MiB respeitando as janelas, depois trailers */
+    size_t total = 9u << 20, sent = 0;
+    uint8_t *blob = malloc(total);
+    for (size_t i = 0; i < total; i++) blob[i] = (uint8_t)(i * 7);
+    for (int round = 0; round < 100000; round++) {
+        pump(&cl, &sv);
+        mnet_h2_stream_t *ss = mnet_h2_find(&sv, 1);
+        if (ss && ss->user && sent < total) {
+            long k = mnet_h2_send_data(&sv, ss, blob + sent, total - sent, 0);
+            if (k > 0) sent += (size_t)k;
+            if (sent == total) {
+                mnet_hdrs_t t = {0}; mnet_hdrs_add(&t, "x-soma", 6, "ok", 2);
+                mnet_h2_respond(&sv, ss, &t, 1);
+                mnet_hdrs_free(&t);
+            }
+        }
+        if (!cl.out.n && !sv.out.n && pc.closed) break;
+    }
+    CHECK(sent == total && pc.body.n == total && !memcmp(pc.body.p, blob, total));
+    CHECK(pc.status == 200 && pc.trailers == 1 && pc.heads == 3 && pc.closed == 1 && pc.close_code == 0);
+    CHECK(pc.pings == 1 && !cl.dead && !sv.dead && cl.open_streams == 0 && sv.open_streams == 0);
+    free(blob);
+    /* RST e GOAWAY */
+    st = mnet_h2_request(&cl, &h, 1);
+    CHECK(st && st->id == 3);
+    pump(&cl, &sv); pump(&cl, &sv);
+    mnet_h2_reset(&sv, mnet_h2_find(&sv, 3), MNET_H2_CANCEL);
+    while (pump(&cl, &sv)) {}
+    CHECK(pc.closed == 2 && pc.close_code == MNET_H2_CANCEL);
+    st = mnet_h2_request(&cl, &h, 1);
+    mnet_h2_goaway(&sv, MNET_H2_NO_ERROR);
+    /* o GOAWAY sai com last = 3: o fluxo 5 chega depois e é recusado do lado do cliente */
+    pump(&cl, &sv);
+    pump(&cl, &sv);
+    CHECK(cl.goaway_recv && !mnet_h2_can_open(&cl) && pc.close_code == MNET_H2_REFUSED_STREAM);
+    mnet_hdrs_free(&h);
+    mnet_h2_free(&cl); mnet_h2_free(&sv);
+    mnet_buf_free(&pc.body); mnet_buf_free(&ps.body);
+    /* erros de conexão: primeiro quadro não é SETTINGS; PUSH_PROMISE com push desligado */
+    mnet_h2_t x = {0};
+    mnet_h2_init(&x, 0);
+    const uint8_t ping0[] = {0, 0, 8, 6, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
+    CHECK(mnet_h2_feed(&x, ping0, sizeof ping0) < 0 && x.err_code == MNET_H2_PROTOCOL_ERROR);
+    mnet_h2_free(&x);
+    mnet_h2_init(&x, 0);
+    const uint8_t set0[] = {0, 0, 0, 4, 0, 0, 0, 0, 0}, push[] = {0, 0, 4, 5, 4, 0, 0, 0, 1, 0, 0, 0, 2};
+    CHECK(mnet_h2_feed(&x, set0, sizeof set0) == 9 && mnet_h2_feed(&x, push, sizeof push) < 0);
+    mnet_h2_free(&x);
+}
+
+/* ---- HTTP/2 do mnet como servidor h2c contra o curl do host (nghttp2): interoperabilidade real */
+static void t_h2_curl(void) {
+    if (system("curl -V 2>/dev/null | grep -q HTTP2") != 0) { printf("  (curl sem HTTP/2: interoperabilidade não testada)\n"); return; }
+    int ls = socket(AF_INET, SOCK_STREAM, 0), one = 1;
+    setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in a; memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(0x7f000001); a.sin_port = 0;
+    bind(ls, (struct sockaddr *)&a, sizeof a); listen(ls, 1);
+    socklen_t al = sizeof a; getsockname(ls, (struct sockaddr *)&a, &al);
+    char cmd[512];
+    snprintf(cmd, sizeof cmd, "curl -s --max-time 20 --http2-prior-knowledge -H 'X-Teste: ç' -d 'corpo-do-pedido' "
+             "-o /tmp/mnet_h2_curl.out -w '%%{http_version} %%{http_code}' http://127.0.0.1:%d/eco > /tmp/mnet_h2_curl.w",
+             ntohs(a.sin_port));
+    pid_t pid = fork();
+    if (!pid) { execl("/bin/sh", "sh", "-c", cmd, (char *)0); _exit(127); }
+    int fd = accept(ls, 0, 0);
+    mnet_h2_t sv = {0};
+    peer_t ps = {&sv, 1, {0}, 0, 0, 0, 0, 0, 0, 0};
+    sv.ctx = &ps; sv.on_data = h2_on_data; sv.on_close = h2_on_close;
+    mnet_h2_init(&sv, 1);
+    uint8_t buf[65536];
+    int answered = 0;
+    for (int it = 0; it < 2000 && fd >= 0; it++) {
+        if (sv.out.n) { (void)!write(fd, sv.out.p, sv.out.n); sv.out.n = 0; }
+        long n = read(fd, buf, sizeof buf);
+        if (n <= 0) break;
+        if (mnet_h2_feed(&sv, buf, (size_t)n) < 0) { printf("  servidor h2: %s\n", sv.err); break; }
+        mnet_h2_stream_t *st = mnet_h2_find(&sv, 1);
+        if (st && (st->state & 2) && !answered) {                     /* pedido inteiro chegou */
+            mnet_hdrs_t r = {0};
+            mnet_hdrs_add(&r, ":status", 7, "201", 3);
+            mnet_hdrs_add(&r, "content-type", 12, "text/plain", 10);
+            mnet_h2_respond(&sv, st, &r, 0);
+            mnet_hdrs_free(&r);
+            mnet_buf_t b = {0};
+            mnet_buf_puts(&b, "eco:");
+            mnet_buf_put(&b, ps.body.p, ps.body.n);
+            for (int i = 0; i < 4000; i++) mnet_buf_puts(&b, "0123456789abcdef");   /* 64 KB: passa da janela inicial */
+            size_t off = 0;
+            while (off < b.n) {
+                long k = mnet_h2_send_data(&sv, mnet_h2_find(&sv, 1), b.p + off, b.n - off, 1);
+                if (k < 0) break;
+                off += (size_t)k;
+                if (sv.out.n) { (void)!write(fd, sv.out.p, sv.out.n); sv.out.n = 0; }
+                if (off < b.n) {
+                    n = read(fd, buf, sizeof buf);
+                    if (n <= 0 || mnet_h2_feed(&sv, buf, (size_t)n) < 0) break;
+                }
+            }
+            mnet_buf_free(&b);
+            answered = 1;
+        }
+        if (answered && sv.out.n) { (void)!write(fd, sv.out.p, sv.out.n); sv.out.n = 0; }
+    }
+    if (fd >= 0) close(fd);
+    close(ls);
+    int stc = 0; waitpid(pid, &stc, 0);
+    char w[64] = {0};
+    FILE *f = fopen("/tmp/mnet_h2_curl.w", "r");
+    if (f) { if (!fgets(w, sizeof w, f)) w[0] = 0; fclose(f); }
+    CHECKS(w, "2 201");
+    f = fopen("/tmp/mnet_h2_curl.out", "rb");
+    char body[80] = {0}; long len = 0;
+    if (f) { len = (long)fread(body, 1, 19, f); fseek(f, 0, SEEK_END); len = ftell(f); fclose(f); }
+    CHECK(!strncmp(body, "eco:corpo-do-pedido", 19) && len == 19 + 64000);
+    unlink("/tmp/mnet_h2_curl.out"); unlink("/tmp/mnet_h2_curl.w");
+    mnet_h2_free(&sv); mnet_buf_free(&ps.body);
+}
+
 int main(void) {
     t_h1();
     t_dates();
     t_cookies();
     t_hpack();
+    t_h2();
+    t_h2_curl();
     printf("mnet: %d/%d ok\n", checks - fails, checks);
     return fails ? 1 : 0;
 }

@@ -103,6 +103,10 @@ int  tls_recv(tls_conn_t *c, void *buf, int max); /* como tcp_recv */
 void tls_free(tls_conn_t *c);
 const char *tls_error(tls_conn_t *c);
 int  tls_copy_peer_chain(const tls_conn_t *c, u8 *buf, u32 cap);
+int  tls_set_alpn(tls_conn_t *c, const u8 *list, u32 len);   /* formato do fio (RFC 7301); antes do handshake */
+const char *tls_get_alpn(const tls_conn_t *c);              /* "" se o servidor não escolheu */
+int  tls_get_version(const tls_conn_t *c);                  /* 0x0304, 0x0303 ou 0 antes do fim */
+int  tls_get_suite(const tls_conn_t *c);
 
 /* HTTP/1.1 cliente assíncrono (http:// e https://) */
 #ifndef MOS_URL_MAX

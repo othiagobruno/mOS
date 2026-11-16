@@ -463,7 +463,15 @@ enum {
     MOS_NET_UDP_ADDRS,     /* (socket, mos_net_addrs_t *) -> 0          endereço e porta locais */
     MOS_NET_TLS_CERTS,     /* (sessão, buf, max) -> tamanho da cadeia. buf 0: só o tamanho.
                             * u32 quantidade, depois u32 tamanho + DER de cada certificado. */
+    MOS_NET_TLS_ALPN,      /* (sessão, lista, n) -> 0 | -errno   lista ALPN no formato do fio, antes do 1º HANDSHAKE */
+    MOS_NET_TLS_INFO,      /* (sessão, mos_net_tls_info_t *) -> 0 | -errno   versão, cifra e ALPN escolhidos */
 };
+typedef struct {
+    unsigned int version;        /* 0x0304 (1.3), 0x0303 (1.2), 0 = handshake não terminou */
+    unsigned int suite;          /* código IANA da cifra */
+    char alpn[33];               /* protocolo ALPN escolhido, "" = nenhum */
+    char pad[7];
+} mos_net_tls_info_t;
 #define MOS_EMSGSIZE 40
 #define MOS_NET_DG_PEEK  1     /* mos_net_dgram_t.flags na entrada: não tira da fila */
 #define MOS_NET_DG_TRUNC 2     /* na saída: o datagrama era maior que cap (o resto foi descartado, como no BSD) */

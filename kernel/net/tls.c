@@ -8,7 +8,8 @@
  * TLS 1.3:
  *   - cifras TLS_CHACHA20_POLY1305_SHA256, TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384
  *   - troca de chaves x25519, secp256r1 ou secp384r1 (key_share inicial = 1º de tls_group_prefs)
- *   - SNI, ALPN "http/1.1", modo de compatibilidade com middleboxes
+ *   - SNI, ALPN configurável (tls_set_alpn; padrão "http/1.1") e o protocolo escolhido em tls_get_alpn
+ *     (EncryptedExtensions no 1.3, ServerHello no 1.2; RFC 7301), modo de compatibilidade com middleboxes
  *     (legacy_session_id + ChangeCipherSpec fictício)
  *   - HelloRetryRequest (repete o ClientHello com cookie e/ou com o grupo pedido;
  *     falha com mensagem clara se o servidor exigir um grupo que não temos)
@@ -144,6 +145,8 @@ struct tls_conn {
     u16 suite;
     u8 master[48], c_hs[48], s_hs[48], c_ap[48], s_ap[48];
     tls_aead_t rd, wr;
+    u8 alpn_offer[128]; u32 alpn_offer_len;   /* lista ALPN no formato do fio (sem o u16 externo); 0 = "http/1.1" */
+    char alpn[33];                            /* protocolo que o servidor escolheu ("" = nenhum) */
 };
 
 /* ======================================================================
@@ -492,7 +495,7 @@ static bool is_ip_literal(const char *s) {
 static u8 *build_client_hello(tls_conn_t *c, u32 *outlen) {
     u32 snilen = (u32)strlen(c->sni);
     bool v13 = tls_versions & TLS_V13, v12 = tls_versions & TLS_V12;
-    u8 *m = kmalloc(800 + snilen + c->cookielen);
+    u8 *m = kmalloc(800 + snilen + c->cookielen + c->alpn_offer_len);
     if (!m) return NULL;
     u8 *p = m;
     *p++ = HT_CLIENT_HELLO;
@@ -558,10 +561,15 @@ static u8 *build_client_hello(tls_conn_t *c, u32 *outlen) {
         memcpy(p + 10, c->ks_group == GRP_X25519 ? c->pub : c->epub, kl);
         p += 10 + kl;
     }
-    /* ALPN: http/1.1 */
-    static const u8 alpn[] = {0x00, 0x10, 0x00, 0x0b, 0x00, 0x09, 0x08,
-                              'h', 't', 't', 'p', '/', '1', '.', '1'};
-    memcpy(p, alpn, sizeof(alpn)); p += sizeof(alpn);
+    /* ALPN (RFC 7301): a lista de tls_set_alpn, ou só http/1.1 */
+    {
+        static const u8 h11[] = {8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+        const u8 *l = c->alpn_offer_len ? c->alpn_offer : h11;
+        u32 ll = c->alpn_offer_len ? c->alpn_offer_len : sizeof(h11);
+        put16(p, 16); put16(p + 2, ll + 2); put16(p + 4, ll);
+        memcpy(p + 6, l, ll);
+        p += 6 + ll;
+    }
     /* cookie (só após HelloRetryRequest) */
     if (c->cookie) {
         put16(p, 44); put16(p + 2, c->cookielen + 2); put16(p + 4, c->cookielen);
@@ -644,6 +652,24 @@ static int handle_server_hello12(tls_conn_t *c, const u8 *msg, u32 mlen, const u
     return 0;
 }
 
+/* extensão ALPN do servidor: exatamente um protocolo, e ele precisa estar na nossa oferta */
+static int take_alpn(tls_conn_t *c, const u8 *d, u32 l) {
+    if (l < 3 || be16(d) + 2u != l || d[2] + 3u != l || d[2] == 0 || d[2] > 32) return -1;
+    static const u8 h11[] = {8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    const u8 *o = c->alpn_offer_len ? c->alpn_offer : h11;
+    u32 ol = c->alpn_offer_len ? c->alpn_offer_len : sizeof(h11), i = 0;
+    while (i < ol) {
+        u32 n = o[i];
+        if (n == d[2] && i + 1 + n <= ol && !memcmp(o + i + 1, d + 3, n)) {
+            memcpy(c->alpn, d + 3, n);
+            c->alpn[n] = 0;
+            return 0;
+        }
+        i += 1 + n;
+    }
+    return -1;
+}
+
 static int handle_server_hello(tls_conn_t *c, const u8 *msg, u32 mlen) {
     rd_t r = {msg + 4, mlen - 4, false};
     u32 ver = rd_u16(&r);
@@ -660,7 +686,7 @@ static int handle_server_hello(tls_conn_t *c, const u8 *msg, u32 mlen) {
 
     u32 sv = 0, group = 0, klen = 0, cklen = 0;
     const u8 *key = NULL, *ck = NULL;
-    bool have_ks = false, ems = false;
+    bool have_ks = false, ems = false, alpn_in_sh = false;
     int reneg = 0;                         /* 0 ausente, 1 ok (vazio), -1 inválido */
     if (r.n) {
         u32 el = rd_u16(&r);
@@ -685,6 +711,10 @@ static int handle_server_hello(tls_conn_t *c, const u8 *msg, u32 mlen) {
                 c->ocsp_req = true;
             } else if (t == 0xff01) {
                 reneg = l == 1 && x.p[0] == 0 ? 1 : -1;
+            } else if (t == 16 && !is_hrr) {
+                /* 1.2 manda ALPN no ServerHello; no 1.3 ela só pode vir no EncryptedExtensions */
+                if (take_alpn(c, x.p, l)) return fail(c, AL_ILLEGAL, "o servidor escolheu um protocolo ALPN que não oferecemos");
+                alpn_in_sh = true;
             }
             if (x.bad) e.bad = true;
         }
@@ -698,6 +728,7 @@ static int handle_server_hello(tls_conn_t *c, const u8 *msg, u32 mlen) {
     }
     if (sv != 0x0304 || !(tls_versions & TLS_V13))
         return fail(c, AL_ILLEGAL, "o servidor escolheu uma versão de TLS inválida");
+    if (alpn_in_sh) return fail(c, AL_ILLEGAL, "ALPN no ServerHello do TLS 1.3");
     if (sidl != 32 || memcmp(sid, c->sid, 32))
         return fail(c, AL_ILLEGAL, "o servidor não ecoou o legacy_session_id");
     if (!suite_offered(suite)) return fail(c, AL_ILLEGAL, "o servidor escolheu uma cifra não oferecida (0x%04x)", suite);
@@ -1218,6 +1249,17 @@ static int handle_hs_message(tls_conn_t *c, const u8 *msg, u32 mlen) {
     case HS_WAIT_EE:
         if (t != HT_ENCRYPTED_EXT) return fail(c, AL_UNEXPECTED, "esperava EncryptedExtensions (veio tipo %u)", t);
         if (blen < 2 || be16(body) + 2 != blen) return fail(c, AL_DECODE, "EncryptedExtensions malformado");
+        {
+            u32 i = 2;
+            while (i + 4 <= blen) {
+                u32 et = be16(body + i), el = be16(body + i + 2);
+                if (i + 4 + el > blen) return fail(c, AL_DECODE, "EncryptedExtensions malformado");
+                if (et == 16 && take_alpn(c, body + i + 4, el))
+                    return fail(c, AL_ILLEGAL, "o servidor escolheu um protocolo ALPN que não oferecemos");
+                i += 4 + el;
+            }
+            if (i != blen) return fail(c, AL_DECODE, "EncryptedExtensions malformado");
+        }
         hash_update(&c->tr, msg, mlen);
         c->hs = HS_WAIT_CERT_CR;
         return 0;
@@ -1450,6 +1492,19 @@ tls_conn_t *tls_new(int tcp_sock, const char *sni) {
     snprintf(c->err, sizeof(c->err), "sem erro");
     return c;
 }
+
+/* lista ALPN no formato do fio (u8 tamanho + nome, repetido). Só antes do handshake. */
+int tls_set_alpn(tls_conn_t *c, const u8 *list, u32 len) {
+    if (!c || c->hs != HS_START || len > sizeof(c->alpn_offer)) return -1;
+    for (u32 i = 0; i < len; i += 1u + list[i])
+        if (!list[i] || i + 1u + list[i] > len) return -1;
+    memcpy(c->alpn_offer, list, len);
+    c->alpn_offer_len = len;
+    return 0;
+}
+const char *tls_get_alpn(const tls_conn_t *c) { return c ? c->alpn : ""; }
+int tls_get_version(const tls_conn_t *c) { return !c || c->hs != HS_DONE ? 0 : c->v12 ? 0x0303 : 0x0304; }
+int tls_get_suite(const tls_conn_t *c) { return !c || c->hs != HS_DONE ? 0 : c->suite; }
 
 int tls_handshake(tls_conn_t *c) {
     if (!c) return -1;

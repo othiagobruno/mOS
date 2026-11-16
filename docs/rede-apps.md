@@ -79,7 +79,9 @@ flowchart TD
 | Etapa | Estado | Teste |
 |---|---|---|
 | 1. Núcleo HTTP portátil | pronto (PR desta etapa): `mnet_util.c`, `mnet_h1.c`, `mnet_cookie.c`, `mnet_hpack.c` | `tools/mnet_host_test.c`: 638/638 no gcc com ASan/UBSan; os 12 blocos do Apêndice C da RFC 7541 decodificam e o codificador gera os mesmos bytes; `zig cc` freestanding x86_64 e arm64 compila sem aviso |
-| 2–10 | não iniciado | — |
+| 2. TLS (ALPN) | ALPN configurável e lido de volta; versão e cifra reais no SecureTransport. Falta: retomada por ticket, certificado de cliente, lado servidor | `tools/tls_local_test.c`: 14/14 contra `openssl s_server` (h2 em 1.3 e 1.2, queda para http/1.1, servidor sem ALPN) |
+| 3. HTTP/2 | codec pronto (`mnet_h2.c`); ainda não ligado a API pública | `tools/mnet_host_test.c`: 9 MiB por janelas, 103 + 200 + trailers, CONTINUATION, PING, RST, GOAWAY, erros; servidor h2c do mnet contra o `curl --http2-prior-knowledge` do host (nghttp2): 201 e 64 KB de corpo |
+| 4–10 | não iniciado | — |
 
 ### Etapa 1 — o que está no código
 
@@ -98,3 +100,17 @@ flowchart TD
   "nunca indexar".
 
 Ainda não ligado a nenhuma API pública: isso entra nas etapas 2–4.
+
+### Etapas 2 e 3 — o que está no código
+
+- **ALPN** (`kernel/net/tls.c`): `tls_set_alpn` (lista no formato do fio, antes do handshake), `tls_get_alpn`,
+  `tls_get_version`, `tls_get_suite`. A escolha do servidor é lida do EncryptedExtensions (1.3) ou do ServerHello (1.2)
+  e recusada se não estiver na oferta ou se vier no ServerHello do 1.3. Syscalls novas `MOS_NET_TLS_ALPN` e
+  `MOS_NET_TLS_INFO` (`mos_net_tls_info_t`). O SecureTransport passa a mandar a lista de `SSLSetALPNProtocols`,
+  `SSLCopyALPNProtocols` devolve o escolhido e `SSLGetNegotiatedProtocolVersion`/`SSLGetNegotiatedCipher` dizem a
+  verdade (antes: 1.2 e 0x1301 fixos).
+- **HTTP/2** (`mnet_h2.c`): prefácio, SETTINGS (push desligado, 256 fluxos, janela 4 MiB por fluxo e 16 MiB na
+  conexão), HEADERS/CONTINUATION com HPACK, DATA com enchimento, controle de fluxo nos dois sentidos com
+  WINDOW_UPDATE, mudança de INITIAL_WINDOW_SIZE aplicada aos fluxos abertos, PING, RST_STREAM, GOAWAY (fluxos acima
+  do último viram REFUSED_STREAM para serem refeitos), validação de campos (minúsculas, pseudo-cabeçalhos primeiro,
+  campos de conexão proibidos), 1xx e trailers. Servidor também, para `NWListener` e testes.

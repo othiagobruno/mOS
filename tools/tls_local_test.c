@@ -82,6 +82,7 @@ static int run(const char *cmd) {
     return st == 0;
 }
 
+static const char *srv_extra[6];   /* argumentos extras do s_server (ALPN, versão) */
 static pid_t serve(const char *cert, const char *key, int port) {
     pid_t p = fork();
     if (p < 0) return -1;
@@ -90,8 +91,11 @@ static pid_t serve(const char *cert, const char *key, int port) {
         snprintf(addr, sizeof addr, "127.0.0.1:%d", port);
         int fd = open("/tmp/mos-tls-s_server.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (fd >= 0) { dup2(fd, 1); dup2(fd, 2); }
-        execlp("openssl", "openssl", "s_server", "-accept", addr, "-cert", cert, "-key", key,
-               "-www", "-quiet", (char *)0);
+        const char *av[20] = {"openssl", "s_server", "-accept", addr, "-cert", cert, "-key", key, "-www", "-quiet"};
+        int ac = 10;
+        for (int i = 0; i < 6 && srv_extra[i]; i++) av[ac++] = srv_extra[i];
+        av[ac] = 0;
+        execvp("openssl", (char *const *)av);
         _exit(127);
     }
     for (int i = 0; i < 50; i++) {
@@ -112,16 +116,21 @@ static pid_t serve(const char *cert, const char *key, int port) {
 }
 static void stop(pid_t p) { if (p > 0) { kill(p, SIGTERM); waitpid(p, NULL, 0); } }
 
+static const u8 *cli_alpn; static u32 cli_alpn_len;   /* lista ALPN do cliente (0 = padrão) */
+static char got_alpn[33]; static int got_ver;
 static int handshake(int port, const char *sni, char *err, size_t errlen, int *http_ok) {
     int s = tcp_connect(port);
     if (s < 0) { snprintf(err, errlen, "tcp"); return -1; }
     tls_conn_t *c = tls_new(s, sni);
+    if (cli_alpn) tls_set_alpn(c, cli_alpn, cli_alpn_len);
     u64 t0 = timer_ticks();
     int r;
     while ((r = tls_handshake(c)) == 0) {
         if (timer_ticks() - t0 > 8000) break;
         usleep(1000);
     }
+    snprintf(got_alpn, sizeof got_alpn, "%s", tls_get_alpn(c));
+    got_ver = tls_get_version(c);
     if (r != 1) {
         snprintf(err, errlen, "%s", r < 0 ? tls_error(c) : "tempo esgotado");
         tls_free(c); tcp_drop(s);
@@ -207,6 +216,34 @@ int main(void) {
     check("recusa AC desconhecida", hr != 0 && strstr(err, "não confiável") != NULL);
     if (hr == 0 || !strstr(err, "não confiável")) printf("    motivo: %s\n", err);
     stop(p);
+
+    /* ALPN (RFC 7301) em 1.3 e 1.2 */
+    static const u8 h2h1[] = {2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    static const u8 only_x[] = {3, 'x', 'y', 'z'};
+    const char *vers[2] = {"-tls1_3", "-tls1_2"};
+    for (int v = 0; v < 2; v++) {
+        srv_extra[0] = "-alpn"; srv_extra[1] = "h2,http/1.1"; srv_extra[2] = vers[v]; srv_extra[3] = 0;
+        p = serve("/tmp/mos-tls-test/srv.pem", "/tmp/mos-tls-test/srv.key", 18447 + v);
+        cli_alpn = h2h1; cli_alpn_len = sizeof h2h1;
+        hr = p > 0 ? handshake(18447 + v, "localhost", err, sizeof err, NULL) : -1;
+        check(v ? "ALPN h2 negociado (TLS 1.2)" : "ALPN h2 negociado (TLS 1.3)",
+              hr == 0 && !strcmp(got_alpn, "h2") && got_ver == (v ? 0x0303 : 0x0304));
+        if (hr) printf("    motivo: %s\n", err);
+        stop(p);
+    }
+    srv_extra[0] = "-alpn"; srv_extra[1] = "http/1.1"; srv_extra[2] = 0;
+    p = serve("/tmp/mos-tls-test/srv.pem", "/tmp/mos-tls-test/srv.key", 18449);
+    cli_alpn = h2h1; cli_alpn_len = sizeof h2h1;
+    hr = p > 0 ? handshake(18449, "localhost", err, sizeof err, NULL) : -1;
+    check("ALPN cai para http/1.1 quando o servidor não tem h2", hr == 0 && !strcmp(got_alpn, "http/1.1"));
+    stop(p);
+    srv_extra[0] = 0;
+    p = serve("/tmp/mos-tls-test/srv.pem", "/tmp/mos-tls-test/srv.key", 18450);
+    cli_alpn = only_x; cli_alpn_len = sizeof only_x;
+    hr = p > 0 ? handshake(18450, "localhost", err, sizeof err, NULL) : -1;
+    check("servidor sem ALPN: handshake segue, nenhum protocolo", hr == 0 && got_alpn[0] == 0);
+    stop(p);
+    cli_alpn = 0;
 
     printf("tls_local: %d/%d\n", passes, passes + fails);
     return fails ? 1 : 0;
