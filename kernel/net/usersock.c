@@ -308,6 +308,33 @@ i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
         kfree(tmp);
         return need;
     }
+    if (op == MOS_NET_TLS_ALPN) {
+        u8 list[128];
+        if (c > sizeof list) return -MOS_EINVAL;
+        if (c && !uvm_copy_in(p, list, b, (usize)c)) return -MOS_EFAULT;
+        fl = spin_lock_irqsave(&g_tls_lock);
+        utls_t *u = ut_of(p, a);
+        r = u && u->tls ? (tls_set_alpn(u->tls, list, (u32)c) ? -MOS_EINVAL : 0) : -MOS_EINVAL;
+        spin_unlock_irqrestore(&g_tls_lock, fl);
+        return r;
+    }
+    if (op == MOS_NET_TLS_INFO) {
+        mos_net_tls_info_t info;
+        memset(&info, 0, sizeof info);
+        fl = spin_lock_irqsave(&g_tls_lock);
+        utls_t *u = ut_of(p, a);
+        int ok = u && u->tls;
+        if (ok) {
+            info.version = (unsigned)tls_get_version(u->tls);
+            info.suite = (unsigned)tls_get_suite(u->tls);
+            const char *al = tls_get_alpn(u->tls);
+            usize n = strlen(al);
+            memcpy(info.alpn, al, n < 32 ? n : 32);
+        }
+        spin_unlock_irqrestore(&g_tls_lock, fl);
+        if (!ok) return -MOS_EINVAL;
+        return uvm_copy_out(p, b, &info, sizeof info) ? 0 : -MOS_EFAULT;
+    }
     if (op == MOS_NET_TLS_ROOTS) {             /* a mesma lista que o tls.c usa (kernel/arch/certs.S) */
         extern const char mos_cacert_pem[], mos_cacert_pem_end[];
         u64 len = (u64)(mos_cacert_pem_end - mos_cacert_pem);

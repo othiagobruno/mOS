@@ -145,3 +145,60 @@ int mnet_hpack_encode(mnet_hpack_t *t, const mnet_hdrs_t *h, mnet_buf_t *out, in
 int mnet_huff_decode(const uint8_t *d, size_t n, mnet_buf_t *out);
 size_t mnet_huff_len(const uint8_t *d, size_t n);
 int mnet_huff_encode(const uint8_t *d, size_t n, mnet_buf_t *out);
+
+/* ---- HTTP/2 (RFC 9113). Codec sem E/S: mnet_h2_feed recebe bytes da rede, a saída vai para c->out.
+   is_server = 0 no cliente (NSURLSession, libcurl); 1 só para servidores locais e testes. */
+enum { MNET_H2_NO_ERROR = 0, MNET_H2_PROTOCOL_ERROR = 1, MNET_H2_INTERNAL_ERROR = 2, MNET_H2_FLOW_CONTROL_ERROR = 3,
+       MNET_H2_SETTINGS_TIMEOUT = 4, MNET_H2_STREAM_CLOSED = 5, MNET_H2_FRAME_SIZE_ERROR = 6,
+       MNET_H2_REFUSED_STREAM = 7, MNET_H2_CANCEL = 8, MNET_H2_COMPRESSION_ERROR = 9,
+       MNET_H2_ENHANCE_YOUR_CALM = 11 };
+typedef struct mnet_h2_stream {
+    uint32_t id;
+    int state;                         /* 0 aberto, 1 meio fechado (local), 2 meio fechado (remoto), 3 fechado */
+    long long send_win, recv_win;
+    long long recv_unacked;            /* bytes recebidos ainda sem WINDOW_UPDATE */
+    int got_headers;
+    void *user;
+    struct mnet_h2_stream *next;
+} mnet_h2_stream_t;
+typedef struct mnet_h2 {
+    int is_server, dead, goaway_recv, goaway_sent;
+    uint32_t next_id, last_peer_id, goaway_last;
+    int err_code;
+    const char *err;
+    mnet_buf_t in, out;
+    int preface_done, preface_in, settings_acked;
+    /* ajustes do par */
+    uint32_t peer_max_frame, peer_max_concurrent, peer_header_table, peer_max_header_list;
+    long long peer_initial_win;
+    int peer_enable_push;
+    /* nossos */
+    uint32_t local_max_frame;
+    long long local_initial_win, conn_recv_win, conn_recv_unacked, conn_send_win;
+    mnet_hpack_t enc, dec;
+    mnet_h2_stream_t *streams;
+    int open_streams;
+    /* bloco de cabeçalho em montagem (HEADERS/PUSH_PROMISE + CONTINUATION) */
+    uint32_t hb_stream; int hb_end_stream; mnet_buf_t hb;
+    /* eventos */
+    void *ctx;
+    void (*on_headers)(void *ctx, mnet_h2_stream_t *s, const mnet_hdrs_t *h, int end_stream);
+    int (*on_data)(void *ctx, mnet_h2_stream_t *s, const uint8_t *d, size_t n, int end_stream);
+    void (*on_close)(void *ctx, mnet_h2_stream_t *s, int error_code);   /* RST ou fim normal (0) */
+    void (*on_goaway)(void *ctx, uint32_t last_id, int error_code);
+    void (*on_ping_ack)(void *ctx, const uint8_t opaque[8]);
+} mnet_h2_t;
+int mnet_h2_init(mnet_h2_t *c, int is_server);           /* enfileira o prefácio e SETTINGS */
+void mnet_h2_free(mnet_h2_t *c);
+long mnet_h2_feed(mnet_h2_t *c, const uint8_t *d, size_t n);   /* -1: erro de conexão (GOAWAY já enfileirado) */
+/* cliente: abre fluxo com cabeçalhos (pseudo :method :scheme :authority :path primeiro); NULL se não puder */
+mnet_h2_stream_t *mnet_h2_request(mnet_h2_t *c, const mnet_hdrs_t *h, int end_stream);
+int mnet_h2_respond(mnet_h2_t *c, mnet_h2_stream_t *s, const mnet_hdrs_t *h, int end_stream);   /* servidor */
+/* manda até n bytes respeitando as janelas; devolve quantos foram (0 = janela cheia) ou -1 */
+long mnet_h2_send_data(mnet_h2_t *c, mnet_h2_stream_t *s, const uint8_t *d, size_t n, int end_stream);
+long long mnet_h2_send_window(const mnet_h2_t *c, const mnet_h2_stream_t *s);
+int mnet_h2_reset(mnet_h2_t *c, mnet_h2_stream_t *s, int code);
+int mnet_h2_ping(mnet_h2_t *c, const uint8_t opaque[8]);
+int mnet_h2_goaway(mnet_h2_t *c, int code);
+mnet_h2_stream_t *mnet_h2_find(mnet_h2_t *c, uint32_t id);
+int mnet_h2_can_open(const mnet_h2_t *c);

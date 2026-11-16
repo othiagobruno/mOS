@@ -21,7 +21,8 @@
  *    devolvida é marcada como válida (cx_trust_mark_verified, security.c).
  *  - SSLRead devolve o que tiver assim que tiver algo; fim do fluxo = errSSLClosedGraceful/NoNotify.
  * Limites: só cliente (lado servidor: SSLCreateContext = NULL), sem certificado de cliente, sem ALPN negociado
- * (SSLCopyALPNProtocols devolve vazio: o app cai para HTTP/1.1). SSLSetSessionTicketsEnabled guarda o
+ * (ALPN: SSLSetALPNProtocols vai para o motor e SSLCopyALPNProtocols devolve o escolhido, MOS_NET_TLS_ALPN/INFO;
+ * versão e cifra negociadas também vêm de MOS_NET_TLS_INFO). SSLSetSessionTicketsEnabled guarda o
  * pedido; o motor (kernel/net/tls.c) não envia nem retoma ticket, então desligar coincide com o fio e
  * ligar não cria retomada.
  */
@@ -35,7 +36,7 @@ typedef OSStatus (*ssl_write_fn)(const void *conn, const void *data, size_t *len
 
 enum {
     errSecSuccess = 0, errSecUnimplemented = -4, errSecParam = -50, errSecAllocate = -108, errSecIO = -36,
-    errSecItemNotFound = -25300, errSecNoTrustSettings = -25263,
+    errSecItemNotFound = -25300, errSecBadReq = -909, errSecNoTrustSettings = -25263,
     errSSLProtocol = -9800, errSSLNegotiation = -9801, errSSLFatalAlert = -9802, errSSLWouldBlock = -9803,
     errSSLClosedGraceful = -9805, errSSLClosedAbort = -9806, errSSLXCertChainInvalid = -9807, errSSLInternal = -9810,
     errSSLClosedNoNotify = -9816, errSSLPeerAuthCompleted = -9841, errSSLBadConfiguration = -9848,
@@ -84,6 +85,8 @@ typedef struct {
     int vmin, vmax;
     u8 *rec, *out, *plain;
     u32 rec_have, out_off, out_len, p_off, p_len;
+    u8 alpn[128]; u32 alpn_len;          /* lista pedida pelo app, formato do fio */
+    mos_net_tls_info_t info;             /* preenchido no fim do handshake */
 } ssl_t;
 
 /* ---------------------------------------------------------------- o objeto (CFType: o app faz CFRelease) */
@@ -222,7 +225,7 @@ OSStatus SSLGetProtocolVersionMax(void *ctx, int *v) { ssl_t *s = S(ctx); if (!s
 OSStatus SSLGetNegotiatedProtocolVersion(void *ctx, int *v) {
     ssl_t *s = S(ctx);
     if (!s || !v) return errSecParam;
-    *v = s->state == kSSLConnected ? kTLSProtocol12 : 0;  /* o kernel não informa qual; 1.2 é o mínimo garantido */
+    *v = s->state != kSSLConnected ? 0 : s->info.version == 0x0304 ? kTLSProtocol13 : kTLSProtocol12;
     return errSecSuccess;
 }
 OSStatus SSLSetSessionOption(void *ctx, int opt, Boolean v) {
@@ -267,13 +270,39 @@ OSStatus SSLSetEnabledCiphers(void *ctx, const u32 *c, size_t n) {
 OSStatus SSLGetNegotiatedCipher(void *ctx, u32 *c) {
     ssl_t *s = S(ctx);
     if (!s || !c) return errSecParam;
-    *c = s->state == kSSLConnected ? 0x1301 : 0;
+    *c = s->state == kSSLConnected ? s->info.suite : 0;
     return errSecSuccess;
 }
-OSStatus SSLSetALPNProtocols(void *ctx, id protos) { (void)protos; return S(ctx) ? errSecSuccess : errSecParam; }
+Boolean CFStringGetCString(id str, char *buf, long size, unsigned enc);
+id CFStringCreateWithCString(void *alloc, const char *s, unsigned enc);
+OSStatus SSLSetALPNProtocols(void *ctx, id protos) {
+    ssl_t *s = S(ctx);
+    if (!s) return errSecParam;
+    if (s->state != kSSLIdle) return errSecBadReq;
+    u32 n = 0;
+    long cnt = protos ? CFArrayGetCount(protos) : 0;
+    for (long i = 0; i < cnt; i++) {
+        char nm[64];
+        id str = CFArrayGetValueAtIndex(protos, i);
+        if (!str || !CFStringGetCString(str, nm, sizeof nm, 0x08000100)) return errSecParam;
+        u32 l = (u32)strlen(nm);
+        if (!l || l > 32 || n + 1 + l > sizeof s->alpn) return errSecParam;
+        s->alpn[n++] = (u8)l;
+        memcpy(s->alpn + n, nm, l);
+        n += l;
+    }
+    s->alpn_len = n;
+    return errSecSuccess;
+}
 OSStatus SSLCopyALPNProtocols(void *ctx, id *protos) {
-    if (!S(ctx) || !protos) return errSecParam;
-    *protos = CFArrayCreateMutable(0, 0, 0);      /* nenhum negociado */
+    ssl_t *s = S(ctx);
+    if (!s || !protos) return errSecParam;
+    id a = CFArrayCreateMutable(0, 0, 0);
+    if (s->state == kSSLConnected && s->info.alpn[0]) {
+        id str = CFStringCreateWithCString(0, s->info.alpn, 0x08000100);
+        if (str) { CFArrayAppendValue(a, str); CFRelease(str); }
+    }
+    *protos = a;
     return errSecSuccess;
 }
 OSStatus SSLGetSessionState(void *ctx, int *st) {
@@ -411,6 +440,7 @@ OSStatus SSLHandshake(void *ctx) {
         long h = net(MOS_NET_TLS_NEW, s->peer[0] ? (long)s->peer : 0, 0, 0);
         if (h < 0) { s->err = errSSLInternal; return s->err; }
         s->h = h;
+        if (s->alpn_len && net(MOS_NET_TLS_ALPN, h, (long)s->alpn, s->alpn_len) < 0) { s->err = errSSLBadConfiguration; return s->err; }
         s->state = kSSLHandshake;
     }
     for (;;) {
@@ -423,6 +453,7 @@ OSStatus SSLHandshake(void *ctx) {
         }
         if (r == 1) {
             s->state = kSSLConnected;
+            net(MOS_NET_TLS_INFO, s->h, (long)&s->info, 0);
             if (s->break_auth && !s->auth_done) { s->auth_done = 1; return errSSLPeerAuthCompleted; }
             return errSecSuccess;
         }
