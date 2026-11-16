@@ -64,6 +64,12 @@ typedef struct {
     bool  has_cta;
     bool  hdmi;             /* VSDB HDMI 1.x (OUI 00-0C-03) presente: o sink aceita HDMI, não só DVI */
     bool  basic_audio, ycbcr444, ycbcr422, underscan;
+    bool  rgb_quant_selectable, ycc_quant_selectable;   /* VCDB (bloco estendido 0): bits QS e QY */
+    /* áudio (bloco 1: descritores curtos; bloco 4: alocação de alto-falantes; VSDB HDMI: latências) */
+    u8    nsad;
+    struct { u8 format, channels, rates, byte2; } sad[16];   /* format = código CTA (1 = LPCM), channels 1..8 */
+    u8    speaker_alloc;    /* byte 1 do bloco de alocação (FL/FR, LFE, FC, RL/RR...) */
+    u8    video_latency, audio_latency;   /* valores crus do VSDB (0 = sem dado) */
     u16   hdmi_phys_addr;
     u32   hdmi_max_tmds_khz; /* do VSDB 1.x; 0 = não declarado */
     u8    hdmi_dc;          /* bits DC_30/36/48 do VSDB */
@@ -85,6 +91,9 @@ typedef struct {
 /* len = bytes disponíveis (128 * blocos). Blocos com checksum errado são ignorados (o base inválido
  * zera tudo e devolve false). */
 bool edid_parse(const u8 *edid, usize len, edid_info_t *out);
+
+/* aspecto da imagem de um VIC do CTA-861 para o infoframe AVI: 1 = 4:3, 2 = 16:9, 0 = outro (64:27, 256:135) */
+u8   edid_vic_aspect(u8 vic);
 
 /* TMDS máximo que o sink aceita em kHz: HF-VSDB > VSDB 1.x > faixa > 165 MHz (DVI single-link). */
 u32  edid_sink_max_tmds_khz(const edid_info_t *e);

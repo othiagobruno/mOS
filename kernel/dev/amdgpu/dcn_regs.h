@@ -2,6 +2,11 @@
  * Não editar à mão. D_*: deslocamento em bytes no BAR5; F_*: "shift, máscara" de um campo. */
 #pragma once
 
+#define D_AZALIA_F0_CODEC_FUNCTION_PARAMETER_POWER_STATES      (0x038CDu * 4u)
+#define D_AZALIA_F0_CODEC_FUNCTION_PARAMETER_STREAM_FORMATS    (0x038CCu * 4u)
+#define D_AZALIA_F0_CODEC_FUNCTION_PARAMETER_SUPPORTED_SIZE_RATES (0x038CBu * 4u)
+#define D_AZF0ENDPOINT_AZALIA_F0_CODEC_ENDPOINT_DATA(i)      ((0x03847u + (u32)(i) * 0x6u) * 4u)
+#define D_AZF0ENDPOINT_AZALIA_F0_CODEC_ENDPOINT_INDEX(i)     ((0x03846u + (u32)(i) * 0x6u) * 4u)
 #define D_CM_CM_BNS_VALUES_B(i)                              ((0x04180u + (u32)(i) * 0x11Bu) * 4u)
 #define D_CM_CM_BNS_VALUES_G(i)                              ((0x0417Fu + (u32)(i) * 0x11Bu) * 4u)
 #define D_CM_CM_BNS_VALUES_R(i)                              ((0x0417Eu + (u32)(i) * 0x11Bu) * 4u)
@@ -22,6 +27,16 @@
 #define D_CNVC_CFG_CNVC_SURFACE_PIXEL_FORMAT(i)              ((0x04107u + (u32)(i) * 0x11Bu) * 4u)
 #define D_CNVC_CFG_FORMAT_CONTROL(i)                         ((0x04108u + (u32)(i) * 0x11Bu) * 4u)
 #define D_CURSOR_CURSOR_CONTROL(i)                           ((0x03AACu + (u32)(i) * 0xC4u) * 4u)
+#define D_D1VGA_CONTROL                                        (0x000CCu * 4u)
+#define D_D2VGA_CONTROL                                        (0x000CEu * 4u)
+#define D_D3VGA_CONTROL                                        (0x000F8u * 4u)
+#define D_D4VGA_CONTROL                                        (0x000F9u * 4u)
+#define D_DCCG_AUDIO_DTO0_MODULE                               (0x0016Du * 4u)
+#define D_DCCG_AUDIO_DTO0_PHASE                                (0x0016Cu * 4u)
+#define D_DCCG_AUDIO_DTO1_MODULE                               (0x0016Fu * 4u)
+#define D_DCCG_AUDIO_DTO1_PHASE                                (0x0016Eu * 4u)
+#define D_DCCG_AUDIO_DTO_SOURCE                                (0x0016Bu * 4u)
+#define D_DCFCLK_CNTL                                          (0x039F0u * 4u)
 #define D_DCHUBBUB_ARB_ALLOW_DRAM_CLK_CHANGE_WATERMARK_A       (0x039CDu * 4u)
 #define D_DCHUBBUB_ARB_ALLOW_DRAM_CLK_CHANGE_WATERMARK_B       (0x039D2u * 4u)
 #define D_DCHUBBUB_ARB_ALLOW_DRAM_CLK_CHANGE_WATERMARK_C       (0x039D7u * 4u)
@@ -48,6 +63,46 @@
 #define D_DCHUBBUB_SDPIF_FB_BASE                               (0x03953u * 4u)
 #define D_DCHUBBUB_SDPIF_FB_OFFSET                             (0x03955u * 4u)
 #define D_DC_IP_REQUEST_CNTL                                   (0x0356Du * 4u)
+#define D_DIG_AFMT_60958_0(i)                                ((0x05560u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_60958_1(i)                                ((0x05561u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_60958_2(i)                                ((0x05567u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_AUDIO_PACKET_CONTROL(i)                   ((0x0556Au + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_AUDIO_PACKET_CONTROL2(i)                  ((0x0553Cu + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_AUDIO_SRC_CONTROL(i)                      ((0x0556Du + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_CNTL(i)                                   ((0x055A6u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_GENERIC_0(i)                              ((0x0554Du + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_GENERIC_1(i)                              ((0x0554Eu + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_GENERIC_2(i)                              ((0x0554Fu + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_GENERIC_3(i)                              ((0x05550u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_GENERIC_4(i)                              ((0x05551u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_GENERIC_5(i)                              ((0x05552u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_GENERIC_6(i)                              ((0x05553u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_GENERIC_7(i)                              ((0x05554u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_GENERIC_HDR(i)                            ((0x0554Cu + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_INFOFRAME_CONTROL0(i)                     ((0x0556Cu + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_VBI_PACKET_CONTROL(i)                     ((0x0556Bu + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_AFMT_VBI_PACKET_CONTROL1(i)                    ((0x055A7u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_DIG_BE_CNTL(i)                                 ((0x0556Fu + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_DIG_BE_EN_CNTL(i)                              ((0x05570u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_DIG_FE_CNTL(i)                                 ((0x05528u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_ACR_32_0(i)                               ((0x05556u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_ACR_32_1(i)                               ((0x05557u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_ACR_44_0(i)                               ((0x05558u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_ACR_44_1(i)                               ((0x05559u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_ACR_48_0(i)                               ((0x0555Au + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_ACR_48_1(i)                               ((0x0555Bu + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_ACR_PACKET_CONTROL(i)                     ((0x05534u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_AUDIO_PACKET_CONTROL(i)                   ((0x05533u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_CONTROL(i)                                ((0x05531u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_DB_CONTROL(i)                             ((0x05548u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_GC(i)                                     ((0x0553Bu + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_GENERIC_PACKET_CONTROL0(i)                ((0x05538u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_GENERIC_PACKET_CONTROL1(i)                ((0x05555u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_GENERIC_PACKET_CONTROL2(i)                ((0x05546u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_GENERIC_PACKET_CONTROL3(i)                ((0x05547u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_INFOFRAME_CONTROL0(i)                     ((0x05536u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_INFOFRAME_CONTROL1(i)                     ((0x05537u + (u32)(i) * 0x100u) * 4u)
+#define D_DIG_HDMI_VBI_PACKET_CONTROL(i)                     ((0x05535u + (u32)(i) * 0x100u) * 4u)
 #define D_DOMAIN0_PG_CONFIG                                    (0x0354Au * 4u)
 #define D_DOMAIN0_PG_STATUS                                    (0x0354Bu * 4u)
 #define D_DOMAIN1_PG_CONFIG                                    (0x0354Cu * 4u)
@@ -65,6 +120,28 @@
 #define D_DOMAIN7_PG_CONFIG                                    (0x03558u * 4u)
 #define D_DOMAIN7_PG_STATUS                                    (0x03559u * 4u)
 #define D_DPP_TOP_DPP_CONTROL(i)                             ((0x040FDu + (u32)(i) * 0x11Bu) * 4u)
+#define D_DP_DP_CONFIG(i)                                    ((0x055CBu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_DPHY_CNTL(i)                                 ((0x055D7u + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_DPHY_PRBS_CNTL(i)                            ((0x055DDu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_DPHY_SCRAM_CNTL(i)                           ((0x055DEu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_DPHY_TRAINING_PATTERN_SEL(i)                 ((0x055D8u + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_LINK_CNTL(i)                                 ((0x055C8u + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_LINK_FRAMING_CNTL(i)                         ((0x055D3u + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_MSA_COLORIMETRY(i)                           ((0x055CAu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_MSA_MISC(i)                                  ((0x055CEu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_MSA_TIMING_PARAM1(i)                         ((0x0560Cu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_MSA_TIMING_PARAM2(i)                         ((0x0560Du + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_MSA_TIMING_PARAM3(i)                         ((0x0560Eu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_MSA_TIMING_PARAM4(i)                         ((0x0560Fu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_PIXEL_FORMAT(i)                              ((0x055C9u + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_SEC_AUD_N(i)                                 ((0x055F1u + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_SEC_CNTL(i)                                  ((0x055EBu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_SEC_TIMESTAMP(i)                             ((0x055F5u + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_STEER_FIFO(i)                                ((0x055CDu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_VID_M(i)                                     ((0x055D2u + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_VID_N(i)                                     ((0x055D1u + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_VID_STREAM_CNTL(i)                           ((0x055CCu + (u32)(i) * 0x100u) * 4u)
+#define D_DP_DP_VID_TIMING(i)                                ((0x055D0u + (u32)(i) * 0x100u) * 4u)
 #define D_DSCL_DSCL_AUTOCAL(i)                               ((0x04135u + (u32)(i) * 0x11Bu) * 4u)
 #define D_DSCL_DSCL_CONTROL(i)                               ((0x04126u + (u32)(i) * 0x11Bu) * 4u)
 #define D_DSCL_LB_DATA_FORMAT(i)                             ((0x0413Du + (u32)(i) * 0x11Bu) * 4u)
@@ -170,12 +247,14 @@
 #define D_OTG_OTG_CLOCK_CONTROL(i)                           ((0x05048u + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_CONTROL(i)                                 ((0x05001u + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_DOUBLE_BUFFER_CONTROL(i)                   ((0x0501Bu + (u32)(i) * 0x80u) * 4u)
+#define D_OTG_OTG_GLOBAL_CONTROL0(i)                         ((0x05052u + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_H_BLANK_START_END(i)                       ((0x04FEBu + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_H_SYNC_A(i)                                ((0x04FECu + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_H_SYNC_A_CNTL(i)                           ((0x04FEDu + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_H_TIMING_CNTL(i)                           ((0x04FEEu + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_H_TOTAL(i)                                 ((0x04FEAu + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_INTERLACE_CONTROL(i)                       ((0x05004u + (u32)(i) * 0x80u) * 4u)
+#define D_OTG_OTG_MASTER_UPDATE_LOCK(i)                      ((0x0504Du + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_VREADY_PARAM(i)                            ((0x0504Bu + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_VSTARTUP_PARAM(i)                          ((0x05049u + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_VUPDATE_PARAM(i)                           ((0x0504Au + (u32)(i) * 0x80u) * 4u)
@@ -185,7 +264,18 @@
 #define D_OTG_OTG_V_TOTAL(i)                                 ((0x04FEFu + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_V_TOTAL_MAX(i)                             ((0x04FF1u + (u32)(i) * 0x80u) * 4u)
 #define D_OTG_OTG_V_TOTAL_MIN(i)                             ((0x04FF0u + (u32)(i) * 0x80u) * 4u)
+#define D_PHYPLLA_PIXCLK_RESYNC_CNTL                           (0x00100u * 4u)
+#define D_PHYPLLB_PIXCLK_RESYNC_CNTL                           (0x00101u * 4u)
+#define D_PHYPLLC_PIXCLK_RESYNC_CNTL                           (0x00102u * 4u)
+#define D_PHYPLLD_PIXCLK_RESYNC_CNTL                           (0x00103u * 4u)
+#define D_PHYPLLE_PIXCLK_RESYNC_CNTL                           (0x0010Cu * 4u)
+#define D_PHYPLLF_PIXCLK_RESYNC_CNTL                           (0x0013Eu * 4u)
+#define D_VGA_TEST_CONTROL                                     (0x000D5u * 4u)
 #define D_VTG_CONTROL(i)                                     ((0x039E8u + (u32)(i) * 0x1u) * 4u)
+#define F_AZALIA_F0_CODEC_FUNCTION_PARAMETER_POWER_STATES__CLKSTOP     30u, 0x40000000u
+#define F_AZALIA_F0_CODEC_FUNCTION_PARAMETER_POWER_STATES__EPSS        31u, 0x80000000u
+#define F_AZALIA_F0_CODEC_FUNCTION_PARAMETER_SUPPORTED_SIZE_RATES__AUDIO_RATE_CAPABILITIES  0u, 0x00000FFFu
+#define F_AZF0ENDPOINT_AZALIA_F0_CODEC_ENDPOINT_INDEX__AZALIA_ENDPOINT_REG_INDEX  0u, 0x00003FFFu
 #define F_CM_CM_BNS_VALUES_R__CM_BNS_SCALE_R                           16u, 0xFFFF0000u
 #define F_CM_CM_CMOUT_CONTROL__CM_CMOUT_ROUND_TRUNC_MODE                0u, 0x0000000Fu
 #define F_CM_CM_CONTROL__CM_BYPASS_EN                                   0u, 0x00000001u
@@ -204,6 +294,14 @@
 #define F_CNVC_CFG_FORMAT_CONTROL__FORMAT_EXPANSION_MODE                0u, 0x00000001u
 #define F_CNVC_CFG_FORMAT_CONTROL__OUTPUT_FP                           16u, 0x00010000u
 #define F_CURSOR_CURSOR_CONTROL__CURSOR_ENABLE                          0u, 0x00000001u
+#define F_D1VGA_CONTROL__D1VGA_MODE_ENABLE                              0u, 0x00000001u
+#define F_DCCG_AUDIO_DTO0_MODULE__DCCG_AUDIO_DTO0_MODULE                0u, 0xFFFFFFFFu
+#define F_DCCG_AUDIO_DTO0_PHASE__DCCG_AUDIO_DTO0_PHASE                  0u, 0xFFFFFFFFu
+#define F_DCCG_AUDIO_DTO1_MODULE__DCCG_AUDIO_DTO1_MODULE                0u, 0xFFFFFFFFu
+#define F_DCCG_AUDIO_DTO1_PHASE__DCCG_AUDIO_DTO1_PHASE                  0u, 0xFFFFFFFFu
+#define F_DCCG_AUDIO_DTO_SOURCE__DCCG_AUDIO_DTO0_SOURCE_SEL             0u, 0x00000007u
+#define F_DCCG_AUDIO_DTO_SOURCE__DCCG_AUDIO_DTO_SEL                     4u, 0x00000030u
+#define F_DCFCLK_CNTL__DCFCLK_GATE_DIS                                 31u, 0x80000000u
 #define F_DCHUBBUB_ARB_DF_REQ_OUTSTAND__DCHUBBUB_ARB_MIN_REQ_OUTSTAND  16u, 0x01FF0000u
 #define F_DCHUBBUB_ARB_DRAM_STATE_CNTL__DCHUBBUB_ARB_ALLOW_SELF_REFRESH_FORCE_ENABLE  1u, 0x00000002u
 #define F_DCHUBBUB_ARB_DRAM_STATE_CNTL__DCHUBBUB_ARB_ALLOW_SELF_REFRESH_FORCE_VALUE  0u, 0x00000001u
@@ -211,10 +309,107 @@
 #define F_DCHUBBUB_SDPIF_FB_BASE__SDPIF_FB_BASE                         0u, 0x00FFFFFFu
 #define F_DCHUBBUB_SDPIF_FB_OFFSET__SDPIF_FB_OFFSET                     0u, 0x00FFFFFFu
 #define F_DC_IP_REQUEST_CNTL__IP_REQUEST_EN                             0u, 0x00000001u
+#define F_DIG_AFMT_60958_0__AFMT_60958_CS_CHANNEL_NUMBER_L             20u, 0x00F00000u
+#define F_DIG_AFMT_60958_0__AFMT_60958_CS_CLOCK_ACCURACY               28u, 0x30000000u
+#define F_DIG_AFMT_60958_1__AFMT_60958_CS_CHANNEL_NUMBER_R             20u, 0x00F00000u
+#define F_DIG_AFMT_60958_2__AFMT_60958_CS_CHANNEL_NUMBER_2              0u, 0x0000000Fu
+#define F_DIG_AFMT_60958_2__AFMT_60958_CS_CHANNEL_NUMBER_3              4u, 0x000000F0u
+#define F_DIG_AFMT_60958_2__AFMT_60958_CS_CHANNEL_NUMBER_4              8u, 0x00000F00u
+#define F_DIG_AFMT_60958_2__AFMT_60958_CS_CHANNEL_NUMBER_5             12u, 0x0000F000u
+#define F_DIG_AFMT_60958_2__AFMT_60958_CS_CHANNEL_NUMBER_6             16u, 0x000F0000u
+#define F_DIG_AFMT_60958_2__AFMT_60958_CS_CHANNEL_NUMBER_7             20u, 0x00F00000u
+#define F_DIG_AFMT_AUDIO_PACKET_CONTROL__AFMT_60958_CS_UPDATE          26u, 0x04000000u
+#define F_DIG_AFMT_AUDIO_PACKET_CONTROL__AFMT_AUDIO_SAMPLE_SEND         0u, 0x00000001u
+#define F_DIG_AFMT_AUDIO_PACKET_CONTROL2__AFMT_60958_OSF_OVRD          28u, 0x10000000u
+#define F_DIG_AFMT_AUDIO_PACKET_CONTROL2__AFMT_AUDIO_CHANNEL_ENABLE     8u, 0x0000FF00u
+#define F_DIG_AFMT_AUDIO_PACKET_CONTROL2__AFMT_AUDIO_LAYOUT_OVRD        0u, 0x00000001u
+#define F_DIG_AFMT_AUDIO_SRC_CONTROL__AFMT_AUDIO_SRC_SELECT             0u, 0x00000007u
+#define F_DIG_AFMT_CNTL__AFMT_AUDIO_CLOCK_EN                            0u, 0x00000001u
+#define F_DIG_AFMT_INFOFRAME_CONTROL0__AFMT_AUDIO_INFO_UPDATE           7u, 0x00000080u
+#define F_DIG_AFMT_VBI_PACKET_CONTROL__AFMT_GENERIC_CONFLICT           16u, 0x00010000u
+#define F_DIG_AFMT_VBI_PACKET_CONTROL__AFMT_GENERIC_CONFLICT_CLR       17u, 0x00020000u
+#define F_DIG_AFMT_VBI_PACKET_CONTROL__AFMT_GENERIC_INDEX              28u, 0xF0000000u
+#define F_DIG_AFMT_VBI_PACKET_CONTROL1__AFMT_GENERIC0_IMMEDIATE_UPDATE  2u, 0x00000004u
+#define F_DIG_DIG_BE_CNTL__DIG_FE_SOURCE_SELECT                         8u, 0x00007F00u
+#define F_DIG_DIG_BE_CNTL__DIG_MODE                                    16u, 0x00070000u
+#define F_DIG_DIG_BE_EN_CNTL__DIG_ENABLE                                0u, 0x00000001u
+#define F_DIG_DIG_FE_CNTL__DIG_SOURCE_SELECT                            0u, 0x00000007u
+#define F_DIG_DIG_FE_CNTL__DIG_START                                   10u, 0x00000400u
+#define F_DIG_DIG_FE_CNTL__TMDS_COLOR_FORMAT                           30u, 0xC0000000u
+#define F_DIG_DIG_FE_CNTL__TMDS_PIXEL_ENCODING                         28u, 0x10000000u
+#define F_DIG_HDMI_ACR_32_0__HDMI_ACR_CTS_32                           12u, 0xFFFFF000u
+#define F_DIG_HDMI_ACR_32_1__HDMI_ACR_N_32                              0u, 0x000FFFFFu
+#define F_DIG_HDMI_ACR_44_0__HDMI_ACR_CTS_44                           12u, 0xFFFFF000u
+#define F_DIG_HDMI_ACR_44_1__HDMI_ACR_N_44                              0u, 0x000FFFFFu
+#define F_DIG_HDMI_ACR_48_0__HDMI_ACR_CTS_48                           12u, 0xFFFFF000u
+#define F_DIG_HDMI_ACR_48_1__HDMI_ACR_N_48                              0u, 0x000FFFFFu
+#define F_DIG_HDMI_ACR_PACKET_CONTROL__HDMI_ACR_AUDIO_PRIORITY         31u, 0x80000000u
+#define F_DIG_HDMI_ACR_PACKET_CONTROL__HDMI_ACR_AUTO_SEND              12u, 0x00001000u
+#define F_DIG_HDMI_ACR_PACKET_CONTROL__HDMI_ACR_SOURCE                  8u, 0x00000100u
+#define F_DIG_HDMI_AUDIO_PACKET_CONTROL__HDMI_AUDIO_DELAY_EN            4u, 0x00000030u
+#define F_DIG_HDMI_CONTROL__HDMI_CLOCK_CHANNEL_RATE                     2u, 0x00000004u
+#define F_DIG_HDMI_CONTROL__HDMI_DATA_SCRAMBLE_EN                       1u, 0x00000002u
+#define F_DIG_HDMI_CONTROL__HDMI_DEEP_COLOR_DEPTH                      28u, 0x30000000u
+#define F_DIG_HDMI_CONTROL__HDMI_DEEP_COLOR_ENABLE                     24u, 0x01000000u
+#define F_DIG_HDMI_CONTROL__HDMI_KEEPOUT_MODE                           0u, 0x00000001u
+#define F_DIG_HDMI_CONTROL__HDMI_NO_EXTRA_NULL_PACKET_FILLED            3u, 0x00000008u
+#define F_DIG_HDMI_CONTROL__HDMI_PACKET_GEN_VERSION                     4u, 0x00000010u
+#define F_DIG_HDMI_DB_CONTROL__HDMI_DB_DISABLE                         12u, 0x00001000u
+#define F_DIG_HDMI_GC__HDMI_GC_AVMUTE                                   0u, 0x00000001u
+#define F_DIG_HDMI_GENERIC_PACKET_CONTROL0__HDMI_GENERIC0_CONT          1u, 0x00000002u
+#define F_DIG_HDMI_GENERIC_PACKET_CONTROL0__HDMI_GENERIC0_LINE         16u, 0x003F0000u
+#define F_DIG_HDMI_GENERIC_PACKET_CONTROL0__HDMI_GENERIC0_SEND          0u, 0x00000001u
+#define F_DIG_HDMI_GENERIC_PACKET_CONTROL0__HDMI_GENERIC1_CONT          5u, 0x00000020u
+#define F_DIG_HDMI_GENERIC_PACKET_CONTROL0__HDMI_GENERIC1_LINE         24u, 0x3F000000u
+#define F_DIG_HDMI_GENERIC_PACKET_CONTROL0__HDMI_GENERIC1_SEND          4u, 0x00000010u
+#define F_DIG_HDMI_INFOFRAME_CONTROL0__HDMI_AUDIO_INFO_SEND             4u, 0x00000010u
+#define F_DIG_HDMI_INFOFRAME_CONTROL1__HDMI_AUDIO_INFO_LINE             8u, 0x00003F00u
+#define F_DIG_HDMI_VBI_PACKET_CONTROL__HDMI_ACP_SEND                   12u, 0x00001000u
+#define F_DIG_HDMI_VBI_PACKET_CONTROL__HDMI_GC_CONT                     5u, 0x00000020u
+#define F_DIG_HDMI_VBI_PACKET_CONTROL__HDMI_GC_SEND                     4u, 0x00000010u
+#define F_DIG_HDMI_VBI_PACKET_CONTROL__HDMI_NULL_SEND                   0u, 0x00000001u
+#define F_DOMAIN0_PG_CONFIG__DOMAIN0_POWER_FORCEON                      0u, 0x00000001u
 #define F_DOMAIN0_PG_CONFIG__DOMAIN0_POWER_GATE                         8u, 0x00000100u
 #define F_DOMAIN0_PG_STATUS__DOMAIN0_PGFSM_PWR_STATUS                  30u, 0xC0000000u
 #define F_DPP_TOP_DPP_CONTROL__DPPCLK_RATE_CONTROL                     24u, 0x01000000u
 #define F_DPP_TOP_DPP_CONTROL__DPP_CLOCK_ENABLE                         4u, 0x00000010u
+#define F_DP_DP_CONFIG__DP_UDI_LANES                                    0u, 0x00000003u
+#define F_DP_DP_DPHY_CNTL__DPHY_BYPASS                                 16u, 0x00010000u
+#define F_DP_DP_DPHY_PRBS_CNTL__DPHY_PRBS_EN                            0u, 0x00000001u
+#define F_DP_DP_DPHY_SCRAM_CNTL__DPHY_SCRAMBLER_ADVANCE                 4u, 0x00000010u
+#define F_DP_DP_DPHY_SCRAM_CNTL__DPHY_SCRAMBLER_BS_COUNT                8u, 0x0003FF00u
+#define F_DP_DP_LINK_CNTL__DP_LINK_TRAINING_COMPLETE                    4u, 0x00000010u
+#define F_DP_DP_LINK_FRAMING_CNTL__DP_IDLE_BS_INTERVAL                  0u, 0x0003FFFFu
+#define F_DP_DP_LINK_FRAMING_CNTL__DP_VBID_DISABLE                     24u, 0x01000000u
+#define F_DP_DP_LINK_FRAMING_CNTL__DP_VID_ENHANCED_FRAME_MODE          28u, 0x10000000u
+#define F_DP_DP_MSA_COLORIMETRY__DP_MSA_MISC0                          24u, 0xFF000000u
+#define F_DP_DP_MSA_TIMING_PARAM1__DP_MSA_HTOTAL                       16u, 0xFFFF0000u
+#define F_DP_DP_MSA_TIMING_PARAM1__DP_MSA_VTOTAL                        0u, 0x0000FFFFu
+#define F_DP_DP_MSA_TIMING_PARAM2__DP_MSA_HSTART                       16u, 0xFFFF0000u
+#define F_DP_DP_MSA_TIMING_PARAM2__DP_MSA_VSTART                        0u, 0x0000FFFFu
+#define F_DP_DP_MSA_TIMING_PARAM3__DP_MSA_HSYNCPOLARITY                31u, 0x80000000u
+#define F_DP_DP_MSA_TIMING_PARAM3__DP_MSA_HSYNCWIDTH                   16u, 0x7FFF0000u
+#define F_DP_DP_MSA_TIMING_PARAM3__DP_MSA_VSYNCPOLARITY                15u, 0x00008000u
+#define F_DP_DP_MSA_TIMING_PARAM3__DP_MSA_VSYNCWIDTH                    0u, 0x00007FFFu
+#define F_DP_DP_MSA_TIMING_PARAM4__DP_MSA_HWIDTH                       16u, 0xFFFF0000u
+#define F_DP_DP_MSA_TIMING_PARAM4__DP_MSA_VHEIGHT                       0u, 0x0000FFFFu
+#define F_DP_DP_PIXEL_FORMAT__DP_COMPONENT_DEPTH                       24u, 0x07000000u
+#define F_DP_DP_PIXEL_FORMAT__DP_PIXEL_ENCODING                         0u, 0x00000007u
+#define F_DP_DP_SEC_AUD_N__DP_SEC_AUD_N                                 0u, 0x00FFFFFFu
+#define F_DP_DP_SEC_CNTL__DP_SEC_ACM_ENABLE                            16u, 0x00010000u
+#define F_DP_DP_SEC_CNTL__DP_SEC_AIP_ENABLE                            12u, 0x00001000u
+#define F_DP_DP_SEC_CNTL__DP_SEC_ASP_ENABLE                             4u, 0x00000010u
+#define F_DP_DP_SEC_CNTL__DP_SEC_ATP_ENABLE                             8u, 0x00000100u
+#define F_DP_DP_SEC_CNTL__DP_SEC_STREAM_ENABLE                          0u, 0x00000001u
+#define F_DP_DP_SEC_TIMESTAMP__DP_SEC_TIMESTAMP_MODE                    0u, 0x00000001u
+#define F_DP_DP_STEER_FIFO__DP_STEER_FIFO_RESET                         0u, 0x00000001u
+#define F_DP_DP_VID_M__DP_VID_M                                         0u, 0x00FFFFFFu
+#define F_DP_DP_VID_N__DP_VID_N                                         0u, 0x00FFFFFFu
+#define F_DP_DP_VID_STREAM_CNTL__DP_VID_STREAM_DIS_DEFER                8u, 0x00000300u
+#define F_DP_DP_VID_STREAM_CNTL__DP_VID_STREAM_ENABLE                   0u, 0x00000001u
+#define F_DP_DP_VID_STREAM_CNTL__DP_VID_STREAM_STATUS                  16u, 0x00010000u
+#define F_DP_DP_VID_TIMING__DP_VID_M_N_GEN_EN                           8u, 0x00000100u
+#define F_DP_DP_VID_TIMING__DP_VID_N_MUL                               10u, 0x00000C00u
 #define F_DSCL_LB_DATA_FORMAT__PIXEL_DEPTH                              0u, 0x00000003u
 #define F_DSCL_LB_DATA_FORMAT__PIXEL_REDUCE_MODE                       12u, 0x00001000u
 #define F_DSCL_LB_MEMORY_CTRL__LB_MAX_PARTITIONS                        8u, 0x00003F00u
@@ -354,6 +549,7 @@
 #define F_OTG_OTG_CONTROL__OTG_MASTER_EN                                0u, 0x00000001u
 #define F_OTG_OTG_CONTROL__OTG_START_POINT_CNTL                        12u, 0x00001000u
 #define F_OTG_OTG_DOUBLE_BUFFER_CONTROL__OTG_BLANK_DATA_DOUBLE_BUFFER_EN 16u, 0x00010000u
+#define F_OTG_OTG_GLOBAL_CONTROL0__OTG_MASTER_UPDATE_LOCK_SEL          25u, 0x0E000000u
 #define F_OTG_OTG_H_BLANK_START_END__OTG_H_BLANK_END                   16u, 0x7FFF0000u
 #define F_OTG_OTG_H_BLANK_START_END__OTG_H_BLANK_START                  0u, 0x00007FFFu
 #define F_OTG_OTG_H_SYNC_A__OTG_H_SYNC_A_END                           16u, 0x7FFF0000u
@@ -362,6 +558,8 @@
 #define F_OTG_OTG_H_TIMING_CNTL__OTG_H_TIMING_DIV_BY2                   0u, 0x00000001u
 #define F_OTG_OTG_H_TOTAL__OTG_H_TOTAL                                  0u, 0x00007FFFu
 #define F_OTG_OTG_INTERLACE_CONTROL__OTG_INTERLACE_ENABLE               0u, 0x00000001u
+#define F_OTG_OTG_MASTER_UPDATE_LOCK__OTG_MASTER_UPDATE_LOCK            0u, 0x00000001u
+#define F_OTG_OTG_MASTER_UPDATE_LOCK__UPDATE_LOCK_STATUS                8u, 0x00000100u
 #define F_OTG_OTG_VREADY_PARAM__VREADY_OFFSET                           0u, 0x0000FFFFu
 #define F_OTG_OTG_VSTARTUP_PARAM__VSTARTUP_START                        0u, 0x000003FFu
 #define F_OTG_OTG_VUPDATE_PARAM__VUPDATE_OFFSET                         0u, 0x0000FFFFu
@@ -374,6 +572,9 @@
 #define F_OTG_OTG_V_TOTAL__OTG_V_TOTAL                                  0u, 0x00007FFFu
 #define F_OTG_OTG_V_TOTAL_MAX__OTG_V_TOTAL_MAX                          0u, 0x00007FFFu
 #define F_OTG_OTG_V_TOTAL_MIN__OTG_V_TOTAL_MIN                          0u, 0x00007FFFu
+#define F_PHYPLLA_PIXCLK_RESYNC_CNTL__PHYPLLA_DCCG_DEEP_COLOR_CNTL      4u, 0x00000030u
+#define F_VGA_TEST_CONTROL__VGA_TEST_ENABLE                             0u, 0x00000001u
+#define F_VGA_TEST_CONTROL__VGA_TEST_RENDER_START                       8u, 0x00000100u
 #define F_VTG_CONTROL__VTG0_ENABLE                                     31u, 0x80000000u
 #define F_VTG_CONTROL__VTG0_FP2                                         0u, 0x00007FFFu
 #define F_VTG_CONTROL__VTG0_VCOUNT_INIT                                15u, 0x3FFF8000u

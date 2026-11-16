@@ -18,6 +18,7 @@
 #include "atom.h"
 #include "dcnbw.h"
 #include "dcn.h"
+#include "modeset.h"
 
 #ifdef MOS_HOST_TEST
 #include "amdgpu_shim.h"      /* tools/: pci_dev_t e as funções do kernel que o teste simula */
@@ -161,6 +162,14 @@ typedef struct amdgpu {
     /* caminho de pixels (dcn.c) */
     int              dcn_pipe_owner[4];   /* OTG que usa o pipe; -1 = livre */
     u32              dcn_timeouts;
+    /* troca de modo (modeset.c): uma tela por OTG e os relógios do display */
+    amd_disp_t       disp[4];
+    u32              disp_dispclk_khz, disp_dppclk_khz, disp_dprefclk_khz;
+    u32              modeset_count;
+    bool             dcn_inited;          /* dcn10_init_hw feito (zera no S3) */
+    u64              disp_buf[AMD_MAX_CONN], disp_buf_bytes[AMD_MAX_CONN];   /* superfície de cada saída (BAR0) */
+    bool             boot_saved;          /* a saída da UEFI, guardada antes do S3 */
+    amd_mode_req_t   boot_req;
     /* DDC (ddc.c): EDID ao vivo por linha e contadores do motor de I2C */
     u8            ddc_edid[AMD_NUM_DDC][512];
     u32           ddc_edid_len[AMD_NUM_DDC];
@@ -223,6 +232,21 @@ const u8  *amdgpu_fw_load(const char *name, u64 *len);
 int        amdgpu_smu_send(amdgpu_t *a, u32 msg, u32 arg, u32 *out);
 /* tabela de relógios do SMU 10 (TABLE_DPMCLOCKS) em a->bw_soc; 0 ou -MOS_*. Precisa da GMC (a tabela vem pela VRAM). */
 int        amdgpu_smu_dpm_clocks(amdgpu_t *a);
+/* telas (display.c): troca de modo pelo EDID e volta do S3 */
+int        amd_pick_mode(const edid_info_t *e, u32 w, u32 h, u32 refresh_mhz, u32 max_tmds_khz, u32 max_pclk_khz);
+void       amdgpu_dcn_init_hw(amdgpu_t *a);
+int        amdgpu_display_set(amdgpu_t *a, u32 conn, u32 w, u32 h, u32 refresh_mhz, bool main);
+void       amdgpu_display_save(amdgpu_t *a);
+void       amdgpu_display_restore(amdgpu_t *a);
+int        amdgpu_display_conn_of_ddc(amdgpu_t *a, int ddc);
+int        amdgpu_display_main_conn(amdgpu_t *a);
+/* áudio pela saída de vídeo (audio.c): endpoint AZ e o lado do encoder */
+void       amdgpu_audio_init(amdgpu_t *a);
+void       amdgpu_audio_on(amdgpu_t *a, int otg);
+void       amdgpu_audio_off(amdgpu_t *a, int otg);
+u32        amd_audio_endpoints(const amdgpu_t *a);
+u8         amd_audio_hdmi_rates(const amd_timing_t *t, u32 bpc, u32 channels, u8 rates);
+void       amd_audio_acr(u32 pix_khz, u32 bpc, u32 out[6]);
 /* RAM -> janela da GART (páginas contíguas a partir de phys). Endereço MC ou 0. */
 u64        amdgpu_gart_map(amdgpu_t *a, u64 phys, u32 npages, bool writable);
 void       amdgpu_gart_unmap(amdgpu_t *a, u64 mc, u32 npages);
@@ -306,6 +330,8 @@ bool       amdgpu_vbios_load(amdgpu_t *a);        /* kernel: acpi_find_table("VF
 /* DDC por hardware (ddc.c). ddc = 0..5 (DDC1..6). EDID: tamanho lido (múltiplo de 128) ou -MOS_*.
  * DDC/CI: VCP 0x10 = brilho. -MOS_ENXIO = ninguém responde na linha. */
 int        amdgpu_ddc_read_edid(amdgpu_t *a, u32 ddc, u8 *buf, u32 max);
+int        amdgpu_i2c_write(amdgpu_t *a, u32 ddc, u8 addr, const u8 *buf, u32 len);
+int        amdgpu_i2c_read_reg(amdgpu_t *a, u32 ddc, u8 addr, u8 reg, u8 *buf, u32 len);
 u32        amdgpu_ddc_probe(amdgpu_t *a);
 int        amdgpu_ddcci_get_vcp(amdgpu_t *a, u32 ddc, u8 vcp, u16 *cur, u16 *max);
 int        amdgpu_ddcci_set_vcp(amdgpu_t *a, u32 ddc, u8 vcp, u16 val);

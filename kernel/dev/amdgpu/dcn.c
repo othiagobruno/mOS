@@ -189,6 +189,17 @@ static void otg_enable(amdgpu_t *a, int o) {
         FV(F_OTG_OTG_CONTROL__OTG_DISABLE_POINT_CNTL, 3) | FV(F_OTG_OTG_CONTROL__OTG_MASTER_EN, 1));
 }
 
+/* optc1_lock/unlock: segura as atualizações de duplo buffer do OTG enquanto os pipes são programados */
+static void otg_lock(amdgpu_t *a, int o, bool lock) {
+    if (lock) {
+        WR(a, D_OTG_OTG_GLOBAL_CONTROL0(o), FV(F_OTG_OTG_GLOBAL_CONTROL0__OTG_MASTER_UPDATE_LOCK_SEL, (u32)o));
+        WR(a, D_OTG_OTG_MASTER_UPDATE_LOCK(o), FV(F_OTG_OTG_MASTER_UPDATE_LOCK__OTG_MASTER_UPDATE_LOCK, 1));
+        WAIT(a, D_OTG_OTG_MASTER_UPDATE_LOCK(o), F_OTG_OTG_MASTER_UPDATE_LOCK__UPDATE_LOCK_STATUS, 1, 10);
+    } else {
+        WR(a, D_OTG_OTG_MASTER_UPDATE_LOCK(o), 0);
+    }
+}
+
 void amdgpu_dcn_disable_otg(amdgpu_t *a, int o) {
     if (!a || o < 0 || o >= AMD_DCN_OTGS) return;
     otg_blank(a, o, true);
@@ -579,13 +590,14 @@ int amdgpu_dcn_enable_stream(amdgpu_t *a, const amd_dcn_stream_t *s) {
     otg_blank(a, o, true);
     otg_enable(a, o);
 
+    otg_lock(a, o, true);
     for (u32 i = 0; i < s->npipes; i++) {
         u32 p = s->pipe[i];
         const amd_dml1_dlg_in_t *in = &s->bw->dlg[i];
         u32 vx = s->bw->viewport_x[i], vw = s->bw->viewport_width[i];
         amd_dml1_surface_t surf = { bpp, tile_bytes(s->sw_mode), vw, s->pitch_px };
         amd_dml1_rq_t rq;
-        if (amd_dml1_rq(&surf, &rq) < 0) return -MOS_EINVAL;
+        if (amd_dml1_rq(&surf, &rq) < 0) { otg_lock(a, o, false); return -MOS_EINVAL; }
         amd_dml1_dlg_t d;
         amd_dml1_dlg(in, &rq, bpp, &d);
 
@@ -613,11 +625,14 @@ int amdgpu_dcn_enable_stream(amdgpu_t *a, const amd_dcn_stream_t *s) {
         a->dcn_pipe_owner[p] = o;
     }
     opp_fmt(a, o, s);
+    otg_lock(a, o, false);
     otg_blank(a, o, false);
     return 0;
 }
 
 void amdgpu_dcn_flip(amdgpu_t *a, const amd_dcn_stream_t *s, u64 addr) {
     if (!a || !s) return;
+    otg_lock(a, s->otg, true);                    /* os pipes de uma tela dividida trocam no mesmo vblank */
     for (u32 i = 0; i < s->npipes && i < 2; i++) hubp_address(a, s->pipe[i], addr, 0);
+    otg_lock(a, s->otg, false);
 }

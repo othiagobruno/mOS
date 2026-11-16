@@ -9,6 +9,8 @@
 #include "regs.h"
 #include "ucode.h"
 #include "pm4check.h"
+#include "dcn_regs.h"
+#include "az_regs.h"
 #include <stdarg.h>
 #include <stdlib.h>
 
@@ -368,8 +370,11 @@ static void mon_init(void) {
     mon_edid[126] = 2;
     for (int b = 0; b < 3; b++) { u8 sum = 0; for (int i = 0; i < 127; i++) sum = (u8)(sum + mon_edid[b * 128 + i]); mon_edid[b * 128 + 127] = (u8)(0x100 - sum); }
 }
+static u8 scdc[256], scdc_ptr;           /* SCDC do HDMI 2.0 no endereço 0x54; versão do sink 1 */
+static u32 scdc_writes;
 static bool i2c_dev_write(u32 ddc, u8 addr, const u8 *p, u32 n) {
     if ((int)ddc != mon_ddc) return false;
+    if (addr == 0x54) { if (n) scdc_ptr = p[0]; if (n >= 2) { scdc[p[0]] = p[1]; scdc_writes++; } return true; }
     if (addr == 0x30) { if (n) mon_seg = p[0]; return true; }
     if (addr == 0x50) { if (n) mon_off = p[0]; return true; }
     if (addr == 0x37) {
@@ -387,6 +392,7 @@ static bool i2c_dev_write(u32 ddc, u8 addr, const u8 *p, u32 n) {
 }
 static bool i2c_dev_read(u32 ddc, u8 addr, u8 *out, u32 n) {
     if ((int)ddc != mon_ddc) return false;
+    if (addr == 0x54) { for (u32 i = 0; i < n; i++) out[i] = scdc[(u8)(scdc_ptr + i)]; return true; }
     if (addr == 0x50) { for (u32 i = 0; i < n; i++) { u32 at = mon_seg * 256u + mon_off + i; out[i] = at < 384 ? mon_edid[at] : 0xFF; } mon_off = (u8)(mon_off + n); return true; }
     if (addr == 0x37) { if (!mon_has_reply) return false; memcpy(out, mon_reply, n < 11 ? n : 11); mon_has_reply = false; return true; }
     return false;
@@ -452,6 +458,20 @@ static int aux_inst_of(u32 off) {
     for (int i = 0; i < 6; i++) if (off >= R_AUX_CONTROL(i) && off <= R_AUX_SW_DATA(i)) return i;
     return -1;
 }
+/* sink DP que treina: TPS1 fecha o clock recovery quando o nível de tensão chega ao pedido; TPS2/3 fecham a
+ * equalização (a menos que dp_eq_fail) e o alinhamento entre vias */
+static u8 dp_need_vs = 1;
+static bool dp_eq_fail;
+static u32 dp_tps1, dp_tps23;
+static void dp_sink_update(void) {
+    u32 lanes = dpcd[0x101] & 0x1F, tps = dpcd[0x102] & 3;
+    u8 st = 0;
+    if (tps == 1) { dp_tps1++; st = (dpcd[0x103] & 3) >= dp_need_vs ? 0x1 : 0; dpcd[0x206] = dpcd[0x207] = (u8)(dp_need_vs | dp_need_vs << 4); }
+    else if (tps >= 2) { dp_tps23++; st = dp_eq_fail ? 0x1 : 0x7; }
+    dpcd[0x202] = dpcd[0x203] = 0;
+    for (u32 l = 0; l < lanes && l < 4; l++) dpcd[0x202 + l / 2] |= (u8)(st << (4 * (l % 2)));
+    dpcd[0x204] = (tps >= 2 && !dp_eq_fail) ? 1 : 0;
+}
 static void aux_go(int i) {
     u8 *b = aux_wbuf[i];
     u32 n = (regs[R_AUX_SW_CONTROL(i) / 4] & AUX_SW_WR_BYTES_MASK) >> AUX_SW_WR_BYTES_SHIFT;
@@ -466,7 +486,7 @@ static void aux_go(int i) {
     else if (native) {
         if (addr + len > sizeof dpcd) aux_rbuf[i][0] = AUX_REPLY_NACK << 4;
         else if (rd) { memcpy(aux_rbuf[i] + 1, dpcd + addr, len); cnt += len; }
-        else memcpy(dpcd + addr, b + 4, len);
+        else { memcpy(dpcd + addr, b + 4, len); if (addr <= 0x106 && addr + len > 0x102) dp_sink_update(); }
     } else {
         if (addr == 0x30 && !rd && len) aux_i2c_seg = b[4];
         else if (addr == 0x50 && !rd && len) aux_i2c_off = b[4];
@@ -499,7 +519,39 @@ static bool aux_wreg(u32 off, u32 v) {
 }
 
 static bool otg_irq_wreg(u32 off, u32 v);
+/* ---------- troca de modo: caixa do VBIOS no MP1, mensagens de display do SMU, VBIOS sintético ---------- */
+#define R_VBSMC_RESP AMD_SEG(AMD_MP1_BASE0, 0x029B)
+#define R_VBSMC_ARG  AMD_SEG(AMD_MP1_BASE0, 0x0293)
+#define R_VBSMC_MSG  AMD_SEG(AMD_MP1_BASE0, 0x0283)
+static u32 vbsmc_msg, vbsmc_arg, smu_disp[0x40];
+static u8 smu_wm_tbl[96];
+#define ATOM_REC 0xFE00u                      /* registradores (dwords, índice de 16 bits do ATOM) onde as tabelas sintéticas gravam o PS */
+typedef struct { int table; u32 ps[8]; } atom_call_t;
+static atom_call_t atom_log[64]; static u32 atom_nlog;
+static bool dcn_status_wreg(u32 off, u32 v);
+static u32 az_ix[8], az_reg[8][256];          /* endpoints de áudio: registradores indiretos */
+static int az_ep_of(u32 off, bool *data) {
+    for (int e = 0; e < 8; e++) {
+        if (off == D_AZF0ENDPOINT_AZALIA_F0_CODEC_ENDPOINT_INDEX(e)) { *data = false; return e; }
+        if (off == D_AZF0ENDPOINT_AZALIA_F0_CODEC_ENDPOINT_DATA(e)) { *data = true; return e; }
+    }
+    return -1;
+}
 static bool engine_wreg(u32 off, u32 v) {
+    { bool dt; int ep = az_ep_of(off, &dt); if (ep >= 0) { if (dt) az_reg[ep][az_ix[ep] & 0xFF] = v; else az_ix[ep] = v & 0xFF; return true; } }
+    if (off == R_VBSMC_MSG) { vbsmc_msg = v; vbsmc_arg = regs[R_VBSMC_ARG / 4]; regs[R_VBSMC_RESP / 4] = 1; regs[off / 4] = v; return true; }
+    if (off >= ATOM_REC * 4 && off < (ATOM_REC + 4 * 8) * 4) {
+        u32 r = off / 4 - ATOM_REC, slot = r / 8;
+        regs[off / 4] = v;
+        if (r % 8 == 7 && atom_nlog < 64) {
+            static const int tbl[4] = { 4, 12, 46, 76 };
+            atom_log[atom_nlog].table = tbl[slot];
+            for (int k = 0; k < 8; k++) atom_log[atom_nlog].ps[k] = regs[ATOM_REC + slot * 8 + k];
+            atom_nlog++;
+        }
+        return true;
+    }
+    if (dcn_status_wreg(off, v)) return true;
     if (otg_irq_wreg(off, v)) return true;
     if (aux_wreg(off, v)) return true;
     if (i2c_wreg(off, v)) return true;
@@ -513,6 +565,12 @@ static bool engine_wreg(u32 off, u32 v) {
         else if (v == SMU_MSG_POWER_UP_GFX) smu_gfx_on = true;
         else if (v == SMU_MSG_DISABLE_GFXOFF) { gfxoff_off = true; gfxoff_allowed = false; }
         else if (v == SMU_MSG_ENABLE_GFXOFF) { gfxoff_allowed = true; gfxoff_enables++; }
+        else if (v == 0x12 || v == 0x18 || v == 0x20 || v == 0x24) smu_disp[v] = regs[R_MP1_C2PMSG_82 / 4];
+        else if (v == 0x1D && regs[R_MP1_C2PMSG_82 / 4] == 1) {
+            u8 *t = mc_ptr_h(0, smu_dram, false);
+            if (!t) { regs[R_MP1_C2PMSG_90 / 4] = 0xFF; return true; }
+            memcpy(smu_wm_tbl, t, sizeof smu_wm_tbl); smu_disp[0x1D]++;
+        }
         else if (v == SMU_MSG_SET_DRIVER_DRAM_HI) smu_dram = (smu_dram & 0xFFFFFFFFull) | (u64)regs[R_MP1_C2PMSG_82 / 4] << 32;
         else if (v == SMU_MSG_SET_DRIVER_DRAM_LO) smu_dram = (smu_dram & ~0xFFFFFFFFull) | regs[R_MP1_C2PMSG_82 / 4];
         else if (v == SMU_MSG_TRANSFER_SMU2DRAM && regs[R_MP1_C2PMSG_82 / 4] == SMU10_TABLE_DPMCLOCKS) {
@@ -557,6 +615,7 @@ static bool engine_wreg(u32 off, u32 v) {
 }
 
 u32 amd_host_rreg(u32 off) {
+    { bool dt; int ep = az_ep_of(off, &dt); if (ep >= 0) return dt ? az_reg[ep][az_ix[ep] & 0xFF] : az_ix[ep]; }
     { int ai = aux_inst_of(off); if (ai >= 0 && off == R_AUX_SW_DATA(ai)) { u32 d = aux_ri[ai] < 32 ? aux_rbuf[ai][aux_ri[ai]] : 0; aux_ri[ai]++; return d << AUX_SW_DATA_SHIFT; } }
     if (off == R_DC_I2C_DATA) { u32 d = i2c_rp < sizeof i2c_buf ? i2c_buf[i2c_rp] : 0; i2c_rp++; return d << I2C_DATA_SHIFT; }
     if (off == R_VM_INV_ENG17_SEM) return 1;
@@ -1393,6 +1452,269 @@ static void test_gfxoff(void) {
 }
 
 /* tela dividida como a do Picasso no 5120x1440: HUBP0 com x 0..2559 e HUBP3 com 2560..5119 */
+
+/* ---------- DCN: o pouco de estado que as esperas do dcn.c leem ---------- */
+#define DMASK_(s, m) (m)
+#define DMASK(f) DMASK_(f)
+#define DFV_(s, m, v) ((((u32)(v)) << (s)) & (m))
+#define DFV(f, v) DFV_(f, v)
+static bool dcn_status_wreg(u32 off, u32 v) {
+    for (int o = 0; o < 4; o++) {
+        if (off == D_ODM_OPTC_INPUT_CLOCK_CONTROL(o)) {
+            u32 on = (v & DMASK(F_ODM_OPTC_INPUT_CLOCK_CONTROL__OPTC_INPUT_CLK_EN)) ? 1 : 0;
+            regs[off / 4] = (v & ~DMASK(F_ODM_OPTC_INPUT_CLOCK_CONTROL__OPTC_INPUT_CLK_ON)) | DFV(F_ODM_OPTC_INPUT_CLOCK_CONTROL__OPTC_INPUT_CLK_ON, on);
+            return true;
+        }
+        if (off == D_OTG_OTG_CLOCK_CONTROL(o)) {
+            u32 on = (v & DMASK(F_OTG_OTG_CLOCK_CONTROL__OTG_CLOCK_EN)) ? 1 : 0;
+            regs[off / 4] = (v & ~(DMASK(F_OTG_OTG_CLOCK_CONTROL__OTG_CLOCK_ON) | DMASK(F_OTG_OTG_CLOCK_CONTROL__OTG_BUSY))) |
+                            DFV(F_OTG_OTG_CLOCK_CONTROL__OTG_CLOCK_ON, on);
+            return true;
+        }
+        if (off == D_MPCC_MPCC_TOP_SEL(o)) { regs[off / 4] = v; regs[D_MPCC_MPCC_STATUS(o) / 4] = 0x2; return true; }   /* MPCC_IDLE */
+        if (off == D_OTG_OTG_MASTER_UPDATE_LOCK(o) && o != sim_otg) {
+            regs[off / 4] = (v & 1) ? (v | DMASK(F_OTG_OTG_MASTER_UPDATE_LOCK__UPDATE_LOCK_STATUS)) : 0; return true;
+        }
+        if (off == D_HUBP_DCHUBP_CNTL(o)) { regs[off / 4] = v | DFV(F_HUBP_DCHUBP_CNTL__HUBP_NO_OUTSTANDING_REQ, 1); return true; }
+    }
+    static const u32 cfg[8] = { D_DOMAIN0_PG_CONFIG, D_DOMAIN1_PG_CONFIG, D_DOMAIN2_PG_CONFIG, D_DOMAIN3_PG_CONFIG,
+                                D_DOMAIN4_PG_CONFIG, D_DOMAIN5_PG_CONFIG, D_DOMAIN6_PG_CONFIG, D_DOMAIN7_PG_CONFIG };
+    static const u32 st[8] = { D_DOMAIN0_PG_STATUS, D_DOMAIN1_PG_STATUS, D_DOMAIN2_PG_STATUS, D_DOMAIN3_PG_STATUS,
+                               D_DOMAIN4_PG_STATUS, D_DOMAIN5_PG_STATUS, D_DOMAIN6_PG_STATUS, D_DOMAIN7_PG_STATUS };
+    for (int d = 0; d < 8; d++)
+        if (off == cfg[d]) {
+            regs[off / 4] = v;
+            regs[st[d] / 4] = DFV(F_DOMAIN0_PG_STATUS__DOMAIN0_PGFSM_PWR_STATUS, (v & DMASK(F_DOMAIN0_PG_CONFIG__DOMAIN0_POWER_GATE)) ? 2 : 0);
+            return true;
+        }
+    return false;
+}
+
+/* VBIOS sintético: as tabelas 4 (DIGxEncoderControl), 12 (SetPixelClock), 46 (SetDCEClock) e 76
+ * (DIG1TransmitterControl) gravam os 8 dwords do PS em registradores que o simulador registra; a 46 devolve
+ * 600 MHz no PS0 (DPREFCLK, em 10 kHz) */
+static u8 sbios[0x2000];
+static u32 sb_pos;
+static void sb8(u32 o, u32 v) { sbios[o] = (u8)v; }
+static void sb16(u32 o, u32 v) { sb8(o, v); sb8(o + 1, v >> 8); }
+static void sbE(u32 v) { sbios[sb_pos++] = (u8)v; }
+static void build_sbios(void) {
+    memset(sbios, 0, sizeof sbios);
+    sb16(0, 0xAA55);
+    memcpy(sbios + 0x30, " 761295520", 10);
+    sb16(0x48, 0x100);
+    memcpy(sbios + 0x104, "ATOM", 4);
+    sb16(0x100 + 0x1E, 0x200);
+    sb16(0x100 + 0x20, 0x300);
+    sb_pos = 0x800;
+    static const int tbl[4] = { 4, 12, 46, 76 };
+    for (u32 slot = 0; slot < 4; slot++) {
+        u32 start = sb_pos;
+        sb16(0x200 + 4 + 2 * tbl[slot], start);
+        sbE(0); sbE(0); sbE(1); sbE(slot == 0 ? 5 : slot == 1 ? 7 : slot == 2 ? 1 : 6); sbE(0); sbE(8 * 4);   /* tamanho, frev, crev, ws, ps */
+        if (tbl[slot] == 46) {                      /* MOVE ps0 = 60000 (antes de gravar: o registro leva a resposta) */
+            sbE(1 + 1); sbE(5); sbE(0); sbE(0x60); sbE(0xEA); sbE(0); sbE(0);
+        }
+        for (u32 k = 0; k < 8; k++) {             /* MOVE reg (ATOM_REC + slot*8 + k) = ps[k] */
+            u32 r = ATOM_REC + slot * 8 + k;
+            sbE(1); sbE(1); sbE(r); sbE(r >> 8); sbE(k);
+        }
+        sbE(91);                                    /* EOT */
+        sb16(start, sb_pos - start);
+    }
+}
+static u32 atom_rd(void *c, u32 r) { (void)c; return amd_host_rreg(r * 4); }
+static void atom_wr(void *c, u32 r, u32 v) { (void)c; amd_host_wreg(r * 4, v); }
+static void atom_dl(void *c, u32 us) { (void)c; (void)us; }
+static const atom_call_t *atom_find(int table, u32 nth) {
+    for (u32 i = 0; i < atom_nlog; i++) if (atom_log[i].table == table && !nth--) return &atom_log[i];
+    return NULL;
+}
+static u32 atom_count(int table) { u32 n = 0; for (u32 i = 0; i < atom_nlog; i++) n += atom_log[i].table == table; return n; }
+static u8 psb(const atom_call_t *c, u32 off) { return (u8)(c->ps[off / 4] >> (off % 4 * 8)); }
+
+static void test_modeset(void) {
+    amdgpu_t *a = &eng;                      /* motores ligados (SMU, GMC) do test_engines */
+    smu_alive = true; aux_defers = 0; aux_sink = 0;   /* testes anteriores deixam o SMU mudo e o AUX mudado */
+    if (!a->smu_ok) { a->s3_engines = true; amdgpu_resume(a, 3); }   /* volta dos motores como num S3 */
+    CHECK(a->smu_ok && a->gmc_ok && a->smu_table, "SMU e GMC de pé para a troca de modo (smu %d gmc %d)", a->smu_ok, a->gmc_ok);
+    build_sbios();
+    CHECK(amd_atom_init(&a->atom, sbios, sizeof sbios) == 0, "VBIOS sintético");
+    a->atom.card = a; a->atom.reg_read = atom_rd; a->atom.reg_write = atom_wr; a->atom.delay_us = atom_dl;
+    a->vbios_ok = true;
+    /* saídas: HDMI no UNIPHY0 link B (DIG1, DDC2/HPD2, como no Picasso do Thiago) e DP no UNIPHY1 link A (AUX0) */
+    a->vbios.nconn = 2;
+    a->vbios.conn[0] = (amd_conn_t){ .object = 0x310C, .encoder = 0x221E, .device_tag = 0, .type = AMD_CONN_HDMI,
+                                     .transmitter = 0, .link = 1, .ddc = 1, .hpd = 1 };
+    a->vbios.conn[1] = (amd_conn_t){ .object = 0x3113, .encoder = 0x2120, .device_tag = 0, .type = AMD_CONN_DP,
+                                     .transmitter = 1, .link = 0, .ddc = 0, .hpd = 0 };
+    for (int i = 0; i < 4; i++) a->dcn_pipe_owner[i] = -1;
+    scdc[1] = 1;
+    u64 fb = amdgpu_vram_alloc(a, 5120u * 1440 * 4);
+    u64 fbmc = amdgpu_vram_to_mc(a, fb);
+    /* 1) a tela do Thiago: HDMI 5120x1440 a 481,14 MHz, YCbCr 4:4:4, 8 bpc */
+    amd_mode_req_t hd = { .conn = 0, .t = { 5400, 5120, 88, 44, 1485, 1440, 3, 5, false, false, 481140 }, .bpc = 8,
+        .ycbcr444 = true, .vic = 0, .aspect = 0, .addr = fbmc, .pitch_px = 5120, .format = AMD_FMT_ARGB8888, .sw_mode = 0 };
+    atom_nlog = 0; memset(smu_disp, 0, sizeof smu_disp);
+    int e = amdgpu_modeset(a, &hd, 1);
+    CHECK(e == 0 && a->disp[0].on && a->disp[0].hdmi && a->disp[0].phy == 1, "HDMI ligado (%d)", e);
+    CHECK(vbsmc_msg == 4 && vbsmc_arg == 489 && a->disp_dispclk_khz == 489000, "dispclk pela caixa do VBIOS: %u MHz", vbsmc_arg);
+    CHECK(smu_disp[0x18] == 1 && smu_disp[0x12] == 400 && smu_disp[0x20] == 300 && smu_disp[0x24] == 31,
+          "SMU: 1 tela, fclk %u, dcfclk %u, deep sleep %u MHz", smu_disp[0x12], smu_disp[0x20], smu_disp[0x24]);
+    CHECK(smu_disp[0x1D] == 1 && smu_wm_tbl[12 * 4] == (300 & 0xFF) && smu_wm_tbl[12 * 4 + 2] == (5000 & 0xFF) &&
+          smu_wm_tbl[12 * 4 + 8] == 0 && smu_wm_tbl[12 * 5 + 8] == 1 && smu_wm_tbl[8] == 0, "faixas das marcas d'água no SMU");
+    const atom_call_t *dce = atom_find(46, 0), *pc = atom_find(12, 0), *de = atom_find(4, 0), *tx = atom_find(76, 0);
+    CHECK(dce && psb(dce, 4) == 1 && psb(dce, 5) == 8 && a->disp_dprefclk_khz == 600000, "DPREFCLK pelo SetDCEClock (DFS) = %u kHz", a->disp_dprefclk_khz);
+    CHECK(pc && pc->ps[0] == 4811400 && psb(pc, 4) == 21 && psb(pc, 5) == 0x1E && psb(pc, 6) == 3 && psb(pc, 8) == 0 && psb(pc, 9) == 0,
+          "SetPixelClock v1.7: 481,14 MHz no COMBOPHY_PLL1, UNIPHY, HDMI, OTG0");
+    CHECK(de && psb(de, 0) == 1 && psb(de, 1) == 0x0F && psb(de, 2) == 3 && psb(de, 3) == 4 && de->ps[1] == 48114 && psb(de, 8) == 2,
+          "DIGxEncoderControl: DIG1 STREAM_SETUP HDMI, 4 vias, 48114 x 10 kHz, 8 bpc");
+    CHECK(tx && psb(tx, 0) == 1 && psb(tx, 1) == 1 && psb(tx, 2) == 3 && psb(tx, 3) == 4 && tx->ps[1] == 48114 &&
+          psb(tx, 8) == 2 && psb(tx, 10) == 0x0C, "DIG1TransmitterControl: UNIPHYB ENABLE, HPD2, conector HDMI");
+    CHECK(scdc[0x02] == 1 && scdc[0x20] == 3, "SCDC: versão da fonte 1, embaralhamento e razão 1/40 (481 MHz > 340)");
+    u32 hc = regs[D_DIG_HDMI_CONTROL(1) / 4];
+    CHECK((hc & DMASK(F_DIG_HDMI_CONTROL__HDMI_DATA_SCRAMBLE_EN)) && (hc & DMASK(F_DIG_HDMI_CONTROL__HDMI_CLOCK_CHANNEL_RATE)) &&
+          !(hc & DMASK(F_DIG_HDMI_CONTROL__HDMI_DEEP_COLOR_ENABLE)), "HDMI_CONTROL com embaralhamento, sem deep color");
+    CHECK((regs[D_DIG_DIG_FE_CNTL(1) / 4] & DMASK(F_DIG_DIG_FE_CNTL__DIG_SOURCE_SELECT)) == 0 &&
+          (regs[D_DIG_DIG_BE_CNTL(1) / 4] & DMASK(F_DIG_DIG_BE_CNTL__DIG_FE_SOURCE_SELECT)) == DFV(F_DIG_DIG_BE_CNTL__DIG_FE_SOURCE_SELECT, 2),
+          "DIG1: front end do OTG0, back end ligado ao FE B");
+    u8 hb[3], sb[28];
+    amd_hdmi_avi(&hd, hb, sb);
+    CHECK(regs[D_DIG_AFMT_GENERIC_HDR(1) / 4] == 0x0D0282u && regs[D_DIG_AFMT_GENERIC_0(1) / 4] == ((u32)sb[0] | (u32)sb[1] << 8 | (u32)sb[2] << 16 | (u32)sb[3] << 24),
+          "infoframe AVI no pacote genérico 0");
+    CHECK((regs[D_DIG_HDMI_GENERIC_PACKET_CONTROL0(1) / 4] & 0x3F0003u) == 0x020003u, "AVI enviado em todo quadro na linha 2");
+    CHECK((regs[D_PHYPLLB_PIXCLK_RESYNC_CNTL / 4] & DMASK(F_PHYPLLA_PIXCLK_RESYNC_CNTL__PHYPLLA_DCCG_DEEP_COLOR_CNTL)) == 0, "PHYPLLB sem deep color");
+    CHECK(a->dcn_pipe_owner[0] == 0 && a->dcn_pipe_owner[3] == 0 && (regs[D_OTG_OTG_CONTROL(0) / 4] & 1), "OTG0 com os pipes 0 e 3");
+    /* 2) desliga: avmute, pacotes parados, transmissor DISABLE, pipes e OTG parados, SMU com 0 telas */
+    atom_nlog = 0;
+    amdgpu_modeset_off(a);
+    tx = atom_find(76, 0);
+    CHECK(tx && psb(tx, 1) == 0 && !a->disp[0].on && !(regs[D_OTG_OTG_CONTROL(0) / 4] & 1) && smu_disp[0x18] == 0 &&
+          a->dcn_pipe_owner[0] == -1 && (regs[D_DIG_HDMI_GC(1) / 4] & DMASK(F_DIG_HDMI_GC__HDMI_GC_AVMUTE)), "tudo desligado");
+    /* 3) DP 2560x1440@60 (241,5 MHz) no UNIPHYC: HBR x4, treino com um ajuste de tensão */
+    memset(dpcd, 0, 0x300);
+    dpcd[0] = 0x12; dpcd[1] = 0x14; dpcd[2] = 0x84 | 0x40; dpcd[0xE] = 0;
+    dp_need_vs = 1; dp_eq_fail = false; dp_tps1 = dp_tps23 = 0;
+    amd_mode_req_t dpq = { .conn = 1, .t = { 2720, 2560, 48, 32, 1481, 1440, 3, 5, true, false, 241500 }, .bpc = 8,
+        .addr = fbmc, .pitch_px = 2560, .format = AMD_FMT_ARGB8888, .sw_mode = 0 };
+    atom_nlog = 0;
+    e = amdgpu_modeset(a, &dpq, 1);
+    amd_disp_t *d = &a->disp[0];
+    CHECK(e == 0 && d->on && d->dp && d->phy == 2 && d->link.rate == 0x0A && d->link.lanes == 4, "DP ligado em HBR x4 (%d, 0x%x x%u)", e, d->link.rate, d->link.lanes);
+    CHECK(dpcd[0x100] == 0x0A && dpcd[0x101] == 0x84 && dpcd[0x102] == 0 && dpcd[0x600] == 1, "DPCD: taxa, vias com enhanced framing, treino fechado, sink em D0");
+    CHECK(dp_tps1 >= 2 && dp_tps23 >= 1 && d->link.vs[0] == 1 && dpcd[0x103] == 1, "clock recovery com ajuste para VS1, equalização com TPS3");
+    CHECK(atom_count(76) >= 1 + 4 * 2 && psb(atom_find(76, 0), 1) == 1 && psb(atom_find(76, 0), 3) == 4 && atom_find(76, 0)->ps[1] == 27000,
+          "transmissor: ENABLE com 4 vias a 270 MHz e SETUP_VSEMPH por via");
+    CHECK(regs[D_DP_DP_DPHY_TRAINING_PATTERN_SEL(2) / 4] == 2 && (regs[D_DP_DP_LINK_CNTL(2) / 4] & DMASK(F_DP_DP_LINK_CNTL__DP_LINK_TRAINING_COMPLETE)),
+          "fonte em modo de vídeo depois do treino");
+    CHECK((regs[D_DP_DP_VID_M(2) / 4] & DMASK(F_DP_DP_VID_M__DP_VID_M)) == amd_dp_mvid(241500, 0x0A) && amd_dp_mvid(241500, 0x0A) == 29309 &&
+          (regs[D_DP_DP_VID_STREAM_CNTL(2) / 4] & DMASK(F_DP_DP_VID_STREAM_CNTL__DP_VID_STREAM_ENABLE)), "vídeo DP: M/N e stream ligado (M %u)", amd_dp_mvid(241500, 0x0A));
+    CHECK((regs[D_DP_DP_MSA_TIMING_PARAM1(2) / 4] & 0xFFFF) == 2720 && (regs[D_DP_DP_MSA_TIMING_PARAM4(2) / 4] & 0xFFFF) == 2560, "MSA");
+    /* 4) DP que não equaliza: cai de taxa e desiste; nada fica ligado */
+    dp_eq_fail = true;
+    e = amdgpu_modeset(a, &dpq, 1);
+    CHECK(e == -MOS_EIO && !a->disp[0].on && a->dcn_pipe_owner[0] == -1, "treino sem equalização: -EIO e tela desligada (%d)", e);
+    dp_eq_fail = false;
+    /* 5) duas telas: HDMI 1080p RGB e DP 1440p */
+    amd_mode_req_t two[2] = { { .conn = 0, .t = { 2200, 1920, 88, 44, 1125, 1080, 4, 5, true, true, 148500 }, .bpc = 8,
+        .vic = 16, .aspect = 2, .rgb_quant_selectable = true, .addr = fbmc, .pitch_px = 1920, .format = AMD_FMT_ARGB8888 }, dpq };
+    e = amdgpu_modeset(a, two, 2);
+    CHECK(e == 0 && a->disp[0].on && a->disp[1].on && a->disp[0].hdmi && a->disp[1].dp, "duas telas (%d)", e);
+    int used = 0; for (int i = 0; i < 4; i++) used += a->dcn_pipe_owner[i] >= 0;
+    CHECK(used == 2 + 0 || used == 3 || used == 4, "pipes em uso: %d", used);
+    CHECK(scdc[0x20] == 0, "SCDC sem embaralhamento a 148,5 MHz");
+    amdgpu_modeset_off(a);
+    /* entradas ruins */
+    amd_mode_req_t bad = hd; bad.conn = 7;
+    CHECK(amdgpu_modeset(a, &bad, 1) == -MOS_EINVAL, "conector inexistente");
+    amd_mode_req_t dup[2] = { hd, hd };
+    CHECK(amdgpu_modeset(a, dup, 2) == -MOS_EINVAL, "o mesmo conector duas vezes");
+    amd_mode_req_t huge = hd; huge.t = (amd_timing_t){ 9000, 7680, 352, 176, 4400, 4320, 16, 20, true, true, 2376000 };
+    CHECK(amdgpu_modeset(a, &huge, 1) == -MOS_ERANGE, "8K60 não cabe");
+    /* lógica pura: AVI do 1080p (VIC 16, 16:9, RGB faixa cheia) */
+    amd_hdmi_avi(&two[0], hb, sb);
+    u8 sum = 0; for (int i = 0; i < 3; i++) sum = (u8)(sum + hb[i]); for (int i = 0; i <= 13; i++) sum = (u8)(sum + sb[i]);
+    CHECK(sum == 0 && sb[1] == 0x1E && sb[2] == 0x28 && sb[3] == 0x88 && sb[4] == 16 && sb[5] == 0 &&
+          (sb[8] | sb[9] << 8) == 1126 && (sb[12] | sb[13] << 8) == 2201, "AVI 1080p: soma, RGB, 16:9, Q cheia, VIC 16, barras");
+    amd_hdmi_avi(&hd, hb, sb);
+    CHECK(sb[1] == 0x5E && sb[2] == 0x88 && sb[3] == 0x80, "AVI 5120x1440: YCbCr 4:4:4, BT.709, sem VIC");
+    u8 r, l;
+    CHECK(amd_dp_pick_link(148500, 8, 0x14, 4, &r, &l) && r == 0x06 && l == 4, "1080p: RBR x4");
+    CHECK(amd_dp_pick_link(533250, 8, 0x14, 4, &r, &l) && r == 0x14 && l == 4, "4K60 CVT-RB: HBR2 x4");
+    CHECK(!amd_dp_pick_link(533250, 8, 0x0A, 4, &r, &l), "4K60 não cabe em HBR");
+    /* 6) pelo EDID real do monitor do Thiago: o modo preferido 5120x1440@60 vira a tela do compositor */
+    {
+        FILE *f = fopen("tools/testdata/amdgpu/edid-hdmi-thiago.bin", "rb");
+        u32 n = f ? (u32)fread(a->ddc_edid[1], 1, sizeof a->ddc_edid[1], f) : 0;
+        if (f) fclose(f);
+        a->ddc_edid_len[1] = n;
+        CHECK(n >= 256, "EDID real do monitor (%u bytes)", n);
+        a->dcn_inited = false;
+        e = amdgpu_display_set(a, 0, 5120, 1440, 0, true);
+        CHECK(e == 0 && a->disp[0].on && a->disp[0].req.t.pix_clk_khz == 481140 && !a->disp[0].req.t.hsync_pos &&
+              a->disp[0].req.ycbcr444 && a->dcn_inited, "display_set: preferido 5120x1440@60, sincronismos negativos, YCbCr (%d)", e);
+        CHECK(a->pipe == 0 && a->split_mask == 0x9 && a->uefi_match && a->uefi_mc == a->disp[0].req.addr &&
+              a->otg[0].hactive == 5120 && a->refresh_mhz >= 59990 && a->refresh_mhz <= 60010, "a tela do compositor é a nova (%u mHz)", a->refresh_mhz);
+        /* áudio pelo HDMI: endpoint 1 (o do DIG1), LPCM 2 canais a 32/44,1/48 kHz, DTO0 no relógio de pixel */
+        CHECK(a->disp[0].audio_ep == 1, "endpoint AZ do DIG1 (%d)", a->disp[0].audio_ep);
+        u32 lpcm = az_reg[1][X_AZALIA_F0_CODEC_PIN_CONTROL_AUDIO_DESCRIPTOR0];
+        CHECK((lpcm & 7) == 1 && ((lpcm >> 8) & 0xFF) == 0x07 && ((lpcm >> 16) & 0xFF) == 0x07 && (lpcm >> 24) == 0x07,
+              "descritor LPCM do EDID real (0x%08x)", lpcm);
+        CHECK(az_reg[1][X_AZALIA_F0_CODEC_PIN_CONTROL_AUDIO_DESCRIPTOR0 + 1] == 0, "sem AC-3");
+        u32 spk = az_reg[1][X_AZALIA_F0_CODEC_PIN_CONTROL_CHANNEL_SPEAKER];
+        CHECK((spk & DMASK(XF_AZALIA_F0_CODEC_PIN_CONTROL_CHANNEL_SPEAKER__SPEAKER_ALLOCATION)) == 1 &&
+              (spk & DMASK(XF_AZALIA_F0_CODEC_PIN_CONTROL_CHANNEL_SPEAKER__HDMI_CONNECTION)) &&
+              !(spk & DMASK(XF_AZALIA_F0_CODEC_PIN_CONTROL_CHANNEL_SPEAKER__DP_CONNECTION)), "FL/FR pelo HDMI");
+        CHECK(az_reg[1][X_AZALIA_F0_CODEC_PIN_CONTROL_HOT_PLUG_CONTROL] & DMASK(XF_AZALIA_F0_CODEC_PIN_CONTROL_HOT_PLUG_CONTROL__AUDIO_ENABLED),
+              "pino de áudio ligado");
+        u32 si4 = az_reg[1][X_AZALIA_F0_CODEC_PIN_CONTROL_SINK_INFO4];
+        CHECK(si4 == ((u32)'P' | 'G' << 8 | '-' << 16 | (u32)'C' << 24), "nome do monitor no endpoint (PG-CFCFS49U)");
+        CHECK(regs[D_DCCG_AUDIO_DTO0_MODULE / 4] == 4811400 && regs[D_DCCG_AUDIO_DTO0_PHASE / 4] == 240000 &&
+              (regs[D_DCCG_AUDIO_DTO_SOURCE / 4] & 0x77) == 0, "DTO0 de áudio igual ao do hardware vivo (4811400 / 240000, OTG0)");
+        CHECK((regs[D_DIG_HDMI_ACR_48_0(1) / 4] & DMASK(F_DIG_HDMI_ACR_48_0__HDMI_ACR_CTS_48)) == DFV(F_DIG_HDMI_ACR_48_0__HDMI_ACR_CTS_48, 481140) &&
+              (regs[D_DIG_HDMI_ACR_48_1(1) / 4] & DMASK(F_DIG_HDMI_ACR_48_1__HDMI_ACR_N_48)) == DFV(F_DIG_HDMI_ACR_48_1__HDMI_ACR_N_48, 6144),
+              "ACR: N 6144 / CTS 481140 para 48 kHz");
+        CHECK((regs[D_DIG_AFMT_AUDIO_PACKET_CONTROL2(1) / 4] & DMASK(F_DIG_AFMT_AUDIO_PACKET_CONTROL2__AFMT_AUDIO_CHANNEL_ENABLE)) ==
+              DFV(F_DIG_AFMT_AUDIO_PACKET_CONTROL2__AFMT_AUDIO_CHANNEL_ENABLE, 3) &&
+              (regs[D_DIG_AFMT_AUDIO_SRC_CONTROL(1) / 4] & 7) == 1 &&
+              (regs[D_DIG_AFMT_AUDIO_PACKET_CONTROL(1) / 4] & DMASK(F_DIG_AFMT_AUDIO_PACKET_CONTROL__AFMT_AUDIO_SAMPLE_SEND)), "AFMT: 2 canais, endpoint 1, amostras saindo");
+        u32 acr[6];
+        amd_audio_acr(148500, 8, acr);
+        CHECK(acr[0] == 4096 && acr[1] == 148500 && acr[2] == 6272 && acr[3] == 165000 && acr[4] == 6144 && acr[5] == 148500, "N/CTS da tabela para 148,5 MHz");
+        amd_timing_t sd = { 858, 720, 16, 62, 525, 480, 9, 6, false, false, 27000 };
+        CHECK(amd_audio_hdmi_rates(&sd, 8, 8, 0x7F) == 0x07, "480p com 8 canais: até 48 kHz");
+        CHECK(amd_audio_hdmi_rates(&a->disp[0].req.t, 8, 2, 0x7F) == 0x7F, "5120x1440: todas as taxas");
+
+        CHECK(amdgpu_display_set(a, 0, 5120, 1440, 120000, true) == 0 && a->disp[0].req.t.pix_clk_khz == 481140,
+              "120 Hz pede 962 MHz de TMDS: fica no modo que o HDMI 2.0 leva");
+        CHECK(amdgpu_display_set(a, 0, 1234, 567, 0, true) == -MOS_ERANGE, "tamanho que o monitor não tem");
+        CHECK(amdgpu_display_set(a, 1, 1920, 1080, 0, false) == -MOS_ENOENT, "saída sem EDID");
+        /* S3 depois de uma troca de modo: a mesma tela volta */
+        amdgpu_display_save(a);
+        CHECK(!a->boot_saved, "com troca de modo feita não há o que capturar da UEFI");
+        a->dcn_inited = false; atom_nlog = 0;
+        amdgpu_display_restore(a);
+        CHECK(a->disp[0].on && a->dcn_inited && atom_count(12) == 1 && atom_count(76) >= 2 && a->pipe == 0 && a->split_mask == 0x9,
+              "S3: init_hw e a tela de volta (pixel %u, transmissor %u)", atom_count(12), atom_count(76));
+        /* S3 com a tela da UEFI: o conector sai do DIG que lê o OTG, o relógio do EDID */
+        u64 boot_mc = a->uefi_mc;
+        amdgpu_modeset_off(a);
+        CHECK(!(az_reg[1][X_AZALIA_F0_CODEC_PIN_CONTROL_HOT_PLUG_CONTROL] & DMASK(XF_AZALIA_F0_CODEC_PIN_CONTROL_HOT_PLUG_CONTROL__AUDIO_ENABLED)),
+              "áudio desligado junto com a tela");
+        regs[D_DIG_DIG_BE_EN_CNTL(1) / 4] |= DMASK(F_DIG_DIG_BE_EN_CNTL__DIG_ENABLE);
+        regs[D_DIG_DIG_FE_CNTL(1) / 4] &= ~DMASK(F_DIG_DIG_FE_CNTL__DIG_SOURCE_SELECT);
+        amdgpu_display_save(a);
+        CHECK(a->boot_saved && a->boot_req.conn == 0 && a->boot_req.t.pix_clk_khz == 481140 && a->boot_req.addr == boot_mc &&
+              a->boot_req.t.h_active == 5120 && !a->boot_req.t.vsync_pos, "saída da UEFI capturada antes do S3");
+        a->dcn_inited = false;
+        amdgpu_display_restore(a);
+        CHECK(a->disp[0].on && a->disp[0].req.conn == 0 && a->pipe == 0, "S3: a saída da UEFI religada igual");
+        amdgpu_modeset_off(a);
+    }
+    CHECK(edid_vic_aspect(16) == 2 && edid_vic_aspect(2) == 1 && edid_vic_aspect(3) == 2 && edid_vic_aspect(100) == 0, "aspecto dos VICs");
+    a->vbios_ok = false;
+}
+
 static void test_split(void) {
     edid_mode_t m = mode_5120();
     boot_state(&m, 1);
@@ -1560,6 +1882,7 @@ int main(int argc, char **argv) {
     test_vblank_irq();
     test_gfxoff();
     test_split();
+    test_modeset();
     printf("amdgpu-hw-host: %d/%d ok\n", pass, total);
     return pass == total ? 0 : 1;
 }

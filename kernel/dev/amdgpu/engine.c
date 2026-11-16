@@ -545,7 +545,9 @@ int amdgpu_suspend(amdgpu_t *a, int state) {
     if (a->sdma_ok) WR(a, R_SDMA_F32_CNTL, RR(a, R_SDMA_F32_CNTL) | SDMA_F32_HALT);
     if (a->ih_ok) WR(a, R_IH_RB_CNTL, RR(a, R_IH_RB_CNTL) & ~(IH_RB_ENABLE | IH_ENABLE_INTR));
     a->comp_ok = a->gfx_ok = a->sdma_ok = a->ih_ok = a->gmc_ok = a->gfxhub_ok = a->smu_ok = false;
+    amdgpu_display_save(a);                      /* a saída da UEFI, se o mOS ainda não trocou o modo */
     dpms(a, false);
+    a->dcn_inited = false;                       /* o DCN volta zerado do S3 */
     a->s3_count++;
     return 0;
 }
@@ -562,6 +564,7 @@ void amdgpu_resume(amdgpu_t *a, int state) {
     if (!amdgpu_ih_init(a)) kprintf("amdgpu: IH não voltou do S3; fences por polling\n");
     sdma_init(a);
     a->gfx_ok = amdgpu_gfx_init(a);
+    amdgpu_display_restore(a);                   /* DCN do zero e as telas de antes (PM_RESTORES_DISPLAY) */
     kprintf("amdgpu: motores de volta do S3 (SDMA %d, GFX %d, compute %d)\n", a->sdma_ok, a->gfx_ok, a->comp_ok);
 }
 
@@ -569,10 +572,10 @@ void amdgpu_resume(amdgpu_t *a, int state) {
 bool amdgpu_engines_init(amdgpu_t *a) {
     if (!a || !a->ready || a->engines_tried) return a && a->sdma_ok;
     a->engines_tried = true;
-    amdgpu_pm_register(a);
 #ifndef MOS_HOST_TEST
     amdgpu_vbios_load(a);                    /* saídas, linhas DDC/HPD e tabelas de comando (troca de modo) */
 #endif
+    amdgpu_pm_register(a);                   /* com o VBIOS, a saída volta do S3 (PM_RESTORES_DISPLAY) */
     a->smu_ok = smu_init(a);
     if (!a->smu_ok) { kprintf("amdgpu: sem SMU; motores da GPU ficam desligados\n"); return false; }
     a->gmc_ok = gmc_init(a);

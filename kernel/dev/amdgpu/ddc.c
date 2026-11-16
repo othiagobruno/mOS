@@ -113,6 +113,16 @@ static int i2c_run(amdgpu_t *a, u32 ddc, const i2c_tr_t *t, u32 n) {
     return e;
 }
 
+/* escrita simples e leitura de registrador (endereço de 1 byte) num dispositivo I2C da linha: o SCDC do HDMI 2.0 */
+int amdgpu_i2c_write(amdgpu_t *a, u32 ddc, u8 addr, const u8 *buf, u32 len) {
+    i2c_tr_t t = { addr, false, buf, NULL, len };
+    return i2c_run(a, ddc, &t, 1);
+}
+int amdgpu_i2c_read_reg(amdgpu_t *a, u32 ddc, u8 addr, u8 reg, u8 *buf, u32 len) {
+    i2c_tr_t t[2] = { { addr, false, &reg, NULL, 1 }, { addr, true, NULL, buf, len } };
+    return i2c_run(a, ddc, t, 2);
+}
+
 /* bloco de 128 bytes do EDID (segmento = bloco / 2, pelo ponteiro 0x30 do E-DDC) */
 static int edid_block(amdgpu_t *a, u32 ddc, u32 block, u8 *out) {
     u8 seg = (u8)(block / 2), off = (u8)((block & 1) * 128);

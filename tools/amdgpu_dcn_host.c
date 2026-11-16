@@ -34,6 +34,8 @@ void amd_host_wreg(u32 off, u32 v) {
             u32 on = (v & MASK(F_ODM_OPTC_INPUT_CLOCK_CONTROL__OPTC_INPUT_CLK_EN)) ? 1 : 0;
             regs[off / 4] = (v & ~MASK(F_ODM_OPTC_INPUT_CLOCK_CONTROL__OPTC_INPUT_CLK_ON)) | FV(F_ODM_OPTC_INPUT_CLOCK_CONTROL__OPTC_INPUT_CLK_ON, on);
         }
+        if (off == D_OTG_OTG_MASTER_UPDATE_LOCK(o))
+            regs[off / 4] = (v & 1) ? (v | MASK(F_OTG_OTG_MASTER_UPDATE_LOCK__UPDATE_LOCK_STATUS)) : 0;
         if (off == D_OTG_OTG_CLOCK_CONTROL(o)) {
             u32 on = (v & MASK(F_OTG_OTG_CLOCK_CONTROL__OTG_CLOCK_EN)) ? 1 : 0;
             regs[off / 4] = (v & ~MASK(F_OTG_OTG_CLOCK_CONTROL__OTG_CLOCK_ON)) | FV(F_OTG_OTG_CLOCK_CONTROL__OTG_CLOCK_ON, on);

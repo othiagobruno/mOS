@@ -23,6 +23,7 @@ void vmm_map_wc(u64 phys, u64 size);
 #define MOS_ENXIO 6
 #define MOS_EBUSY 16
 #define MOS_ENOMEM 12
+#define MOS_ERANGE 34
 const u8 *amd_host_fw(const char *name, u64 *len);
 u64  amd_host_ram_page(void);
 void amd_host_idle(void);               /* o "hlt" do teste: o chip simulado anda um pouco */
