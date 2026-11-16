@@ -465,7 +465,7 @@ void CGImageSourceRemoveCacheAtIndex(void *src, size_t i) {
     (void)i;
     if (s && s->tried) { iio_image_free(&s->img); s->tried = s->ok = 0; }
 }
-/* PNG/JPEG/GIF/TIFF/BMP não trazem mapa de ganho, profundidade ou matte: NULL, como o ImageIO sem o dado */
+/* PNG/JPEG/GIF/TIFF/BMP/WebP não trazem mapa de ganho, profundidade ou matte: NULL, como o ImageIO sem o dado */
 void *CGImageSourceCopyAuxiliaryDataInfoAtIndex(void *src, size_t i, const void *type) { (void)src; (void)i; (void)type; return 0; }
 
 static void *make_cgimage(const u32 *px, int w, int h, int alpha) {
@@ -633,6 +633,13 @@ void *CGImageSourceCopyPropertiesAtIndex(void *src, size_t i, void *opts) {
             put(p, kCGImagePropertyAPNGUnclampedDelayTime, num_d(f->delay_ms / 1000.0));
         }
         put(d, kCGImagePropertyPNGDictionary, p);
+    } else if (!strcmp(u, "org.webmproject.webp")) {
+        void *w = CFDictionaryCreateMutable(0, 0, 0, 0);
+        if (s->img.nframes > 1) {
+            put(w, kCGImagePropertyWebPDelayTime, num_d(clamp_delay(f->delay_ms)));
+            put(w, kCGImagePropertyWebPUnclampedDelayTime, num_d(f->delay_ms / 1000.0));
+        }
+        put(d, kCGImagePropertyWebPDictionary, w);
     } else if (!strcmp(u, "com.compuserve.gif")) {
         void *g = CFDictionaryCreateMutable(0, 0, 0, 0);
         put(g, kCGImagePropertyGIFDelayTime, num_d(clamp_delay(f->delay_ms)));
@@ -661,6 +668,12 @@ void *CGImageSourceCopyProperties(void *src, void *opts) {
         put(g, kCGImagePropertyGIFCanvasPixelWidth, num_i(s->img.w));
         put(g, kCGImagePropertyGIFCanvasPixelHeight, num_i(s->img.h));
         put(d, kCGImagePropertyGIFDictionary, g);
+    } else if (!strcmp(u, "org.webmproject.webp")) {
+        void *w = CFDictionaryCreateMutable(0, 0, 0, 0);
+        put(w, kCGImagePropertyWebPLoopCount, num_i(s->img.loop_count < 0 ? 0 : s->img.loop_count));
+        put(w, kCGImagePropertyWebPCanvasPixelWidth, num_i(s->img.w));
+        put(w, kCGImagePropertyWebPCanvasPixelHeight, num_i(s->img.h));
+        put(d, kCGImagePropertyWebPDictionary, w);
     } else if (!strcmp(u, "public.png") && s->img.nframes > 1) {
         void *p = CFDictionaryCreateMutable(0, 0, 0, 0);
         put(p, kCGImagePropertyAPNGLoopCount, num_i(s->img.loop_count < 0 ? 0 : s->img.loop_count));

@@ -31,7 +31,7 @@ Cada passo fecha com teste de host em `tools/` e PR mergeado na `main`.
    (none/LZW/PackBits/Deflate, predictor, multipágina, leitura e gravação). Propriedades
    `{TIFF}`, `{Exif}`, `{PNG}`, `{GIF}`, DPI, Orientation, Depth, ColorModel; miniatura com
    filtro de caixa e transformação EXIF. Teste: `tools/imageio_host.c` contra arquivos que o PIL gera.
-2. **WebP** (VP8L sem perda e VP8 com perda, alfa, animação; gravação VP8L).
+2. ✅ **WebP** (leitura; o ImageIO da Apple também não grava WebP). Ver "Passo 2" abaixo.
 3. **HEIC/HEIF/AVIF** (contêiner ISOBMFF, grade de tiles, alfa auxiliar, EXIF; HEVC intra e AV1
    intra para os quadros). Combinar com a Isabela (VideoToolbox HEVC) para não haver dois decodificadores.
 4. **CGImage completo**: 1/2/4/8/16 bits, float, cinza, cinza+alfa, CMYK, `decode`, máscara
@@ -94,4 +94,19 @@ Testes de host (todos saem 0):
 Não verificado: nada disso rodou dentro do mOS (build proibido até o fim da frente). Limites conhecidos:
 JPEG lê crominância 4:2:0 por vizinho mais próximo (não interpolado); JPEG aritmético, sem perdas e 12 bits
 recusados; TIFF com JPEG dentro (compressão 6/7) recusado; `CGImageMetadata*` ainda não existe;
-WebP/HEIC/AVIF são os passos 2 e 3.
+HEIC/AVIF são o passo 3.
+
+### Passo 2 — WebP (PR de 15 nov. 2026)
+
+- `userland/libsystem/iio_webp.c` compila **sem mudança** o decodificador do motor web
+  (`kernel/web/webp.c`, frente do Fabio: VP8L, VP8 com filtro de laço, ALPH, VP8X). `kshim/web.h` e
+  `kshim/gfx.h` dão só tipos, malloc e `surface_t`. Unidade separada porque o `webp.c` tem estáticos com os
+  nomes dos codecs do `imageio.c`.
+- Animação feita aqui, por fora do `webp.c` (que entrega só o primeiro quadro): cada `ANMF` vira um WebP
+  avulso (VP8X + sub-blocos), composto na tela com mistura e disposição do quadro; ANIM dá as repetições;
+  ICCP vira o perfil da imagem.
+- `CGImageSource`: tipo `org.webmproject.webp`, quadros, `{WebP}` com DelayTime/UnclampedDelayTime por quadro
+  e LoopCount/CanvasPixelWidth/Height no arquivo.
+- Teste: `tools/imageio_host.py` ganhou 5 casos contra o PIL (libwebp): sem perda RGBA e RGB pixel a pixel,
+  com perda e com alfa erro médio ≤ 2, animado de 3 quadros pixel a pixel com loop 4 (46 casos no total).
+  `tools/imageio_cf_host.c`: 35 verificações (8 tipos de leitura).

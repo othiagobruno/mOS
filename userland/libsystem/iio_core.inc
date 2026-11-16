@@ -166,7 +166,8 @@ static int iio_png_encode(const iio_enc_frame *fr, int nfr, const iio_enc_opts *
 
 /* ------------------------------------------------------------------ despacho */
 const char *const iio_read_types[] = {"public.png", "public.jpeg", "com.compuserve.gif", "public.tiff", "com.microsoft.bmp",
-                                      "com.microsoft.ico", "com.microsoft.cur", NULL};
+                                      "com.microsoft.ico", "com.microsoft.cur", "org.webmproject.webp", NULL};
+int iio_webp(const u8 *d, usize n, iio_image *out);     /* iio_webp.c */
 const char *const iio_write_types[] = {"public.png", "public.jpeg", "com.compuserve.gif", "public.tiff", "com.microsoft.bmp", NULL};
 
 const char *iio_sniff(const uint8_t *d, size_t n) {
@@ -176,6 +177,7 @@ const char *iio_sniff(const uint8_t *d, size_t n) {
     if (n >= 6 && !memcmp(d, "GIF8", 4) && (d[4] == '7' || d[4] == '9') && d[5] == 'a') return "com.compuserve.gif";
     if ((d[0] == 'I' && d[1] == 'I' && d[2] == 42 && d[3] == 0) || (d[0] == 'M' && d[1] == 'M' && d[2] == 0 && d[3] == 42)) return "public.tiff";
     if (n >= 26 && d[0] == 'B' && d[1] == 'M') return "com.microsoft.bmp";
+    if (n >= 16 && !memcmp(d, "RIFF", 4) && !memcmp(d + 8, "WEBP", 4)) return "org.webmproject.webp";
     if (n >= 6 && !d[0] && !d[1] && (d[2] == 1 || d[2] == 2) && !d[3] && (d[4] || d[5])) return d[2] == 1 ? "com.microsoft.ico" : "com.microsoft.cur";
     return NULL;
 }
@@ -209,6 +211,7 @@ int iio_decode(const uint8_t *d, size_t n, iio_image *out) {
     else if (!strcmp(t, "com.compuserve.gif")) rc = iio_gif(d, n, out);
     else if (!strcmp(t, "public.tiff")) rc = iio_tiff(d, n, out);
     else if (!strcmp(t, "com.microsoft.bmp")) rc = iio_bmp(d, n, out);
+    else if (!strcmp(t, "org.webmproject.webp")) rc = iio_webp(d, n, out);
     else rc = iio_ico(d, n, out);
     if (rc) { iio_image_free(out); return -1; }
     if (!strcmp(t, "public.jpeg")) {

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Confere os codecs do ImageIO do mOS contra o PIL (lê o que o PIL grava, o PIL lê o que o mOS grava).
-gcc -O1 -DIIO_HOST -Iuserland/libsystem tools/imageio_host.c userland/libsystem/imageio.c -lz -lm -o /tmp/imageio_host
+gcc -O1 -DIIO_HOST -Iuserland/libsystem tools/imageio_host.c userland/libsystem/imageio.c \
+    -Itools/iio_host_inc userland/libsystem/iio_webp.c -lz -lm -o /tmp/imageio_host
 python3 tools/imageio_host.py [/tmp/imageio_host]"""
 import io, os, random, struct, subprocess, sys, tempfile
 from PIL import Image, ImageDraw
@@ -86,6 +87,11 @@ dec_case("p8.bmp", base.convert("P"), "BMP")
 dec_case("1.bmp", base.convert("1"), "BMP")
 dec_case("a.ico", base.resize((32, 32)), "ICO", sizes=[(32, 32)])
 
+# WebP: sem perda bate pixel a pixel com o PIL (libwebp); com perda, erro médio pequeno
+dec_case("ll.webp", base, "WEBP", lossless=True)
+dec_case("llrgb.webp", base.convert("RGB"), "WEBP", lossless=True)
+dec_case("lossy.webp", base.convert("RGB"), "WEBP", tol=2, mean=True, quality=90)
+dec_case("alpha.webp", base, "WEBP", tol=2, mean=True, quality=90)
 # PNG entrelaçado: o PIL não grava Adam7; usa um arquivo feito à mão via zlib
 import zlib
 def png_adam7(im):
@@ -122,6 +128,16 @@ if ok:
         ai.seek(i); ref = list(ai.convert("RGBA").get_flattened_data())
         if diff(ref, g["frames"][i]) > 0: ok = False; print("  quadro", i, diff(ref, g["frames"][i]))
 check("anim.png (APNG, 3 quadros)", ok)
+p = os.path.join(T, "anim.webp")
+rgba[0].save(p, save_all=True, append_images=rgba[1:], duration=[80, 90, 100], loop=4, lossless=True)
+g = mos_decode(p)
+ok = g and g["n"] == 3 and g["loop"] == 4
+if ok:
+    wi = Image.open(p)
+    for i in range(3):
+        wi.seek(i); ref = list(wi.convert("RGBA").get_flattened_data())
+        if diff(ref, g["frames"][i]) > 0: ok = False; print("  quadro", i, diff(ref, g["frames"][i]))
+check("anim.webp (3 quadros, loop 4)", ok)
 p = os.path.join(T, "multi.tif")
 frames[0].save(p, save_all=True, append_images=frames[1:3], compression="tiff_lzw")
 g = mos_decode(p); check("multi.tif (3 páginas)", g and g["n"] == 3)
