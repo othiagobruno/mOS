@@ -106,6 +106,19 @@ int main(void) {
     /* cabeçalho inválido */
     uint8_t bad[4] = {20, 0x80, 0, 0}; uvc_asm_payload(&a, bad, 4); CHECK(a.bad == 1);
 
+    /* unidades: Camera Terminal (id 1, AE mode + exposição + foco auto) e Processing Unit (id 2, brilho + WB auto) */
+    uint8_t vcd[18 + 11] = {18, 0x24, 0x02, 1, 0x01, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0x0A, 0x00, 0x02,
+                            11, 0x24, 0x05, 2, 1, 0, 0, 3, 0x01, 0x10, 0x00};
+    uvc_units u;
+    uvc_parse_units(vcd, sizeof vcd, &u);
+    CHECK(u.ct_id == 1 && u.pu_id == 2 && u.ct_bm == 0x2000A && u.pu_bm == 0x1001);
+    CHECK(uvc_ctl_supported(&u, UVC_CTL_AE_MODE) && uvc_ctl_supported(&u, UVC_CTL_EXPOSURE) && uvc_ctl_supported(&u, UVC_CTL_FOCUS_AUTO));
+    CHECK(!uvc_ctl_supported(&u, UVC_CTL_FOCUS) && uvc_ctl_supported(&u, UVC_CTL_BRIGHTNESS) && uvc_ctl_supported(&u, UVC_CTL_WB_AUTO) && !uvc_ctl_supported(&u, UVC_CTL_CONTRAST));
+    uint8_t cb[4];
+    uvc_ctl_encode(uvc_ctl(UVC_CTL_BRIGHTNESS), -5, cb);
+    CHECK(cb[0] == 0xFB && cb[1] == 0xFF && uvc_ctl_decode(uvc_ctl(UVC_CTL_BRIGHTNESS), cb) == -5);
+    uvc_ctl_encode(uvc_ctl(UVC_CTL_EXPOSURE), 156, cb);
+    CHECK(uvc_ctl_decode(uvc_ctl(UVC_CTL_EXPOSURE), cb) == 156);
     printf(fails ? "uvc_core: %d falhas\n" : "uvc_core: ok\n", fails);
     return fails != 0;
 }

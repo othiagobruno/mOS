@@ -104,6 +104,13 @@ int compat_gui_cgwindow(int index, gui_cgwindow_t *out);
 #define DEV_CAMERA_OPEN 29
 #define DEV_CAMERA_READ 30
 #define DEV_CAMERA_CLOSE 31
+#define DEV_CAMERA_CTRL 36    /* (índice, gui_camera_ctrl_t *) lê (set 0) ou grava (set 1) um controle UVC; 0 ou -errno */
+typedef struct {
+    unsigned int id;               /* UVC_CTL_* (kernel/dev/uvc_core.h): brilho, contraste, ..., modo AE, exposição, foco, zoom */
+    unsigned int set;              /* 1: grava value */
+    int value;
+    int supported, min, max, res, def, cur;   /* saída */
+} gui_camera_ctrl_t;
 #define GUI_CAMERA_MODES 32
 typedef struct {
     unsigned int fourcc;
