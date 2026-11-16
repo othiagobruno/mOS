@@ -316,6 +316,10 @@ void    frame_load(frame_t *f, const char *url, const char *post, int post_len, 
 /* envio de formulário: URL (com a query no GET) e corpo (POST); devolve true se é POST */
 bool    form_build(doc_t *d, node_t *form, ctrl_t *submitter, char *url, int cap, sbuf_t *body);
 u8     *frame_data_url(const char *url, usize *len, char *mime, int mcap);
+enum { FRAME_CUR_ARROW = 1, FRAME_CUR_HAND, FRAME_CUR_TEXT };
+int     frame_cursor(doc_t *d, int x, int y);              /* 0 = fora de iframe */
+bool    frames_take_popup(doc_t *d, char *out, int cap);  /* window.open de algum iframe */
+int     frame_sandbox(frame_t *f);                         /* JS_SB_* do documento do iframe */
 
 /* chamado pela pintura para controles de formulário (implementado em horizonte.c) */
 void web_paint_control(ui_t *u, doc_t *d, ctrl_t *c, rect_t r);

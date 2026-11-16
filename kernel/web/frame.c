@@ -10,6 +10,7 @@
 #define FRAME_MAX_PER_DOC 32
 #define FRAME_CSS 8
 #define FRAME_GRAVE 8
+#define FRAME_HIST 16
 
 struct frame {
     node_t *el;                 /* o <iframe> no documento pai */
@@ -33,6 +34,10 @@ struct frame {
     /* documentos antigos: o JS do pai pode guardar objetos deles (contentWindow), então vivem até o pai sair */
     struct { doc_t *d; js_page_t *js; } grave[FRAME_GRAVE];
     int ngrave;
+    int sbox;                   /* sandbox do documento atual (JS_SB_*) */
+    /* histórico do iframe: documentos e entradas de pushState/fragmento (gen = documento que as criou) */
+    struct { char url[1024]; int gen, sid; } hist[FRAME_HIST];
+    int nh, hp, gen, trav;      /* trav: entrada a abrir na próxima carga (-1 = navegação nova) */
     struct frame *next;
 };
 
@@ -250,7 +255,46 @@ static void bury(frame_t *f) {
 /* antes dos scripts do filho: parent/top/frameElement já valem no primeiro script */
 static void link_init(js_page_t *p, int phase, void *ctx) {
     frame_t *f = ctx;
-    if (phase == 0 && f->owner_js) js_page_link_frame(p, f->owner_js, f->el);
+    if (phase != 0) { js_page_run_frame_init(p, phase); return; }
+    js_page_set_sandbox(p, f->sbox);
+    js_page_set_history_host(p, true);
+    js_page_set_hist_len(p, f->nh);
+    if (f->owner_js) js_page_link_frame(p, f->owner_js, f->el);
+    js_page_run_frame_init(p, 0);
+}
+
+/* atributo sandbox: sem ele, herda as restrições do documento pai; com ele, só o que os tokens liberam */
+static int sandbox_flags(frame_t *f) {
+    int parent = f->owner_js ? js_page_sandbox(f->owner_js) : 0;
+    const char *a = node_attr(f->el, "sandbox");
+    if (!a) return parent;
+    static const struct { const char *t; int f; } tok[] = {
+        { "allow-scripts", JS_SB_SCRIPTS }, { "allow-same-origin", JS_SB_SAME_ORIGIN }, { "allow-forms", JS_SB_FORMS },
+        { "allow-popups", JS_SB_POPUPS }, { "allow-top-navigation", JS_SB_TOP_NAV }, { "allow-modals", JS_SB_MODALS },
+        { "allow-top-navigation-by-user-activation", JS_SB_TOP_NAV_USER }, { "allow-downloads", JS_SB_DOWNLOADS },
+    };
+    int fl = JS_SB_ON;
+    for (const char *p = a; *p;) {
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == '\f') p++;
+        const char *e = p;
+        while (*e && *e != ' ' && *e != '\t' && *e != '\n' && *e != '\r' && *e != '\f') e++;
+        for (u32 i = 0; i < ARRAY_LEN(tok); i++)
+            if ((usize)(e - p) == strlen(tok[i].t) && !strncasecmp(p, tok[i].t, (usize)(e - p))) fl |= tok[i].f;
+        p = e;
+    }
+    if (parent & JS_SB_ON) fl &= parent | JS_SB_ON;   /* não pode liberar o que o pai já não tem */
+    return fl;
+}
+
+static void hist_sync(frame_t *f) { if (f->js) js_page_set_hist_len(f->js, f->nh); }
+
+static void hist_push(frame_t *f, const char *url, int sid) {
+    if (f->hp < f->nh - 1) f->nh = f->hp + 1;   /* descarta as entradas à frente */
+    if (f->nh == FRAME_HIST) { memmove(f->hist, f->hist + 1, sizeof f->hist[0] * (FRAME_HIST - 1)); f->nh--; }
+    f->hp = f->nh++;
+    snprintf(f->hist[f->hp].url, sizeof f->hist[0].url, "%s", url);
+    f->hist[f->hp].gen = f->gen;
+    f->hist[f->hp].sid = sid;
 }
 
 static void set_doc(frame_t *f, doc_t *d, const char *url) {
@@ -263,6 +307,15 @@ static void set_doc(frame_t *f, doc_t *d, const char *url) {
     f->dirty = true;
     if (!d) return;
     snprintf(f->url, sizeof f->url, "%s", url);
+    f->gen++;
+    if (f->trav >= 0 && f->trav < f->nh) {
+        f->hp = f->trav;
+        snprintf(f->hist[f->hp].url, sizeof f->hist[0].url, "%s", url);
+        f->hist[f->hp].gen = f->gen;
+        f->hist[f->hp].sid = -1;
+    } else hist_push(f, url, -1);
+    f->trav = -1;
+    f->sbox = sandbox_flags(f);
     static int seq;
     d->transparent = true;
     d->frame_depth = f->depth;
@@ -341,6 +394,8 @@ static void scan(doc_t *d, node_t *n, js_page_t *js) {
                 f->owner_js = js;
                 f->depth = d->frame_depth + 1;
                 f->w = 300; f->h = 150; f->zoom = d->zoom > 0 ? d->zoom : 1;
+                f->hp = -1;
+                f->trav = -1;
                 f->next = d->frames;
                 d->frames = f;
                 c->frame = f;
@@ -374,10 +429,50 @@ void frame_resize(frame_t *f, int w, int h, float zoom) {
 
 static int frame_max_scroll(frame_t *f) { return f->doc ? MAX(0, f->doc->height - f->h) : 0; }
 
+/* janelas dos iframes em ordem do documento (window[i]) */
+static void collect_kids(node_t *n, js_page_t **out, int *k, int cap) {
+    for (node_t *c = n->first; c && *k < cap; c = c->next) {
+        if (c->type != N_ELEM) continue;
+        if (c->tag == T_IFRAME) { if (c->frame && c->frame->js) out[(*k)++] = c->frame->js; }
+        else if (c->tag != T_SVG && c->tag != T_TEMPLATE) collect_kids(c, out, k, cap);
+    }
+}
+
+/* voltar/avançar no iframe: entrada do mesmo documento troca URL e estado; outra recarrega */
+static void frame_go(frame_t *f, int idx) {
+    if (idx < 0 || idx >= f->nh || idx == f->hp) return;
+    if (f->hist[idx].gen == f->gen && f->js) {
+        f->hp = idx;
+        snprintf(f->url, sizeof f->url, "%s", f->hist[idx].url);
+        js_page_hist_restore(f->js, f->hist[idx].url, f->hist[idx].sid);
+        f->dirty = true;
+        return;
+    }
+    f->trav = idx;
+    snprintf(f->pending, sizeof f->pending, "%s", f->hist[idx].url);
+}
+
+static void hist_ops(frame_t *f) {
+    int op, arg;
+    char url[1024];
+    while (f->js && js_page_take_hist_op(f->js, &op, &arg, url, sizeof url)) {
+        if (op == 1) { hist_push(f, url, arg); snprintf(f->url, sizeof f->url, "%s", url); }
+        else if (op == 2 && f->hp >= 0) { snprintf(f->hist[f->hp].url, sizeof f->hist[0].url, "%s", url); f->hist[f->hp].sid = arg; snprintf(f->url, sizeof f->url, "%s", url); }
+        else if (op == 3) frame_go(f, f->hp + arg);
+        hist_sync(f);
+    }
+}
+
 bool frames_pump(doc_t *d) {
     if (!d) return false;
     bool changed = false;
     scan(d, d->root, d->frames_js);
+    if (d->frames_js) {
+        js_page_t *kids[32];
+        int nk = 0;
+        collect_kids(d->root, kids, &nk, 32);
+        js_page_set_frames(d->frames_js, kids, nk);
+    }
     for (frame_t *f = d->frames; f; f = f->next) {
         if (!f->el->parent) continue;                       /* removido do DOM */
         if (!f->started) { frame_begin(f); changed = true; }
@@ -419,16 +514,19 @@ bool frames_pump(doc_t *d) {
         if (doc_pump_images(f->doc)) { f->doc->need_layout = true; changed = true; }
         if (f->js) {
             if (js_page_tick(f->js)) { f->doc->need_layout = true; changed = true; }
+            hist_ops(f);
+            if (!f->js) continue;
             bool rl = false;
             const char *nav = js_page_take_nav(f->js, &rl);
             if (nav && *nav) {
                 char u[1024];
                 url_resolve(f->doc->base, nav, u, sizeof u);
                 snprintf(f->pending, sizeof f->pending, "%s", u);
-            } else if (rl) snprintf(f->pending, sizeof f->pending, "%s", f->url);
+            } else if (rl) { snprintf(f->pending, sizeof f->pending, "%s", f->url); f->trav = f->hp; }
             int sc = js_page_take_scroll(f->js);
             if (sc >= 0) { f->scroll = sc; changed = true; }
             node_t *sf = js_page_take_submit(f->js);   /* form.submit() no filho */
+            if (sf && (f->sbox & JS_SB_ON) && !(f->sbox & JS_SB_FORMS)) sf = NULL;   /* sandbox sem allow-forms */
             if (sf) {
                 char u[1024];
                 sbuf_t body = { 0 };
@@ -494,7 +592,12 @@ int frame_input(frame_t *f, int kind, int x, int y, int wheel, char *out_url, in
     if (a && a->node && a->node->tag == T_IFRAME) {
         frame_t *sub = find_frame(f->doc, a->node);
         int ox = a->x + (int)(a->b[3] + a->p[3]), oy = a->y + (int)(a->b[0] + a->p[0]) - f->scroll;
-        if (sub) return frame_input(sub, kind, x - ox, y - oy, wheel, out_url, cap);
+        if (sub) {
+            int r = frame_input(sub, kind, x - ox, y - oy, wheel, out_url, cap);
+            /* target=_parent do neto navega este iframe */
+            if (out_url && out_url[0] == 2) { snprintf(f->pending, sizeof f->pending, "%s", out_url + 1); out_url[0] = 0; }
+            return r;
+        }
     }
     if (kind == FRAME_WHEEL) {
         int old = f->scroll;
@@ -518,14 +621,24 @@ int frame_input(frame_t *f, int kind, int x, int y, int wheel, char *out_url, in
     char url[1024];
     url_resolve(f->doc->base, href, url, sizeof url);
     if (!strncmp(url, "javascript:", 11)) { if (f->js) js_page_eval_url(f->js, url + 11); return true; }
-    if (href[0] == '#') {
+    const char *t = node_attr(link, "target");
+    if (href[0] == '#' && (!t || !*t || !strcasecmp(t, "_self"))) {
         int ay = doc_anchor_y(f->doc, href + 1);
         if (ay >= 0) f->scroll = CLAMP(ay, 0, frame_max_scroll(f));
+        if (strcmp(url, f->url)) {
+            if (f->hp >= 0) hist_push(f, url, -1);
+            snprintf(f->url, sizeof f->url, "%s", url);
+            if (f->js) { js_page_hist_restore(f->js, url, -1); js_page_take_scroll(f->js); }
+            hist_sync(f);
+        }
         return true;
     }
-    const char *t = node_attr(link, "target");
-    if (t && (!strcmp(t, "_top") || !strcmp(t, "_parent") || !strcmp(t, "_blank"))) {
-        if (out_url) snprintf(out_url, cap, "%s%s", !strcmp(t, "_blank") ? "\x01" : "", url);
+    if (t && (!strcasecmp(t, "_top") || !strcasecmp(t, "_parent") || !strcasecmp(t, "_blank"))) {
+        bool blank = !strcasecmp(t, "_blank");
+        /* sandbox: popups e navegação da janela de cima só com os tokens (clique conta como ativação do usuário) */
+        if ((f->sbox & JS_SB_ON) && (blank ? !(f->sbox & JS_SB_POPUPS) : !(f->sbox & (JS_SB_TOP_NAV | JS_SB_TOP_NAV_USER)))) return true;
+        bool parent = !strcasecmp(t, "_parent") && f->depth > 1;
+        if (out_url) snprintf(out_url, cap, "%s%s", blank ? "\x01" : parent ? "\x02" : "", url);
         return true;
     }
     snprintf(f->pending, sizeof f->pending, "%s", url);
@@ -668,3 +781,31 @@ bool form_build(doc_t *d, node_t *form, ctrl_t *submitter, char *out, int cap, s
     sb_free(&q);
     return false;
 }
+
+/* cursor sobre o iframe (coords do documento d): 0 fora de iframe, senão MOS_WEB_CURSOR_* + 1 */
+int frame_cursor(doc_t *d, int x, int y) {
+    int ox, oy;
+    frame_t *f = frame_at(d, x, y, &ox, &oy);
+    if (!f || !f->doc) return 0;
+    int fx = x - ox, fy = y - oy + f->scroll;
+    int sub = frame_cursor(f->doc, fx, fy);
+    if (sub) return sub;
+    frag_t *fr = doc_hit(f->doc, fx, fy, NULL);
+    if (fr && fr->node && fr->node->link) return FRAME_CUR_HAND;
+    for (node_t *q = js_hit_node(f->doc, fx, fy); q; q = q->parent)   /* link em bloco, sem texto */
+        if (q->type == N_ELEM && q->tag == T_A && node_attr(q, "href")) return FRAME_CUR_HAND;
+    if (fr && fr->node) return FRAME_CUR_TEXT;
+    return FRAME_CUR_ARROW;
+}
+
+/* window.open pedido por um iframe (em qualquer nível); \x01 + URL, como target=_blank */
+bool frames_take_popup(doc_t *d, char *out, int cap) {
+    for (frame_t *f = d ? d->frames : NULL; f; f = f->next) {
+        const char *u = f->js ? js_page_take_popup(f->js) : NULL;
+        if (u) { snprintf(out, (usize)cap, "%s", u); return true; }
+        if (f->doc && frames_take_popup(f->doc, out, cap)) return true;
+    }
+    return false;
+}
+
+int frame_sandbox(frame_t *f) { return f ? f->sbox : 0; }

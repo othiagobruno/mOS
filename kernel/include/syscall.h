@@ -935,13 +935,15 @@ typedef struct {
     unsigned long long body;     /* char* */
     unsigned int cap, len;       /* len = tamanho real; maior que cap: nada copiado, a mensagem fica na fila */
     int type;                    /* MOS_WEB_T_* */
-    int pad;
+    int subframe;                /* 0 = quadro principal; 1 = iframe (WKFrameInfo.isMainFrame) */
     char url[1024];              /* página que mandou (WKFrameInfo.request) */
 } mos_web_msg_t;
 typedef struct {
     unsigned long long src;      /* const char* (0 = tira todos os scripts) */
     unsigned int len;
     int at_end;                  /* 0 = AtDocumentStart, 1 = AtDocumentEnd */
+    int all_frames;              /* 1 = também nos iframes (forMainFrameOnly:NO) */
+    int pad;
 } mos_web_script_t;
 typedef struct { char url[1024]; char title[256]; } mos_web_hist_t;
 /* alert/confirm/prompt que bloqueia: enquanto está aberto, LOAD/GO/EVAL/DECIDE/INPUT da vista devolvem -MOS_EBUSY,
@@ -955,5 +957,5 @@ typedef struct {
     int has_default;                 /* GET: o prompt tem texto padrão */
     unsigned long long msg, def, frame_url, text;   /* buffers do app (text: resposta do prompt) */
     unsigned msg_cap, def_cap, frame_cap, text_len;
-    unsigned msg_len, def_len, frame_len, pad;      /* GET: tamanhos reais (o texto é cortado em cap) */
+    unsigned msg_len, def_len, frame_len, subframe; /* GET: tamanhos reais (o texto é cortado em cap); subframe: veio de iframe */
 } mos_web_dialog_t;

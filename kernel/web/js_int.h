@@ -181,6 +181,7 @@ typedef struct { jsstr *exp, *local, *spec, *imp; } jsexport;   /* reexport: imp
 typedef struct jsscript {
     gch_t h;
     bool is_module;
+    struct jsrealm *realm;    /* reino em que foi compilado: as funções dele rodam nesse reino (globais, this padrão) */
     jsstr **mreq;             /* especificadores pedidos (sem repetição) */
     int nmreq, cmreq;
     jsimport *imports;
@@ -498,7 +499,8 @@ jsv    js_env_get(jsenv *e, jsstr *name);         /* binding de um ambiente (TDZ
 jsscript *js_cur_script(void);
 
 /* contexto do interpretador salvo ao trocar de corrotina */
-typedef struct { struct jsscript *script; jsstr *plabel, *label, *srcname; int calldepth, line; } jsictx;
+typedef struct { struct jsscript *script; jsstr *plabel, *label, *srcname; int calldepth, line; struct jsrealm *realm; } jsictx;
+bool js_realm_alive(struct jsrealm *r);
 void   js_ictx_save(jsictx *c);
 void   js_ictx_restore(jsictx *c);
 jsv    js_call_body(jsobj *f, jsv thisv, int argc, jsv *argv, jsv newtarget);

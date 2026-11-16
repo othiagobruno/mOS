@@ -39,6 +39,7 @@ struct js_page {
     doc_t *xdocs[64];           /* documentos de DOMParser e XHR document, vivos até a página fechar */
     /* History API: estados por id (vetor JS); com anfitrião (WebView), as entradas ficam no histórico dele */
     jsobj *hstates;
+    jsobj *hobj;                /* o objeto history deste reino (métodos chamados de outra janela acham a página) */
     int hcur;                   /* id do estado atual (-1 = estado nulo) */
     bool hhost, hscroll_manual;
     int hlen;                   /* tamanho do histórico informado pelo anfitrião */
@@ -46,6 +47,14 @@ struct js_page {
     int hln, hlpos;
     struct { int op, arg; char url[1024]; } hops[8];   /* 1 push, 2 replace, 3 go */
     int nhops;
+    int sbox;                   /* iframe sandbox: JS_SB_* (0 = sem sandbox) */
+    js_init_fn frame_init;      /* anfitrião: preparo das páginas dos iframes (WKUserScript em todos os quadros...) */
+    void *frame_ctx;
+    jsobj *xwin;                /* WindowProxy entre origens: só postMessage, location (escrita), frames, parent, top... */
+    struct js_page *kids[32];   /* janelas dos iframes, em ordem do documento (window[i], window.length) */
+    int nkids;
+    char popup[1024];           /* window.open pedido ao anfitrião (\x01 = sem URL) */
+    bool popup_pending;
     int nxdocs;
     jtimer_t *timers;
     int ntimers, ctimers, next_timer;
@@ -77,9 +86,9 @@ struct js_page {
 };
 typedef struct pmsg { struct pmsg *next; jsv val; char origin[256]; jsobj *source; } pmsg_t;   /* val: clone estruturado */
 
-static js_page_t *pages;
 
 static js_page_t *cur_page(void) { return J.realm ? J.realm->page : NULL; }
+static bool sb_denies(js_page_t *p, int allow) { return p && (p->sbox & JS_SB_ON) && !(p->sbox & allow); }
 
 /* ============================================================ console */
 void js_console_log(int level, const char *msg) {
@@ -174,9 +183,14 @@ static node_t *node_of(jsv v) {
     return NULL;
 }
 
+static js_page_t *pages;
 static js_page_t *page_of(jsv v) {
     if (jv_isobj(v) && jv_o(v)->cls >= CL_NODE && jv_o(v)->cls <= CL_HOST) return jv_o(v)->u.host.page;
-    return cur_page();
+    js_page_t *c = cur_page();
+    /* objeto global de outra janela (contentWindow.addEventListener...) */
+    if (jv_isobj(v) && (!c || !c->realm || jv_obj(c->realm->global) != v))
+        for (js_page_t *q = pages; q; q = q->next) if (q->realm && jv_obj(q->realm->global) == v) return q;
+    return c;
 }
 
 void js_mark_page(js_page_t *p) {
@@ -189,6 +203,8 @@ void js_mark_page(js_page_t *p) {
     gc_mark_ptr(p->keep);
     gc_mark_ptr(p->imgdec);
     gc_mark_ptr(p->hstates);
+    gc_mark_ptr(p->xwin);
+    gc_mark_ptr(p->hobj);
     for (int i = 0; i < p->ntimers; i++) { gc_mark_val(p->timers[i].fn); gc_mark_ptr(p->timers[i].args); }
     for (int i = 0; i < p->nnets; i++) gc_mark_ptr(p->nets[i].target);
     for (int i = 0; i < p->nscripts; i++) gc_mark_val(p->scripts[i].job);
@@ -974,7 +990,7 @@ static jsv attr_handler(js_page_t *p, node_t *n, jsstr *type) {
     char an[48];
     snprintf(an, sizeof an, "on%s", type->d);
     const char *code = node_attr(n, an);
-    if (!code) return JS_UNDEF;
+    if (!code || sb_denies(p, JS_SB_SCRIPTS)) return JS_UNDEF;
     jsobj *w = wrap(p, n);
     jsobj *l = listeners_of(p, jv_obj(w), true);
     for (u32 i = 0; i < l->alen; i += 4) {
@@ -991,9 +1007,13 @@ static jsv attr_handler(js_page_t *p, node_t *n, jsstr *type) {
     sb_puts(&sb, code);
     sb_puts(&sb, "\n})");
     jsstr *err = NULL;
+    jsrealm *saved_realm = J.realm;
+    J.realm = p->realm;   /* o atributo pertence à janela do elemento */
     jsscript *s = js_parse(sb.p, sb.len, an, 0, &err);
     sb_free(&sb);
+    if (s) s->realm = p->realm;
     if (!s) {
+        J.realm = saved_realm;
         char b[300];
         snprintf(b, sizeof b, "SyntaxError no atributo %s: %s", an, err ? err->d : "?");
         js_console_log(3, b);
@@ -1001,6 +1021,7 @@ static jsv attr_handler(js_page_t *p, node_t *n, jsstr *type) {
         return JS_UNDEF;
     }
     jsv f = js_run_script(s);
+    J.realm = saved_realm;
     if (f == JS_EXC) { js_report_exception(); return JS_UNDEF; }
     js_arr_push(l, jv_str(type));
     js_arr_push(l, f);
@@ -1244,6 +1265,7 @@ static int run_timers(js_page_t *p) {
 
 /* ============================================================ scripts */
 static void queue_script(js_page_t *p, node_t *n) {
+    if (sb_denies(p, JS_SB_SCRIPTS)) return;   /* sandbox sem allow-scripts */
     for (int i = 0; i < p->nscripts; i++) if (p->scripts[i].n == n) return;
     const char *type = node_attr(n, "type");
     bool module = type && !strcasecmp(type, "module");
@@ -1310,8 +1332,114 @@ static void fire_simple(js_page_t *p, node_t *target, const char *type, bool bub
 /* ---------- iframes: postMessage entre janelas (clone por JSON) */
 static js_page_t *page_of_global(jsv g) {
     if (!jv_isobj(g)) return NULL;
-    for (js_page_t *q = pages; q; q = q->next) if (q->realm && jv_obj(q->realm->global) == g) return q;
+    for (js_page_t *q = pages; q; q = q->next) if ((q->realm && jv_obj(q->realm->global) == g) || (q->xwin && jv_obj(q->xwin) == g)) return q;
     return NULL;
+}
+
+/* mesma origem: origens opacas ("null", sandbox sem allow-same-origin) nunca são iguais a nada */
+static bool same_origin(js_page_t *a, js_page_t *b) {
+    return a && b && (a == b || (strcmp(a->origin, "null") && !strcmp(a->origin, b->origin)));
+}
+
+static jsv win_for(js_page_t *viewer, js_page_t *t);
+static jsobj *xwin_of(js_page_t *t);
+
+/* WindowProxy entre origens: magic 0 window/self/frames 1 parent 2 top 3 length 4 closed 5 location(get) 6 location(set)
+ * 7 close/focus/blur; postMessage reaproveita w_postmessage (page_of_global reconhece o proxy) */
+NATIVE(xwin_get) {
+    UNUSED_ARGS;
+    int m = self->u.nat.magic;
+    js_page_t *t = page_of_global(m == 8 || m == 9 ? self->u.nat.data : thisv), *v = cur_page();
+    if (m == 10) return js_throw_dom("SecurityError", "Bloqueado o acesso a uma janela de outra origem");
+    if (!t) return JS_UNDEF;
+    switch (m) {
+    case 0: return win_for(v, t);
+    case 1: return win_for(v, t->parent ? t->parent : t);
+    case 2: { js_page_t *top = t; while (top->parent) top = top->parent; return win_for(v, top); }
+    case 3: return jv_int(t->nkids);
+    case 4: return JS_FALSE;
+    case 5: {
+        /* Location entre origens: só replace() e href (escrita) */
+        jsobj *l = js_newobj(NULL);
+        jsv lw = jv_obj(xwin_of(t));
+        jsobj *rf = js_newnative(xwin_get, "replace", 1, 8);
+        rf->u.nat.data = lw;
+        js_defprop(l, js_intern("replace", -1), jv_obj(rf), PF_NOENUM);
+        jsobj *hs = js_newnative(xwin_get, "href", 1, 9);
+        hs->u.nat.data = lw;
+        js_defaccessor(l, js_intern("href", -1), jv_obj(js_newnative(xwin_get, "href", 0, 10)), jv_obj(hs), 0);
+        return jv_obj(l);
+    }
+    case 6: case 8: case 9: {
+        if (v && (v->sbox & JS_SB_ON) && !(v->sbox & (JS_SB_TOP_NAV | JS_SB_TOP_NAV_USER)) && !t->parent && v != t)
+            return js_throw_dom("SecurityError", "sandbox: o iframe não pode navegar a janela de cima");
+        jsstr *u = js_tostr(ARG(0));
+        if (!u) return JS_EXC;
+        page_navigate(t, u->d, m == 8);
+        return JS_UNDEF;
+    }
+    }
+    return JS_UNDEF;
+}
+
+static jsobj *xwin_of(js_page_t *t) {
+    if (t->xwin) return t->xwin;
+    jsobj *o = js_newobj(NULL);
+    t->xwin = o;
+    static const char *gs[] = { "window", "self", "frames", "parent", "top", "length", "closed" };
+    static const int gm[] = { 0, 0, 0, 1, 2, 3, 4 };
+    for (u32 i = 0; i < ARRAY_LEN(gs); i++) js_defgetter(o, gs[i], xwin_get, gm[i]);
+    js_defaccessor(o, js_intern("location", -1), jv_obj(js_newnative(xwin_get, "location", 0, 5)), jv_obj(js_newnative(xwin_get, "location", 1, 6)), 0);
+    js_defprop(o, js_intern("postMessage", -1), js_getn(jv_obj(t->realm->global), "postMessage"), PF_NOENUM);
+    static const char *fs[] = { "close", "focus", "blur" };
+    for (u32 i = 0; i < ARRAY_LEN(fs); i++) js_defnative(o, fs[i], xwin_get, 0, 7);
+    return o;
+}
+
+/* o que a janela viewer enxerga de t: o objeto global (mesma origem) ou o WindowProxy restrito */
+static jsv win_for(js_page_t *viewer, js_page_t *t) {
+    if (!t || !t->realm) return JS_NULL;
+    if (!viewer || same_origin(viewer, t)) return jv_obj(t->realm->global);
+    return jv_obj(xwin_of(t));
+}
+
+/* window[i] e window.length: o hospedeiro informa as páginas dos iframes em ordem do documento */
+void js_page_set_frames(js_page_t *p, js_page_t **kids, int n) {
+    if (!p || !p->realm) return;
+    if (n > (int)ARRAY_LEN(p->kids)) n = (int)ARRAY_LEN(p->kids);
+    if (n == p->nkids && !memcmp(p->kids, kids, sizeof(js_page_t *) * (usize)n)) return;
+    jsobj *g = p->realm->global;
+    char k[12];
+    for (int i = n; i < p->nkids; i++) { snprintf(k, sizeof k, "%d", i); js_delprop(g, js_intern(k, -1)); }
+    for (int i = 0; i < n; i++) {
+        snprintf(k, sizeof k, "%d", i);
+        js_defprop(g, js_intern(k, -1), win_for(p, kids[i]), PF_NOENUM | PF_RO);
+        p->kids[i] = kids[i];
+    }
+    p->nkids = n;
+}
+
+/* preparo das páginas de iframe pelo anfitrião da página de cima (fases como js_page_new2) */
+void js_page_set_frame_init(js_page_t *p, js_init_fn fn, void *ctx) { if (p) { p->frame_init = fn; p->frame_ctx = ctx; } }
+void js_page_run_frame_init(js_page_t *c, int phase) {
+    js_page_t *t = c ? c->parent : NULL;
+    while (t && !t->frame_init) t = t->parent;
+    if (t) t->frame_init(c, phase, t->frame_ctx);
+}
+
+/* iframe sandbox: chamado antes dos scripts do filho */
+void js_page_set_sandbox(js_page_t *p, int flags) {
+    if (!p) return;
+    p->sbox = flags;
+    if ((flags & JS_SB_ON) && !(flags & JS_SB_SAME_ORIGIN)) snprintf(p->origin, sizeof p->origin, "null");
+}
+int js_page_sandbox(js_page_t *p) { return p ? p->sbox : 0; }
+
+/* window.open: o anfitrião abre a vista nova (MOS_WEB_EV_NEWWIN); devolve a URL pedida uma vez */
+const char *js_page_take_popup(js_page_t *p) {
+    if (!p || !p->popup_pending) return NULL;
+    p->popup_pending = false;
+    return p->popup;
 }
 
 NATIVE(w_postmessage) {
@@ -1334,7 +1462,7 @@ NATIVE(w_postmessage) {
     if (!m) return JS_UNDEF;
     m->val = val;
     snprintf(m->origin, sizeof m->origin, "%s", src ? src->origin : "null");
-    m->source = src && src->realm ? src->realm->global : NULL;
+    m->source = src && src->realm ? (same_origin(src, dst) ? src->realm->global : xwin_of(src)) : NULL;
     if (dst->msgs_tail) dst->msgs_tail->next = m; else dst->msgs = m;
     dst->msgs_tail = m;
     return JS_UNDEF;
@@ -1381,13 +1509,15 @@ void js_page_link_frame(js_page_t *c, js_page_t *par, node_t *iframe) {
     c->parent = par;
     if (!c->dialog) { c->dialog = par->dialog; c->dialog_ctx = par->dialog_ctx; }
     c->frame_el = iframe;
-    if (!strncmp(c->url, "about:", 6) || !strncmp(c->url, "data:", 5)) snprintf(c->origin, sizeof c->origin, "%s", strncmp(c->url, "data:", 5) ? par->origin : "null");
+    bool opaque = (c->sbox & JS_SB_ON) && !(c->sbox & JS_SB_SAME_ORIGIN);
+    if (!opaque && (!strncmp(c->url, "about:", 6) || !strncmp(c->url, "data:", 5)))
+        snprintf(c->origin, sizeof c->origin, "%s", strncmp(c->url, "data:", 5) ? par->origin : "null");
     js_page_t *top = par;
     while (top->parent) top = top->parent;
     jsobj *g = c->realm->global;
-    js_defn(g, "parent", jv_obj(par->realm->global), PF_NOENUM);
-    js_defn(g, "top", jv_obj(top->realm->global), PF_NOENUM);
-    js_defn(g, "frameElement", !strcmp(c->origin, par->origin) ? jv_obj(wrap(par, iframe)) : JS_NULL, PF_NOENUM);
+    js_defn(g, "parent", win_for(c, par), PF_NOENUM);
+    js_defn(g, "top", win_for(c, top), PF_NOENUM);
+    js_defn(g, "frameElement", same_origin(c, par) ? jv_obj(wrap(par, iframe)) : JS_NULL, PF_NOENUM);
 }
 
 /* executa scripts em ordem; devolve false se está esperando um download */
@@ -1700,8 +1830,8 @@ static jsv node_get(jsobj *o, jsstr *k, bool *found) {
     if (n->tag == T_IFRAME && (keyis(k, "contentWindow") || keyis(k, "contentDocument"))) {
         js_page_t *c = frame_page(n);
         if (!c) return JS_NULL;
-        if (keyis(k, "contentWindow")) return jv_obj(c->realm->global);
-        return !strcmp(c->origin, p->origin) ? jv_obj(c->document) : JS_NULL;   /* mesma origem */
+        if (keyis(k, "contentWindow")) return win_for(p, c);
+        return same_origin(c, p) ? jv_obj(c->document) : JS_NULL;   /* mesma origem */
     }
     if (keyis(k, "isConnected")) return jv_bool(is_connected(p, n));
     if (keyis(k, "textContent") || keyis(k, "innerText")) {
@@ -2272,9 +2402,9 @@ static void scroll_to_fragment(js_page_t *p, const char *url) {
 /* tarefa: popstate e/ou hashchange; data = [estado, url antiga, url nova, popstate?] */
 NATIVE(hist_task) {
     UNUSED_ARGS;
-    js_page_t *p = cur_page();
-    if (!p) return JS_UNDEF;
     jsobj *a = jv_o(self->u.nat.data);
+    js_page_t *p = page_of_global(js_arr_get(a, 4));   /* a janela dona, não a que está rodando */
+    if (!p) return JS_UNDEF;
     jsv state = js_arr_get(a, 0), ou = js_arr_get(a, 1), nu = js_arr_get(a, 2);
     if (js_truthy(js_arr_get(a, 3))) {
         jsobj *ev = new_event(p, js_intern("popstate", -1), false);
@@ -2296,9 +2426,9 @@ NATIVE(hist_task) {
 }
 
 static void hist_events(js_page_t *p, const char *old, const char *nu, jsv state, bool pop) {
-    jsv a[4] = { state, jv_str(js_strz(old)), jv_str(js_strz(nu)), jv_bool(pop) };
+    jsv a[5] = { state, jv_str(js_strz(old)), jv_str(js_strz(nu)), jv_bool(pop), jv_obj(p->realm->global) };
     jsobj *t = js_newnative(hist_task, "historico", 0, 0);
-    t->u.nat.data = jv_obj(js_arr_from(a, 4));
+    t->u.nat.data = jv_obj(js_arr_from(a, 5));
     add_timer(p, jv_obj(t), 0, false, 0, NULL);
 }
 
@@ -2352,7 +2482,9 @@ static bool hist_same_origin(js_page_t *p, const char *url) {
 /* magic: 0 pushState 1 replaceState 2 go 3 back 4 forward 5 length 6 state 7 scrollRestoration(get) 8 (set) */
 NATIVE(hist_method) {
     UNUSED_ARGS;
-    js_page_t *p = cur_page();
+    js_page_t *p = NULL;
+    for (js_page_t *q = pages; q && !p; q = q->next) if (q->hobj && jv_obj(q->hobj) == thisv) p = q;
+    if (!p) p = cur_page();
     if (!p) return JS_UNDEF;
     int m = self->u.nat.magic;
     switch (m) {
@@ -2416,7 +2548,7 @@ bool js_page_take_hist_op(js_page_t *p, int *op, int *arg, char *url, int cap) {
 
 NATIVE(loc_method) {
     UNUSED_ARGS;
-    js_page_t *p = cur_page();
+    js_page_t *p = jv_isobj(thisv) && jv_o(thisv)->cls == CL_LOCATION ? jv_o(thisv)->u.host.page : cur_page();
     if (!p) return JS_UNDEF;
     int op = self->u.nat.magic;
     if (op == 2) { p->nav_pending = true; p->nav_reload = true; strncpy(p->nav, p->url, sizeof p->nav - 1); return JS_UNDEF; }
@@ -2922,12 +3054,68 @@ NATIVE(doc_write) {
     return JS_UNDEF;
 }
 
+/* window.length: número de iframes */
+NATIVE(w_frames_len) {
+    UNUSED_ARGS;
+    js_page_t *p = page_of_global(thisv);
+    if (!p) p = cur_page();
+    return jv_int(p ? p->nkids : 0);
+}
+
+/* window.open(url, target, features): iframe com nome → navega o iframe; _self/_parent/_top → navega a janela;
+ * senão pede ao anfitrião uma vista nova (createWebViewWithConfiguration) */
+NATIVE(w_open) {
+    UNUSED_ARGS;
+    js_page_t *p = cur_page();
+    if (!p) return JS_NULL;
+    char url[1024] = "";
+    if (argc && !jv_isnullish(argv[0])) {
+        jsstr *u = js_tostr(argv[0]);
+        if (!u) return JS_EXC;
+        if (u->len && !web_url_parse(u->d, p->doc->base, url, sizeof url)) return js_throw_dom("SyntaxError", "window.open: URL inválido");
+    }
+    char tgt[128] = "_blank";
+    if (argc > 1 && !jv_isnullish(argv[1])) {
+        jsstr *t = js_tostr(argv[1]);
+        if (!t) return JS_EXC;
+        if (t->len) snprintf(tgt, sizeof tgt, "%s", t->d);
+    }
+    bool noopener = false;
+    if (argc > 2 && !jv_isnullish(argv[2])) {
+        jsstr *f = js_tostr(argv[2]);
+        if (!f) return JS_EXC;
+        noopener = strstr(f->d, "noopener") || strstr(f->d, "noreferrer");
+    }
+    js_page_t *dst = NULL;
+    if (!strcasecmp(tgt, "_self")) dst = p;
+    else if (!strcasecmp(tgt, "_parent")) dst = p->parent ? p->parent : p;
+    else if (!strcasecmp(tgt, "_top")) { dst = p; while (dst->parent) dst = dst->parent; }
+    else if (strcasecmp(tgt, "_blank")) {
+        /* iframe com esse nome, na própria janela ou acima */
+        for (js_page_t *q = p; q && !dst; q = q->parent)
+            for (int i = 0; i < q->nkids && !dst; i++) {
+                const char *nm = q->kids[i]->frame_el ? node_attr(q->kids[i]->frame_el, "name") : NULL;
+                if (nm && !strcmp(nm, tgt)) dst = q->kids[i];
+            }
+    }
+    if (dst) {
+        if (dst != p && !dst->parent && sb_denies(p, JS_SB_TOP_NAV | JS_SB_TOP_NAV_USER)) return JS_NULL;
+        if (url[0]) page_navigate(dst, url, false);
+        return noopener ? JS_NULL : win_for(p, dst);
+    }
+    if (sb_denies(p, JS_SB_POPUPS)) return JS_NULL;   /* sandbox sem allow-popups: bloqueado */
+    snprintf(p->popup, sizeof p->popup, "%s", url[0] ? url : "about:blank");
+    p->popup_pending = true;
+    return JS_NULL;   /* a vista nova é do anfitrião; sem opener entre vistas */
+}
+
 /* window */
 NATIVE(w_alert) {
     UNUSED_ARGS;
     jsstr *s = argc && argv[0] != JS_UNDEF ? js_tostr(argv[0]) : A[A_empty];
     if (!s) return JS_EXC;
     js_page_t *dp = cur_page();
+    if (sb_denies(dp, JS_SB_MODALS)) return self->u.nat.magic == 1 ? JS_FALSE : self->u.nat.magic == 2 ? JS_NULL : JS_UNDEF;
     if (dp && dp->dialog) {
         int kind = self->u.nat.magic == 1 ? JS_DLG_CONFIRM : self->u.nat.magic == 2 ? JS_DLG_PROMPT : JS_DLG_ALERT;
         jsstr *def = NULL;
@@ -2957,7 +3145,8 @@ NATIVE(w_alert) {
 
 NATIVE(w_getter) {
     UNUSED_ARGS;
-    js_page_t *p = cur_page();
+    js_page_t *p = page_of_global(thisv);   /* janela consultada (outra, via contentWindow) */
+    if (!p) p = cur_page();
     if (!p) return JS_UNDEF;
     switch (self->u.nat.magic) {
     case 0: return jv_int(p->vw ? p->vw : 1024);
@@ -2972,7 +3161,8 @@ NATIVE(w_getter) {
 
 NATIVE(w_setlocation) {
     UNUSED_ARGS;
-    js_page_t *p = cur_page();
+    js_page_t *p = page_of_global(thisv);
+    if (!p) p = cur_page();
     if (!p) return JS_UNDEF;
     jsstr *s = js_tostr(ARG(0));
     if (!s) return JS_EXC;
@@ -3281,6 +3471,8 @@ void js_dom_init(jsrealm *r) {
     js_defn(g, "frames", jv_obj(g), PF_NOENUM);
     js_defn(g, "frameElement", JS_NULL, PF_NOENUM);
     js_defnative(g, "postMessage", w_postmessage, 2, 0);
+    js_defnative(g, "open", w_open, 0, 0);
+    js_defgetter(g, "length", w_frames_len, 0);
     p->document = wrap(p, p->doc->root);
     js_defn(g, "document", jv_obj(p->document), PF_NOENUM);
     p->location = mkhost(p, CL_LOCATION, js_newobj(op), NULL);
@@ -3341,7 +3533,9 @@ void js_dom_init(jsrealm *r) {
                    jv_obj(js_newnative(hist_method, "scrollRestoration", 1, 8)), 0);
     js_defprop(hp, A[A_sym_toStringTag], jv_str(js_intern("History", -1)), PF_NOENUM | PF_RO);
     js_defn(g, "History", jv_obj(js_newctor(w_noop, "History", 0, hp)), PF_NOENUM);
-    js_defn(g, "history", jv_obj(js_newobj(hp)), PF_NOENUM);
+    jsobj *ho = js_newobj(hp);
+    if (r->page) r->page->hobj = ho;
+    js_defn(g, "history", jv_obj(ho), PF_NOENUM);
     jsobj *sp = js_newobj(op);
     js_defnative(sp, "getItem", stor_op, 1, 0);
     js_defnative(sp, "setItem", stor_op, 2, 1);
@@ -3732,7 +3926,7 @@ bool js_page_event(js_page_t *p, node_t *target, int type, int key, u16 mods) {
 }
 
 void js_page_eval_url(js_page_t *p, const char *code) {
-    if (!p) return;
+    if (!p || sb_denies(p, JS_SB_SCRIPTS)) return;
     int frame;
     js_enter(&frame);
     jsrealm *saved = J.realm;

@@ -676,9 +676,12 @@ static WKWebsiteDataStore *wk_store(BOOL persistent) {
     NSURLRequest *_req;
     WKSecurityOrigin *_origin;
     WKWebView *_wv;
+    BOOL _main;
 }
-static WKFrameInfo *wk_frame(WKWebView *wv, NSString *url) {
+/* main: o quadro principal (NO = iframe; o kernel diz quem mandou a mensagem ou abriu o diálogo) */
+static WKFrameInfo *wk_frame(WKWebView *wv, NSString *url, BOOL main) {
     WKFrameInfo *f = [[[WKFrameInfo alloc] init] autorelease];
+    f->_main = main;
     NSURL *u = url && [url length] ? [NSURL URLWithString:url] : nil;
     f->_req = [(u ? [NSURLRequest requestWithURL:u] : [[[NSURLRequest alloc] init] autorelease]) retain];
     f->_origin = [[WKSecurityOrigin alloc] init];
@@ -688,7 +691,7 @@ static WKFrameInfo *wk_frame(WKWebView *wv, NSString *url) {
     f->_wv = wv;
     return f;
 }
-- (BOOL)isMainFrame { return YES; }
+- (BOOL)isMainFrame { return _main; }
 - (NSURLRequest *)request { return _req; }
 - (WKSecurityOrigin *)securityOrigin { return _origin; }
 - (WKWebView *)webView { return _wv; }
@@ -1056,18 +1059,19 @@ static NSString *const kReplyShimFmt =
         if (wk_sys(MOS_WEB_HANDLER, _wid, (long)[e->name UTF8String], 1) == 0) [_kernelHandlers addObject:e->name];
     [self _mosScriptsChanged];   /* o calço de reply depende da lista */
 }
-- (void)_mosAddScript:(NSString *)src atEnd:(BOOL)end {
+- (void)_mosAddScript:(NSString *)src atEnd:(BOOL)end allFrames:(BOOL)all {
     const char *s = [src UTF8String];
-    mos_web_script_t S = {(unsigned long long)(uintptr_t)s, (unsigned)strlen(s), end ? 1 : 0};
+    mos_web_script_t S = {(unsigned long long)(uintptr_t)s, (unsigned)strlen(s), end ? 1 : 0, all ? 1 : 0, 0};
     wk_sys(MOS_WEB_SCRIPT, _wid, (long)&S, 0);
 }
 - (void)_mosScriptsChanged {
-    mos_web_script_t clear = {0, 0, 0};
+    mos_web_script_t clear = {0, 0, 0, 0, 0};
     wk_sys(MOS_WEB_SCRIPT, _wid, (long)&clear, 0);
     WKUserContentController *ucc = _config.userContentController;
     for (WKHandlerEntry *e in ucc->_handlers)
-        if (e->reply) [self _mosAddScript:[NSString stringWithFormat:kReplyShimFmt, wk_js_literal(e->name)] atEnd:NO];
-    for (WKUserScript *s in ucc->_scripts) [self _mosAddScript:s.source atEnd:s.injectionTime == WKUserScriptInjectionTimeAtDocumentEnd];
+        if (e->reply) [self _mosAddScript:[NSString stringWithFormat:kReplyShimFmt, wk_js_literal(e->name)] atEnd:NO allFrames:YES];
+    for (WKUserScript *s in ucc->_scripts)
+        [self _mosAddScript:s.source atEnd:s.injectionTime == WKUserScriptInjectionTimeAtDocumentEnd allFrames:!s.forMainFrameOnly];
 }
 
 /* ---------------------------------------------------------------- tamanho e desenho */
@@ -1254,8 +1258,8 @@ static int wk_mods(NSEvent *e) {
     NSURL *u = [NSURL URLWithString:url];
     a->_r = [(u ? [NSURLRequest requestWithURL:u] : [[[NSURLRequest alloc] init] autorelease]) retain];
     a->_t = (WKNavigationType)kind;
-    a->_src = [wk_frame(self, [_URL absoluteString]) retain];
-    a->_dst = [wk_frame(self, url) retain];
+    a->_src = [wk_frame(self, [_URL absoluteString], YES) retain];
+    a->_dst = [wk_frame(self, url, YES) retain];
     return a;
 }
 
@@ -1329,7 +1333,7 @@ static int wk_mods(NSEvent *e) {
         id body = wk_value(M->type, buf, M->len, &bad);
         NSString *name = wk_cstr(M->name);
         NSString *src = wk_cstr(M->url);
-        if ([name isEqualToString:@"__mosAlert"]) { [self _mosAlert:body frame:src]; continue; }
+        if ([name isEqualToString:@"__mosAlert"]) { [self _mosAlert:body frame:src main:!M->subframe]; continue; }
         if ([name isEqualToString:@"__mosAsync"]) { [self _mosAsyncDone:body]; continue; }
         WKHandlerEntry *e = [_config.userContentController _entryNamed:name];
         if (!e) continue;
@@ -1341,7 +1345,7 @@ static int wk_mods(NSEvent *e) {
         WKScriptMessage *m = [[WKScriptMessage alloc] init];
         m->_b = [body retain];
         m->_w = self;
-        m->_f = [wk_frame(self, src) retain];
+        m->_f = [wk_frame(self, src, !M->subframe) retain];
         m->_n = [name copy];
         if (e->reply && [e->handler respondsToSelector:@selector(userContentController:didReceiveScriptMessage:replyHandler:)]) {
             NSString *rid = [[replyId copy] autorelease];
@@ -1398,7 +1402,7 @@ static int wk_mods(NSEvent *e) {
     if (wk_sys(MOS_WEB_DIALOG, _wid, (long)&D, 0) != 0) return;
     _dlgOpen = YES;
     NSString *m = wk_cstr(msg), *dt = D.has_default ? wk_cstr(def) : nil;
-    WKFrameInfo *fi = wk_frame(self, wk_cstr(frame));
+    WKFrameInfo *fi = wk_frame(self, wk_cstr(frame), !D.subframe);
     id u = _UIDelegate;
     __block BOOL answered = NO;
     if (D.kind == MOS_WEB_DLG_ALERT) {
@@ -1441,12 +1445,12 @@ static int wk_mods(NSEvent *e) {
     _syncEvalValue = [v retain];
 }
 
-- (void)_mosAlert:(id)body frame:(NSString *)src {
+- (void)_mosAlert:(id)body frame:(NSString *)src main:(BOOL)main {
     if (![body isKindOfClass:[NSDictionary class]]) return;
     NSString *kind = [body objectForKey:@"kind"], *msg = [body objectForKey:@"message"];
     if (![msg isKindOfClass:[NSString class]]) msg = @"";
     id u = _UIDelegate;
-    WKFrameInfo *fi = wk_frame(self, src);
+    WKFrameInfo *fi = wk_frame(self, src, main);
     if ([kind isEqualToString:@"alert"] && [u respondsToSelector:@selector(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:)])
         [u webView:self runJavaScriptAlertPanelWithMessage:msg initiatedByFrame:fi completionHandler:^{}];
     else if ([kind isEqualToString:@"confirm"] && [u respondsToSelector:@selector(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:)])

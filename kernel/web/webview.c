@@ -40,8 +40,8 @@ typedef struct {
     int gen;                     /* documento que criou a entrada (pushState e fragmentos voltam sem recarregar) */
     int sid;                     /* estado do history.pushState (-1 = nenhum) */
 } wv_hent_t;
-typedef struct wmsg { struct wmsg *next; char name[64]; char *body; int len; int type; char url[1024]; } wmsg_t;
-typedef struct wscript { struct wscript *next; char *src; int len; int at_end; } wscript_t;
+typedef struct wmsg { struct wmsg *next; char name[64]; char *body; int len; int type; int subframe; char url[1024]; } wmsg_t;
+typedef struct wscript { struct wscript *next; char *src; int len; int at_end; int all_frames; } wscript_t;
 
 typedef struct webview {
     int pid;                     /* 0 = livre */
@@ -337,7 +337,10 @@ static void wv_post(void *ctx, const char *name, const char *body, int len, int 
     m->len = len;
     m->type = type;
     wv_strcpy(m->name, name, sizeof m->name);
-    wv_strcpy(m->url, w->url, sizeof m->url);
+    /* quem mandou: a página principal ou um iframe (WKFrameInfo) */
+    js_page_t *from = js_cur_page();
+    m->subframe = from && from != w->js;
+    wv_strcpy(m->url, from && m->subframe ? js_page_url(from) : w->url, sizeof m->url);
     if (w->msgs_tail) w->msgs_tail->next = m;
     else w->msgs = m;
     w->msgs_tail = m;
@@ -355,6 +358,7 @@ static const char ALERT_SHIM[] =
  * aberto na vista), avisa o app por mensagem e devolve a resposta padrão do WebKit sem WKUIDelegate */
 static int wv_dialog(void *ctx, js_page_t *p, int kind, const char *msg, const char *def, sbuf_t *out);
 
+static void wv_frame_init(js_page_t *p, int phase, void *ctx);
 static void wv_page_init(js_page_t *p, int phase, void *ctx) {
     webview_t *w = ctx;
     if (phase == 0) js_page_set_dialog(p, wv_dialog, w);
@@ -367,6 +371,21 @@ static void wv_page_init(js_page_t *p, int phase, void *ctx) {
     }
     for (wscript_t *s = w->scripts; s; s = s->next)
         if (s->at_end == phase) js_page_eval(p, s->src, s->len, "WKUserScript");
+    if (phase == 0) js_page_set_frame_init(p, wv_frame_init, w);
+}
+
+/* página de iframe: diálogos, manipuladores de mensagem e os WKUserScript com forMainFrameOnly:NO */
+static void wv_frame_init(js_page_t *p, int phase, void *ctx) {
+    webview_t *w = ctx;
+    if (phase == 0) {
+        js_page_set_dialog(p, wv_dialog, w);
+        js_page_wk_bridge(p, wv_post, w);
+        js_page_wk_handler(p, "__mosAlert", true);
+        for (int i = 0; i < w->nhandlers; i++) js_page_wk_handler(p, w->handlers[i], true);
+        js_page_eval(p, ALERT_SHIM, (int)sizeof ALERT_SHIM - 1, "mos-alert");
+    }
+    for (wscript_t *s = w->scripts; s; s = s->next)
+        if (s->at_end == phase && s->all_frames) js_page_eval(p, s->src, s->len, "WKUserScript");
 }
 
 /* ============================================================ documento */
@@ -797,6 +816,7 @@ static void submit_form_in(webview_t *w, doc_t *d, node_t *form, ctrl_t *submitt
     bool post = form_build(d, form, submitter, url, sizeof url, &body);
     if (d != w->doc) {
         frame_t *f = frames_frame_of(w->doc, d);
+        if (f && (frame_sandbox(f) & JS_SB_ON) && !(frame_sandbox(f) & JS_SB_FORMS)) f = NULL;   /* sandbox sem allow-forms */
         if (f) frame_load(f, url, post ? (body.p ? body.p : "") : NULL, body.len, NULL);
     } else if (post) navigate(w, url, true, 1, body.p ? body.p : "", body.len, "application/x-www-form-urlencoded", -1);
     else navigate(w, url, true, 1, NULL, 0, NULL, -1);
@@ -1068,7 +1088,7 @@ static void frame(webview_t *w) {
                 char out[1024];
                 frame_prevented = frame_input(fr, FRAME_CLICK, fx, fy, 0, out, sizeof out) == FRAME_PREVENTED;
                 if (out[0] == 1) { wv_strcpy(w->newwin_url, out + 1, sizeof w->newwin_url); w->events |= MOS_WEB_EV_NEWWIN; }
-                else if (out[0]) navigate(w, out, true, 0, NULL, 0, NULL, -1);
+                else if (out[0]) navigate(w, out + (out[0] == 2), true, 0, NULL, 0, NULL, -1);
                 w->dirty = true;
             }
             w->press_link = NULL;
@@ -1095,6 +1115,10 @@ static void frame(webview_t *w) {
     else gfx_fill(s, 0, 0, w->vw, w->vh, RGB(255, 255, 255));
     draw_select_list(w, u);
     if (hover && u->cursor == CURSOR_ARROW && !w->select_open) u->cursor = CURSOR_HAND;
+    if (over_frame && u->cursor == CURSOR_ARROW && d) {
+        int fc = frame_cursor(d, u->mx, u->my + w->scroll);
+        if (fc == FRAME_CUR_HAND) u->cursor = CURSOR_HAND; else if (fc == FRAME_CUR_TEXT) u->cursor = CURSOR_IBEAM;
+    }
     if (u->pressed && !w->select_open && !over_frame) { w->press_link = hover; w->press_in = true; }
     /* eventos dos controles e cliques para o JavaScript */
     bool prevented = false;
@@ -1187,6 +1211,13 @@ static void pump(webview_t *w) {
             const char *fr = url_fragment(hurl);
             wv_strcpy(w->frag, fr && *fr ? fr : "", sizeof w->frag);
             js_page_set_hist_len(w->js, w->nhist);
+        }
+        /* window.open: da página ou de um iframe → createWebViewWithConfiguration no app */
+        if (w->js && w->doc == d0) {
+            const char *pu = js_page_take_popup(w->js);
+            char pbuf[1024];
+            if (!pu && frames_take_popup(w->doc, pbuf, sizeof pbuf)) pu = pbuf;
+            if (pu) { wv_strcpy(w->newwin_url, pu, sizeof w->newwin_url); w->events |= MOS_WEB_EV_NEWWIN; }
         }
         if (w->js && w->doc == d0) {
             bool reload = false;
@@ -1333,6 +1364,7 @@ typedef struct wvop {
     bool detached;               /* a syscall original já voltou: nada mais é copiado para o app */
     int kind;
     char *msg, *def, *frame;
+    bool subframe;
     int reply_ok;
     char *reply;
     webview_t *saved_cur;
@@ -1510,8 +1542,10 @@ static i64 wv_dispatch(void *arg) {
             node_t *hv = NULL;
             int cur = MOS_WEB_CURSOR_ARROW;
             if (w->doc && u->inside) {
-                frag_t *f = doc_hit(w->doc, u->mx, u->my + w->scroll, NULL);
-                if (f && f->node && f->node->link) { hv = f->node->link; cur = MOS_WEB_CURSOR_HAND; }
+                int fc = frame_cursor(w->doc, u->mx, u->my + w->scroll);   /* o iframe sob o ponteiro decide */
+                frag_t *f = fc ? NULL : doc_hit(w->doc, u->mx, u->my + w->scroll, NULL);
+                if (fc) cur = fc == FRAME_CUR_HAND ? MOS_WEB_CURSOR_HAND : fc == FRAME_CUR_TEXT ? MOS_WEB_CURSOR_IBEAM : MOS_WEB_CURSOR_ARROW;
+                else if (f && f->node && f->node->link) { hv = f->node->link; cur = MOS_WEB_CURSOR_HAND; }
                 else if (f && f->node) cur = MOS_WEB_CURSOR_IBEAM;
             }
             if (hv != old_hover) { w->dirty = true; frame(w); }
@@ -1608,6 +1642,7 @@ static i64 wv_dispatch(void *arg) {
         memset(M, 0, sizeof *M);
         wv_strcpy(M->name, m->name, sizeof M->name);
         wv_strcpy(M->url, m->url, sizeof M->url);
+        M->subframe = m->subframe;
         M->type = m->type;
         M->len = (u32)m->len;
         M->cap = cap;
@@ -1638,6 +1673,7 @@ static i64 wv_dispatch(void *arg) {
         if (!s->src) { kfree(s); return -MOS_ENOMEM; }
         s->len = (int)S.len;
         s->at_end = S.at_end ? 1 : 0;
+        s->all_frames = S.all_frames ? 1 : 0;
         wscript_t **pp = &w->scripts;
         while (*pp) pp = &(*pp)->next;
         *pp = s;
@@ -1783,6 +1819,7 @@ static int wv_dialog(void *ctx, js_page_t *p, int kind, const char *msg, const c
     o->msg = dup_str(msg ? msg : "");
     o->def = def ? dup_str(def) : NULL;
     o->frame = dup_str(js_page_url(p));
+    o->subframe = p != w->js;
     o->reply_ok = kind == JS_DLG_ALERT;
     o->saved_cur = g_cur;
     o->saved_paint = g_paint_doc;
@@ -1825,6 +1862,7 @@ static i64 web_dialog_op(process_t *p, webview_t *w, u64 a) {
     if (D.op == MOS_WEB_DLG_GET) {
         D.kind = o->kind;
         D.has_default = o->def != NULL;
+        D.subframe = o->subframe;
         const char *src[3] = {o->msg ? o->msg : "", o->def ? o->def : "", o->frame ? o->frame : ""};
         unsigned long long dst[3] = {D.msg, D.def, D.frame_url};
         unsigned cap[3] = {D.msg_cap, D.def_cap, D.frame_cap};
