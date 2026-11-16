@@ -520,8 +520,6 @@ void $ss8DurationV10FoundationE15TimeFormatStyleV7PatternVMa(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleVAC0dE0ACMc(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleVMa(void) {}
 void $ss8DurationV10FoundationE9formattedy12FormatOutputQzxAC0D5StyleRzAB0D5InputRtzlF(void) {}
-void *OBJC_CLASS_$_NSOutputStream;
-void *OBJC_CLASS_$_NSStream;
 void SecTaskCopyTeamIdentifier(void) {}
 void SecTaskCreateWithAuditToken(void) {}
 void __invert_f3(void) {}
