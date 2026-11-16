@@ -389,7 +389,12 @@ static void doc_undo_note(id self, SEL c, id note) {
     else if (!strcmp(s, "NSUndoManagerDidCloseUndoGroupNotification") || !strcmp(s, "NSUndoManagerCheckpointNotification")) {
         id um = note ? MSG0(id, note, "object") : 0;
         if (!um || (responds(um, "isUndoing") && MSG0(BOOL, um, "isUndoing")) || (responds(um, "isRedoing") && MSG0(BOOL, um, "isRedoing"))) return;
-        if (!strcmp(s, "NSUndoManagerDidCloseUndoGroupNotification")) doc_update_count(self, 0, DC_DONE);
+        if (strcmp(s, "NSUndoManagerDidCloseUndoGroupNotification")) return;
+        /* o NSUndoManager posta também ao fechar grupos aninhados: só o de fora (nível 0 depois de fechar) é mudança */
+        if (responds(um, "groupingLevel") && MSG0(i64, um, "groupingLevel") > 0) return;
+        id info = MSG0(id, note, "userInfo");
+        id disc = info ? MSG(id, info, "objectForKey:", cx_str("NSUndoManagerGroupIsDiscardableKey")) : 0;
+        doc_update_count(self, 0, DC_DONE | (disc && MSG0(BOOL, disc, "boolValue") ? DC_DISCARDABLE : 0));
     }
 }
 static void observe_undo(id self, id um) {
