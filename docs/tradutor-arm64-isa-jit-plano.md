@@ -83,7 +83,10 @@ Cada lote: fuzz interp × JIT (`a64fuzz --sem-qemu`) com 3–4 sementes, de 75 0
   `jit_cvt_borda`).
 - Fuzz SIMD/FP × QEMU, semente 20261115, 100 000 casos: JIT = interpretador em todos; 245 casos de
   load/store SIMD divergiam do QEMU por causa do harness Linux (o `a64host` mapeava 64 KiB de rascunho
-  e o monitor 16 KiB). Corrigido no `a64host`; placar completo na fila.
+  e o monitor 16 KiB). Corrigido no `a64host` (#328).
+- Placar completo × QEMU 10.2 (16 nov., harness corrigido): todos os grupos, semente 20261116,
+  139 500 casos de 1 instrução, e semente 20261117, 18 600 sequências de 8 instruções:
+  0 divergências e 0 JIT ≠ interpretador.
 - Modelo de memória (`tools/a64litmus_host.c`, `a64-linux.sh litmus`): duas threads, 500 000 iterações
   por teste, JIT e interpretador. SB com STLR/LDAR, DMB ISH e SWPAL e MP com STLR/LDAR: 0 resultados
   proibidos. Controle sem barreira: 57 285 reordenações no JIT (o teste enxerga a reordenação do x86).
@@ -102,7 +105,7 @@ Medido com `A64JIT_FBLOG=1` no fuzz de SIMD/FP (distribuição uniforme por codi
 
 ### Próximos passos
 
-1. Placar completo × QEMU com o harness corrigido (na fila) e tabela no `tradutor-arm64.md`.
+1. Repetir o placar a cada lote novo do JIT.
 2. Desempenho: medir com a máquina livre; superblocos e cache de registradores entre saídas encadeadas
    (`jit_bench_call`).
 3. FP16 nativo via F16C (exato para add/sub/mul/div/sqrt: f32 tem precisão ≥ 2·11 + 2) e o resto da
