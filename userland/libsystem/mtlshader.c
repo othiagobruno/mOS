@@ -845,7 +845,7 @@ static void parse_attrs(P_t *P, attr_t *a) {
                 {"thread_index_in_simdgroup", A_SIMD_LANE}, {"simdgroup_index_in_threadgroup", A_SIMD_GROUP},
                 {"threads_per_simdgroup", A_SIMD_SIZE}, {"thread_execution_width", A_SIMD_SIZE}, {"sample_mask", A_SAMPLE_MASK},
                 {"primitive_id", A_PRIMITIVE_ID}, {"viewport_array_index", A_VIEWPORT_INDEX},
-                {"dispatch_threads_per_threadgroup", A_TPTG}, {0, 0}};
+                {"dispatch_threads_per_threadgroup", A_TPTG}, {"id", A_ARG_ID}, {0, 0}};
             int found = 0;
             for (int i = 0; m[i].s; i++)
                 if (!strcmp(s, m[i].s)) {

@@ -333,9 +333,35 @@ IOSurfaceRef IOSurfaceLookupFromMachPort(mach_port_t port) {
                     port, (u32)(ctx >> 32) & 0xFFFF, s->w, s->h, s->sid, nimp);
     return s;
 }
-/* variantes por XPC: o mOS não tem XPC */
-void *IOSurfaceCreateXPCObject(IOSurfaceRef s) { (void)s; return 0; }
-IOSurfaceRef IOSurfaceLookupFromXPCObject(void *x) { (void)x; return 0; }
+/* variantes por XPC: um dicionário XPC com o direito de envio da superfície (o mesmo de IOSurfaceCreateMachPort).
+ * No fio, xpc_dictionary_set_mach_send vira um descritor COPY_SEND, então o outro processo recebe a porta da memória
+ * e o Lookup mapeia a superfície como em IOSurfaceLookupFromMachPort. */
+typedef void *xpc_object_t;
+xpc_object_t xpc_dictionary_create(const char *const *keys, const xpc_object_t *vals, u64 n);
+void xpc_dictionary_set_mach_send(xpc_object_t d, const char *k, u32 port);
+u32 xpc_dictionary_copy_mach_send(xpc_object_t d, const char *k);
+void xpc_dictionary_set_uint64(xpc_object_t d, const char *k, u64 v);
+u64 xpc_dictionary_get_uint64(xpc_object_t d, const char *k);
+#define IOSURF_XPC_PORT "com.apple.iosurface.port"
+#define IOSURF_XPC_ID "com.apple.iosurface.id"
+void *IOSurfaceCreateXPCObject(IOSurfaceRef s) {
+    if (!s) return 0;
+    mach_port_t p = IOSurfaceCreateMachPort(s);
+    if (!p) return 0;
+    xpc_object_t d = xpc_dictionary_create(0, 0, 0);
+    if (!d) return 0;
+    xpc_dictionary_set_mach_send(d, IOSURF_XPC_PORT, p);
+    xpc_dictionary_set_uint64(d, IOSURF_XPC_ID, s->sid);
+    return d;
+}
+IOSurfaceRef IOSurfaceLookupFromXPCObject(void *x) {
+    if (!x) return 0;
+    u32 p = xpc_dictionary_copy_mach_send(x, IOSURF_XPC_PORT);
+    if (p) return IOSurfaceLookupFromMachPort(p);
+    /* sem porta (direito local do mesmo processo): pelo id */
+    u64 id = xpc_dictionary_get_uint64(x, IOSURF_XPC_ID);
+    return id ? IOSurfaceLookup((u32)id) : 0;
+}
 
 int IOSurfaceLock(IOSurfaceRef s, u32 opts, u32 *seed) {
     if (!s) return KERN_INVALID_ARGUMENT;
