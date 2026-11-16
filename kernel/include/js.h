@@ -30,6 +30,13 @@ void js_page_eval(js_page_t *p, const char *code, int len, const char *name); /*
 
 /* navegação pedida por location.href = ... / reload(); devolve NULL se nenhuma */
 const char *js_page_take_nav(js_page_t *p, bool *reload);
+/* History API: com anfitrião (WebView), pushState/replaceState/go viram operações para o histórico dele
+ * (op 1 push, 2 replace — arg = id do estado; 3 go — arg = delta); voltar a uma entrada do mesmo documento chama
+ * js_page_hist_restore (popstate/hashchange, sem recarregar) */
+void js_page_set_history_host(js_page_t *p, bool host);
+void js_page_set_hist_len(js_page_t *p, int n);
+bool js_page_take_hist_op(js_page_t *p, int *op, int *arg, char *url, int cap);
+void js_page_hist_restore(js_page_t *p, const char *url, int sid);
 /* rolagem pedida por window.scrollTo (-1 = nenhuma) */
 int  js_page_take_scroll(js_page_t *p);
 /* formulário cujo envio foi pedido por form.submit() (NULL = nenhum) */

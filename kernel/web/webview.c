@@ -37,6 +37,8 @@ typedef struct {
     char *html;                  /* conteúdo de loadHTMLString/loadData (kmalloc), para voltar a ele */
     usize html_len;
     char mime[64];
+    int gen;                     /* documento que criou a entrada (pushState e fragmentos voltam sem recarregar) */
+    int sid;                     /* estado do history.pushState (-1 = nenhum) */
 } wv_hent_t;
 typedef struct wmsg { struct wmsg *next; char name[64]; char *body; int len; int type; char url[1024]; } wmsg_t;
 typedef struct wscript { struct wscript *next; char *src; int len; int at_end; } wscript_t;
@@ -77,6 +79,7 @@ typedef struct webview {
     /* histórico */
     wv_hent_t hist[WV_HIST];
     int nhist, hpos;
+    int gen;                     /* geração do documento atual */
     /* política de navegação (decidePolicyForNavigationAction) */
     bool policy;
     bool pend;
@@ -457,6 +460,7 @@ static void hent_clear(wv_hent_t *e) {
     e->mime[0] = 0;
 }
 
+static void navigate(webview_t *w, const char *url, bool record, int kind, const char *post, int post_len, const char *ctype, int hist_target);
 static void push_history_new(webview_t *w, const char *url);
 static void push_history(webview_t *w, const char *url) {
     if (w->nhist && w->hpos >= 0 && !strcmp(w->hist[w->hpos].url, url)) { hent_clear(&w->hist[w->hpos]); return; }
@@ -478,7 +482,16 @@ static void push_history_new(webview_t *w, const char *url) {
     wv_hent_t *e = &w->hist[w->nhist];
     memset(e, 0, sizeof *e);
     wv_strcpy(e->url, url, sizeof e->url);
+    e->gen = w->gen;
+    e->sid = -1;
     w->hpos = w->nhist++;
+}
+
+/* liga a página ao histórico da vista (History API) */
+static void hist_attach(webview_t *w) {
+    if (!w->js) return;
+    js_page_set_history_host(w->js, true);
+    js_page_set_hist_len(w->js, w->nhist);
 }
 
 static void commit(webview_t *w, doc_t *d, const char *url, bool record, int scroll, const char *mime, int status) {
@@ -497,9 +510,11 @@ static void commit(webview_t *w, doc_t *d, const char *url, bool record, int scr
     w->scroll = scroll;
     const char *fr = url_fragment(url);
     wv_strcpy(w->frag, fr && *fr ? fr : "", sizeof w->frag);
+    w->gen++;
     if (record) push_history(w, url);
     else if (w->nhist && w->hpos >= 0) wv_strcpy(w->hist[w->hpos].url, url, sizeof w->hist[0].url);
     else push_history(w, url);
+    if (w->hpos >= 0 && w->hpos < w->nhist) { w->hist[w->hpos].gen = w->gen; w->hist[w->hpos].sid = -1; }
     char old_title[256];
     wv_strcpy(old_title, w->title, sizeof old_title);
     wv_strcpy(w->title, d ? d->title : "", sizeof w->title);
@@ -508,6 +523,7 @@ static void commit(webview_t *w, doc_t *d, const char *url, bool record, int scr
     if (url_changed) w->events |= MOS_WEB_EV_URL;
     if (strcmp(old_title, w->title)) w->events |= MOS_WEB_EV_TITLE;
     if (d && !(w->opts & MOS_WEB_OPT_NOJS)) w->js = js_page_new2(d, url, w->vw, w->vh, wv_page_init, w);
+    hist_attach(w);
     if (d) frames_set_owner_js(d, w->js);
 }
 
@@ -596,10 +612,14 @@ static void start(webview_t *w, const char *url, bool record, int scroll, const 
     if (!post && w->doc && w->url[0] && url_same_doc(url, w->url) && url_fragment(url) && !w->req) {
         const char *fr = url_fragment(url);
         int y = doc_anchor_y(w->doc, fr);
+        char old[1024];
+        wv_strcpy(old, w->url, sizeof old);
         if (record) { if (w->nhist) w->hist[w->hpos].scroll = w->scroll; push_history(w, url); }
         wv_strcpy(w->url, url, sizeof w->url);
         w->scroll = y >= 0 ? y : 0;
         w->events |= MOS_WEB_EV_URL | MOS_WEB_EV_DIRTY;
+        /* a página vê o novo URL e recebe popstate/hashchange */
+        if (w->js && strcmp(old, url)) { js_page_hist_restore(w->js, url, -1); js_page_take_scroll(w->js); hist_attach(w); }
         return;
     }
     if (record && w->nhist) w->hist[w->hpos].scroll = w->scroll;
@@ -627,6 +647,23 @@ static void open_entry(webview_t *w, int idx) {
         return;
     }
     fetch(w, url, false, sc, NULL, 0, NULL);
+}
+
+/* voltar/avançar até a entrada idx: do mesmo documento (pushState, fragmento) só troca URL e estado, sem recarregar */
+static void go_entry(webview_t *w, int idx) {
+    if (idx < 0 || idx >= w->nhist || idx == w->hpos) return;
+    wv_hent_t *e = &w->hist[idx];
+    if (e->gen != w->gen || !w->doc || w->req) { navigate(w, e->url, false, 2, NULL, 0, NULL, idx); return; }
+    if (w->hpos >= 0 && w->hpos < w->nhist) w->hist[w->hpos].scroll = w->scroll;
+    w->hpos = idx;
+    bool url_changed = strcmp(w->url, e->url) != 0;
+    wv_strcpy(w->url, e->url, sizeof w->url);
+    const char *fr = url_fragment(e->url);
+    wv_strcpy(w->frag, fr && *fr ? fr : "", sizeof w->frag);
+    w->scroll = e->scroll;
+    if (w->js) { js_page_hist_restore(w->js, e->url, e->sid); js_page_take_scroll(w->js); }
+    w->events |= MOS_WEB_EV_DIRTY | (url_changed ? MOS_WEB_EV_URL : 0);
+    w->dirty = true;
 }
 
 /* toda navegação passa por aqui: com a política ligada, espera o MOS_WEB_DECIDE do app */
@@ -1131,6 +1168,26 @@ static void pump(webview_t *w) {
             node_t *f = js_page_take_submit(w->js);
             if (f) submit_form(w, f, NULL);
         }
+        /* History API: pushState/replaceState/go da página */
+        int hop, harg;
+        char hurl[1024];
+        while (w->js && w->doc == d0 && js_page_take_hist_op(w->js, &hop, &harg, hurl, sizeof hurl)) {
+            if (hop == 1) {
+                if (w->nhist && w->hpos >= 0) w->hist[w->hpos].scroll = w->scroll;
+                push_history_new(w, hurl);
+                w->hist[w->hpos].sid = harg;
+            } else if (hop == 2 && w->hpos >= 0 && w->hpos < w->nhist) {
+                wv_strcpy(w->hist[w->hpos].url, hurl, sizeof w->hist[0].url);
+                w->hist[w->hpos].sid = harg;
+            } else if (hop == 3) {
+                go_entry(w, w->hpos + harg);
+                continue;
+            }
+            if (strcmp(w->url, hurl)) { wv_strcpy(w->url, hurl, sizeof w->url); w->events |= MOS_WEB_EV_URL; }
+            const char *fr = url_fragment(hurl);
+            wv_strcpy(w->frag, fr && *fr ? fr : "", sizeof w->frag);
+            js_page_set_hist_len(w->js, w->nhist);
+        }
         if (w->js && w->doc == d0) {
             bool reload = false;
             const char *nu = js_page_take_nav(w->js, &reload);
@@ -1473,6 +1530,7 @@ static i64 wv_dispatch(void *arg) {
         if (!w->js) {
             if (!w->doc || (w->opts & MOS_WEB_OPT_NOJS)) { kfree(src); sb_puts(&out, "JavaScript não está ativo nesta vista"); type = JS_WK_EXCEPTION; goto eval_out; }
             w->js = js_page_new2(w->doc, w->url, w->vw, w->vh, wv_page_init, w);
+            hist_attach(w);
             frames_set_owner_js(w->doc, w->js);
             if (!w->js) { kfree(src); sb_puts(&out, "sem memória para o JavaScript"); type = JS_WK_EXCEPTION; goto eval_out; }
         }
@@ -1508,10 +1566,10 @@ static i64 wv_dispatch(void *arg) {
     case MOS_WEB_GO:
         switch ((int)a) {
         case MOS_WEB_GO_BACK:
-            if (w->hpos > 0) navigate(w, w->hist[w->hpos - 1].url, false, 2, NULL, 0, NULL, w->hpos - 1);
+            if (w->hpos > 0) go_entry(w, w->hpos - 1);
             return 0;
         case MOS_WEB_GO_FORWARD:
-            if (w->hpos >= 0 && w->hpos < w->nhist - 1) navigate(w, w->hist[w->hpos + 1].url, false, 2, NULL, 0, NULL, w->hpos + 1);
+            if (w->hpos >= 0 && w->hpos < w->nhist - 1) go_entry(w, w->hpos + 1);
             return 0;
         case MOS_WEB_GO_RELOAD:
             if (w->hpos >= 0 && w->hpos < w->nhist) navigate(w, w->hist[w->hpos].url, false, 3, NULL, 0, NULL, w->hpos);
