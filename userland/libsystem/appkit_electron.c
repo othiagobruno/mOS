@@ -59,7 +59,7 @@ int cx_appkit_swift_main(int argc, char **argv) { return NSApplicationMain(argc,
 
 #define K(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
 K(NSSplitViewController) K(NSSplitViewItem)
-K(NSTextTab) K(NSTextList) K(NSTextContainer) K(NSTextLayoutManager) K(NSTextContentStorage)
+K(NSTextTab) K(NSTextList) K(NSTextContainer)
 K(NSClickGestureRecognizer)
 
 static char pk;
@@ -248,17 +248,7 @@ void cx_appkit_electron_init(void) {
     cx_add_method(&NSTextContainer_c, "textView", (void *)gobj);
     cx_add_method(&NSTextContainer_c, "setTextView:", (void *)sobj);
 
-    def(&NSTextLayoutManager_c, &NSTextLayoutManager_m, "NSTextLayoutManager", "NSObject");
-    cx_add_method(&NSTextLayoutManager_c, "textContainer", (void *)gobj);
-    cx_add_method(&NSTextLayoutManager_c, "setTextContainer:", (void *)sobj);
-    cx_add_method(&NSTextLayoutManager_c, "textContentStorage", (void *)gobj);
-    cx_add_method(&NSTextLayoutManager_c, "setTextContentStorage:", (void *)sobj);
-
-    def(&NSTextContentStorage_c, &NSTextContentStorage_m, "NSTextContentStorage", "NSObject");
-    cx_add_method(&NSTextContentStorage_c, "attributedString", (void *)gobj);
-    cx_add_method(&NSTextContentStorage_c, "setAttributedString:", (void *)sobj);
-    cx_add_method(&NSTextContentStorage_c, "textStorage", (void *)gobj);
-    cx_add_method(&NSTextContentStorage_c, "setTextStorage:", (void *)sobj);
+    /* NSTextLayoutManager e NSTextContentStorage: appkit_textkit2.c (TextKit 2) */
 
     def(&NSClickGestureRecognizer_c, &NSClickGestureRecognizer_m, "NSClickGestureRecognizer", "NSGestureRecognizer");
     cx_add_method(&NSClickGestureRecognizer_c, "init", (void *)click_init);
