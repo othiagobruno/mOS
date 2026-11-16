@@ -20,3 +20,10 @@ int avx_probe(const char *in, avx_info *out);
  * 0 ok; em erro o arquivo de saída não fica e *why explica. */
 int avx_passthrough(const char *in, const char *out, int container, int faststart, double start, double dur, int want,
                     avx_ctl *ctl, const char **why);
+
+/* composição (AVMutableComposition exportada por cópia): cada faixa de saída é uma lista de trechos em ordem de destino.
+ * Um trecho copia [src_start, src_start + dur) da faixa src_track (índice no arquivo) de path para dst_start; o espaço
+ * entre trechos fica vazio na edit list. Os trechos de uma faixa precisam do mesmo codec e da mesma configuração. */
+typedef struct { const char *path; int src_track; double src_start, dur, dst_start; } avx_segment;
+typedef struct { int media; const avx_segment *seg; int nseg; } avx_ctrack;   /* media: AVX_VIDEO ou AVX_AUDIO */
+int avx_compose(const char *out, int container, int faststart, const avx_ctrack *tracks, int ntracks, avx_ctl *ctl, const char **why);
