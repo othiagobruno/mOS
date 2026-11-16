@@ -26,6 +26,7 @@ static const kv ITEM[] = {
     {"kMDItemContentType", {"com.apple.application-bundle", 0}},
     {"kMDItemContentTypeTree", {"com.apple.application-bundle", "com.apple.application", "public.item", 0}},
     {"kMDItemFSSize", {"12345678", 0}},
+    {"kMDItemFSContentChangeDate", {"816004800", 0}},   /* 2026-11-10 12:00 UTC */
     {0, {0}},
 };
 static const char *getv(void *ctx, const char *attr, int i) {
@@ -82,7 +83,22 @@ int main(void) {
     check(q("!(kMDItemFSName == \"outro\")") == 1, "negação");
     check(q("\"Claude\"") == 1, "texto solto casa o nome");
     check(q("\"claude\"wc == ") == -1 || 1, "consulta malformada não derruba");
-    check(q("$time.now(-60)") == -1, "variável de tempo: recusada (consulta inválida)");
+    mdq_set_clock(816436800.0, 0);                 /* agora = 2026-11-15 12:00 UTC (domingo) */
+    check(q("kMDItemFSContentChangeDate >= $time.today(-7)") == 1, "$time.today(-7): mudou na última semana");
+    check(q("kMDItemFSContentChangeDate >= $time.today(-3)") == 0, "$time.today(-3): mais antigo que 3 dias");
+    check(q("kMDItemFSContentChangeDate < $time.now(-3600)") == 1, "$time.now(-3600)");
+    check(q("kMDItemFSContentChangeDate >= $time.this_week") == 0, "$time.this_week começa no domingo 15");
+    check(q("kMDItemFSContentChangeDate >= $time.this_week(-1)") == 1, "$time.this_week(-1): domingo 8");
+    check(q("kMDItemFSContentChangeDate >= $time.this_month") == 1, "$time.this_month: 1º de novembro");
+    check(q("kMDItemFSContentChangeDate >= $time.this_year(1)") == 0, "$time.this_year(1): 2027");
+    check(q("kMDItemFSContentChangeDate == $time.iso(2026-11-10T12:00:00Z)") == 1, "$time.iso");
+    check(q("InRange(kMDItemFSContentChangeDate, $time.today(-6), $time.today(-4))") == 1, "InRange com datas");
+    check(q("InRange(kMDItemFSSize, 1, 1000)") == 0, "InRange com números (fora)");
+    check(q("InRange(kMDItemFSSize, 1000, 99999999)") == 1, "InRange com números (dentro)");
+    mdq_set_clock(816404400.0, -4 * 3600);         /* 2026-11-15 03:00 UTC = 14/11 23:00 no fuso -4 */
+    check(q("kMDItemFSContentChangeDate >= $time.today(-4)") == 1, "fuso: hoje é dia 14 no fuso -4");
+    check(q("$time.amanha") == -1, "$time desconhecido: inválida");
+    check(q("InRange(kMDItemFSSize, 1)") == -1, "InRange com um extremo só: inválida");
     check(q("kMDItemFSName ==") == -1, "operador sem valor: inválida");
 
     printf("2. chave P-256 em PEM\n");

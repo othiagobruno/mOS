@@ -8,8 +8,15 @@
  * apps e a pasta do usuário); sem escopo vale o computador.
  * kMDQuerySynchronous (1) junta tudo antes de voltar e não manda notificação, como o macOS. Sem ele, a coleta roda
  * na fila de MDQuerySetDispatchQueue (ou na principal) e termina com kMDQueryDidFinishNotification no centro local.
- * Atualizações ao vivo (kMDQueryWantsUpdates) não chegam: sem o daemon de índice nada observa o disco; o resultado
- * fica o da coleta. */
+ * Atualizações ao vivo (kMDQueryWantsUpdates): depois da coleta um FSEventStream (fsevents.c) segue o escopo; cada
+ * leva de eventos refaz a coleta e posta kMDQueryDidUpdateNotification com kMDQueryUpdateAdded/Changed/RemovedItems.
+ * Atributos novos: datas (kMDItemFSCreationDate, kMDItemFSContentChangeDate, kMDItemContentCreationDate,
+ * kMDItemContentModificationDate, kMDItemLastUsedDate, kMDItemDateAdded; nas consultas são números CFAbsoluteTime e
+ * aceitam $time.*), kMDItemLogicalSize, kMDItemPhysicalSize, kMDItemFSOwnerUserID/GroupID, kMDItemFSInvisible,
+ * kMDItemFSNodeCount, kMDItemVersion (CFBundleShortVersionString), kMDItemWhereFroms (o xattr
+ * com.apple.metadata:kMDItemWhereFroms que os navegadores gravam) e kMDItemTextContent (o texto de um arquivo
+ * public.text de até 256 KB, lido só quando a consulta pede).
+ * Um volume com .metadata_never_index na raiz (mdutil -i off) fica fora da busca, como no macOS. */
 #include "foundation.h"
 #include "mdq_core.h"
 #include "sys.h"
@@ -31,11 +38,14 @@ char *getenv(const char *k);
 typedef void (*dispatch_function_t)(void *);
 void dispatch_async_f(void *q, void *ctx, dispatch_function_t fn);
 void *dispatch_get_main_queue(void);
+void *dispatch_get_global_queue(long id, unsigned long flags);
 void *dispatch_retain(void *q);
 void dispatch_release(void *q);
 id objc_retain(id o);
 void objc_release(id o);
 id objc_autorelease(id o);
+id CFDateCreate(void *alloc, double at);
+double CFAbsoluteTimeGetCurrent(void);
 /* tamanho do arquivo (SYS_STAT); -1 se não existe */
 static long long cx_file_size(const char *path) {
     mos_stat_t st;
@@ -48,6 +58,9 @@ static long long cx_file_size(const char *path) {
 extern cx_class_t NSConstantString_c __asm__("__CFConstantStringClassReference");
 MDK(kMDItemCFBundleIdentifier) MDK(kMDItemDisplayName) MDK(kMDItemPath) MDK(kMDItemFSName) MDK(kMDItemContentType)
 MDK(kMDItemContentTypeTree) MDK(kMDItemKind) MDK(kMDItemFSSize)
+MDK(kMDItemFSCreationDate) MDK(kMDItemFSContentChangeDate) MDK(kMDItemContentCreationDate) MDK(kMDItemContentModificationDate)
+MDK(kMDItemLastUsedDate) MDK(kMDItemDateAdded) MDK(kMDItemLogicalSize) MDK(kMDItemPhysicalSize) MDK(kMDItemFSOwnerUserID)
+MDK(kMDItemFSOwnerGroupID) MDK(kMDItemFSInvisible) MDK(kMDItemFSNodeCount) MDK(kMDItemVersion) MDK(kMDItemTextContent)
 MDK(kMDQueryDidFinishNotification) MDK(kMDQueryDidUpdateNotification) MDK(kMDQueryProgressNotification)
 MDK(kMDQueryScopeComputer) MDK(kMDQueryScopeHome) MDK(kMDQueryScopeNetwork) MDK(kMDQueryScopeAllIndexed)
 MDK(kMDQueryScopeComputerIndexed) MDK(kMDQueryScopeNetworkIndexed)
@@ -58,10 +71,19 @@ enum { MD_SYNC = 1, MD_UPDATES = 4, MD_MAX_DEPTH = 12, MD_MAX_VISIT = 50000 };
 /* ---------------------------------------------------------------- MDItem */
 typedef struct {
     char *path;
-    int have_info, have_type;
-    char name[256], display[256], bundle[256], type[128], kind[128];
+    int have_info, have_type, have_stat, have_from, have_text;
+    char name[256], display[256], bundle[256], version[64], type[128], kind[128];
     char tree[8][128];
     int ntree;
+    /* stat: datas em CFAbsoluteTime */
+    double birth, mtime, atime;
+    long long size, blocks;
+    unsigned uid, gid, flags, is_dir;
+    long nodes;
+    char from[4][512];
+    int nfrom;
+    char *text;
+    char num[12][40];        /* textos dos valores numéricos que item_get devolve */
 } mditem_t;
 
 static cx_class_t MDItem_c, MDItem_m, MDQuery_c, MDQuery_m;
@@ -71,7 +93,7 @@ static mditem_t *item_of(id o) { return o && object_getClass(o) == &MDItem_c ? *
 static void item_dealloc(id self, SEL c) {
     mditem_t *m = item_of(self);
     (void)c;
-    if (m) { free(m->path); free(m); }
+    if (m) { free(m->path); free(m->text); free(m); }
     *(void **)((u8 *)self + 8) = 0;
     cx_object_free(self);
 }
@@ -114,6 +136,8 @@ static void item_info(mditem_t *m) {
             id dn = MSG(id, d, "objectForKey:", cx_str("CFBundleDisplayName"));
             if (!dn || !cx_is_str(dn)) dn = MSG(id, d, "objectForKey:", cx_str("CFBundleName"));
             if (b && cx_is_str(b)) copy_s(m->bundle, sizeof m->bundle, cx_cstr(b));
+            id ver = MSG(id, d, "objectForKey:", cx_str("CFBundleShortVersionString"));
+            if (ver && cx_is_str(ver)) copy_s(m->version, sizeof m->version, cx_cstr(ver));
             if (dn && cx_is_str(dn) && cx_cstr(dn)[0]) copy_s(m->display, sizeof m->display, cx_cstr(dn));
         }
     }
@@ -148,9 +172,88 @@ static void item_type(mditem_t *m) {
     }
 }
 
+
+/* stat do macOS ($INODE64, o mac_stat_t de libc.c) */
+typedef struct {
+    u32 dev; u16 mode, nlink; u64 ino; u32 uid, gid, rdev;
+    i64 atime, atime_ns, mtime, mtime_ns, ctime, ctime_ns, btime, btime_ns;
+    i64 size, blocks; i32 blksize; u32 flags, gen; i32 lspare; i64 qspare[2];
+} md_stat_t;
+int stat(const char *p, void *st);
+long getxattr(const char *p, const char *n, void *v, size_t s, u32 pos, int o);
+int open(const char *p, int flags, ...);
+long read(int fd, void *b, size_t n);
+int close(int fd);
+#define ABS(s, ns) ((double)(s) + (double)(ns) / 1e9 - 978307200.0)
+static void item_stat(mditem_t *m) {
+    if (m->have_stat) return;
+    m->have_stat = 1;
+    md_stat_t st;
+    if (stat(m->path, &st) != 0) return;
+    m->birth = ABS(st.btime ? st.btime : st.mtime, st.btime ? st.btime_ns : st.mtime_ns);
+    m->mtime = ABS(st.mtime, st.mtime_ns);
+    m->atime = ABS(st.atime, st.atime_ns);
+    m->size = st.size;
+    m->blocks = st.blocks;
+    m->uid = st.uid;
+    m->gid = st.gid;
+    m->flags = st.flags;
+    m->is_dir = (st.mode & 0170000) == 0040000;
+    m->nodes = -1;
+    if (m->is_dir) {
+        void *d = opendir(m->path);
+        if (d) {
+            long n = 0;
+            u8 *e;
+            while ((e = readdir(d))) { const char *nm = (const char *)e + 21; if (strcmp(nm, ".") && strcmp(nm, "..")) n++; }
+            closedir(d);
+            m->nodes = n;
+        }
+    }
+}
+/* kMDItemWhereFroms: plist (binário ou XML) com a lista de URLs, gravada pelo navegador no download */
+static void item_from(mditem_t *m) {
+    if (m->have_from) return;
+    m->have_from = 1;
+    u8 buf[4096];
+    long n = getxattr(m->path, "com.apple.metadata:kMDItemWhereFroms", buf, sizeof buf, 0, 0);
+    if (n <= 0) return;
+    id data = MSG(id, (id)cx_class_named("NSData"), "dataWithBytes:length:", (const void *)buf, (u64)n);
+    id list = data ? MSG(id, (id)cx_class_named("NSPropertyListSerialization"), "propertyListWithData:options:format:error:",
+                         data, (u64)0, (void *)0, (void *)0) : 0;
+    if (!list || !MSG(BOOL, list, "isKindOfClass:", (id)cx_class_named("NSArray"))) return;
+    u64 c = MSG0(u64, list, "count");
+    for (u64 i = 0; i < c && m->nfrom < 4; i++) {
+        id v = MSG(id, list, "objectAtIndex:", i);
+        if (v && cx_is_str(v)) copy_s(m->from[m->nfrom++], sizeof m->from[0], cx_cstr(v));
+    }
+}
+static int conforms(mditem_t *m, const char *uti);
+/* kMDItemTextContent: o conteúdo de arquivos de texto (até 256 KB) */
+static void item_text(mditem_t *m) {
+    if (m->have_text) return;
+    m->have_text = 1;
+    if (!conforms(m, "public.text")) return;
+    int fd = open(m->path, 0);
+    if (fd < 0) return;
+    enum { MAXT = 256 * 1024 };
+    char *b = malloc(MAXT + 1);
+    long n = b ? read(fd, b, MAXT) : -1;
+    close(fd);
+    if (n < 0) { free(b); return; }
+    for (long i = 0; i < n; i++) if (!b[i]) b[i] = ' ';
+    b[n] = 0;
+    m->text = b;
+}
+static const char *fmt_num(mditem_t *m, int slot, double v, int integer) {
+    if (integer) cx_snprintf(m->num[slot], sizeof m->num[0], "%lld", (long long)v);
+    else cx_snprintf(m->num[slot], sizeof m->num[0], "%.3f", v);
+    return m->num[slot];
+}
 static const char *item_get(void *ctx, const char *attr, int i) {
     mditem_t *m = ctx;
     if (!strcmp(attr, "kMDItemContentTypeTree")) { item_type(m); return i < m->ntree ? m->tree[i] : 0; }
+    if (!strcmp(attr, "kMDItemWhereFroms")) { item_from(m); return i < m->nfrom ? m->from[i] : 0; }
     if (i) return 0;
     if (!strcmp(attr, "kMDItemPath")) return m->path;
     item_info(m);
@@ -159,6 +262,26 @@ static const char *item_get(void *ctx, const char *attr, int i) {
     if (!strcmp(attr, "kMDItemCFBundleIdentifier")) return m->bundle[0] ? m->bundle : 0;
     if (!strcmp(attr, "kMDItemContentType")) { item_type(m); return m->type; }
     if (!strcmp(attr, "kMDItemKind")) { item_type(m); return m->kind[0] ? m->kind : 0; }
+    if (!strcmp(attr, "kMDItemVersion")) return m->version[0] ? m->version : 0;
+    if (!strcmp(attr, "kMDItemWhereFroms")) { item_from(m); return 0; }
+    if (!strcmp(attr, "kMDItemTextContent")) { item_text(m); return m->text; }
+    item_stat(m);
+    if (!strcmp(attr, "kMDItemFSSize") || !strcmp(attr, "kMDItemLogicalSize")) return fmt_num(m, 0, (double)m->size, 1);
+    if (!strcmp(attr, "kMDItemPhysicalSize")) return fmt_num(m, 1, (double)m->blocks * 512, 1);
+    if (!strcmp(attr, "kMDItemFSCreationDate") || !strcmp(attr, "kMDItemContentCreationDate") || !strcmp(attr, "kMDItemDateAdded"))
+        return fmt_num(m, 2, m->birth, 0);
+    if (!strcmp(attr, "kMDItemFSContentChangeDate") || !strcmp(attr, "kMDItemContentModificationDate")) return fmt_num(m, 3, m->mtime, 0);
+    if (!strcmp(attr, "kMDItemLastUsedDate")) return fmt_num(m, 4, m->atime, 0);
+    if (!strcmp(attr, "kMDItemFSOwnerUserID")) return fmt_num(m, 5, m->uid, 1);
+    if (!strcmp(attr, "kMDItemFSOwnerGroupID")) return fmt_num(m, 6, m->gid, 1);
+    if (!strcmp(attr, "kMDItemFSInvisible")) return fmt_num(m, 7, m->name[0] == '.' || (m->flags & 0x8000), 1);   /* UF_HIDDEN */
+    if (!strcmp(attr, "kMDItemFSNodeCount")) return m->nodes >= 0 ? fmt_num(m, 8, (double)m->nodes, 1) : 0;
+    return 0;
+}
+/* conformidade pela árvore de tipos */
+static int conforms(mditem_t *m, const char *uti) {
+    item_type(m);
+    for (int i = 0; i < m->ntree; i++) if (!strcmp(m->tree[i], uti)) return 1;
     return 0;
 }
 
@@ -197,10 +320,33 @@ id MDItemCopyAttribute(id item, id name) {
         for (int i = 0; i < m->ntree; i++) cx_arr_add(arr, cx_str(m->tree[i]));
         return objc_retain(arr);
     }
-    if (!strcmp(a, "kMDItemFSSize")) {
-        long long sz = cx_file_size(m->path);
-        return sz >= 0 ? objc_retain(cx_num_i(sz)) : 0;
+    if (!strcmp(a, "kMDItemWhereFroms")) {
+        item_from(m);
+        if (!m->nfrom) return 0;
+        id arr = cx_arr_new(0);
+        for (int i = 0; i < m->nfrom; i++) cx_arr_add(arr, cx_str(m->from[i]));
+        return objc_retain(arr);
     }
+    static const char *dates[] = {"kMDItemFSCreationDate", "kMDItemContentCreationDate", "kMDItemDateAdded",
+                                  "kMDItemFSContentChangeDate", "kMDItemContentModificationDate", "kMDItemLastUsedDate"};
+    static const char *nums[] = {"kMDItemFSSize", "kMDItemLogicalSize", "kMDItemPhysicalSize", "kMDItemFSOwnerUserID",
+                                 "kMDItemFSOwnerGroupID", "kMDItemFSInvisible", "kMDItemFSNodeCount"};
+    for (unsigned k = 0; k < sizeof dates / sizeof dates[0]; k++)
+        if (!strcmp(a, dates[k])) {
+            item_stat(m);
+            if (!m->have_stat || (!m->mtime && !m->birth)) return 0;
+            double t = k < 3 ? m->birth : k < 5 ? m->mtime : m->atime;
+            return CFDateCreate(0, t);
+        }
+    for (unsigned k = 0; k < sizeof nums / sizeof nums[0]; k++)
+        if (!strcmp(a, nums[k])) {
+            const char *v = item_get(m, a, 0);
+            if (!v) return 0;
+            if (k == 5) return objc_retain(MSG(id, (id)cx_class_named("NSNumber"), "numberWithBool:", (BOOL)(v[0] == '1')));
+            long long x = 0;
+            for (const char *p = v; *p >= '0' && *p <= '9'; p++) x = x * 10 + (*p - '0');
+            return cx_num_i(x);                         /* +1 */
+        }
     const char *v = item_get(m, a, 0);
     return v ? objc_retain(cx_str(v)) : 0;
 }
@@ -217,14 +363,24 @@ id MDItemCopyAttributes(id item, id names) {
 }
 id MDItemCopyAttributeNames(id item) {
     static const char *all[] = {"kMDItemPath", "kMDItemFSName", "kMDItemDisplayName", "kMDItemContentType",
-                                "kMDItemContentTypeTree", "kMDItemKind", "kMDItemFSSize", "kMDItemCFBundleIdentifier"};
+                                "kMDItemContentTypeTree", "kMDItemKind", "kMDItemFSSize", "kMDItemLogicalSize",
+                                "kMDItemPhysicalSize", "kMDItemFSCreationDate", "kMDItemContentCreationDate",
+                                "kMDItemDateAdded", "kMDItemFSContentChangeDate", "kMDItemContentModificationDate",
+                                "kMDItemLastUsedDate", "kMDItemFSOwnerUserID", "kMDItemFSOwnerGroupID", "kMDItemFSInvisible",
+                                "kMDItemFSNodeCount", "kMDItemCFBundleIdentifier", "kMDItemVersion", "kMDItemWhereFroms"};
     mditem_t *m = item_of(item);
     if (!m) return 0;
     item_info(m);
+    item_stat(m);
+    item_from(m);
     id arr = cx_arr_new(0);
     for (unsigned i = 0; i < sizeof all / sizeof all[0]; i++) {
-        if (i == 7 && !m->bundle[0]) continue;
-        cx_arr_add(arr, cx_str(all[i]));
+        const char *a = all[i];
+        if (!strcmp(a, "kMDItemCFBundleIdentifier") && !m->bundle[0]) continue;
+        if (!strcmp(a, "kMDItemVersion") && !m->version[0]) continue;
+        if (!strcmp(a, "kMDItemWhereFroms") && !m->nfrom) continue;
+        if (!strcmp(a, "kMDItemFSNodeCount") && m->nodes < 0) continue;
+        cx_arr_add(arr, cx_str(a));
     }
     return objc_retain(arr);
 }
@@ -237,7 +393,12 @@ struct mdquery_s {
     char **scopes;
     int nscopes;
     void *queue;
-    int running, gathering, stopped, updates_off, visited;
+    int running, gathering, stopped, updates_off, visited, wants_updates, pending_update;
+    void *stream;            /* FSEventStreamRef das atualizações ao vivo */
+    int (*filter)(void *ctx, id item);   /* NSMetadataQuery: o NSPredicate decide (ctx = o estado dele) */
+    void (*on_update)(void *ctx, id added, id changed, id removed);
+    void *hook_ctx;
+    id self_obj;             /* fraco: o __MDQuery dono (para o objeto da notificação) */
 };
 static mdquery_t *query_of(id o) { return o && object_getClass(o) == &MDQuery_c ? *(mdquery_t **)((u8 *)o + 8) : 0; }
 static void free_scopes(mdquery_t *q) {
@@ -246,6 +407,9 @@ static void free_scopes(mdquery_t *q) {
     q->scopes = 0;
     q->nscopes = 0;
 }
+void FSEventStreamStop(void *s);
+void FSEventStreamInvalidate(void *s);
+void FSEventStreamRelease(void *s);
 static void query_dealloc(id self, SEL c) {
     mdquery_t *q = query_of(self);
     (void)c;
@@ -253,6 +417,7 @@ static void query_dealloc(id self, SEL c) {
         mdq_free(q->pred);
         if (q->results) objc_release(q->results);
         if (q->query_text) objc_release(q->query_text);
+        if (q->stream) { FSEventStreamStop(q->stream); FSEventStreamInvalidate(q->stream); FSEventStreamRelease(q->stream); }
         if (q->queue) dispatch_release(q->queue);
         free_scopes(q);
         free(q);
@@ -266,6 +431,9 @@ id MDQueryCreate(void *alloc, id query, id valueListAttrs, id sortingAttrs) {
     char err[96];
     const char *s = query && cx_is_str(query) ? cx_cstr(query) : 0;
     if (!s) return 0;
+    /* $time.* conta a partir de agora, no fuso do sistema */
+    id tz = MSG0(id, (id)cx_class_named("NSTimeZone"), "localTimeZone");
+    mdq_set_clock(CFAbsoluteTimeGetCurrent(), tz ? (long)MSG0(i64, tz, "secondsFromGMT") : 0);
     mdq_node *p = mdq_parse(s, err, sizeof err);
     if (!p) return 0;                                  /* consulta inválida: NULL, como no macOS */
     md_boot();
@@ -340,7 +508,9 @@ static void test_path(mdquery_t *q, const char *path) {
     probe.path = (char *)path;
     if (!mdq_eval(q->pred, item_get, &probe) || already(q, path)) return;
     id it = item_new(path);
-    if (it) { cx_arr_add(q->results, it); objc_release(it); }
+    if (!it) return;
+    if (!q->filter || q->filter(q->hook_ctx, it)) cx_arr_add(q->results, it);
+    objc_release(it);
 }
 static void walk(mdquery_t *q, const char *dir, int depth) {
     if (q->stopped || depth > MD_MAX_DEPTH || q->visited > MD_MAX_VISIT) return;
@@ -360,10 +530,83 @@ static void walk(mdquery_t *q, const char *dir, int depth) {
     }
     closedir(d);
 }
+/* volume com busca desligada (mdutil -i off): o arquivo .metadata_never_index na raiz dele */
+static int never_index(const char *path) {
+    char root[600], flag[700];
+    if (!strncmp(path, "/Volumes/", 9)) {
+        const char *e = path + 9;
+        while (*e && *e != '/') e++;
+        size_t n = (size_t)(e - path) < sizeof root - 1 ? (size_t)(e - path) : sizeof root - 1;
+        memcpy(root, path, n);
+        root[n] = 0;
+    } else copy_s(root, sizeof root, "");
+    cx_snprintf(flag, sizeof flag, "%s/.metadata_never_index", root);
+    return cx_file_size(flag) >= 0;
+}
 static void gather(mdquery_t *q) {
     if (!q->nscopes) add_computer(q);
     q->visited = 0;
-    for (int i = 0; i < q->nscopes && !q->stopped; i++) walk(q, q->scopes[i], 0);
+    for (int i = 0; i < q->nscopes && !q->stopped; i++)
+        if (!never_index(q->scopes[i])) walk(q, q->scopes[i], 0);
+}
+
+/* ---- atualizações ao vivo: o FSEventStream acorda, a coleta é refeita e a diferença vira kMDQueryDidUpdateNotification */
+typedef struct { long version; void *info; void *retain; void *release; void *desc; } fse_ctx_t;
+void *FSEventStreamCreate(void *alloc, void *cb, fse_ctx_t *ctx, id paths, u64 since, double latency, u32 flags);
+void FSEventStreamSetDispatchQueue(void *s, void *q);
+u8 FSEventStreamStart(void *s);
+static int has_path(id arr, const char *path) {
+    u64 n = MSG0(u64, arr, "count");
+    for (u64 i = 0; i < n; i++) { mditem_t *m = item_of(MSG(id, arr, "objectAtIndex:", i)); if (m && !strcmp(m->path, path)) return 1; }
+    return 0;
+}
+static void post_update(mdquery_t *q, id added, id changed, id removed) {
+    if (q->on_update) { q->on_update(q->hook_ctx, added, changed, removed); return; }
+    id info = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
+    MSG(void, info, "setObject:forKey:", added, kMDQueryUpdateAddedItems);
+    MSG(void, info, "setObject:forKey:", changed, kMDQueryUpdateChangedItems);
+    MSG(void, info, "setObject:forKey:", removed, kMDQueryUpdateRemovedItems);
+    id nc = MSG0(id, (id)cx_class_named("NSNotificationCenter"), "defaultCenter");
+    if (nc) MSG(void, nc, "postNotificationName:object:userInfo:", kMDQueryDidUpdateNotification, q->self_obj, info);
+}
+static void regather(mdquery_t *q, char **paths, u64 n) {
+    id old = q->results;
+    q->results = objc_retain(cx_arr_new(0));
+    gather(q);
+    id added = cx_arr_new(0), changed = cx_arr_new(0), removed = cx_arr_new(0);
+    u64 nn = MSG0(u64, q->results, "count"), no = MSG0(u64, old, "count");
+    for (u64 i = 0; i < nn; i++) {
+        id it = MSG(id, q->results, "objectAtIndex:", i);
+        mditem_t *m = item_of(it);
+        if (!m) continue;
+        if (!has_path(old, m->path)) { cx_arr_add(added, it); continue; }
+        for (u64 k = 0; k < n; k++) if (paths[k] && !strcmp(paths[k], m->path)) { cx_arr_add(changed, it); break; }
+    }
+    for (u64 i = 0; i < no; i++) {
+        id it = MSG(id, old, "objectAtIndex:", i);
+        mditem_t *m = item_of(it);
+        if (m && !has_path(q->results, m->path)) cx_arr_add(removed, it);
+    }
+    objc_release(old);
+    if (MSG0(u64, added, "count") || MSG0(u64, changed, "count") || MSG0(u64, removed, "count")) post_update(q, added, changed, removed);
+}
+static void fse_cb(void *stream, void *info, size_t n, void *paths, const u32 *flags, const u64 *ids) {
+    (void)stream; (void)flags; (void)ids;
+    mdquery_t *q = info;
+    if (!q || q->stopped) return;
+    if (q->updates_off) { q->pending_update = 1; return; }   /* MDQueryDisableUpdates: represa até reativar */
+    regather(q, (char **)paths, (u64)n);
+}
+static void start_updates(mdquery_t *q) {
+    if (q->stream || !q->nscopes) return;
+    id arr = cx_arr_new(0);
+    for (int i = 0; i < q->nscopes; i++) cx_arr_add(arr, cx_str(q->scopes[i]));
+    fse_ctx_t ctx = {0, q, 0, 0, 0};
+    q->stream = FSEventStreamCreate(0, (void *)fse_cb, &ctx, arr, 0xFFFFFFFFFFFFFFFFull /* desde agora */, 0.5,
+                                    0x10 /* FileEvents */);
+    if (!q->stream) return;
+    FSEventStreamSetDispatchQueue(q->stream, q->queue ? q->queue : dispatch_get_main_queue());
+    FSEventStreamStart(q->stream);
 }
 static void post_finish(id query) {
     id nc = MSG0(id, (id)cx_class_named("NSNotificationCenter"), "defaultCenter");
@@ -376,6 +619,7 @@ static void async_gather(void *ctx) {
         gather(q);
         q->gathering = 0;
         if (!q->stopped) post_finish(query);
+        if (!q->stopped && q->wants_updates) start_updates(q);
     }
     objc_release(query);
 }
@@ -385,18 +629,32 @@ u8 MDQueryExecute(id query, u32 options) {
     if (!q || q->running) return 0;
     q->running = 1;
     q->stopped = 0;
+    q->self_obj = query;
+    q->wants_updates = (options & MD_UPDATES) != 0;
     if (options & MD_SYNC) {
         gather(q);
+        if (q->wants_updates) start_updates(q);
         return 1;
     }
     q->gathering = 1;
     dispatch_async_f(q->queue ? q->queue : dispatch_get_main_queue(), objc_retain(query), async_gather);
     return 1;
 }
-void MDQueryStop(id query) { mdquery_t *q = query_of(query); if (q) { q->stopped = 1; q->gathering = 0; } }
+void MDQueryStop(id query) {
+    mdquery_t *q = query_of(query);
+    if (!q) return;
+    q->stopped = 1;
+    q->gathering = 0;
+    if (q->stream) { FSEventStreamStop(q->stream); FSEventStreamInvalidate(q->stream); FSEventStreamRelease(q->stream); q->stream = 0; }
+}
 u8 MDQueryIsGatheringComplete(id query) { mdquery_t *q = query_of(query); return q && q->running && !q->gathering; }
 void MDQueryDisableUpdates(id query) { mdquery_t *q = query_of(query); if (q) q->updates_off++; }
-void MDQueryEnableUpdates(id query) { mdquery_t *q = query_of(query); if (q && q->updates_off > 0) q->updates_off--; }
+/* reativar com mudança represada: a próxima leva de eventos refaz a coleta e avisa tudo de uma vez */
+void MDQueryEnableUpdates(id query) {
+    mdquery_t *q = query_of(query);
+    if (!q || q->updates_off <= 0) return;
+    if (--q->updates_off == 0 && q->pending_update) { q->pending_update = 0; regather(q, 0, 0); }
+}
 long MDQueryGetResultCount(id query) { mdquery_t *q = query_of(query); return q ? (long)MSG0(u64, q->results, "count") : 0; }
 const void *MDQueryGetResultAtIndex(id query, long idx) {
     mdquery_t *q = query_of(query);
@@ -416,3 +674,282 @@ void *MDQueryGetAttributeValueOfResultAtIndex(id query, id name, long idx) {
 }
 unsigned long MDQueryGetTypeID(void) { return 0x4D445100u; }
 unsigned long MDItemGetTypeID(void) { return 0x4D444900u; }
+
+/* ================================================================ NSMetadataQuery e NSMetadataItem
+ * A classe existe em foundation_more.c (fachada); os métodos daqui a substituem. A busca é a do MDQuery acima com a
+ * consulta "true" e o NSPredicate do app como filtro (evaluateWithObject: num NSMetadataItem, que responde por
+ * valueForKey:). Escopos: pastas (NSString/NSURL), NSMetadataQueryUserHomeScope, …LocalComputerScope e as variantes
+ * Indexed; os de iCloud (…Ubiquitous…) e de rede não têm itens. Ordem: sortDescriptors (chave e ascending).
+ * Notificações no fio principal: DidStartGathering, DidFinishGathering e, com a consulta viva, DidUpdate com
+ * NSMetadataQueryUpdateAdded/Changed/RemovedItemsKey (o FSEventStream do MDQuery). groupedResults e valueLists: o
+ * mOS não agrupa; devolvem vazio. */
+void objc_setAssociatedObject(id obj, const void *key, id value, u64 policy);
+id objc_getAssociatedObject(id obj, const void *key);
+static char k_mditem, k_mqstate;
+typedef struct {
+    id predicate, scopes, sorts, delegate;
+    id mdq;                  /* __MDQuery */
+    id results;              /* NSMutableArray de NSMetadataItem */
+    int started, gathering, stopped, disabled;
+    id self_obj;
+} mqs_t;
+static cx_class_t MQS_c, MQS_m;
+static void mqs_dealloc(id self, SEL c) {
+    mqs_t *m = *(mqs_t **)((u8 *)self + 8);
+    (void)c;
+    if (m) {
+        if (m->predicate) objc_release(m->predicate);
+        if (m->scopes) objc_release(m->scopes);
+        if (m->sorts) objc_release(m->sorts);
+        if (m->mdq) { MDQueryStop(m->mdq); objc_release(m->mdq); }
+        if (m->results) objc_release(m->results);
+        free(m);
+    }
+    cx_object_free(self);
+}
+static mqs_t *mqs(id self) {
+    id box = objc_getAssociatedObject(self, &k_mqstate);
+    if (!box) {
+        box = cx_alloc_instance(&MQS_c);
+        mqs_t *m = calloc(1, sizeof *m);
+        *(mqs_t **)((u8 *)box + 8) = m;
+        m->self_obj = self;
+        m->results = objc_retain(cx_arr_new(0));
+        objc_setAssociatedObject(self, &k_mqstate, box, 1 /* RETAIN_NONATOMIC */);
+        objc_release(box);
+    }
+    return *(mqs_t **)((u8 *)box + 8);
+}
+/* NSMetadataItem sobre um MDItem */
+static id mi_wrap(id mditem) {
+    id o = MSG0(id, (id)cx_class_named("NSMetadataItem"), "alloc");
+    o = MSG0(id, o, "init");
+    if (o) objc_setAssociatedObject(o, &k_mditem, mditem, 1);
+    return o;                                          /* +1 */
+}
+static id mi_value(id self, SEL c, id attr) {
+    (void)c;
+    id it = objc_getAssociatedObject(self, &k_mditem);
+    if (!it || !attr) return 0;
+    if (cx_is_str(attr) && !strcmp(cx_cstr(attr), "kMDItemURL")) {
+        id p = MDItemCopyAttribute(it, cx_str("kMDItemPath"));
+        id u = p ? MSG(id, (id)cx_class_named("NSURL"), "fileURLWithPath:", p) : 0;
+        if (p) objc_release(p);
+        return u;
+    }
+    id v = MDItemCopyAttribute(it, attr);
+    return v ? objc_autorelease(v) : 0;
+}
+static id mi_values(id self, SEL c, id attrs) {
+    (void)c;
+    id d = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
+    u64 n = attrs ? MSG0(u64, attrs, "count") : 0;
+    for (u64 i = 0; i < n; i++) {
+        id k = MSG(id, attrs, "objectAtIndex:", i);
+        id v = mi_value(self, 0, k);
+        if (v) MSG(void, d, "setObject:forKey:", v, k);
+    }
+    return d;
+}
+static id mi_attributes(id self, SEL c) {
+    (void)c;
+    id it = objc_getAssociatedObject(self, &k_mditem);
+    id a = it ? MDItemCopyAttributeNames(it) : 0;
+    return a ? objc_autorelease(a) : cx_arr_new(0);
+}
+static id mi_init_url(id self, SEL c, id url) {
+    (void)c;
+    id it = url ? MDItemCreateWithURL(0, url) : 0;
+    if (!it) { objc_release(self); return 0; }
+    objc_setAssociatedObject(self, &k_mditem, it, 1);
+    objc_release(it);
+    return self;
+}
+
+static int mq_filter(void *ctx, id mditem) {
+    mqs_t *m = ctx;
+    if (!m->predicate) return 1;
+    id w = mi_wrap(mditem);
+    BOOL ok = w ? MSG(BOOL, m->predicate, "evaluateWithObject:", w) : NO;
+    if (w) objc_release(w);
+    return ok;
+}
+static int sort_cmp(id a, id b, id sorts) {
+    u64 n = sorts ? MSG0(u64, sorts, "count") : 0;
+    for (u64 i = 0; i < n; i++) {
+        id sd = MSG(id, sorts, "objectAtIndex:", i);
+        id key = MSG0(id, sd, "key");
+        BOOL asc = MSG0(BOOL, sd, "ascending");
+        id va = mi_value(a, 0, key), vb = mi_value(b, 0, key);
+        long r = 0;
+        if (va && vb) r = MSG(long, va, "compare:", vb);
+        else if (va) r = 1;
+        else if (vb) r = -1;
+        if (r) return asc ? (int)r : (int)-r;
+    }
+    return 0;
+}
+static void mq_fill(mqs_t *m) {
+    id fresh = cx_arr_new(0);
+    long n = MDQueryGetResultCount(m->mdq);
+    for (long i = 0; i < n; i++) {
+        id w = mi_wrap((id)MDQueryGetResultAtIndex(m->mdq, i));
+        if (!w) continue;
+        /* inserção ordenada (estável) */
+        u64 c = MSG0(u64, fresh, "count"), at = c;
+        if (m->sorts) for (u64 k = 0; k < c; k++) if (sort_cmp(w, MSG(id, fresh, "objectAtIndex:", k), m->sorts) < 0) { at = k; break; }
+        MSG(void, fresh, "insertObject:atIndex:", w, at);
+        objc_release(w);
+    }
+    objc_release(m->results);
+    m->results = objc_retain(fresh);
+}
+static void mq_post(id obj, const char *name, id info) {
+    id nc = MSG0(id, (id)cx_class_named("NSNotificationCenter"), "defaultCenter");
+    if (nc) MSG(void, nc, "postNotificationName:object:userInfo:", cx_str(name), obj, info);
+}
+static id wrap_all(id mditems) {
+    id out = cx_arr_new(0);
+    u64 n = MSG0(u64, mditems, "count");
+    for (u64 i = 0; i < n; i++) { id w = mi_wrap(MSG(id, mditems, "objectAtIndex:", i)); if (w) { cx_arr_add(out, w); objc_release(w); } }
+    return out;
+}
+static void mq_on_update(void *ctx, id added, id changed, id removed) {
+    mqs_t *m = ctx;
+    if (m->stopped) return;
+    mq_fill(m);
+    id info = MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary");
+    MSG(void, info, "setObject:forKey:", wrap_all(added), cx_str("kMDQueryUpdateAddedItems"));
+    MSG(void, info, "setObject:forKey:", wrap_all(changed), cx_str("kMDQueryUpdateChangedItems"));
+    MSG(void, info, "setObject:forKey:", wrap_all(removed), cx_str("kMDQueryUpdateRemovedItems"));
+    mq_post(m->self_obj, "NSMetadataQueryDidUpdateNotification", info);
+}
+static void mq_finish_main(void *ctx) {
+    id self = ctx;
+    mqs_t *m = mqs(self);
+    if (!m->stopped) {
+        mq_fill(m);
+        m->gathering = 0;
+        mq_post(self, "NSMetadataQueryDidFinishGatheringNotification", 0);
+        mdquery_t *q = query_of(m->mdq);
+        if (q && !m->stopped) { q->queue = dispatch_retain(dispatch_get_main_queue()); start_updates(q); }
+    }
+    objc_release(self);
+}
+static void mq_gather_bg(void *ctx) {
+    id self = ctx;
+    mqs_t *m = mqs(self);
+    if (!m->stopped) MDQueryExecute(m->mdq, MD_SYNC);
+    dispatch_async_f(dispatch_get_main_queue(), self, mq_finish_main);
+}
+static void add_ns_scope(mdquery_t *q, id sc) {
+    const char *p = 0;
+    if (sc && cx_is_str(sc)) p = cx_cstr(sc);
+    else if (sc && MSG(BOOL, sc, "respondsToSelector:", sel_registerName("path"))) { id ps = MSG0(id, sc, "path"); p = ps ? cx_cstr(ps) : 0; }
+    if (!p) return;
+    if (!strcmp(p, "NSMetadataQueryUserHomeScope")) add_home(q);
+    else if (!strcmp(p, "NSMetadataQueryLocalComputerScope") || !strcmp(p, "NSMetadataQueryIndexedLocalComputerScope")) add_computer(q);
+    else if (p[0] == '/') add_scope(q, p);
+    /* …Ubiquitous… (iCloud) e …NetworkScope: sem itens no mOS */
+}
+static BOOL mq_start(id self, SEL c) {
+    (void)c;
+    mqs_t *m = mqs(self);
+    if (m->started && !m->stopped) return NO;
+    id mdq = MDQueryCreate(0, cx_str("true"), 0, 0);
+    if (!mdq) return NO;
+    mdquery_t *q = query_of(mdq);
+    q->filter = mq_filter;
+    q->on_update = mq_on_update;
+    q->hook_ctx = m;
+    q->wants_updates = 1;
+    int any = 0;
+    u64 n = m->scopes ? MSG0(u64, m->scopes, "count") : 0;
+    for (u64 i = 0; i < n; i++) add_ns_scope(q, MSG(id, m->scopes, "objectAtIndex:", i));
+    any = q->nscopes > 0;
+    if (!any && n) q->stopped = 1;                    /* só escopos sem itens (iCloud): termina vazio */
+    if (m->mdq) { MDQueryStop(m->mdq); objc_release(m->mdq); }
+    m->mdq = mdq;
+    m->started = 1;
+    m->stopped = 0;
+    m->gathering = 1;
+    mq_post(self, "NSMetadataQueryDidStartGatheringNotification", 0);
+    dispatch_async_f(dispatch_get_global_queue(0, 0), objc_retain(self), mq_gather_bg);
+    return YES;
+}
+static void mq_stop(id self, SEL c) { (void)c; mqs_t *m = mqs(self); m->stopped = 1; m->gathering = 0; if (m->mdq) MDQueryStop(m->mdq); }
+static void mq_set_pred(id self, SEL c, id p) { (void)c; mqs_t *m = mqs(self); if (p) objc_retain(p); if (m->predicate) objc_release(m->predicate); m->predicate = p; }
+static id mq_pred(id self, SEL c) { (void)c; return mqs(self)->predicate; }
+static void mq_set_scopes(id self, SEL c, id a) { (void)c; mqs_t *m = mqs(self); if (a) objc_retain(a); if (m->scopes) objc_release(m->scopes); m->scopes = a; }
+static id mq_scopes(id self, SEL c) { (void)c; mqs_t *m = mqs(self); return m->scopes ? m->scopes : cx_arr_new(0); }
+static void mq_set_sorts(id self, SEL c, id a) { (void)c; mqs_t *m = mqs(self); if (a) objc_retain(a); if (m->sorts) objc_release(m->sorts); m->sorts = a; }
+static id mq_sorts(id self, SEL c) { (void)c; mqs_t *m = mqs(self); return m->sorts ? m->sorts : cx_arr_new(0); }
+static void mq_set_delegate(id self, SEL c, id d) { (void)c; mqs(self)->delegate = d; }   /* fraco, como no Foundation */
+static id mq_delegate(id self, SEL c) { (void)c; return mqs(self)->delegate; }
+static id mq_results(id self, SEL c) { (void)c; return MSG0(id, mqs(self)->results, "copy"); }
+static u64 mq_count(id self, SEL c) { (void)c; return MSG0(u64, mqs(self)->results, "count"); }
+static id mq_at(id self, SEL c, u64 i) { (void)c; mqs_t *m = mqs(self); return i < MSG0(u64, m->results, "count") ? MSG(id, m->results, "objectAtIndex:", i) : 0; }
+static u64 mq_index(id self, SEL c, id r) { (void)c; return MSG(u64, mqs(self)->results, "indexOfObject:", r); }
+static id mq_value_at(id self, SEL c, id attr, u64 i) { (void)c; id it = mq_at(self, 0, i); return it ? mi_value(it, 0, attr) : 0; }
+static BOOL mq_started(id self, SEL c) { (void)c; mqs_t *m = mqs(self); return m->started && !m->stopped; }
+static BOOL mq_gathering(id self, SEL c) { (void)c; return mqs(self)->gathering; }
+static BOOL mq_stopped(id self, SEL c) { (void)c; return mqs(self)->stopped; }
+static void mq_disable(id self, SEL c) { (void)c; mqs_t *m = mqs(self); if (m->mdq) MDQueryDisableUpdates(m->mdq); }
+static void mq_enable(id self, SEL c) { (void)c; mqs_t *m = mqs(self); if (m->mdq) MDQueryEnableUpdates(m->mdq); }
+static void mq_enum(id self, SEL c, void *blk) {
+    (void)c;
+    mqs_t *m = mqs(self);
+    void (*inv)(void *, id, u64, BOOL *) = *(void **)((u8 *)blk + 16);
+    u64 n = MSG0(u64, m->results, "count");
+    for (u64 i = 0; i < n; i++) { BOOL stop = NO; inv(blk, MSG(id, m->results, "objectAtIndex:", i), i, &stop); if (stop) break; }
+}
+static id mq_empty_arr(id self, SEL c) { (void)self; (void)c; return cx_arr_new(0); }
+static id mq_empty_dict(id self, SEL c) { (void)self; (void)c; return MSG0(id, (id)cx_class_named("NSDictionary"), "dictionary"); }
+static void mq_ignore(id self, SEL c, id v) { (void)self; (void)c; (void)v; }
+static void mq_ignore_d(id self, SEL c, double v) { (void)self; (void)c; (void)v; }
+static double mq_batch(id self, SEL c) { (void)self; (void)c; return 1.0; }
+
+void cx_mdquery_init(void) {
+    static int done;
+    if (done++) return;
+    md_boot();
+    cx_define_class(&MQS_c, &MQS_m, "__MOSMetadataQueryState", cx_class_named("NSObject"), 8);
+    cx_add_method(&MQS_c, "dealloc", (void *)mqs_dealloc);
+    cx_class_t *mi = cx_class_named("NSMetadataItem"), *mq = cx_class_named("NSMetadataQuery");
+    if (mi) {
+        cx_add_method(mi, "valueForAttribute:", (void *)mi_value);
+        cx_add_method(mi, "valueForKey:", (void *)mi_value);   /* o NSPredicate lê por KVC */
+        cx_add_method(mi, "valuesForAttributes:", (void *)mi_values);
+        cx_add_method(mi, "attributes", (void *)mi_attributes);
+        cx_add_method(mi, "initWithURL:", (void *)mi_init_url);
+    }
+    if (!mq) return;
+    cx_add_method(mq, "startQuery", (void *)mq_start);
+    cx_add_method(mq, "stopQuery", (void *)mq_stop);
+    cx_add_method(mq, "setPredicate:", (void *)mq_set_pred);
+    cx_add_method(mq, "predicate", (void *)mq_pred);
+    cx_add_method(mq, "setSearchScopes:", (void *)mq_set_scopes);
+    cx_add_method(mq, "searchScopes", (void *)mq_scopes);
+    cx_add_method(mq, "setSortDescriptors:", (void *)mq_set_sorts);
+    cx_add_method(mq, "sortDescriptors", (void *)mq_sorts);
+    cx_add_method(mq, "setDelegate:", (void *)mq_set_delegate);
+    cx_add_method(mq, "delegate", (void *)mq_delegate);
+    cx_add_method(mq, "results", (void *)mq_results);
+    cx_add_method(mq, "resultCount", (void *)mq_count);
+    cx_add_method(mq, "resultAtIndex:", (void *)mq_at);
+    cx_add_method(mq, "indexOfResult:", (void *)mq_index);
+    cx_add_method(mq, "valueOfAttribute:forResultAtIndex:", (void *)mq_value_at);
+    cx_add_method(mq, "isStarted", (void *)mq_started);
+    cx_add_method(mq, "isGathering", (void *)mq_gathering);
+    cx_add_method(mq, "isStopped", (void *)mq_stopped);
+    cx_add_method(mq, "disableUpdates", (void *)mq_disable);
+    cx_add_method(mq, "enableUpdates", (void *)mq_enable);
+    cx_add_method(mq, "enumerateResultsUsingBlock:", (void *)mq_enum);
+    cx_add_method(mq, "groupedResults", (void *)mq_empty_arr);
+    cx_add_method(mq, "valueLists", (void *)mq_empty_dict);
+    cx_add_method(mq, "setValueListAttributes:", (void *)mq_ignore);
+    cx_add_method(mq, "setGroupingAttributes:", (void *)mq_ignore);
+    cx_add_method(mq, "setOperationQueue:", (void *)mq_ignore);
+    cx_add_method(mq, "setNotificationBatchingInterval:", (void *)mq_ignore_d);
+    cx_add_method(mq, "notificationBatchingInterval", (void *)mq_batch);
+}

@@ -8,8 +8,9 @@
  * O valor aceita * (qualquer sequência). Modificadores: c (sem diferença de caixa), d (sem acento, Latin-1),
  * w (por palavra: o padrão casa no começo de qualquer palavra). Atributo com vários valores
  * (kMDItemContentTypeTree): == casa se algum valor casar; != só se nenhum casar.
- * $time.* e InRange não entram: mdq_parse devolve erro, e MDQueryCreate devolve NULL, como o macOS
- * faz com uma consulta inválida. */
+ *   InRange(atributo, mínimo, máximo); datas são números (CFAbsoluteTime) e aceitam
+ *   $time.now[(s)] .today[(d)] .yesterday .this_week[(w)] .this_month[(m)] .this_year[(a)] .iso(AAAA-MM-DDThh:mm:ssZ)
+ * Consulta inválida: mdq_parse devolve erro, e MDQueryCreate devolve NULL, como o macOS. */
 #pragma once
 
 typedef struct mdq_node mdq_node;
@@ -18,6 +19,8 @@ typedef const char *(*mdq_get_fn)(void *ctx, const char *attr, int i);
 
 mdq_node *mdq_parse(const char *query, char *err, int errcap);
 int mdq_eval(const mdq_node *n, mdq_get_fn get, void *ctx);
+/* relógio do $time: agora (CFAbsoluteTime) e o fuso em segundos a leste do UTC */
+void mdq_set_clock(double now_abs, long tz_offset);
 void mdq_free(mdq_node *n);
 /* casamento de um valor com um padrão (os mesmos modificadores); exposto para o teste */
 int mdq_match(const char *value, const char *pattern, int nocase, int nodiac, int word);

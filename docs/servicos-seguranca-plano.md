@@ -56,9 +56,10 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 | 1 SecKey | ✅ (15 nov.); falta ECIES e OAEP+AESGCM | `gcc -O2 -DMOS_HOST_TEST -Itools -Ikernel/include tools/seckeytest.c kernel/net/crypto.c kernel/net/pk.c -o /tmp/seckeytest`, `/tmp/seckeytest self` → ok; `python3 -I tools/seckeytest.py /tmp/seckeytest` → **225/225** contra o OpenSSL 3.5.5 (RSA 1024/2048/3072, EC P-256/384/521) |
 | 3 CommonCrypto | ✅ (15 nov.) | `python3 -I tools/cctest.py` → **512/512** contra OpenSSL/hashlib (AES ECB/CBC/CFB/CFB8/CTR/OFB/XTS/GCM, DES, 3DES, RC2, RC4, Blowfish, MD2/MD4/MD5/SHA-1/2, HMAC, PBKDF2) |
 | 2 Certificados, confiança, PKCS#12, Keychain de chaves | ✅ (15 nov.) | `python3 -I tools/seccerttest.py` → **59/59** (PKCS#12 de 6 variantes do cryptography e do `openssl pkcs12`, PEM, nomes, cadeia); SecKey agora **231/231** |
-| 5 TCC | ✅ diálogo e pedidos (16 nov.); falta o painel de Privacidade nos Ajustes | `tools/tccprompttest.c` **134/134**, `tools/tccutiltest.sh` **8/8** |
+| 5 TCC | ✅ diálogo, pedidos e painel (16 nov.; painel "Permissões dos apps" da Camila, PR #366) | `tools/tccprompttest.c` **134/134**, `tools/tccutiltest.sh` **8/8** |
 | 11 CloudKit/iCloud | ✅ código e nomes (16 nov.); não executado em VM | `CloudKit.m` compila para Mach-O (170 classes); overlay `CloudKit.swift` compilado contra o Foundation Swift real: os **41/41** nomes mangled que os apps pedem saem dele |
-| 4, 6–10, 12 | a fazer | — |
+| 7 Spotlight | ✅ (16 nov.); não executado em VM | `tools/agentes_host.c` **39/39** (predicado com `$time.*` e `InRange`), `tools/mdclitest.sh` **18/18** (mdfind, mdls, mdutil) |
+| 4, 6, 8–10, 12 | a fazer | — |
 
 ## Fase 1 — o que entrou (15 nov.)
 
@@ -130,3 +131,18 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 - `userland/libsystem/icloud.c`: `NSUbiquitousKeyValueStore` local (~/Library/SyncedPreferences, limites da Apple,
   aviso de cota) e `NSFileManager` sem contêiner (erro 4353).
 - Limite honesto: nada disso rodou num app ainda (precisa do build final). CKSyncEngine não existe.
+
+## Fase 7 — Spotlight (16 nov.)
+
+- Predicado (`mdq_core.c`): `$time.now/today/yesterday/this_week/this_month/this_year/iso` com deslocamento e fuso,
+  `InRange(atributo, a, b)`.
+- `mdquery.c`: datas (criação, modificação, último uso, adicionado), tamanhos lógico e físico, dono, invisível,
+  número de itens da pasta, versão do app, `kMDItemWhereFroms` (xattr), `kMDItemTextContent` (texto até 256 KB);
+  `MDItemCopyAttribute` devolve NSDate/NSNumber/NSArray; `.metadata_never_index` respeitado; `kMDQueryWantsUpdates`
+  pelo FSEventStream com `kMDQueryDidUpdateNotification` (adicionados/alterados/removidos) e
+  `MDQueryDisableUpdates` represando.
+- `NSMetadataQuery`/`NSMetadataItem` reais (substituem a fachada de `foundation_more.c`): NSPredicate do app como
+  filtro, escopos, ordem, notificações de início/fim/atualização no fio principal. `groupedResults`/`valueLists`
+  vazios (o mOS não agrupa).
+- `/usr/bin/mdfind`, `/usr/bin/mdls`, `/usr/bin/mdutil` (`userland/cli-macos`). Não há índice persistente: cada
+  busca lê o disco (até 50 000 itens); `mdutil -E` só informa isso.

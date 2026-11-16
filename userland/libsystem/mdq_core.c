@@ -5,12 +5,12 @@ void *malloc(unsigned long n);
 void *calloc(unsigned long n, unsigned long s);
 void free(void *p);
 
-enum { N_AND = 1, N_OR, N_NOT, N_CMP, N_TEXT, N_CONST };
+enum { N_AND = 1, N_OR, N_NOT, N_CMP, N_TEXT, N_CONST, N_RANGE };
 enum { OP_EQ = 1, OP_NE, OP_LT, OP_GT, OP_LE, OP_GE };
 
 struct mdq_node {
     int kind, op, nocase, nodiac, word, num_ok, konst;
-    double num;
+    double num, hi;
     char *attr, *val;
     mdq_node *a, *b;
 };
@@ -81,6 +81,109 @@ static int number(ps_t *s, double *out) {
     return 1;
 }
 
+/* ---- $time: datas como CFAbsoluteTime (segundos desde 2001-01-01 UTC), no fuso de mdq_set_clock */
+static double g_now;
+static long g_tz;
+void mdq_set_clock(double now_abs, long tz_offset) { g_now = now_abs; g_tz = tz_offset; }
+static long long fl_div(long long a, long long b) { long long q = a / b; return (a % b && (a < 0) != (b < 0)) ? q - 1 : q; }
+/* dias desde 1970-01-01 <-> data civil (H. Hinnant) */
+static long long days_from_civil(long long y, int m, int d) {
+    y -= m <= 2;
+    long long era = fl_div(y, 400), yoe = y - era * 400;
+    long long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1, doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+static void civil_from_days(long long z, long long *y, int *m, int *d) {
+    z += 719468;
+    long long era = fl_div(z, 146097), doe = z - era * 146097;
+    long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365, yy = yoe + era * 400;
+    long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+    *d = (int)(doy - (153 * mp + 2) / 5 + 1);
+    *m = (int)(mp < 10 ? mp + 3 : mp - 9);
+    *y = yy + (*m <= 2);
+}
+#define EPOCH_DIFF 978307200.0
+/* início do dia local que contém t (abs), mais n dias */
+static double day_start(double t, long long n) {
+    double local = t + EPOCH_DIFF + (double)g_tz;
+    long long days = fl_div((long long)local, 86400);
+    return (double)((days + n) * 86400) - (double)g_tz - EPOCH_DIFF;
+}
+static double month_start(double t, long long n, int year) {
+    double local = t + EPOCH_DIFF + (double)g_tz;
+    long long y; int m, d;
+    civil_from_days(fl_div((long long)local, 86400), &y, &m, &d);
+    if (year) { y += n; m = 1; }
+    else { long long mm = (long long)(m - 1) + n; y += fl_div(mm, 12); m = (int)(mm - fl_div(mm, 12) * 12) + 1; }
+    return (double)(days_from_civil(y, m, 1) * 86400) - (double)g_tz - EPOCH_DIFF;
+}
+/* $time.now, now(s), today, today(d), yesterday, this_week(w), this_month(m), this_year(y), iso(AAAA-MM-DD[Thh:mm:ss[Z]]) */
+static int time_value(ps_t *s, double *out) {
+    if (s->p[0] != '$' || __builtin_memcmp(s->p, "$time.", 6)) return 0;
+    s->p += 6;
+    const char *st = s->p;
+    while (isid(*s->p) && *s->p != '.') s->p++;
+    int n = (int)(s->p - st);
+    double arg = 0, iso = 0;
+    int have_arg = 0, iso_ok = 0;
+    if (*s->p == '(') {
+        s->p++;
+        ws(s);
+        if (n == 3 && !__builtin_memcmp(st, "iso", 3)) {
+            const char *q = s->p;
+            int f[6] = {0, 1, 1, 0, 0, 0}, k = 0;
+            while (k < 6) {
+                int v = 0, dg = 0;
+                while (*q >= '0' && *q <= '9') { v = v * 10 + (*q - '0'); q++; dg++; }
+                if (!dg) break;
+                f[k++] = v;
+                if (*q == '-' || *q == ':' || *q == 'T' || *q == ' ') q++;
+                else break;
+            }
+            if (*q == 'Z') q++;
+            if (k >= 3) {
+                iso = (double)(days_from_civil(f[0], f[1], f[2]) * 86400 + f[3] * 3600 + f[4] * 60 + f[5]) - EPOCH_DIFF;
+                iso_ok = 1;
+            }
+            s->p = q;
+        } else if (number(s, &arg)) have_arg = 1;
+        ws(s);
+        if (*s->p != ')') { fail(s, "esperava ) em $time"); return 1; }
+        s->p++;
+    }
+    double now = g_now;
+    if (n == 3 && !__builtin_memcmp(st, "now", 3)) *out = now + (have_arg ? arg : 0);
+    else if (n == 5 && !__builtin_memcmp(st, "today", 5)) *out = day_start(now, have_arg ? (long long)arg : 0);
+    else if (n == 9 && !__builtin_memcmp(st, "yesterday", 9)) *out = day_start(now, -1);
+    else if (n == 9 && !__builtin_memcmp(st, "this_week", 9)) {
+        double local = now + EPOCH_DIFF + (double)g_tz;
+        long long days = fl_div((long long)local, 86400);
+        long long since_sunday = ((days + 4) % 7 + 7) % 7;      /* 1970-01-01 foi quinta */
+        *out = day_start(now, -since_sunday + (have_arg ? (long long)arg * 7 : 0));
+    }
+    else if (n == 10 && !__builtin_memcmp(st, "this_month", 10)) *out = month_start(now, have_arg ? (long long)arg : 0, 0);
+    else if (n == 9 && !__builtin_memcmp(st, "this_year", 9)) *out = month_start(now, have_arg ? (long long)arg : 0, 1);
+    else if (n == 3 && !__builtin_memcmp(st, "iso", 3) && iso_ok) *out = iso;
+    else { fail(s, "$time desconhecido"); return 1; }
+    return 1;
+}
+/* valor de comparação: "texto", número ou $time.* (os dois últimos viram número) */
+static int value(ps_t *s, mdq_node *n, double *num, int *num_ok) {
+    if (*s->p == '"' || *s->p == '\'') {
+        n->val = quoted(s, n);
+        double d;
+        ps_t t = {n->val ? n->val : "", 0, 0, 0};
+        if (n->val && number(&t, &d) && !*t.p) { *num = d; *num_ok = 1; }
+        return 1;
+    }
+    if (number(s, num) || time_value(s, num)) {
+        *num_ok = 1;
+        if (!n->val) n->val = sdup("", 0);
+        return 1;
+    }
+    return 0;
+}
+
 static mdq_node *expr(ps_t *s);
 static mdq_node *unary(ps_t *s) {
     ws(s);
@@ -106,7 +209,6 @@ static mdq_node *unary(ps_t *s) {
         n->val = quoted(s, n);
         return n;
     }
-    if (*s->p == '$') { fail(s, "variável ($time...) não suportada"); return 0; }
     const char *st = s->p;
     while (isid(*s->p)) s->p++;
     int idl = (int)(s->p - st);
@@ -115,6 +217,24 @@ static mdq_node *unary(ps_t *s) {
         (idl == 4 && !__builtin_memcmp(st, "TRUE", 4)) || (idl == 5 && !__builtin_memcmp(st, "FALSE", 5))) {
         mdq_node *n = node(N_CONST);
         if (n) n->konst = idl == 4;
+        return n;
+    }
+    if (idl == 7 && !__builtin_memcmp(st, "InRange", 7)) {   /* InRange(atributo, mínimo, máximo), extremos inclusos */
+        ws(s);
+        if (*s->p != '(') { fail(s, "esperava ( depois de InRange"); return 0; }
+        s->p++;
+        ws(s);
+        const char *as = s->p;
+        while (isid(*s->p)) s->p++;
+        mdq_node *n = node(N_RANGE);
+        if (!n) { fail(s, "sem memória"); return 0; }
+        n->attr = sdup(as, (int)(s->p - as));
+        int ok1 = 0, ok2 = 0;
+        ws(s);
+        if (*s->p == ',') { s->p++; ws(s); value(s, n, &n->num, &ok1); ws(s); }
+        if (*s->p == ',') { s->p++; ws(s); free(n->val); n->val = 0; value(s, n, &n->hi, &ok2); ws(s); }
+        if (!ok1 || !ok2 || *s->p != ')' || !n->attr[0]) { fail(s, "InRange pede (atributo, número, número)"); mdq_free(n); return 0; }
+        s->p++;
         return n;
     }
     mdq_node *n = node(N_CMP);
@@ -130,19 +250,7 @@ static mdq_node *unary(ps_t *s) {
     else if (s->p[0] == '=') { n->op = OP_EQ; s->p++; }
     else { fail(s, "esperava um operador"); mdq_free(n); return 0; }
     ws(s);
-    if (*s->p == '"' || *s->p == '\'') {
-        n->val = quoted(s, n);
-        double d;
-        ps_t t = {n->val ? n->val : "", 0, 0, 0};
-        if (n->val && number(&t, &d) && !*t.p) { n->num = d; n->num_ok = 1; }
-    } else if (number(s, &n->num)) {
-        n->num_ok = 1;
-        n->val = sdup("", 0);
-    } else if (*s->p == '$') {
-        fail(s, "variável ($time...) não suportada");
-    } else {
-        fail(s, "esperava um valor");
-    }
+    if (!value(s, n, &n->num, &n->num_ok) && !s->bad) fail(s, "esperava um valor");
     if (!s->bad && n->op >= OP_LT && !n->num_ok) fail(s, "comparação de ordem pede um número");
     return n;
 }
@@ -279,6 +387,13 @@ int mdq_eval(const mdq_node *n, mdq_get_fn get, void *ctx) {
             const char *v = get(ctx, names[k], 0);
             if (v && mdq_match(v, n->val, n->nocase, n->nodiac, 1)) return 1;
         }
+        return 0;
+    }
+    case N_RANGE: {
+        const char *v;
+        double d;
+        for (int i = 0; (v = get(ctx, n->attr, i)) != 0; i++)
+            if (to_num(v, &d) && d >= n->num && d <= n->hi) return 1;
         return 0;
     }
     case N_CMP: {
