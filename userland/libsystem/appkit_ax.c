@@ -176,11 +176,32 @@ static const char *role_of(axel_t *e) {
     if (e->kind == AXK_APP) return "AXApplication";
     if (e->kind == AXK_WIN) return "AXWindow";
     id o = e->obj;
-    if (is_a(o, "NSButton")) return "AXButton";
+    /* o próprio objeto diz o papel (NSAccessibility: NSSwitch, NSTextView, subclasses do app) */
+    if (o && MSG(BOOL, o, "respondsToSelector:", sel_registerName("accessibilityRole"))) {
+        id r = MSG0(id, o, "accessibilityRole");
+        if (r && cx_is_str(r) && MSG0(u64, r, "length")) return cx_cstr(r);
+    }
+    if (is_a(o, "NSButton")) {
+        /* checkbox e rádio pelo tipo do botão */
+        i64 bt = MSG(BOOL, o, "respondsToSelector:", sel_registerName("_cxButtonType")) ? MSG0(i64, o, "_cxButtonType") : -1;
+        if (bt == 3) return "AXCheckBox";
+        if (bt == 4) return "AXRadioButton";
+        if (is_a(o, "NSPopUpButton")) return "AXPopUpButton";
+        return "AXButton";
+    }
     if (is_a(o, "NSTextView")) return "AXTextArea";
     if (is_a(o, "NSTextField")) {
         int ed = MSG(BOOL, o, "respondsToSelector:", sel_registerName("isEditable")) && MSG0(BOOL, o, "isEditable");
         return ed ? "AXTextField" : "AXStaticText";
+    }
+    {   /* o resto pela classe do sistema mais próxima (appkit_public.c) */
+        extern const char *cx_ax_role(const char *cls);
+        for (cx_class_t *k = object_getClass(o); k; k = k->super) {
+            const char *n = cx_class_name(k);
+            if (n[0] != 'N' || n[1] != 'S') continue;
+            const char *r = cx_ax_role(n);
+            if (strcmp(r, "AXGroup") || !strcmp(n, "NSView")) return r;
+        }
     }
     return "AXGroup";
 }
@@ -194,6 +215,15 @@ static const char *role_desc(const char *role) {
     if (!strcmp(role, "AXWindow")) return "window";
     if (!strcmp(role, "AXApplication")) return "application";
     if (!strcmp(role, "AXSystemWide")) return "system-wide";
+    static const char *const map[][2] = {{"AXCheckBox", "check box"}, {"AXRadioButton", "radio button"}, {"AXRadioGroup", "radio group"},
+        {"AXSlider", "slider"}, {"AXIncrementor", "stepper"}, {"AXPopUpButton", "pop up button"}, {"AXComboBox", "combo box"},
+        {"AXProgressIndicator", "progress indicator"}, {"AXLevelIndicator", "level indicator"}, {"AXTable", "table"},
+        {"AXOutline", "outline"}, {"AXRow", "row"}, {"AXCell", "cell"}, {"AXScrollArea", "scroll area"}, {"AXImage", "image"},
+        {"AXSplitGroup", "split group"}, {"AXTabGroup", "tab group"}, {"AXBrowser", "browser"}, {"AXList", "list"},
+        {"AXColorWell", "color well"}, {"AXDateField", "date field"}, {"AXRuleEditor", "rule editor"}, {"AXToolbar", "toolbar"},
+        {"AXMenu", "menu"}, {"AXMenuItem", "menu item"}, {"AXPathControl", "path control"}, {"AXDisclosureTriangle", "disclosure triangle"},
+        {"AXSearchField", "search text field"}, {"AXSheet", "sheet"}};
+    for (unsigned i = 0; i < sizeof map / sizeof map[0]; i++) if (!strcmp(role, map[i][0])) return map[i][1];
     return "group";
 }
 
@@ -480,7 +510,19 @@ int cx_ax_copy(id elem, id attr, id *v) {
     if (!strcmp(name, "AXValue")) {
         if (e->kind == AXK_VIEW) {   /* o campo seguro não expõe a senha (o macOS devolve vazio) */
             extern BOOL cx_is_secure_field(id v);
-            if (v) *v = cx_is_secure_field(e->obj) ? cx_str("") : str_attr(e->obj, "stringValue");
+            if (cx_is_secure_field(e->obj)) { if (v) *v = cx_str(""); return AX_OK; }
+            /* o valor do próprio controle (NSAccessibility); senão número para os de valor (checkbox, slider) e texto */
+            if (MSG(BOOL, e->obj, "respondsToSelector:", sel_registerName("accessibilityValue"))) {
+                id av = MSG0(id, e->obj, "accessibilityValue");
+                if (av) { if (v) *v = objc_retain(av); return AX_OK; }
+            }
+            const char *r = role_of(e);
+            if (r && (!strcmp(r, "AXCheckBox") || !strcmp(r, "AXRadioButton"))) { if (v) *v = cx_num_i(MSG0(i64, e->obj, "state")); return AX_OK; }
+            if (r && (!strcmp(r, "AXSlider") || !strcmp(r, "AXIncrementor") || !strcmp(r, "AXProgressIndicator") || !strcmp(r, "AXLevelIndicator"))) {
+                if (v) *v = cx_num_d(MSG0(double, e->obj, "doubleValue"));
+                return AX_OK;
+            }
+            if (v) *v = str_attr(e->obj, "stringValue");
             return AX_OK;
         }
         return AX_NOATTR;

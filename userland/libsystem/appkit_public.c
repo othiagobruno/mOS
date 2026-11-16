@@ -41,18 +41,34 @@ int cx_path_split(const char *path, char parts[][CX_PATH_PART], int max) {
 const char *cx_ax_role(const char *cls) {
     if (!cls) return "AXGroup";
     if (!strcmp(cls, "NSButton") || !strcmp(cls, "NSPopUpButton") || !strcmp(cls, "NSStatusBarButton")) return "AXButton";
-    if (!strcmp(cls, "NSTextField") || !strcmp(cls, "NSSecureTextField") || !strcmp(cls, "NSSearchField") || !strcmp(cls, "NSTokenField") || !strcmp(cls, "NSComboBox")) return "AXTextField";
+    if (!strcmp(cls, "NSTextField") || !strcmp(cls, "NSSecureTextField") || !strcmp(cls, "NSSearchField") || !strcmp(cls, "NSTokenField")) return "AXTextField";
     if (!strcmp(cls, "NSTextView")) return "AXTextArea";
-    if (!strcmp(cls, "NSSlider") || !strcmp(cls, "NSStepper")) return "AXSlider";
-    if (!strcmp(cls, "NSProgressIndicator") || !strcmp(cls, "NSLevelIndicator")) return "AXProgressIndicator";
-    if (!strcmp(cls, "NSTableView") || !strcmp(cls, "NSOutlineView")) return "AXTable";
+    if (!strcmp(cls, "NSSlider")) return "AXSlider";
+    if (!strcmp(cls, "NSStepper")) return "AXIncrementor";
+    if (!strcmp(cls, "NSComboBox")) return "AXComboBox";
+    if (!strcmp(cls, "NSProgressIndicator")) return "AXProgressIndicator";
+    if (!strcmp(cls, "NSLevelIndicator")) return "AXLevelIndicator";
+    if (!strcmp(cls, "NSOutlineView")) return "AXOutline";
+    if (!strcmp(cls, "NSTableView")) return "AXTable";
     if (!strcmp(cls, "NSScrollView")) return "AXScrollArea";
     if (!strcmp(cls, "NSImageView")) return "AXImage";
-    if (!strcmp(cls, "NSPathControl")) return "AXButton";
+    if (!strcmp(cls, "NSPathControl")) return "AXPathControl";
     if (!strcmp(cls, "NSWindow") || !strcmp(cls, "NSPanel")) return "AXWindow";
     if (!strcmp(cls, "NSApplication")) return "AXApplication";
     if (!strcmp(cls, "NSMenu")) return "AXMenu";
     if (!strcmp(cls, "NSMenuItem")) return "AXMenuItem";
+    if (!strcmp(cls, "NSSwitch")) return "AXCheckBox";
+    if (!strcmp(cls, "NSMatrix") || !strcmp(cls, "NSSegmentedControl")) return "AXRadioGroup";
+    if (!strcmp(cls, "NSBrowser")) return "AXBrowser";
+    if (!strcmp(cls, "NSCollectionView")) return "AXList";
+    if (!strcmp(cls, "NSRuleEditor") || !strcmp(cls, "NSPredicateEditor")) return "AXRuleEditor";
+    if (!strcmp(cls, "NSColorWell")) return "AXColorWell";
+    if (!strcmp(cls, "NSDatePicker")) return "AXDateField";
+    if (!strcmp(cls, "NSSplitView")) return "AXSplitGroup";
+    if (!strcmp(cls, "NSTabView")) return "AXTabGroup";
+    if (!strcmp(cls, "NSRulerView")) return "AXRuler";
+    if (!strcmp(cls, "NSTableRowView")) return "AXRow";
+    if (!strcmp(cls, "NSTableCellView")) return "AXCell";
     return "AXGroup";
 }
 
