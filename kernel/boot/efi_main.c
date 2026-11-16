@@ -119,6 +119,20 @@ static void load_dir(EFI_FILE *dir, const char *prefix, int depth) {
     }
 }
 
+/* copia os nós de um caminho de dispositivo até o End Node 0x7F/0xFF; len 0 se for malformado ou não couber */
+static u16 copy_nodes(const u8 *dp, u8 *dst, u16 cap) {
+    if (!dp) return 0;
+    u32 n = 0;
+    for (int nodes = 0; nodes < 64; nodes++) {
+        u16 len = (u16)(dp[n + 2] | dp[n + 3] << 8);
+        if (len < 4 || n + len > cap) return 0;
+        bool end = dp[n] == 0x7F && dp[n + 1] == 0xFF;
+        n += len;
+        if (end) { memcpy(dst, dp, n); return (u16)n; }
+    }
+    return 0;
+}
+
 /* copia o caminho de dispositivo (nós até o End Node 0x7F/0xFF) de um handle; len 0 se não houver */
 static u16 copy_devpath(EFI_HANDLE h, u8 *dst, u16 cap) {
     u8 *dp = NULL;
@@ -157,6 +171,7 @@ static void load_files(EFI_HANDLE image) {
         s_boot.kernel_base = (u64)li->ImageBase;
         s_boot.kernel_size = li->ImageSize;
         s_boot.boot_dp_len = copy_devpath(li->DeviceHandle, s_boot.boot_dp, sizeof s_boot.boot_dp);
+        s_boot.loader_fp_len = copy_nodes((u8 *)li->FilePath, s_boot.loader_fp, sizeof s_boot.loader_fp);
         if (!EFI_ERROR(BS->HandleProtocol(li->DeviceHandle, &SFS_GUID, (void **)&sfs))) ok = try_volume(sfs, li->DeviceHandle);
     }
     /* 2) qualquer volume FAT que contenha \mOS */

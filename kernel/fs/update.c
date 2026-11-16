@@ -14,6 +14,7 @@
  * ser repetido: arquivo já trocado não tem mais cópia em novos/, fat_replace reconhece a troca pela metade.
  */
 #include "update.h"
+#include "origin.h"
 #include "install.h"
 #include "sysstate.h"
 #include "crypto.h"
@@ -29,7 +30,7 @@
 #define ULAST   UDIR "/ultima.txt"
 #define MANIFEST_P "/mOS/Sistema/Instalacao/manifesto.txt"   /* no pacote (e na mídia live) */
 #define PUBKEY_P   "/mOS/Sistema/Biblioteca/chave-atualizacao.pub"
-#define LOADER  "/EFI/BOOT/BOOTX64.EFI"
+#define LOADER  ORIGIN_LOADER_DEFAULT     /* nome do carregador no manifesto; no disco é origin_loader_path() */
 #define MIB     (1ull << 20)
 #define SLICE_MS 25
 
@@ -395,9 +396,9 @@ static bool compare_one(int i) {
     if (!strcmp(e->path, LOADER)) {
         u64 n = 0;
         bool dir;
-        if (same_as_installed && fat_stat(sysfs(), LOADER, &dir, &n) && n == e->size) return true;
+        if (same_as_installed && fat_stat(sysfs(), origin_loader_path(), &dir, &n) && n == e->size) return true;
         kfree(buf);
-        buf = fat_read_file(sysfs(), LOADER, &buflen);
+        buf = fat_read_file(sysfs(), origin_loader_path(), &buflen);
         if (!buf || buflen != e->size) { mark_changed(i); return true; }
         hash_begin(buf, buflen);
         return false;
@@ -655,8 +656,9 @@ static bool apply(fatfs_t *fs, bool *loader) {
             bool dir;
             if (path && fat_stat(fs, staged, &dir, NULL) && !dir) {
                 path++;
+                if (!strcmp(path, LOADER)) path = (char *)origin_loader_path();   /* ESP compartilhada: o arquivo do mOS */
                 if (!mkdirs_fs(fs, path) || !fat_replace(fs, staged, path)) { errs++; kprintf("update: falha ao trocar %s\n", path); }
-                else { done++; if (!strcmp(path, LOADER)) { *loader = true; fat_flush(fs); } }
+                else { done++; if (!strcmp(path, origin_loader_path())) { *loader = true; fat_flush(fs); } }
             }
         } else if (line[0] == 'D' && line[1] == ' ') {
             bool dir;

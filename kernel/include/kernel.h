@@ -44,6 +44,10 @@ typedef struct {
     u16           boot_dp_len;
     u8            files_dp[256];
     u16           files_dp_len;
+    /* nós de arquivo (tipo 4, subtipo 4) do LoadedImage->FilePath, brutos: de qual arquivo EFI o firmware carregou o
+     * kernel (\EFI\BOOT\BOOTX64.EFI no pendrive, \EFI\mOS\BOOTX64.EFI numa ESP compartilhada com outro sistema) */
+    u8            loader_fp[256];
+    u16           loader_fp_len;
 } boot_info_t;
 
 extern boot_info_t *g_boot;
