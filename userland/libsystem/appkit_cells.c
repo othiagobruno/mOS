@@ -315,9 +315,10 @@ static u64 cell_hit_test(id self, SEL c, id ev, R f, id view) {
     if (pgi(self, "enabled", 1)) r |= 4;
     return r;
 }
-/* rastreio: o mOS entrega o mouse em mouseDown:/mouseDragged:/mouseUp: separados. Por isso trackMouse: guarda o
- * estado e o controle (cx_cell_track_*) continua o rastreio nos eventos seguintes, com a mesma ordem de chamadas
- * do AppKit: startTrackingAt:, continueTracking:at:inView: e stopTracking:at:inView:mouseIsUp:. */
+/* rastreio: trackMouse: é um laço sobre -[NSApp nextEventMatchingMask:] (arrastar e soltar do botão esquerdo) que chama
+ * startTrackingAt:, continueTracking:at:inView: e stopTracking:at:inView:mouseIsUp: na ordem do AppKit; devolve YES
+ * quando o botão solta (sempre com untilMouseUp, ou dentro da célula) e NO quando o mouse sai da célula sem
+ * untilMouseUp. cx_cell_track_drag/up fazem cada passo. */
 static BOOL cell_start_tracking(id self, SEL c, P p, id view) { (void)c; (void)p; (void)view; return pgi(self, "continuous", 0) != 0; }
 static BOOL cell_continue_tracking(id self, SEL c, P last, P cur, id view) { (void)c; (void)last; (void)cur; (void)view; return pgi(self, "continuous", 0) != 0; }
 static void cell_stop_tracking(id self, SEL c, P last, P stop, id view, BOOL up) { (void)self; (void)c; (void)last; (void)stop; (void)view; (void)up; }
@@ -329,6 +330,8 @@ static void cell_send(id cell, id view) {
     if (view && responds(view, "sendAction:to:")) MSG(BOOL, view, "sendAction:to:", a, t);
     else MSG(BOOL, NSApp, "sendAction:to:from:", a, t, cell);
 }
+void cx_cell_track_drag(id cell, id ev, id view);
+int cx_cell_track_up(id cell, id ev, id view);
 static BOOL cell_track(id self, SEL c, id ev, R f, id view, BOOL until_up) {
     (void)c;
     P p = m_loc(view, ev);
@@ -338,7 +341,21 @@ static BOOL cell_track(id self, SEL c, id ev, R f, id view, BOOL until_up) {
     BOOL cont = MSG(BOOL, self, "startTrackingAt:inView:", p, view);
     psi(self, "tr_cont", cont);
     if (cont && pgi(self, "enabled", 1)) cell_send(self, view);
-    return YES;
+    id until = MSG0(id, (id)kls("NSDate"), "distantFuture");
+    u64 mask = (1ULL << 6) | (1ULL << 2);   /* LeftMouseDragged | LeftMouseUp */
+    while (pgi(self, "tracking", 0)) {
+        id e = ((id (*)(id, SEL, u64, id, id, BOOL))objc_msgSend)(NSApp, sl("nextEventMatchingMask:untilDate:inMode:dequeue:"), mask, until,
+                                                                   cx_str("NSEventTrackingRunLoopMode"), (BOOL)YES);
+        if (!e) break;
+        if (MSG0(u64, e, "type") == 2) {
+            int inside = cx_cell_track_up(self, e, view);
+            psi(self, "tr_inside", inside);
+            return until_up || inside ? YES : NO;
+        }
+        cx_cell_track_drag(self, e, view);
+    }
+    psi(self, "tr_inside", 0);
+    return NO;                               /* saiu da célula sem untilMouseUp */
 }
 void cx_cell_track_drag(id cell, id ev, id view) {
     if (!pgi(cell, "tracking", 0)) return;
@@ -824,7 +841,11 @@ static void ctl_mouse_down2(id self, SEL c, id ev) {
         if (cell && MSG0(BOOL, cell, "isEnabled")) {
             R b = msg_rect(self, "bounds");
             MSG(void, cell, "highlight:withFrame:inView:", (BOOL)YES, b, self);
-            MSG(BOOL, cell, "trackMouse:inRect:ofView:untilMouseUp:", ev, b, self, (BOOL)NO);
+            BOOL up = MSG(BOOL, cell, "trackMouse:inRect:ofView:untilMouseUp:", ev, b, self, (BOOL)NO);
+            if (up && pgi(cell, "tr_inside", 0)) {   /* clique completo dentro da célula */
+                if (MSG(BOOL, cell, "isKindOfClass:", (id)kls("NSButtonCell"))) bc_after_click(cell, self);
+                else if (!pgi(cell, "tr_cont", 0)) cell_send(cell, self);
+            }
         }
         return;
     }
@@ -1168,8 +1189,8 @@ static void mx_mouse_down(id self, SEL c, id ev) {
     i64 mode = pgi(self, "mode", 0);
     if (mode == 3) {   /* trilha: a célula rastreia o mouse sozinha (sliders numa matriz) */
         R f = mx_frame_of(self, r, k);
-        pset(self, "trackCell", cell);
         MSG(BOOL, cell, "trackMouse:inRect:ofView:untilMouseUp:", ev, f, self, (BOOL)YES);
+        mx_send_cell_action(self, cell, 0);
         return;
     }
     if (mode != 0 || !MSG(BOOL, cell, "isKindOfClass:", (id)kls("NSButtonCell"))) mx_select_index(self, r * mx_cols(self) + k, (int)ev_mods_to_core(ev));
