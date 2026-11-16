@@ -3902,6 +3902,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         memcpy(q->name, p->name, sizeof q->name);
         memcpy(q->path, p->path, sizeof q->path);
         memcpy(q->cwd, p->cwd, sizeof q->cwd);
+        q->args_va = p->args_va; q->args_len = p->args_len; q->args_argc = p->args_argc; q->args_envc = p->args_envc;   /* a pilha vem junto (COW) */
         q->brk = p->brk; q->brk_start = p->brk_start; q->mmap_next = p->mmap_next;
         q->dyld = macho_dyld_clone(p->dyld);            /* imagens do dlopen: mesma memória, cópia do grafo */
         memcpy(q->sig_handler, p->sig_handler, sizeof q->sig_handler);
@@ -4070,6 +4071,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         r = uvm_copy_out(p, b, p->fds[a].path, n) ? (i64)n - 1 : -MOS_EFAULT;
         break;
     }
+    case SYS_DARWIN: { extern i64 darwin_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c); r = darwin_syscall(p, a, b, c, f->r10); break; }   /* sysctl/proc_info (proc/darwin.c) */
     case SYS_PROCLIST: {
         process_t *q = procs;
         for (u64 i = 0; q; q = q->next) if (!q->exited && i++ == a) break;
