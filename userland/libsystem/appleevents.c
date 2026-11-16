@@ -326,7 +326,8 @@ static id i_description(id self, SEL c) {
 }
 
 /* ================================================================ NSAppleEventManager */
-static __thread ae_node *t_cur_event, *t_cur_reply;
+/* o evento atual: os tratadores rodam sempre no fio principal (dispatch_event), sem TLS (__thread não vale no mOS) */
+static ae_node *t_cur_event, *t_cur_reply;
 static id aem_shared(id cls, SEL c) {
     (void)c;
     static id g;
