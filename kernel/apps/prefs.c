@@ -50,13 +50,13 @@ extern void bt_a2dp_test_tone(void);
 enum {
     P_USERS, P_WIFI, P_BT, P_REDE, P_NOTIF, P_SOM, P_GERAL, P_APAR, P_MESA, P_MONITOR, P_WALL, P_PRIV, P_TECLADO,
     /* subpáginas de Geral */
-    P_SOBRE, P_UPDATE, P_STORAGE, P_DATA, P_IDIOMA, P_STARTUP,
+    P_SOBRE, P_UPDATE, P_STORAGE, P_DATA, P_IDIOMA, P_STARTUP, P_LOGIN,
     P_COUNT
 };
 static const char *pane_names[P_COUNT] = {
     "Usuários e Grupos", "Wi-Fi", "Bluetooth", "Rede", "Notificações", "Som", "Geral", "Aparência", "Mesa e Dock",
     "Monitores", "Papel de Parede", "Privacidade e Segurança", "Teclado",
-    "Sobre", "Atualização de Software", "Armazenamento", "Data e Hora", "Idioma e Região", "Disco de Inicialização",
+    "Sobre", "Atualização de Software", "Armazenamento", "Data e Hora", "Idioma e Região", "Disco de Inicialização", "Itens de Início",
 };
 static const char *pane_kw[P_COUNT] = {
     "conta senha usuario login administrador", "wifi rede sem fio wpa senha internet", "bluetooth fone teclado mouse parear",
@@ -65,12 +65,14 @@ static const char *pane_kw[P_COUNT] = {
     "papel de parede fundo imagem dunas seda", "privacidade seguranca certificados https tls senha", "teclado layout abnt2 atalhos",
     "sobre mac chip memoria processador versao serie", "atualizacao software versao", "armazenamento disco espaco memoria",
     "data hora fuso relogio", "idioma regiao portugues", "disco inicializacao instalar boot",
+    "itens de inicio login abrir ao iniciar sessao segundo plano launchagents launchdaemons",
 };
 static const u32 pane_colors[P_COUNT] = {
     RGB(142, 142, 147), RGB(10, 132, 255), RGB(10, 132, 255), RGB(10, 132, 255), RGB(255, 59, 48), RGB(255, 45, 85),
     RGB(142, 142, 147), RGB(28, 28, 30), RGB(28, 28, 30), RGB(10, 132, 255), RGB(50, 173, 230), RGB(10, 132, 255),
     RGB(142, 142, 147),
     RGB(142, 142, 147), RGB(142, 142, 147), RGB(142, 142, 147), RGB(10, 132, 255), RGB(10, 132, 255), RGB(142, 142, 147),
+    RGB(142, 142, 147),
 };
 static int pane_parent(int p) { return p >= P_SOBRE ? P_GERAL : p; }
 
@@ -157,7 +159,7 @@ static void g_lock(surface_t *s, int x, int y, int z, u32 c) {
 
 static const glyph_fn pane_glyph[P_COUNT] = {
     g_people, g_wifi, glyph_bluetooth, g_globe, g_bell, g_speaker, g_gear, g_appearance, g_dock, g_monitor, g_wallpaper,
-    g_hand, g_keyboard, g_info, g_update, g_disk, g_clock, g_globe, g_disk,
+    g_hand, g_keyboard, g_info, g_update, g_disk, g_clock, g_globe, g_disk, g_dock,
 };
 
 /* quadrado arredondado colorido com o símbolo em branco (como os ícones dos Ajustes) */
@@ -615,11 +617,11 @@ static void paint_som(void) {
 /* ================================================================== Geral */
 static void paint_geral(void) {
     hero(P_GERAL, "Gerencie a configuração geral do mOS, atualizações, armazenamento e mais.", NULL, 0);
-    static const int a[] = {P_SOBRE, P_UPDATE, P_STORAGE}, b[] = {P_DATA, P_IDIOMA, P_STARTUP};
+    static const int a[] = {P_SOBRE, P_UPDATE, P_STORAGE}, b[] = {P_DATA, P_IDIOMA, P_LOGIN, P_STARTUP};
     rect_t g = group(3);
     for (int i = 0; i < 3; i++) if (icon_row(UI_ID + 3000 * (i + 1), g, i, pane_icon_cb, (void *)(uptr)a[i], pane_names[a[i]], NULL, true)) go(a[i], true);
-    rect_t g2 = group(3);
-    for (int i = 0; i < 3; i++) if (icon_row(UI_ID + 3000 * (i + 1), g2, i, pane_icon_cb, (void *)(uptr)b[i], pane_names[b[i]], NULL, true)) go(b[i], true);
+    rect_t g2 = group(4);
+    for (int i = 0; i < 4; i++) if (icon_row(UI_ID + 3000 * (i + 1), g2, i, pane_icon_cb, (void *)(uptr)b[i], pane_names[b[i]], NULL, true)) go(b[i], true);
 }
 
 static void paint_sobre(void) {
@@ -816,6 +818,201 @@ static void paint_idioma(void) {
     rect_t g2 = group(2);
     row_value(row(g2, 0, "Data"), "06/11/2026 · sexta-feira, 6 de novembro");
     row_value(row(g2, 1, "Números"), "1.234.567,89 · R$");
+}
+
+/* ================================================================== Itens de Início (Geral)
+ * "Abrir ao iniciar sessão": ~/Library/Preferences/com.mos.loginitems, um .app por linha (kernel/include/loginitem.inc;
+ * o init relê a cada 5 s). "Permitir em segundo plano": os .plist de ~/Library/LaunchAgents, /Library/LaunchAgents e
+ * /Library/LaunchDaemons; desligar grava <key>Disabled</key><true/> no plist (o init respeita), ligar tira. */
+#define LI_LOGIC_ONLY
+#include "loginitem.inc"
+#include "plist.h"
+
+static const char *li_file(void) { return home_sub("/Library/Preferences/com.mos.loginitems"); }
+
+static int li_read(char paths[][LI_PATH], int max) {
+    vnode_t *v = vfs_lookup(li_file());
+    if (!v || v->dir) return 0;
+    vfs_ensure(v);
+    static char txt[LI_TEXT];
+    usize n = MIN(v->size, (usize)LI_TEXT - 1);
+    memcpy(txt, v->data, n);
+    txt[n] = 0;
+    return li_parse(txt, paths, max);
+}
+
+static bool li_change(const char *path, bool add) {
+    static char cur[LI_TEXT], out[LI_TEXT];
+    cur[0] = 0;
+    vnode_t *v = vfs_lookup(li_file());
+    if (v && !v->dir) { vfs_ensure(v); usize n = MIN(v->size, (usize)LI_TEXT - 1); memcpy(cur, v->data, n); cur[n] = 0; }
+    int rc = add ? li_text_add(cur, path, out, LI_TEXT) : li_text_remove(cur, path, out, LI_TEXT);
+    if (rc < 0 || (add && rc != 0)) return false;
+    vfs_mkdir(home_sub("/Library"));
+    vfs_mkdir(home_sub("/Library/Preferences"));
+    return vfs_write_file(li_file(), out, strlen(out)) != NULL;
+}
+
+/* Disabled no plist XML. Binário: não editável aqui (devolve false). on = permitir (Disabled ausente ou false). */
+static bool bg_set_enabled(const char *path, bool on) {
+    vnode_t *v = vfs_lookup(path);
+    if (!v || v->dir || v->size < 8) return false;
+    vfs_ensure(v);
+    if (!memcmp(v->data, "bplist", 6)) return false;
+    usize n = v->size;
+    char *src = kmalloc(n + 1), *dst = kmalloc(n + 64);
+    if (!src || !dst) { kfree(src); kfree(dst); return false; }
+    memcpy(src, v->data, n);
+    src[n] = 0;
+    usize m = 0;
+    char *k = strstr(src, "<key>Disabled</key>");
+    if (k) {
+        /* troca o valor que vem depois da chave (<true/> ou <false/>) */
+        char *val = k + 19;
+        while (*val == ' ' || *val == '\t' || *val == '\r' || *val == '\n') val++;
+        char *end = !strncmp(val, "<true/>", 7) ? val + 7 : !strncmp(val, "<false/>", 8) ? val + 8 : NULL;
+        if (!end) { kfree(src); kfree(dst); return false; }
+        memcpy(dst, src, (usize)(val - src)); m = (usize)(val - src);
+        const char *nv = on ? "<false/>" : "<true/>";
+        memcpy(dst + m, nv, strlen(nv)); m += strlen(nv);
+        usize rest = n - (usize)(end - src);
+        memcpy(dst + m, end, rest); m += rest;
+    } else if (!on) {
+        /* acrescenta antes do último </dict> (o do dicionário raiz) */
+        char *last = NULL;
+        for (char *p = strstr(src, "</dict>"); p; p = strstr(p + 1, "</dict>")) last = p;
+        if (!last) { kfree(src); kfree(dst); return false; }
+        memcpy(dst, src, (usize)(last - src)); m = (usize)(last - src);
+        const char *ins = "\t<key>Disabled</key>\n\t<true/>\n";
+        memcpy(dst + m, ins, strlen(ins)); m += strlen(ins);
+        usize rest = n - (usize)(last - src);
+        memcpy(dst + m, last, rest); m += rest;
+    } else { kfree(src); kfree(dst); return true; }      /* já permitido */
+    bool ok = vfs_write_file(path, dst, m) != NULL;
+    kfree(src); kfree(dst);
+    return ok;
+}
+
+typedef struct { char path[320], label[96], owner[96]; bool disabled, binary; } bgitem_t;
+
+/* dono: AssociatedBundleIdentifiers, ou o .app no caminho do programa, ou o rótulo */
+static void bg_owner(const pl_t *root, const char *label, char *out, int cap) {
+    const pl_t *ab = pl_get(root, "AssociatedBundleIdentifiers");
+    const char *id = ab ? (ab->type == PL_STRING ? ab->str : (ab->type == PL_ARRAY && pl_at(ab, 0) && pl_at(ab, 0)->type == PL_STRING ? pl_at(ab, 0)->str : NULL)) : NULL;
+    ls_app_t *a = id ? ls_app_by_id(id) : NULL;
+    if (a) { snprintf(out, cap, "%s", ls_app_name(a)); return; }
+    const char *prog = pl_str(root, "Program");
+    const pl_t *args = pl_get(root, "ProgramArguments");
+    if (!prog && args && args->type == PL_ARRAY && pl_at(args, 0) && pl_at(args, 0)->type == PL_STRING) prog = pl_at(args, 0)->str;
+    const char *app = prog ? strstr(prog, ".app/") : NULL;
+    if (app) {
+        const char *s = app;
+        while (s > prog && s[-1] != '/') s--;
+        snprintf(out, cap, "%.*s", (int)(app - s), s);
+        return;
+    }
+    snprintf(out, cap, "%s", label);
+}
+
+static int bg_scan(bgitem_t *items, int max) {
+    const char *dirs[3] = { home_sub("/Library/LaunchAgents"), "/Library/LaunchAgents", "/Library/LaunchDaemons" };
+    int n = 0;
+    for (int d = 0; d < 3; d++) {
+        vnode_t *dir = vfs_lookup(dirs[d]);
+        for (vnode_t *c = dir && dir->dir ? dir->child : NULL; c && n < max; c = c->next) {
+            if (c->dir || strcasecmp(vfs_ext(c->name), "plist")) continue;
+            bgitem_t *it = &items[n];
+            memset(it, 0, sizeof *it);
+            snprintf(it->path, sizeof it->path, "%s/%s", dirs[d], c->name);
+            vfs_ensure(c);
+            it->binary = c->size >= 6 && !memcmp(c->data, "bplist", 6);
+            pl_t *root = pl_parse(c->data, c->size);
+            const char *label = root ? pl_str(root, "Label") : NULL;
+            snprintf(it->label, sizeof it->label, "%s", label ? label : c->name);
+            if (root) {
+                bg_owner(root, it->label, it->owner, sizeof it->owner);
+                const pl_t *dis = pl_get(root, "Disabled");
+                it->disabled = dis && dis->type == PL_BOOL && dis->num;
+                pl_free(root);
+            } else snprintf(it->owner, sizeof it->owner, "%s", it->label);
+            n++;
+        }
+    }
+    return n;
+}
+
+static void paint_login(void) {
+    hero(P_LOGIN, "Apps que abrem quando você inicia sessão e itens que os apps deixam rodando em segundo plano.", NULL, 0);
+    static bool picking;
+    static char paths[LI_MAX][LI_PATH];
+    int n = li_read(paths, LI_MAX);
+    section("Abrir ao iniciar sessão");
+    int del = -1;
+    if (n) {
+        rect_t g = group(n);
+        for (int i = 0; i < n; i++) {
+            int y = g.y + 6 + i * RH;
+            if (i) gfx_fill(U->s, g.x + 20, y, g.w - 40, 1, T.separator);
+            ls_app_t *a = ls_app_by_path(paths[i]);
+            if (a) ls_app_draw_icon(a, U->s, g.x + 16, y + (RH - 26) / 2, 26);
+            char nm[96];
+            const char *bn = strrchr(paths[i], '/');
+            bn = bn ? bn + 1 : paths[i];
+            int bl = (int)strlen(bn);
+            if (bl > 4 && !strcasecmp(bn + bl - 4, ".app")) bl -= 4;
+            snprintf(nm, sizeof nm, "%.*s", bl, bn);
+            text_draw_ellipsis(U->s, F(FONT_REGULAR), 14, g.x + 52, y + RH / 2 + 5, g.w - 52 - 70, T.text, a ? ls_app_name(a) : nm);
+            if (ui_button(U, 0x7D000 + i, rect_make(g.x + g.w - 50, y + (RH - 26) / 2, 34, 26), "−", false)) del = i;
+        }
+    } else footnote("Nenhum app abre ao iniciar sessão.", 0);
+    if (del >= 0 && !li_change(paths[del], false)) footnote("Não foi possível gravar a lista.", RGB(230, 70, 60));
+    rect_t gb = group(1);
+    if (row_button(UI_ID, row(gb, 0, picking ? "Escolha um app" : "Adicionar um app"), picking ? "Cancelar" : "+", false)) picking = !picking;
+    if (picking) {
+        int k = 0;
+        for (int i = 0; i < ls_app_count(); i++) { const char *p = ls_app_path(ls_app_at(i)); if (p && p[0]) k++; }
+        if (!k) footnote("Nenhum app instalado em /Aplicativos.", 0);
+        else {
+            rect_t g = group(k);
+            int r = 0;
+            for (int i = 0; i < ls_app_count(); i++) {
+                ls_app_t *a = ls_app_at(i);
+                const char *p = ls_app_path(a);
+                if (!p || !p[0]) continue;
+                int y = g.y + 6 + r * RH;
+                if (r) gfx_fill(U->s, g.x + 20, y, g.w - 40, 1, T.separator);
+                ls_app_draw_icon(a, U->s, g.x + 16, y + (RH - 26) / 2, 26);
+                text_draw_ellipsis(U->s, F(FONT_REGULAR), 14, g.x + 52, y + RH / 2 + 5, g.w - 52 - 130, T.text, ls_app_name(a));
+                bool there = false;
+                for (int j = 0; j < n; j++) if (!strcmp(paths[j], p)) there = true;
+                if (there) row_value(rect_make(g.x + 20, y, g.w - 40, RH), "Já está na lista");
+                else if (ui_button(U, 0x7D100 + i, rect_make(g.x + g.w - 110, y + (RH - 26) / 2, 94, 26), "Adicionar", false)) {
+                    if (li_change(p, true)) picking = false;
+                }
+                r++;
+            }
+        }
+    }
+    footnote("O mOS abre estes apps alguns segundos depois de você entrar na sessão.", 0);
+
+    section("Permitir em segundo plano");
+    static bgitem_t items[48];
+    int nb = bg_scan(items, 48);
+    if (!nb) { footnote("Nenhum app instalou itens em segundo plano.", 0); return; }
+    rect_t g = group(nb);
+    bool failed = false;
+    for (int i = 0; i < nb; i++) {
+        int y = g.y + 6 + i * RH;
+        if (i) gfx_fill(U->s, g.x + 20, y, g.w - 40, 1, T.separator);
+        text_draw_ellipsis(U->s, F(FONT_REGULAR), 14, g.x + 20, y + 18, g.w - 110, T.text, items[i].owner);
+        text_draw_ellipsis(U->s, F(FONT_REGULAR), 11.5f, g.x + 20, y + 33, g.w - 110, T.text2,
+                           items[i].binary ? "plist binário: não dá para mudar aqui" : items[i].label);
+        bool on = !items[i].disabled;
+        if (ui_switch_ex(U, 0x7D200 + i, g.x + g.w - 66, y + (RH - 20) / 2, 20, &on, !items[i].binary))
+            if (!bg_set_enabled(items[i].path, on)) failed = true;
+    }
+    if (failed) footnote("Não foi possível gravar o item.", RGB(230, 70, 60));
+    footnote("Desligar impede o item de rodar a partir do próximo início (o plist ganha Disabled). Ligar volta a permitir.", 0);
 }
 
 static void paint_startup(void) {
@@ -1575,6 +1772,7 @@ static void paint(window_t *w, ui_t *u) {
     case P_DATA: paint_data(); break;
     case P_IDIOMA: paint_idioma(); break;
     case P_STARTUP: paint_startup(); break;
+    case P_LOGIN: paint_login(); break;
     }
     content_h[p] = Y - y0 + 12;
     u->mx = saved_mx;
@@ -1619,6 +1817,25 @@ void prefs_open_pane(int p) {
 void prefs_open_named(const char *name) {
     for (int p = 0; p < P_COUNT; p++)
         if (icontains(pane_names[p], name) || icontains(pane_kw[p], name)) { if (!pw) launch(&app_preferencias); go(p, true); return; }
+}
+
+/* x-apple.systempreferences:<painel> (Launch Services, SMAppService.openSystemSettingsLoginItems e afins) */
+void prefs_open_url(const char *url) {
+    const char *id = strchr(url, ':');
+    id = id ? id + 1 : "";
+    if (!pw) launch(&app_preferencias);
+    if (strstr(id, "LoginItems")) go(P_LOGIN, true);
+    else if (strstr(id, "Privacy") || strstr(id, "security") || strstr(id, "Security")) go(P_PRIV, true);
+    else if (strstr(id, "Notifications")) go(P_NOTIF, true);
+    else if (strstr(id, "Bluetooth")) go(P_BT, true);
+    else if (strstr(id, "Network") || strstr(id, "Wi-Fi")) go(P_REDE, true);
+    else if (strstr(id, "Sound")) go(P_SOM, true);
+    else if (strstr(id, "Displays")) go(P_MONITOR, true);
+    else if (strstr(id, "Keyboard")) go(P_TECLADO, true);
+    else if (strstr(id, "Users")) go(P_USERS, true);
+    else if (strstr(id, "Appearance")) go(P_APAR, true);
+    else if (strstr(id, "Dock") || strstr(id, "Desktop")) go(P_MESA, true);
+    else if (strstr(id, "General")) go(P_GERAL, true);
 }
 
 app_t app_preferencias = {.name = "Ajustes do Sistema", .exec = "preferencias", .draw_icon = icon_prefs, .launch = launch, .pinned = true};

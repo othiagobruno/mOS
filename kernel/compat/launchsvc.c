@@ -26,6 +26,7 @@ void archive_open_file(const char *path);
 void diskimage_open_file(const char *path);
 void script_open_file(const char *path);
 void mail_open_url(const char *url);
+void prefs_open_url(const char *url);
 void br_vfs_announce(const char *root);   /* compat/bundlereg.c: XPC e plugin, sem privilégio */
 extern app_t app_compactacao, app_dimounter;
 app_t *compat_gui_app_for_pid(int pid);
@@ -539,12 +540,15 @@ static void register_builtins(void) {
     bclaim(a, "public.iso-image", LS_ROLE_VIEWER, RANK_OWNER);
     /* os outros apps do sistema existem para "abrir -b" e para o NSWorkspace achá-los, sem tipos */
     struct { app_t *a; const char *id; } plain[] = {
-        {&app_terminal, "com.apple.Terminal"}, {&app_preferencias, "com.apple.systempreferences"}, {&app_notas, "com.apple.Notes"},
+        {&app_terminal, "com.apple.Terminal"}, {&app_notas, "com.apple.Notes"},
         {&app_calculadora, "com.apple.calculator"}, {&app_musica, "com.apple.Music"}, {&app_fotos, "com.apple.Photos"},
         {&app_mapas, "com.apple.Maps"}, {&app_atividade, "com.apple.ActivityMonitor"}, {&app_console, "com.apple.Console"},
         {&app_lembretes, "com.apple.reminders"}, {&app_fontes, "com.apple.FontBook"}, {&app_disco, "com.apple.DiskUtility"},
     };
     for (u32 i = 0; i < ARRAY_LEN(plain); i++) builtin(plain[i].a, plain[i].id, NULL, NULL);
+    /* Ajustes: x-apple.systempreferences:<painel> abre o painel (SMAppService.openSystemSettingsLoginItems etc.) */
+    a = builtin(&app_preferencias, "com.apple.systempreferences", NULL, prefs_open_url);
+    if (a) scheme_add(a, "x-apple.systempreferences");
 }
 
 /* ---------------- apps do macOS: Info.plist */
