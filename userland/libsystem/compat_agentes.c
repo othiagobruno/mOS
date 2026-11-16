@@ -133,11 +133,6 @@ void *FSEventStreamCreateRelativeToDevice(void *alloc, void *cb, void *ctx, long
 id_ FSEventsCopyUUIDForDevice(long dev) { (void)dev; return 0; } /* STUB: o VFS não tem UUID de volume */
 u64 FSEventsGetLastEventIdForDeviceBeforeTime(long dev, double t) { (void)dev; (void)t; return 0; } /* STUB: sem journal */
 
-/* ---- DiskArbitration: os dicionários de filtro prontos (CFDictionaryRef). NULL = "todos os discos", o que o
- * DARegister*Callback do mOS faria de qualquer forma (ele nunca chama de volta: não há discos removíveis) */
-const void *kDADiskDescriptionMatchVolumeMountable = 0;
-const void *kDADiskDescriptionWatchVolumePath = 0;
-
 /* ---- IOKit HID: o mOS não expõe dispositivos HID (o sand-webauthn-signer do Grok procura chaves de segurança) */
 void IOHIDManagerSetDeviceMatching(void *m, id_ dict) { (void)m; (void)dict; }
 void IOHIDManagerRegisterInputReportCallback(void *m, void *cb, void *ctx) { (void)m; (void)cb; (void)ctx; }
