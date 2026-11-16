@@ -58,6 +58,37 @@ static pv_cmtime_t pv_time(double s) { pv_cmtime_t t = {(long long)(s * 600 + (s
 static double pv_sec(pv_cmtime_t t) { return t.timescale > 0 && (t.flags & 1) ? (double)t.value / t.timescale : 0; }
 static pv_cmtime_t pv_invalid(void) { pv_cmtime_t t = {0, 0, 0, 0}; return t; }
 
+/* videoComposition do item: o quadro da tela de render (renderSize) com as camadas do momento; BGRA (+malloc) */
+#include "avvcomp_desc.h"
+#include "avcap_conv.h"
+id cx_avitem_video_composition(id item);
+static struct { id vc; vcomp_desc d; int ok; } vcache;
+static int comp_bgra(id item, avv_t *v, const avv_frame *f, uint8_t **out, int *ow, int *oh) {
+    id vc = cx_avitem_video_composition(item);
+    if (!vc) return -1;
+    if (vcache.vc != vc) { vcache.vc = vc; vcache.ok = !cx_vcomp_describe(vc, &vcache.d); }
+    if (!vcache.ok) return -1;
+    const vcomp_desc *d = &vcache.d;
+    double t = f->pts;
+    const vcd_inst *ins = 0;
+    for (int i = 0; i < d->ninst; i++) if (t >= d->inst[i].t0 - 1e-9 && t < d->inst[i].t1 - 1e-9) { ins = &d->inst[i]; break; }
+    uint32_t *cv = malloc((size_t)d->w * d->h * 4);
+    if (!cv) return -1;
+    for (long i = 0; i < (long)d->w * d->h; i++) cv[i] = ins ? ins->bg : 0xFF000000u;
+    uint8_t *px = 0; int fw, fh;
+    if (ins && !avv_to_bgra(f, 0, 0, 0, &px, &fw, &fh)) {
+        for (int li = ins->nlayers - 1; li >= 0; li--) {
+            const vc_layer *l = &ins->layers[li];
+            vc_rect cr;
+            int hc = vc_layer_crop(l, t, &cr);
+            vc_composite(cv, d->w, d->h, (const uint32_t *)px, fw, fh, vc_layer_transform(l, t), vc_layer_opacity(l, t), hc ? &cr : 0);
+        }
+        free(px);
+    }
+    (void)v;
+    *out = (uint8_t *)cv; *ow = d->w; *oh = d->h;
+    return 0;
+}
 /* leitor de vídeo de uma saída: reabre quando o item (o asset) muda */
 typedef struct { avv_t *v; char path[1024]; } pv_reader_t;
 static avv_t *reader_for(pv_reader_t *r, id item) {
@@ -129,6 +160,25 @@ static void *pvo_copy(id s, SEL c, pv_cmtime_t t, pv_cmtime_t *disp) {
     avv_frame f;
     if (!v || avv_frame_at(v, pv_sec(t), &f)) return 0;
     void *img = 0;
+    uint8_t *cpx = 0; int cw = 0, ch = 0;
+    if (!comp_bgra(o->item, v, &f, &cpx, &cw, &ch)) {   /* com videoComposition: a tela de render */
+        if (CVPixelBufferCreate(0, (u64)cw, (u64)ch, o->fmt, 0, &img) || !img) { free(cpx); return 0; }
+        CVPixelBufferLockBaseAddress(img, 0);
+        if (o->fmt == 0x42475241u) {
+            uint8_t *dd = CVPixelBufferGetBaseAddress(img);
+            u64 bpr = CVPixelBufferGetBytesPerRow(img);
+            for (int r = 0; r < ch; r++) memcpy(dd + (u64)r * bpr, cpx + (u64)r * cw * 4, (size_t)cw * 4);
+        } else {
+            uint8_t *pl[2] = {CVPixelBufferGetBaseAddressOfPlane(img, 0), CVPixelBufferGetBaseAddressOfPlane(img, 1)};
+            size_t bpr[2] = {CVPixelBufferGetBytesPerRowOfPlane(img, 0), CVPixelBufferGetBytesPerRowOfPlane(img, 1)};
+            avc_convert(AVC_SRC_BGRA, cpx, (size_t)cw * ch * 4, cw, ch, o->fmt, pl, bpr);
+        }
+        CVPixelBufferUnlockBaseAddress(img, 0);
+        free(cpx);
+        o->last_pts = f.pts; o->has_last = 1;
+        if (disp) *disp = pv_time(f.pts);
+        return img;
+    }
     if (CVPixelBufferCreate(0, (u64)f.w, (u64)f.h, o->fmt, 0, &img) || !img) return 0;
     CVPixelBufferLockBaseAddress(img, 0);
     if (o->fmt == 0x42475241u) {
@@ -224,7 +274,7 @@ static void pls_tick(id s, SEL c, id timer) {
     if (!v || !st->layer || avv_frame_at(v, cx_avitem_seconds(item), &f) || f.pts == st->last_pts) return;
     uint8_t *px = 0;
     int ow, oh;
-    if (avv_to_bgra(&f, avv_rotation(v), 0, 0, &px, &ow, &oh)) return;
+    if (comp_bgra(item, v, &f, &px, &ow, &oh) && avv_to_bgra(&f, avv_rotation(v), 0, 0, &px, &ow, &oh)) return;
     void *prov = CGDataProviderCreateWithData(0, px, (size_t)ow * oh * 4, free_px);
     void *cs = CGColorSpaceCreateDeviceRGB();
     void *img = CGImageCreate((size_t)ow, (size_t)oh, 8, 32, (size_t)ow * 4, cs, 6 | 0x2000, prov, 0, 1, 0);   /* BGRA */
