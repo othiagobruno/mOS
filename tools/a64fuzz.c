@@ -792,7 +792,7 @@ typedef struct { u32 gen, must_udf, exp_exec, exp_udf, impl, match, diverge, udf
                  jit_div, jit_match, saved; } gstat;
 
 int main(int argc, char **argv) {
-    int casos = 2000, K = 1, jit = 0, salvar = 0, max_salvos = 3, listar = 0, lote = 40000;
+    int casos = 2000, K = 1, jit = 0, sem_qemu = 0, salvar = 0, max_salvos = 3, listar = 0, lote = 40000;
     const char *relatorio = NULL, *exemplos = NULL, *so_gerar = NULL;
     int sel[NGROUPS]; int nsel = 0;
     u64 seed = GetTickCount64();
@@ -811,6 +811,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--k") && i + 1 < argc) K = atoi(argv[++i]);
         else if (!strcmp(a, "--semente") && i + 1 < argc) seed = strtoull(argv[++i], NULL, 0);
         else if (!strcmp(a, "--jit")) jit = 1;
+        else if (!strcmp(a, "--sem-qemu")) sem_qemu = jit = 1;   /* só interp × JIT: o interpretador faz de oráculo */
         else if (!strcmp(a, "--salvar")) salvar = 1;
         else if (!strcmp(a, "--max-salvos") && i + 1 < argc) max_salvos = atoi(argv[++i]);
         else if (!strcmp(a, "--lote") && i + 1 < argc) lote = atoi(argv[++i]);
@@ -850,7 +851,7 @@ int main(int argc, char **argv) {
     const char *o = getenv("MOS_LLVM_OBJDUMP"); strcpy(g_objdump, o ? o : "/usr/bin/llvm-objdump");
 #endif
     g_have_llvm = exists(g_objdump);
-    if (!exists(g_qemu) || !exists(g_mon) || !exists(g_a64test)) {
+    if ((!sem_qemu && (!exists(g_qemu) || !exists(g_mon))) || !exists(g_a64test)) {
         fprintf(stderr, "a64fuzz: falta %s\n", !exists(g_qemu) ? g_qemu : !exists(g_mon) ? g_mon : g_a64test); return 2;
     }
     if (!g_have_llvm) fprintf(stderr, "a64fuzz: aviso: sem llvm-objdump (%s); validade só pelo QEMU (recursos a mais do -cpu max não viram UDF esperado)\n", g_objdump);
@@ -915,6 +916,7 @@ int main(int argc, char **argv) {
                 }
             }
         }
+        if (sem_qemu) { memcpy(rq + b, ri + b, m * sizeof *ri); continue; }
         x = run_engine(ENG_QEMU, cs + b, m, 0); if (!x) return 3; memcpy(rq + b, x, m * sizeof *x); free(x);
     }
     DWORD t1 = GetTickCount();
