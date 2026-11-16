@@ -69,4 +69,25 @@ de host passando (o build do projeto fica para o fim, pela fila `build-final.sh`
 | 4 getattrlist e operações | ✅ `attrlist.c` + `vfsops.c`; testes 147 + 50. Hard links ficam com a fase 10. |
 | 9 Bookmarks, alias e quarentena | ✅ `bookmark.c`, `quarantine.c`, `/usr/bin/xattr` (`docs/bookmarks-quarentena.md`); teste 71. |
 | 8 Instalador .pkg | ✅ `/usr/sbin/installer`, `/usr/sbin/pkgutil`, motor `userland/pkg/pkgengine.c` (`docs/pkg-instalador.md`); teste 30 + pacote real. |
-| 5–7, 10, 11 | a fazer |
+| 5, 6, 7, 10, 11 | a fazer (desenho abaixo) |
+
+## O que falta, em detalhe
+
+- **5 HFS+ completo** (`kernel/fs/hfsplus_wr.c`): árvore de atributos crescendo, xattr inline e em fork (o VFS já tem
+  os xattrs: falta o driver gravar e ler), hard links (arquivo e pasta), links simbólicos de verdade, modo/dono/flags/
+  datas do vnode no catálogo, FinderInfo, resource fork, decmpfs na escrita. **TRIM** (pedido da Larissa, PR #276):
+  ao soltar blocos (apagar, truncar, substituir) no HFS+, FAT e APFS, chamar `blk_discard()` na faixa liberada,
+  juntando faixas contíguas.
+- **6 APFS**: leitura completa (snapshots, clones, xattrs, links, compressão, volume selado) e escrita (B-tree COW,
+  spaceman, checkpoints) com verificador próprio em `tools/volimg.c`.
+- **7 .dmg e hdiutil**: UDRW gravável no kernel (blkdev com `write` sobre o vnode da imagem, gravado pelo persist;
+  o HFS+ do volume monta com `hfsplus_wr`, sem o consentimento de disco físico, porque é um arquivo do usuário);
+  sparseimage (UDSP) e sparsebundle; formatador HFS+/FAT32 limpo em `userland/pkg/volfmt.c` (conferido pelo
+  `volimg check`); escritor UDIF (koly, plist, mish, CRC32) com UDRO/UDZO/ULFO/ULMO por `compression_encode_buffer`;
+  `/usr/bin/hdiutil` Mach-O (attach/detach/info/imageinfo/verify/create -srcfolder/convert/compact) no lugar do
+  script `tools/brew-shims/hdiutil`; criptografia AES (senha) por último.
+- **10 fd -> vnode** (repassado pelo Henrique): o fd guardar o vnode com contagem de referência (o `SYS_READ` sem
+  `vfs_lookup` por chamada, fileport do `machipc` acompanhando o rename), separar nome e inode no VFS (hard links
+  reais com `nlink`), e `tools/fatcat.c` voltando a compilar no host.
+- **11 VFS sob demanda**: nós por diretório e conteúdo pelo `fs/pcache.c` em vez do disco inteiro na RAM (com o
+  Gustavo).
