@@ -273,7 +273,10 @@ bool app_guard_close_request(window_t *w);
 void app_guard_reap(void);
 int  app_guard_crashes(struct app *a);
 void notify_tagged(const char *title, const char *body, int pid, int token);
-int notify_banner_hit(int x, int y, int *pid, int *token);
+/* notificação de app com subtítulo e até 4 ações ("título\topções" por linha; MOS_DESK_ACT_*, MOS_DESK_FLAG_*) */
+void notify_tagged_ex(const char *title, const char *subtitle, const char *body, const char *actions, int pid, int token, u32 flags);
+int  notify_remove(int pid, int token);   /* token 0 = todas do pid; devolve quantas saíram */
+void desk_event_enqueue(int pid, int token, int action, const char *text);   /* deskbridge.c */
 void desktop_open_menu(int index);
 void desktop_close_menus(void);
 bool desktop_menu_open(void);

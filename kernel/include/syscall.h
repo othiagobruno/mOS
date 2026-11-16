@@ -78,7 +78,8 @@ enum {
     SYS_GPU = 62,      /* 62: (op, struct*, tamanho) -> 0 | -errno   GPU: kernel/include/mos_gpu.h e docs/gpu-abi.md */
     SYS_COUNT,
     /* 63: banner de notificação do app e selo do Dock (kernel/ui/deskbridge.c).
-     * rdi = MOS_DESK_BANNER (título, corpo, token) | MOS_DESK_TAKE (int *token) | MOS_DESK_BADGE (rótulo). */
+     * rdi = MOS_DESK_BANNER (título, corpo, token) | MOS_DESK_TAKE (int *token) | MOS_DESK_BADGE (rótulo)
+     *     | MOS_DESK_BANNER_EX (mos_desk_banner_t *) | MOS_DESK_TAKE_EX (mos_desk_event_t *) | MOS_DESK_REMOVE (token). */
     SYS_DESKTOP = 63,
     SYS_GUI_FIRST = 64,/* 64..79: interface gráfica dos apps do macOS (kernel/compat/guisys.c) */
     SYS_GUI_LAST = 79,
@@ -279,9 +280,27 @@ typedef struct {
     char name[32];
 } mos_dw_thread_t;
 
-#define MOS_DESK_BANNER 1
-#define MOS_DESK_TAKE   2
-#define MOS_DESK_BADGE  3
+#define MOS_DESK_BANNER    1
+#define MOS_DESK_TAKE      2
+#define MOS_DESK_BADGE     3
+#define MOS_DESK_BANNER_EX 4   /* b = mos_desk_banner_t *: 0 ou -errno */
+#define MOS_DESK_TAKE_EX   5   /* b = mos_desk_event_t *: 1 = evento, 0 = nenhum */
+#define MOS_DESK_REMOVE    6   /* b = token (0 = todas do processo): quantas saíram do banner e da Central */
+
+/* MOS_DESK_BANNER_EX. Strings UTF-8 no espaço do app; 0 = vazio. `actions`: até 4 linhas "título\topções", opções em
+ * decimal: bit0 destrutiva (vermelha), bit1 pede texto (campo + enviar), bit2 abre o app. */
+#define MOS_DESK_ACT_DESTRUCTIVE 1u
+#define MOS_DESK_ACT_TEXT        2u
+#define MOS_DESK_ACT_FOREGROUND  4u
+#define MOS_DESK_FLAG_DISMISS    1u    /* avisar quando o usuário fechar (evento action = -2) */
+#define MOS_DESK_FLAG_SILENT     2u    /* sem som */
+typedef struct { u64 title, subtitle, body, actions; i32 token; u32 flags; } mos_desk_banner_t;
+
+/* MOS_DESK_TAKE_EX. action: -1 clique no corpo, -2 fechado pelo usuário (com MOS_DESK_FLAG_DISMISS), 0..3 botão;
+ * text: o que foi digitado (ação com MOS_DESK_ACT_TEXT). */
+#define MOS_DESK_EV_CLICK   (-1)
+#define MOS_DESK_EV_DISMISS (-2)
+typedef struct { i32 token; i32 action; char text[256]; } mos_desk_event_t;
 
 /* SYS_SPAWNVEC: vetores no espaço do pai. argv e envp são char *const * terminados em NULL.
  * envp 0 = o ambiente curto padrão (HOME, PATH, …). O Electron passa os dois completos:
