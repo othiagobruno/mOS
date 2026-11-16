@@ -538,6 +538,8 @@ typedef struct {
     void *base; u8 *table; int ntable;        /* indexado: espaço base e tabela (ntable entradas × ncomp do base) */
     u8 *icc; long nicc;                      /* perfil ICC (CGColorSpaceCreateWithICCData / ICCBased) */
     double white[3], black[3], gamma[3], matrix[9], range[8];   /* calibrado, Lab */
+    void *prof; int prof_srgb;               /* perfil do motor do ColorSync (cg_color.inc), lido na primeira vez */
+    int calib;                               /* 1 CalibratedRGB, 2 CalibratedGray, 3 Lab */
 } cgspace_t;
 static cx_class_t *space_cls;
 #define MAX_SPACES 24
@@ -560,10 +562,11 @@ void *CGColorSpaceCreateWithName(const void *name) {
     }
     cgspace_t *s = (cgspace_t *)class_createInstance(space_cls, 0);
     if (!s) return 0;
-    int gray = strstr(n, "Gray") != 0;
+    int gray = strstr(n, "Gray") != 0, cmyk = strstr(n, "CMYK") != 0, lab = strstr(n, "Lab") != 0, xyz = strstr(n, "XYZ") != 0;
     s->name = name;
-    s->model = gray ? 0 : 1;
-    s->ncomp = gray ? 1 : 3;
+    s->model = gray ? 0 : cmyk ? 2 : lab ? 3 : xyz ? 7 : 1;     /* CGColorSpaceModel */
+    s->ncomp = gray ? 1 : cmyk ? 4 : 3;
+    if (lab) { s->white[0] = 0.9642; s->white[1] = 1; s->white[2] = 0.8249; s->range[0] = -128; s->range[1] = 127; s->range[2] = -128; s->range[3] = 127; s->calib = 3; }
     s->extended = strstr(n, "Extended") != 0 || strstr(n, "ITUR_2100") != 0;
     objc_retain((id)s);                        /* a tabela mantém uma referência própria */
     spaces[nspaces++] = s;
@@ -572,13 +575,24 @@ void *CGColorSpaceCreateWithName(const void *name) {
 void *CGColorSpaceCreateDeviceRGB(void) { return CGColorSpaceCreateWithName(kCGColorSpaceSRGB); }
 void *CGColorSpaceCreateDeviceGray(void) { return CGColorSpaceCreateWithName(kCGColorSpaceGenericGrayGamma2_2); }
 /* espaços calibrados: o mOS não faz gerenciamento de cor; aproximados por sRGB / cinza gamma 2.2 */
+static cgspace_t *space_new(int model, int ncomp);
 void *CGColorSpaceCreateCalibratedRGB(const CGFloat *white, const CGFloat *black, const CGFloat *gamma, const CGFloat *matrix) {
-    (void)white; (void)black; (void)gamma; (void)matrix;
-    return CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    if (!white || white[1] <= 0) return 0;
+    cgspace_t *s = space_new(1, 3);
+    if (!s) return 0;
+    s->calib = 1;
+    for (int i = 0; i < 3; i++) { s->white[i] = white[i]; s->black[i] = black ? black[i] : 0; s->gamma[i] = gamma ? gamma[i] : 1; }
+    for (int i = 0; i < 9; i++) s->matrix[i] = matrix ? matrix[i] : (i % 4 == 0);
+    return s;
 }
 void *CGColorSpaceCreateCalibratedGray(const CGFloat *white, const CGFloat *black, CGFloat gamma) {
-    (void)white; (void)black; (void)gamma;
-    return CGColorSpaceCreateWithName(kCGColorSpaceGenericGrayGamma2_2);
+    if (!white || white[1] <= 0) return 0;
+    cgspace_t *s = space_new(0, 1);
+    if (!s) return 0;
+    s->calib = 2;
+    for (int i = 0; i < 3; i++) { s->white[i] = white[i]; s->black[i] = black ? black[i] : 0; }
+    s->gamma[0] = gamma > 0 ? gamma : 1;
+    return s;
 }
 void *CGColorSpaceRetain(void *s) { return s ? (void *)objc_retain((id)s) : 0; }
 void CGColorSpaceRelease(void *s) { if (s) objc_release((id)s); }
@@ -592,25 +606,61 @@ bool CGColorSpaceIsWideGamutRGB(const void *s) { return s && strstr(cfstr_c(((co
 /* ======================================================================== CGColor (= NSColor do mOS) */
 typedef struct { cx_class_t *isa; double r, g, b, a; } cgcolor_t;      /* igual a rgba_t do appkit.c */
 u64 CGColorGetTypeID(void) { return 0x2A2; }
+static id space_color(void *space, const CGFloat *comps, int n, void *pattern);
+void *CGColorGetPattern(const void *c);
+static void *colx_any(const void *c);
+static void *colx_space(const void *c);
+static int colx_n(const void *c);
+static const double *colx_comps(const void *c);
 void *CGColorCreate(const void *space, const CGFloat *c) {
-    if (!c) return 0;
-    if (space && ((const cgspace_t *)space)->ncomp == 1) return cx_color(c[0], c[0], c[0], c[1]);
-    return cx_color(c[0], c[1], c[2], c[3]);
+    const cgspace_t *s = space;
+    if (!c || !s) return 0;
+    if (s->model == 6) return 0;                 /* espaço de padrão: CGColorCreateWithPattern */
+    return space_color((void *)space, c, (int)s->ncomp + 1, 0);
 }
-void *CGColorCreateSRGB(CGFloat r, CGFloat g, CGFloat b, CGFloat a) { return cx_color(r, g, b, a); }
-void *CGColorCreateCopy(const void *c) { const cgcolor_t *k = c; return k ? cx_color(k->r, k->g, k->b, k->a) : 0; }
-void *CGColorCreateCopyWithAlpha(const void *c, CGFloat a) { const cgcolor_t *k = c; return k ? cx_color(k->r, k->g, k->b, a) : 0; }
+void *CGColorCreateSRGB(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
+    CGFloat c[4] = {r, g, b, a};
+    void *s = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    id o = space_color(s, c, 4, 0);
+    CGColorSpaceRelease(s);
+    return o;
+}
+void *CGColorCreateCopy(const void *c) {
+    const cgcolor_t *k = c;
+    if (!k) return 0;
+    if (colx_any(c)) return space_color(colx_space(c), colx_comps(c), colx_n(c), CGColorGetPattern(c));
+    return cx_color(k->r, k->g, k->b, k->a);
+}
+void *CGColorCreateCopyWithAlpha(const void *c, CGFloat a) {
+    const cgcolor_t *k = c;
+    if (!k) return 0;
+    if (colx_any(c)) {
+        double v[6];
+        int n = colx_n(c);
+        memcpy(v, colx_comps(c), sizeof v);
+        if (n > 0) v[n - 1] = a;
+        return space_color(colx_space(c), v, n, CGColorGetPattern(c));
+    }
+    return cx_color(k->r, k->g, k->b, a);
+}
 bool CGColorEqualToColor(const void *x, const void *y) {
     const cgcolor_t *a = x, *b = y;
     if (a == b) return true;
-    return a && b && a->r == b->r && a->g == b->g && a->b == b->b && a->a == b->a;
+    if (!a || !b) return false;
+    if (colx_any(x) || colx_any(y)) {
+        if (!colx_any(x) || !colx_any(y) || colx_space(x) != colx_space(y) || colx_n(x) != colx_n(y)) return false;
+        for (int i = 0; i < colx_n(x); i++) if (colx_comps(x)[i] != colx_comps(y)[i]) return false;
+        return CGColorGetPattern(x) == CGColorGetPattern(y);
+    }
+    return a->r == b->r && a->g == b->g && a->b == b->b && a->a == b->a;
 }
-size_t CGColorGetNumberOfComponents(const void *c) { return c ? 4 : 0; }
-const CGFloat *CGColorGetComponents(const void *c) { return c ? &((const cgcolor_t *)c)->r : 0; }
+size_t CGColorGetNumberOfComponents(const void *c) { return !c ? 0 : colx_any(c) ? (size_t)colx_n(c) : 4; }
+const CGFloat *CGColorGetComponents(const void *c) { return !c ? 0 : colx_any(c) ? colx_comps(c) : &((const cgcolor_t *)c)->r; }
 CGFloat CGColorGetAlpha(const void *c) { return c ? ((const cgcolor_t *)c)->a : 0; }
 void *CGColorGetColorSpace(const void *c) {
     static void *srgb;
     if (!c) return 0;
+    if (colx_any(c) && colx_space(c)) return colx_space(c);
     if (!srgb) srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);   /* referência mantida: "Get" não transfere posse */
     return srgb;
 }
@@ -677,6 +727,7 @@ typedef struct {
     double decode[10]; int ndecode;
 } cgobj_t;
 #include "cg_pixel.inc"
+static void cg_derived_layout(cgobj_t *n);
 static void bmx_free(cgobj_t *o);
 static void bmx_save(cgobj_t *o);
 static void bmx_restore(cgobj_t *o);
@@ -728,6 +779,8 @@ static cgobj_t *cg_new(cx_class_t *cls, u32 kind) {
     return o;
 }
 
+#include "cg_color.inc"
+
 void *CGDataProviderCreateWithData(void *info, const void *data, size_t size, void (*release)(void *, const void *, size_t)) {
     if (!data || !size) return 0;
     cgobj_t *o = cg_new(&PR_c, CGK_PR);
@@ -776,7 +829,8 @@ static void *image_from(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, 
     if ((u64)w * h * 4 > (1ull << 30)) return 0;
     if (!bpr) bpr = (w * bpp + 7) / 8;
     if ((u64)bpr * (h - 1) + (w * bpp + 7) / 8 > p->cb_size) return 0;
-    unpack_t u = {bpc, bpp, 0, 0, info, 1, decode, 0, 0, 0, 1};
+    unpack_t u = {bpc, bpp, 0, 0, info, 1, decode, 0, 0, 0, 1, 0, 0};
+    double labdec[10];
     u32 ai = info & 31;
     if (mask) { u.model = -2; u.ncolor = 1; }
     else if (ai == AI_ONLY) u.ncolor = 0;
@@ -789,7 +843,18 @@ static void *image_from(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, 
             u.table = cs->table; u.ntable = cs->ntable;
             u.tcomp = bs ? (int)bs->ncomp : 3; u.table_model = bs ? bs->model : 1;
         }
-        if (model == 3) u.model = 1;                 /* Lab chega convertido pelo ColorSync (ver color.c) */
+        /* espaço que não é sRGB (ICC, calibrado, Lab, P3, CMYK com perfil...): o ColorSync converte cada pixel */
+        cgspace_t *xs = model == 5 && cs ? (cgspace_t *)cs->base : (cgspace_t *)cs;
+        if (xs && space_prof(xs)) { u.xf = unpack_xf; u.xfctx = xs; }
+        if (model == 3) {
+            u.model = 1;
+            if (!decode && cs) {                     /* decode padrão do Lab: L 0..100, a e b pela faixa do espaço */
+                labdec[0] = 0; labdec[1] = 100;
+                labdec[2] = cs->range[0]; labdec[3] = cs->range[1]; labdec[4] = cs->range[2]; labdec[5] = cs->range[3];
+                labdec[6] = 0; labdec[7] = 1;
+                u.decode = labdec;
+            }
+        }
     }
     u.ncomp = u.ncolor + (ai_present(ai) && ai != AI_ONLY && !mask ? 1 : 0);
     if (!mask && ai != AI_ONLY && bpc != 5 && bpp < u.ncomp * bpc) return 0;
@@ -810,6 +875,7 @@ static void *image_from(size_t w, size_t h, size_t bpc, size_t bpp, size_t bpr, 
     if (!o->data) { objc_release((id)o); return 0; }
     int prem = 0;
     for (size_t y = 0; y < h; y++) unpack_row(&u, p->data + y * bpr, w, (u32 *)(o->data + y * o->bpr), &prem);
+    o->cb_info = objc_retain((id)p);         /* CGImageGetDataProvider devolve o provedor original */
     o->cb_size = prem || mask || ai == AI_ONLY ? 1 : 0;   /* só alfa / máscara: RGB 0, já "pré-multiplicado" */
     return o;
 }
@@ -850,6 +916,9 @@ void *CGImageCreateWithImageInRect(void *img, CGRect rect) {
     n->info = o->info;
     n->owns = 1;
     n->cb_size = o->cb_size;
+    n->ismask = o->ismask; n->shint = o->shint; n->uti = o->uti;
+    if (o->space) n->space = objc_retain((id)o->space);
+    cg_derived_layout(n);
     return n;
 }
 int cx_cgimage_src(const void *img, const u8 **px, long *bpr, int *w, int *h, int *premul) {
@@ -1133,6 +1202,13 @@ void *CGBitmapContextCreateImage(void *c) {
         u32 *out = (u32 *)(im->data + (size_t)y * im->bpr);
         for (u32 x = 0; x < o->w; x++) out[x] = ctx_get(o, row + (size_t)x * o->bpp);
     }
+    /* o provedor da imagem tem os bytes do contexto, no layout do contexto (bitmapInfo e bpc acima) */
+    u8 *raw = malloc((size_t)o->bpr * o->h);
+    if (raw) {
+        memcpy(raw, o->data, (size_t)o->bpr * o->h);
+        im->cb_info = CGDataProviderCreateWithData(0, raw, (size_t)o->bpr * o->h, cg_free_bytes);
+        if (!im->cb_info) free(raw);
+    }
     if (o->fmt == PF_A8) im->ismask = 0;
     return im;
 }
@@ -1286,6 +1362,13 @@ void *CGBitmapContextGetColorSpace(void *c) {
 u32 CGBitmapContextGetAlphaInfo(void *c) { cgobj_t *o = as_kind(c, CGK_BM); return o ? (o->info & 31) : 0; }
 
 /* cópia com outro espaço de cor: mesmos pixels, o número de componentes do espaço tem de bater */
+/* imagem nova a partir de pixels internos: o provedor e o bitmapInfo passam a descrever esses pixels
+ * (ARGB 8 bits em u32, ordem 32 little), com o alfa pré-multiplicado ou reto conforme ficaram */
+static void cg_derived_layout(cgobj_t *n) {
+    if (n->cb_info) { objc_release((id)n->cb_info); n->cb_info = 0; }
+    n->info = (n->cb_size ? AI_PFIRST : AI_FIRST) | BO_32L;
+    n->sbpc = 8; n->sbpp = 32; n->ndecode = 0;
+}
 void *CGImageCreateCopyWithColorSpace(void *img, void *space) {
     cgobj_t *o = as_kind(img, CGK_IM);
     const cgspace_t *s = space;
@@ -1317,7 +1400,7 @@ void *CGImageCreateWithMask(void *img, void *mask) {
             else row[x] = (a * keep / 255) << 24 | (p & 0xFFFFFF);
         }
     }
-    if (n->info % 32 == 0 || (n->info & 31) >= 5) n->info = (n->info & ~31u) | (n->cb_size ? 1u : 3u);
+    cg_derived_layout(n);
     return n;
 }
 /* cores mascaradas: pixel com todos os componentes dentro de [min, max] vira transparente (só imagens sem alfa) */
@@ -1341,7 +1424,7 @@ void *CGImageCreateWithMaskingColors(void *img, const double *comps) {
         }
     }
     n->cb_size = 1;
-    n->info = (n->info & ~31u) | 1u;
+    cg_derived_layout(n);
     return n;
 }
 /* PNG e JPEG por provedor: o decodificador do ImageIO (imageio.c) */

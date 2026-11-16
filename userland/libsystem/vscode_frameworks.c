@@ -403,9 +403,6 @@ id CGColorGetConstantColor(id name) {
     if (!black) black = CGColorCreateGenericRGB(0, 0, 0, 1);
     return black;
 }
-id CGColorCreateCopyByMatchingToColorSpace(void *space, int intent, id color, id opts) { (void)space; (void)intent; (void)opts; return color ? objc_retain(color) : 0; }
-void *CGColorSpaceCreateICCBased(size_t n, const double *range, void *profile, void *alt) { (void)n; (void)range; (void)profile; (void)alt; return CGColorSpaceCreateDeviceRGB(); }
-id CGColorSpaceCopyICCData(void *space) { (void)space; return 0; }
 /* fontes CG: o Skia usa CTFont; com NULL ele não segue o caminho de CGFont */
 void CGFontRelease(void *f) { if (f) objc_release((id)f); }
 u16 CGFontGetGlyphWithGlyphName(void *f, id name) { (void)f; (void)name; return 0; }

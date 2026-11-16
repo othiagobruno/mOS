@@ -584,7 +584,8 @@ void CGContextSetRGBFillColor(id c, double r, double g, double b, double a) {
 void CGContextSetRGBStrokeColor(id c, double r, double g, double b, double a) { if (cx_bm_set_stroke(c, argb(cx_color(r, g, b, a)))) return; ctx.stroke = ga(argb(cx_color(r, g, b, a))); }
 void CGContextSetGrayFillColor(id c, double g, double a) { CGContextSetRGBFillColor(c, g, g, g, a); }
 void CGContextSetGrayStrokeColor(id c, double g, double a) { CGContextSetRGBStrokeColor(c, g, g, g, a); }
-void CGContextSetFillColorWithColor(id c, id color) { if (cx_bm_is(c)) { cx_bm_set_fill(c, argb(color)); return; } ctx.fill = ga(argb(color)); }
+int cx_bm_pattern_color(const void *c, const void *color, int stroke);   /* coregraphics: cor de padrão */
+void CGContextSetFillColorWithColor(id c, id color) { if (cx_bm_pattern_color(c, color, 0)) return; if (cx_bm_is(c)) { cx_bm_set_fill(c, argb(color)); return; } ctx.fill = ga(argb(color)); }
 /* alfa global do contexto: vale para as cores definidas depois e para a cor de preenchimento atual */
 void CGContextSetAlpha(id c, double a) {
     if (cx_bm_set_alpha(c, a)) return;
@@ -596,7 +597,7 @@ void CGContextSetAlpha(id c, double a) {
     ctx.fill = (fa << 24) | (ctx.fill & 0xFFFFFF);
     cx_bm_set_fill(c, ctx.fill);
 }
-void CGContextSetStrokeColorWithColor(id c, id color) { if (cx_bm_set_stroke(c, argb(color))) return; ctx.stroke = ga(argb(color)); }
+void CGContextSetStrokeColorWithColor(id c, id color) { if (cx_bm_pattern_color(c, color, 1)) return; if (cx_bm_set_stroke(c, argb(color))) return; ctx.stroke = ga(argb(color)); }
 void CGContextSetLineWidth(id c, double w) { if (cx_bm_set_line_width(c, w)) return; ctx.line_width = w; pth(cgp())->lw = w; }
 void CGContextFillRect(id c, CGRect r) {
     if (cx_bm_fill_rect(c, r.o.x, r.o.y, r.s.w, r.s.h)) return;
@@ -646,7 +647,7 @@ void CGContextSetLineCap(id c, int v) { cx_bm_set_cap(c, v); }
 void CGContextSetLineJoin(id c, int v) { cx_bm_set_join(c, v); }
 void CGContextSetShouldAntialias(id c, int v) { cx_bm_set_aa(c, v); }
 id CGColorCreateGenericRGB(double r, double g, double b, double a) { return cx_color(r, g, b, a); }
-id CGColorCreateGenericGray(double g, double a) { return cx_color(g, g, g, a); }
+/* CGColorCreateGenericGray: coregraphics (cg_color.inc), com o espaço cinza e 2 componentes */
 void CGColorRelease(id c) { (void)c; }
 id CGColorRetain(id c) { return c; }
 

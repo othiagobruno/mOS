@@ -887,6 +887,7 @@ void *CGImageCreateCopy(void *img) {
     n->ismask = o->ismask; n->shint = o->shint; n->sbpc = o->sbpc; n->sbpp = o->sbpp; n->uti = o->uti;
     n->ndecode = o->ndecode; memcpy(n->decode, o->decode, sizeof n->decode);
     if (o->space) n->space = objc_retain((id)o->space);
+    if (o->cb_info) n->cb_info = objc_retain((id)o->cb_info);      /* mesma imagem: mesmo provedor */
     return n;
 }
 /* imagens que não saíram de um CGImageSource não têm tipo, como no macOS */
