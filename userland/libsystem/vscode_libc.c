@@ -214,14 +214,7 @@ void *popen(const char *cmd, const char *mode) { (void)cmd; (void)mode; set_errn
 int pclose(void *f) { (void)f; set_errno(10 /* ECHILD */); return -1; }
 
 /* ================================================================ arquivos */
-int futimens(int fd, const vs_timespec_t t[2]) { (void)fd; (void)t; return 0; }
-int utimensat(int dfd, const char *p, const vs_timespec_t t[2], int flag) {
-    (void)t; (void)flag;
-    const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap);   /* posixmore.c: dirfd -> caminho (GNU tar) */
-    char tp[1024], st[256];
-    const char *q = cx_at_path(dfd, p, tp, sizeof tp);
-    return q ? stat(q, st) : -1;
-}
+/* futimens, utimensat e lchflags: fsmeta.c (SYS_FSMETA) */
 void cx_perm_set(const char *path, unsigned mode);   /* libc.c: o stat devolve o modo pedido */
 int fchmodat(int dfd, const char *p, unsigned short mode, int flag) {
     (void)flag;
@@ -233,7 +226,6 @@ int fchmodat(int dfd, const char *p, unsigned short mode, int flag) {
     if (r == 0) cx_perm_set(q, mode);
     return r;
 }
-int lchflags(const char *p, u32 flags) { (void)flags; char st[256]; return stat(p, st); }
 int mknod(const char *p, unsigned short mode, int dev) { (void)p; (void)mode; (void)dev; set_errno(E_PERM); return -1; }
 /* o clonefile do APFS: sem CoW aqui; quem chama (VS Code, Chromium) copia o arquivo */
 int clonefile(const char *src, const char *dst, u32 flags) { (void)src; (void)dst; (void)flags; set_errno(E_NOTSUP); return -1; }

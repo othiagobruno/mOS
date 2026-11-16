@@ -1,6 +1,18 @@
 /* mOS — sistema de arquivos virtual em memória (populado a partir do pendrive no boot) */
 #pragma once
+#ifdef MOS_HOST_TEST
+#include "vfs_host_kernel.h"   /* tools/vfsmeta_host: teste de host */
+#else
 #include "kernel.h"
+#endif
+
+/* atributo estendido (getxattr/setxattr): nome UTF-8 até 127 bytes, valor binário */
+typedef struct vxattr {
+    struct vxattr *next;
+    u32 len;
+    u8 *val;
+    char name[128];
+} vxattr_t;
 
 typedef struct vnode {
     char name[256];
@@ -12,7 +24,69 @@ typedef struct vnode {
     struct vnode *parent, *child, *next;
     void *ext;          /* nó de um sistema de arquivos externo (ex.: volume .dmg), carregado sob demanda */
     bool dirty;         /* alterado e ainda não gravado no disco do sistema (fs/persist.c) */
+    /* metadados (kernel/lib/vfsmeta.c): valem para todo nó, persistidos em \mOS\.vfsmeta */
+    bool meta;          /* tem metadados próprios (entra no .vfsmeta) */
+    u64 ino;            /* número de inode, estável enquanto o nó existir (rename não muda) */
+    u32 uid, gid;
+    u32 flags;          /* st_flags do BSD: UF_* / SF_* */
+    i64 atime_ns, mtime_ns, ctime_ns, btime_ns; /* ns desde 1970; 0 = desconhecido (usa a hora do boot) */
+    vxattr_t *xattr;
+    u64 xattr_bytes;
 } vnode_t;
+
+/* ---- metadados (kernel/lib/vfsmeta.c) */
+#define VFS_UF_NODUMP     0x00000001
+#define VFS_UF_IMMUTABLE  0x00000002
+#define VFS_UF_APPEND     0x00000004
+#define VFS_UF_OPAQUE     0x00000008
+#define VFS_UF_COMPRESSED 0x00000020
+#define VFS_UF_TRACKED    0x00000040
+#define VFS_UF_DATAVAULT  0x00000080
+#define VFS_UF_HIDDEN     0x00008000
+#define VFS_UF_SETTABLE   0x0000ffff
+#define VFS_SF_ARCHIVED   0x00010000
+#define VFS_SF_IMMUTABLE  0x00020000
+#define VFS_SF_APPEND     0x00040000
+#define VFS_SF_RESTRICTED 0x00080000
+#define VFS_SF_NOUNLINK   0x00100000
+#define VFS_SF_SETTABLE   0xffff0000
+#define VFS_DEFAULT_UID   501   /* o usuário do mOS (conta única do sistema; ver cred.c) */
+#define VFS_DEFAULT_GID   20    /* staff */
+#define VFS_XATTR_NAME_MAX  127
+#define VFS_XATTR_VAL_MAX   (64u << 20)   /* um valor (o resource fork pode ser grande) */
+#define VFS_XATTR_NODE_MAX  (128u << 20)  /* soma por nó */
+#define VFS_XATTR_CREATE  0x0002          /* opções do setxattr do macOS */
+#define VFS_XATTR_REPLACE 0x0004
+enum { VT_ATIME = 1, VT_MTIME = 2, VT_CTIME = 4, VT_BTIME = 8, VT_MOD = VT_MTIME | VT_CTIME };
+i64  vfs_now_ns(void);
+void vfs_meta_init(vnode_t *n, vnode_t *parent);   /* nó novo: inode, dono e datas */
+void vfs_touch(vnode_t *n, int which);             /* datas = agora (e mtime em ms do boot com VT_MTIME) */
+void vfs_meta_changed(vnode_t *n);                 /* metadado mudou: ctime e gravação do .vfsmeta */
+u64  vfs_ino_next(void);
+void vfs_ino_reserve(u64 ino);                     /* inode lido do .vfsmeta: o contador passa dele */
+i64  vfs_xattr_get(vnode_t *n, const char *name, void *buf, u64 cap, u64 pos); /* tamanho ou -errno */
+int  vfs_xattr_set(vnode_t *n, const char *name, const void *val, u64 len, u64 pos, int opts);
+i64  vfs_xattr_list(vnode_t *n, char *buf, u64 cap);  /* bytes ("a\0b\0") ou -errno */
+int  vfs_xattr_remove(vnode_t *n, const char *name);
+vxattr_t *vfs_xattr_find(vnode_t *n, const char *name);
+void vfs_xattr_free(vnode_t *n);
+bool vfs_xattr_copy(vnode_t *dst, const vnode_t *src);
+bool vfs_immutable(vnode_t *n);                    /* uchg/schg: não pode mudar conteúdo, nome nem metadados */
+bool vfs_append_only(vnode_t *n);                  /* uappnd/sappnd: só acrescentar */
+bool vfs_no_unlink(vnode_t *n);                    /* imutável, append-only ou sunlnk: não pode apagar/renomear */
+i64  vfs_time_ns(const vnode_t *n, int which);     /* a data, com a hora do boot quando desconhecida */
+void persist_meta_mark(void);
+
+/* núcleo do SYS_FSMETA (syscall.h): rq e kbuf já no kernel; name = nome do xattr (ou NULL) */
+i64  vfs_fsmeta(vnode_t *v, int op, const void *rq, const char *name, void *kbuf, int euid, int egid);
+void vfs_statx(vnode_t *v, void *mos_statx);
+/* .vfsmeta (fs/persist.c): serialização dos metadados dos nós com v->meta */
+typedef bool (*vmeta_track_fn)(void *ctx, vnode_t *v, char *vpath, usize cap);  /* entra? (e o caminho) */
+typedef vnode_t *(*vmeta_lookup_fn)(void *ctx, const char *vpath);
+u8  *vmeta_build(vnode_t *root, vmeta_track_fn track, void *ctx, u64 *len);  /* kfree no retorno */
+bool vmeta_check(const u8 *d, u64 n, u64 *next_ino);
+int  vmeta_apply(const u8 *d, u64 n, vmeta_lookup_fn lookup, void *ctx);    /* nº de nós restaurados */
+u32  vfs_crc32(const void *d, u64 n);                      /* fs/persist.c: o .vfsmeta precisa ser regravado */
 
 /* persistência no disco do sistema (kernel/fs/persist.c; padrão = sem disco, só RAM) */
 bool persist_load(void);                  /* carrega a árvore do disco; false = usar arquivos do boot */

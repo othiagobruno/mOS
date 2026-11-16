@@ -13,7 +13,11 @@ const char *home_sub(const char *sub) {
     return b;
 }
 
-static vnode_t root = {.name = "", .dir = true};
+static vnode_t root = {.name = "", .dir = true, .mode = 0755, .ino = 2, .uid = 0, .gid = 0};
+extern bool vfs_meta_live; /* fim do vfs_init: nós criados daqui em diante têm metadados próprios (.vfsmeta) */
+
+/* a pasta ganhou, perdeu ou trocou um filho: mtime e ctime (só depois do boot; a carga inicial não conta) */
+static void dir_changed(vnode_t *d) { if (d && vfs_meta_live) vfs_touch(d, VT_MOD); }
 
 /* implementações padrão; a ponte de FS externos as substitui com definições fortes */
 __attribute__((weak)) bool vfs_ensure(vnode_t *n) { (void)n; return true; }
@@ -54,11 +58,15 @@ static vnode_t *add_child(vnode_t *dir, const char *name, bool isdir) {
     n->mode = isdir ? 0755 : 0644;
     n->parent = dir;
     n->mtime = timer_ticks();
+    vfs_meta_init(n, dir);
+    n->meta = vfs_meta_live;
+    if (dir->flags & VFS_UF_TRACKED) n->flags |= VFS_UF_TRACKED;
     /* inserção ordenada (diretórios e arquivos misturados, ordem alfabética sem caixa) */
     vnode_t **pp = &dir->child;
     while (*pp && strcasecmp((*pp)->name, name) < 0) pp = &(*pp)->next;
     n->next = *pp;
     *pp = n;
+    dir_changed(dir);
     persist_mark(n);
     return n;
 }
@@ -139,7 +147,7 @@ vnode_t *vfs_create(const char *path) {
     vnode_t *n = vfs_lookup(path);
     if (n && (n->dir || read_only(n))) return NULL;
     if (!n) n = walk(path, true, false);
-    if (n) { n->size = 0; n->mtime = timer_ticks(); persist_mark(n); }
+    if (n) { n->size = 0; vfs_touch(n, VT_MOD); persist_mark(n); }
     return n;
 }
 
@@ -161,7 +169,7 @@ bool vfs_append(vnode_t *f, const void *data, usize len) {
     memcpy(f->data + f->size, data, len);
     f->size += len;
     f->data[f->size] = 0;
-    f->mtime = timer_ticks();
+    vfs_touch(f, VT_MOD);
     persist_mark(f);
     return true;
 }
@@ -175,6 +183,7 @@ vnode_t *vfs_write_file(const char *path, const void *data, usize n) {
 static void free_tree(vnode_t *n) {
     for (vnode_t *c = n->child, *nx; c; c = nx) { nx = c->next; free_tree(c); }
     if (n->cap) kfree(n->data);
+    vfs_xattr_free(n);
     kfree(n);
 }
 
@@ -188,8 +197,11 @@ static void unlink_node(vnode_t *n) {
 bool vfs_delete(vnode_t *n) {
     if (!n || n == &root || !n->parent || read_only(n) || vfs_is_volume(n)) return false; /* volume: vfs_eject */
     persist_delete(n);
+    vnode_t *par = n->parent;
     unlink_node(n);
     free_tree(n);
+    dir_changed(par);
+    persist_meta_mark();
     return true;
 }
 
@@ -204,9 +216,13 @@ bool vfs_move(vnode_t *n, vnode_t *np, const char *newname) {
     while (vfs_child(np, name) && vfs_child(np, name) != n) snprintf(name, sizeof name, "%s %d", nm, k++);
     char *old = kmalloc(1024);
     if (old) vfs_path(n, old, 1024);
+    vnode_t *op = n->parent;
     unlink_node(n);
     strcpy(n->name, name);
     n->parent = np;
+    dir_changed(op);
+    if (np != op) dir_changed(np);
+    vfs_meta_changed(n);                                   /* rename muda o ctime (o inode fica) */
     vnode_t **pp = &np->child;
     while (*pp && strcasecmp((*pp)->name, name) < 0) pp = &(*pp)->next;
     n->next = *pp;
@@ -319,4 +335,5 @@ void vfs_init(void) {
     if (persist_available()) kprintf("VFS: arquivos carregados do disco do sistema (gravação ativa)\n");
     else kprintf("VFS: %d arquivos carregados do pendrive (somente RAM)\n", nf);
     persist_enable();
+    vfs_meta_live = true;
 }

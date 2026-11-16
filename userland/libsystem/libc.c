@@ -1519,14 +1519,42 @@ static void apply_perm(mac_stat_t *m) {
         if (perms[i].ino == m->st_ino) { m->st_mode = (u16)((m->st_mode & ~07777) | perms[i].perm); return; }
 }
 
+/* caminho absoluto seguindo links no último componente (até 8; mais que isso é ELOOP) */
+int cx_follow_path(const char *in, char *out, size_t cap) {
+    cx_path(in, out, cap);
+    for (int hop = 0; link_step(out, cap, 0); hop++)
+        if (hop >= 8) { cx_errno = 62; return -1; }   /* ELOOP */
+    return 0;
+}
+
+/* metadados reais do kernel (SYS_FSMETA): inode estável, dono, flags, as 4 datas em ns, nlink e volume.
+ * O modo gravado (chmod/creat) vale; sem ele fica o padrão com o bit de execução pelo conteúdo (exec_bits). */
+int cx_statx(const char *abs, int fd, mos_statx_t *st);   /* fsmeta.c */
+static int fill_statx(const char *abs, int fd, mac_stat_t *m) {
+    mos_statx_t x;
+    if (cx_statx(abs, fd, &x) < 0) return 0;
+    m->st_ino = x.ino;
+    m->st_dev = (u32)x.dev;
+    m->st_uid = x.uid;
+    m->st_gid = x.gid;
+    m->st_flags = x.flags;
+    m->st_nlink = (u16)x.nlink;
+    m->atime = x.atime_ns / 1000000000ll; m->atime_ns = x.atime_ns % 1000000000ll;
+    m->mtime = x.mtime_ns / 1000000000ll; m->mtime_ns = x.mtime_ns % 1000000000ll;
+    m->ctime = x.ctime_ns / 1000000000ll; m->ctime_ns = x.ctime_ns % 1000000000ll;
+    m->btime = x.btime_ns / 1000000000ll; m->btime_ns = x.btime_ns % 1000000000ll;
+    if (x.mode & 0x10000u) { m->st_mode = (u16)((m->st_mode & 0170000) | (x.mode & 07777)); return 2; }
+    return 1;
+}
+
 int stat(const char *path, mac_stat_t *m) {
     mos_stat_t s;
     char abs[1024];
-    cx_path(path, abs, sizeof abs);
-    for (int hop = 0; hop < 8 && link_step(abs, sizeof abs, 0); hop++) {}
+    if (cx_follow_path(path, abs, sizeof abs) < 0) return -1;
     if (ret_errno(SYS2(SYS_STAT, abs, &s)) < 0) return -1;
     to_mac_stat(&s, m);
     m->st_ino = path_ino(abs);
+    if (fill_statx(abs, -1, m) == 2) return 0;
     exec_bits(abs, m);
     apply_perm(m);
     return 0;
@@ -1538,6 +1566,7 @@ int lstat(const char *path, mac_stat_t *m) {
     if (ret_errno(SYS2(SYS_STAT, abs, &s)) < 0) return -1;
     to_mac_stat(&s, m);
     m->st_ino = path_ino(abs);
+    int sx = fill_statx(abs, -1, m);
     long tl = 0;
     strlcpy(tgt, abs, sizeof tgt);
     if (!s.is_dir && link_step(tgt, sizeof tgt, &tl)) {
@@ -1546,6 +1575,7 @@ int lstat(const char *path, mac_stat_t *m) {
         m->st_blocks = 0;
         return 0;
     }
+    if (sx == 2) return 0;
     exec_bits(abs, m);
     apply_perm(m);
     return 0;
@@ -1565,7 +1595,11 @@ int fstat(int fd, mac_stat_t *m) {
     to_mac_stat(&s, m);
     char p[1024];
     if (s.is_dir == 2 || s.is_dir == 3) m->st_ino = 0x8000000000000000ULL | ((u64)getpid() << 8) | (u64)fd;   /* pipe */
-    else if (SYS3(SYS_FDPATH, fd, p, sizeof p) >= 0) { m->st_ino = path_ino(p); exec_bits(p, m); }
+    else if (SYS3(SYS_FDPATH, fd, p, sizeof p) >= 0) {
+        m->st_ino = path_ino(p);
+        if (s.is_dir <= 1 && fill_statx(0, fd, m) == 2) return 0;
+        exec_bits(p, m);
+    }
     return 0;
 }
 

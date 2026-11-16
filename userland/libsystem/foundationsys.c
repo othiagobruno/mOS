@@ -1,9 +1,9 @@
 /*
  * mOS libSystem — funções do macOS que o Foundation (swift-foundation: FileManager, Data, String, Calendar) chama e o
  * libSystem ainda não tinha. Muitas também aparecem em binários compilados com o SDK do macOS 14+ (malloc tipado,
- * variantes _l de locale, fts, *at). Ficam sobre a libc existente (open/stat/opendir/unlink...) e o VFS do mOS, que
- * não guarda permissões, datas por arquivo, links nem atributos estendidos: essas chamadas aceitam e não fazem nada,
- * ou respondem "não suportado", como um volume sem esses recursos.
+ * variantes _l de locale, fts, *at). Ficam sobre a libc existente (open/stat/opendir/unlink...). Dono, flags, datas e
+ * atributos estendidos são reais e ficam em fsmeta.c (SYS_FSMETA); hard links ainda viram cópia (fase 4 do
+ * docs/arquivos-volumes-plano.md).
  */
 #include "sys.h"
 #include "libc.h"
@@ -109,24 +109,8 @@ int lstat(const char *p, void *st);
 /* lchmod: o modo do próprio link (não segue). Links do mOS não têm modo: basta o link existir. Seguir o link
  * falhava em links relativos de dentro de .app (Versions/Current) e o brew caía no "sudo chmod -R". */
 int lchmod(const char *p, unsigned short m) { char st[STAT_SIZE]; (void)m; return lstat(p, st); }
-int chown(const char *p, unsigned u, unsigned g) { char st[STAT_SIZE]; (void)u; (void)g; return stat(p, st); }
-int fchown(int fd, unsigned u, unsigned g) { (void)fd; (void)u; (void)g; return 0; }
-int lchown(const char *p, unsigned u, unsigned g) { return chown(p, u, g); }
-int chflags(const char *p, unsigned f) { char st[STAT_SIZE]; (void)f; return stat(p, st); }
-int fchflags(int fd, unsigned f) { (void)fd; (void)f; return 0; }
-int utimes(const char *p, const void *tv) { char st[STAT_SIZE]; (void)tv; return stat(p, st); }
-int futimes(int fd, const void *tv) { (void)fd; (void)tv; return 0; }
-int lutimes(const char *p, const void *tv) { return utimes(p, tv); }
 
-/* atributos estendidos: o volume não tem nenhum */
-long getxattr(const char *p, const char *n, void *v, size_t s, u32 pos, int o) { (void)p; (void)n; (void)v; (void)s; (void)pos; (void)o; SET(MAC_ENOATTR); return -1; }
-long fgetxattr(int fd, const char *n, void *v, size_t s, u32 pos, int o) { (void)fd; (void)n; (void)v; (void)s; (void)pos; (void)o; SET(MAC_ENOATTR); return -1; }
-int setxattr(const char *p, const char *n, const void *v, size_t s, u32 pos, int o) { (void)p; (void)n; (void)v; (void)s; (void)pos; (void)o; SET(MAC_ENOTSUP); return -1; }
-int fsetxattr(int fd, const char *n, const void *v, size_t s, u32 pos, int o) { (void)fd; (void)n; (void)v; (void)s; (void)pos; (void)o; SET(MAC_ENOTSUP); return -1; }
-int removexattr(const char *p, const char *n, int o) { (void)p; (void)n; (void)o; SET(MAC_ENOATTR); return -1; }
-int fremovexattr(int fd, const char *n, int o) { (void)fd; (void)n; (void)o; SET(MAC_ENOATTR); return -1; }
-long listxattr(const char *p, char *b, size_t s, int o) { char st[STAT_SIZE]; (void)b; (void)s; (void)o; return stat(p, st) < 0 ? -1 : 0; }
-long flistxattr(int fd, char *b, size_t s, int o) { (void)fd; (void)b; (void)s; (void)o; return 0; }
+/* dono, flags, datas e atributos estendidos: fsmeta.c (SYS_FSMETA) */
 int quotactl(const char *p, int cmd, int id, char *addr) { (void)p; (void)cmd; (void)id; (void)addr; SET(MAC_ENOTSUP); return -1; }
 
 /* ======================================================================== variantes *at (só relativo ao cwd ou absoluto) */
@@ -201,6 +185,7 @@ static int copy_tree(const char *from, const char *to) {
 #define COPYFILE_RECURSIVE (1 << 15)
 #define COPYFILE_DATA (1 << 3)
 void cx_copyfile_note(void *state, int src_fd, const char *src, int dst_fd, const char *dst, long copied);
+int cx_copy_meta(const char *from, const char *to, unsigned flags);
 int copyfile(const char *from, const char *to, void *state, u32 flags) {
     char st[STAT_SIZE];
     if (stat(from, st) < 0) return -1;
@@ -210,6 +195,7 @@ int copyfile(const char *from, const char *to, void *state, u32 flags) {
         if (flags & COPYFILE_RECURSIVE) r = copy_tree(from, to);
         else { r = 0; if (mkdir(to, 0755) < 0 && stat(to, st) < 0) r = -1; }
     } else r = copy_file(from, to);
+    if (r == 0 && (flags & ((1 << 1) | (1 << 2)))) cx_copy_meta(from, to, flags);   /* COPYFILE_STAT/XATTR (fsmeta.c) */
     long bytes = -1;
     if (r == 0) {
         bytes = 0;
