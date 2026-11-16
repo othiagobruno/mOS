@@ -41,6 +41,8 @@ static int s_frint_sc(T *t, int dbl, int opc, int n, int d);
 static int s_fcvt_gpr(T *t, int dbl, int sf, int rmode, int opc, int n, int d);
 static int s_shift_scalar(T *t, a64_u32 w);
 static int s_shimm(T *t, int x, int eb, int kind, int sh);
+static int s_fcmpv(T *t, int q, int dbl, int kind, int abs, int n, int m, int d, int sc);
+static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc);
 static int s_scalar_simd(T *t, a64_u32 w);
 
 static void s_ld(T *t, int x, int v) { x_movdqu_ld(B, x, VO(v)); }
@@ -255,6 +257,15 @@ static int s_misc_x(T *t, a64_u32 w, int sc) {
         if (key == 0x18 || key == 0x19 || key == 0x38 || key == 0x39 || key == 0x79)
             return s_frint_vec(t, q, size, key == 0x79 ? -1 : key == 0x18 ? 0 : key == 0x19 ? 1 : key == 0x38 ? 2 : 3, n, d);
         if (key == 0x2F || key == 0x6F) return s_fabsneg_vec(t, q, size, key == 0x6F, n, d);
+        if ((key == 0x3B || key == 0x7B) && !(size == 3 && !q && !sc)) return s_fcvtz_vec(t, q, size & 1, u, n, d, sc);
+        if ((key == 0x2C || key == 0x6C || key == 0x2D || key == 0x6D || key == 0x2E) && !(size == 3 && !q && !sc)) {
+            int kind = key == 0x2D ? 0 : key == 0x6C ? -1 : key == 0x2C ? -2 : key == 0x6D ? 3 : 4;
+            if (kind < 0) {                         /* FCMGE/FCMGT #0: 0 <= n, 0 < n como m = 0 */
+                /* n >= 0 ⇔ 0 <= n: o núcleo compara m(=0) com n */
+                return s_fcmpv(t, q, size & 1, kind == -1 ? 1 : 2, 0, n, 32, d, sc);
+            }
+            return s_fcmpv(t, q, size & 1, kind, 0, n, 32, d, sc);
+        }
     }
     if (op == 0x05 && u && size == 0) {             /* NOT */
         s_ld(t, 0, n); s_ones(t, 1); s_op(t, 0xEF, 0, 1); s_st(t, d, 0, q);
@@ -1445,10 +1456,91 @@ static int fpv_core(T *t, unsigned x86, int fma, int dbl, int q, int d, int n, i
     s_st(t, d, 0, q);
     return 1;
 }
+/* Comparações FP de S/D com resultado em máscara: kind 0 EQ, 1 GE, 2 GT (n × m), 3 LE0, 4 LT0
+ * (n × 0); abs = FACGE/FACGT. NaN em alguma lane usada (IOC e o "falso" do ARM) e FPCR.FZ
+ * (entrada subnormal vira zero) vão ao interpretador. sc: escalar (só a lane 0).
+ * O x86 compara subnormais exatos; o DE que isso deixa no MXCSR é limpo pelo próximo mx_clean. */
+static int s_fcmpv(T *t, int q, int dbl, int kind, int abs, int n, int m, int d, int sc) {
+    int ps = dbl ? XF_66 : 0;
+    fl_clobber(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
+    slow_if(t, CC_NE);
+    s_ld(t, 0, n);
+    if (kind >= 3 || m == 32) s_zero(t, 1); else s_ld(t, 1, m);   /* m = 32: zero */
+    if (abs) {
+        s_const(t, 2, dbl ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFF7FFFFFFFull);
+        s_op(t, 0xDB, 0, 2); s_op(t, 0xDB, 1, 2);
+    }
+    x_movdqa_ld(B, 2, XR(0));
+    xop2(B, ps, 0xC2, 2, XR(1)); xe8(B, 3);         /* cmpunord */
+    xop2(B, XF_66, 0xD7, XAX, XR(2));               /* pmovmskb */
+    x_test_ri(B, 0, XR(XAX), sc ? (dbl ? 0xFF : 0x0F) : q ? 0xFFFF : 0xFF);
+    slow_if(t, CC_NE);
+    int r = 0;
+    if (kind == 0) { xop2(B, ps, 0xC2, 0, XR(1)); xe8(B, 0); }               /* n == m */
+    else if (kind <= 2) { xop2(B, ps, 0xC2, 1, XR(0)); xe8(B, kind == 1 ? 2 : 1); r = 1; }   /* m <= n, m < n */
+    else { xop2(B, ps, 0xC2, 0, XR(1)); xe8(B, kind == 3 ? 2 : 1); }         /* n <= 0, n < 0 */
+    t->mxclean = 0;
+    if (sc && !dbl) { s_const2(t, 2, 0xFFFFFFFFull, 0); s_op(t, 0xDB, r, 2); }
+    s_st(t, d, r, q && !sc);
+    return 1;
+}
+/* FCVTZS / FCVTZU de S/D para inteiro do mesmo tamanho (vetor ou escalar). O que o x86 não
+ * converte igual ao ARM vai ao interpretador antes de gravar: resultado "indefinido" do cvtt
+ * (NaN, fora da faixa, e o -2^31/-2^63 exato, raro), FCVTZU com sinal ligado ou >= 2^31/2^63, e
+ * FPCR.FZ (IDC). IXC sai do PE do cvtt. Lanes de D: resultados em xmm1/xmm2 e só então V[d]. */
+static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc) {
+    fl_clobber(t);
+    x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
+    slow_if(t, CC_NE);
+    mx_clean(t);
+    if (!dbl) {
+        int req = sc ? 0x0F : q ? 0xFFFF : 0xFF;
+        if (sc) x_movd_ld(B, 0, VO(n)); else if (q) s_ld(t, 0, n); else x_movq_ld(B, 0, VO(n));
+        if (u) {
+            s_zero(t, 2); s_op(t, 0x66, 2, 0);                  /* 0 > bits: sinal ligado */
+            s_const(t, 4, 0x4EFFFFFF4EFFFFFFull);
+            x_movdqa_ld(B, 3, XR(0)); s_op(t, 0x66, 3, 4);      /* >= 2^31 ou NaN */
+            s_op(t, 0xEB, 2, 3);
+            xop2(B, XF_66, 0xD7, XAX, XR(2));
+            x_test_ri(B, 0, XR(XAX), req);
+            slow_if(t, CC_NE);
+        }
+        xop2(B, XF_F3, 0x5B, 0, XR(0));                         /* cvttps2dq */
+        xop2(B, 0, 0xAE, 3, XM(XSP, 0));                        /* stmxcsr */
+        t->mxclean = 0;
+        if (!u) {
+            s_const(t, 2, 0x8000000080000000ull);
+            x_movdqa_ld(B, 3, XR(0)); s_op(t, 0x76, 3, 2);
+            xop2(B, XF_66, 0xD7, XAX, XR(3));
+            x_test_ri(B, 0, XR(XAX), req);
+            slow_if(t, CC_NE);
+        }
+        ixc_if_pe(t);
+        s_st(t, d, 0, q && !sc);
+        return 1;
+    }
+    for (int e = 0; e < (sc ? 1 : 2); e++) {
+        x_mov_rm(B, 1, XAX, VOE(n, 8 * e));
+        if (u) { x_mov_ri(B, XCX, 0x43DFFFFFFFFFFFFFull); x_alu_rr(B, 1, A_CMP, XAX, XCX); slow_if(t, CC_A); }
+        xop2(B, XF_66 | XF_W, 0x6E, 0, XR(XAX));               /* movq xmm0, rax */
+        xop2(B, XF_F2 | XF_W, 0x2C, XAX, XR(0));               /* cvttsd2si rax, xmm0 */
+        t->mxclean = 0;
+        if (!u) { x_alu_rr(B, 1, A_XOR, XCX, XCX); x_alu_rr(B, 1, A_SUB, XCX, XAX); slow_if(t, CC_O); }   /* rax = INT64_MIN */
+        xop2(B, XF_66 | XF_W, 0x6E, 1 + e, XR(XAX));
+    }
+    xop2(B, 0, 0xAE, 3, XM(XSP, 0));
+    ixc_if_pe(t);
+    if (!sc) s_op(t, 0x6C, 1, 2);                               /* punpcklqdq */
+    s_st(t, d, 1, !sc);
+    return 1;
+}
 static int s_fpvec(T *t, a64_u32 w) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), a = (int)BIT(w, 23), dbl = (int)BIT(w, 22), op = (int)BITS(w, 13, 11);
     int m = (int)BITS(w, 20, 16), n = (int)BITS(w, 9, 5), d = (int)(w & 31);
     if (dbl && !q) return 0;
+    if (op == 4 && !(!u && a)) return s_fcmpv(t, q, dbl, !u ? 0 : a ? 2 : 1, 0, n, m, d, 0);   /* FCMEQ FCMGE FCMGT */
+    if (op == 5 && u) return s_fcmpv(t, q, dbl, a ? 2 : 1, 1, n, m, d, 0);                  /* FACGE FACGT */
     if (!u && op == 2) return fpv_core(t, a ? 0x5C : 0x58, 0, dbl, q, d, n, m, -1);       /* FSUB / FADD */
     if (u && !a && op == 3) return fpv_core(t, 0x59, 0, dbl, q, d, n, m, -1);             /* FMUL */
     if (u && !a && op == 7) return q ? fpv_core(t, 0x5E, 0, dbl, q, d, n, m, -1) : 0;     /* FDIV (Q=0: 0/0 nas lanes zeradas) */
@@ -2453,6 +2545,11 @@ static int s_scalar_simd(T *t, a64_u32 w) {
         /* ADD SUB CMTST CMEQ CMGT CMHI CMGE CMHS de D: a forma vetorial com q = 0 */
         if (size == 3 && (op == 0x10 || op == 0x11 || op == 0x06 || op == 0x07))
             return s_three_same_x(t, w & ~((1u << 28) | (1u << 30)), 1);
+        {   /* FCMEQ FCMGE FCMGT FACGE FACGT escalares de S/D */
+            int u = (int)BIT(w, 29), a = size >> 1, n = (int)BITS(w, 9, 5), m = (int)BITS(w, 20, 16), d = (int)(w & 31);
+            if (op == 0x1C && !(!u && a)) return s_fcmpv(t, 0, size & 1, !u ? 0 : a ? 2 : 1, 0, n, m, d, 1);
+            if (op == 0x1D && u) return s_fcmpv(t, 0, size & 1, a ? 2 : 1, 1, n, m, d, 1);
+        }
         return 0;
     }
 
@@ -2461,6 +2558,9 @@ static int s_scalar_simd(T *t, a64_u32 w) {
         int n = (int)BITS(w, 9, 5), d = (int)(w & 31), u = (int)BIT(w, 29);
         if (op == 0x0B && !u) return s_iabs(t, 0, size, n, d, 1);
         if (op == 0x1D && !(size & 2)) return s_scvtf(t, 0, u, size, n, d, 1);
+        if ((size & 2) && op == 0x1B) return s_fcvtz_vec(t, 0, size & 1, u, n, d, 1);   /* FCVTZS FCVTZU escalares */
+        if ((size & 2) && (op == 0x0C || op == 0x0D || (op == 0x0E && !u)))   /* FCMxx #0 escalares */
+            return s_misc_x(t, w & ~((1u << 28) | (1u << 30)), 1);
         /* CMGT CMGE CMEQ CMLE CMLT #0 e NEG de D: a forma vetorial com q = 0 */
         if (size == 3 && (op == 0x08 || op == 0x09 || (op == 0x0A && !u) || (op == 0x0B && u)))
             return s_misc_x(t, w & ~((1u << 28) | (1u << 30)), 1);
