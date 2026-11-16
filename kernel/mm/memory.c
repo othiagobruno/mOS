@@ -86,7 +86,7 @@ static u64 pmm_find(u64 from, u64 pages) {
 
 u64 pmm_alloc(u64 pages) {
     if (!pages) return 0;
-    if (!swap_busy() && swap_floor() && pmm_free_pages() < swap_floor()) mem_pressure();
+    if (swap_floor() && free_count < swap_floor()) vm_pageout_kick();   /* a thread vm_pageout comprime fora daqui */
     u64 f = spin_lock_irqsave(&pmm_lock);
     u64 s = pmm_find(hint, pages);
     if (s == ~0ULL && hint > 256) s = pmm_find(256, pages);

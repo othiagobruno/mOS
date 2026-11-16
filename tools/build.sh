@@ -21,8 +21,12 @@ gcc -O2 -Wall -Wextra -I kernel/include tools/cred_host.c kernel/proc/cred.c -o 
 /tmp/cred_host
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/resto_host.c \
     kernel/proc/cred.c kernel/proc/fdshare.c kernel/proc/fileport.c kernel/mm/commpage.c kernel/mm/swap.c \
-    -o /tmp/resto_host
+    kernel/mm/vmcomp.c -o /tmp/resto_host
 /tmp/resto_host
+# compressor de memória e swap comprimido (docs/nucleo-plano.md)
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/vmcomp_host.c kernel/mm/vmcomp.c kernel/mm/swap.c \
+    -o /tmp/vmcomp_host
+/tmp/vmcomp_host
 # o que o ChatGPT desktop pedia (Spotlight, chave P-256 em PEM, inversa de CATransform3D)
 gcc -std=c11 -Wall -Wextra -I userland/libsystem -DCK_PEM_HOST userland/libsystem/mdq_core.c userland/libsystem/ck_pem.c \
     userland/libsystem/catransform_inv.c tools/agentes_host.c -o /tmp/agentes_host

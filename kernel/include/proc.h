@@ -119,6 +119,7 @@ struct process {
     int exit_code;
     bool exited;
     u64 mem_pages;
+    u64 swap_pages;              /* páginas deste processo no swap comprimido (mm/swap.c) */
     u64 start_ms;
     thread_t *main;
     struct process *next;
@@ -201,6 +202,7 @@ void      uvm_page_put(u64 phys);
 void      sched_init(void);
 thread_t *thread_current(void);
 thread_t *kthread_create(const char *name, void (*fn)(void *), void *arg);
+void kthread_sleep(u64 ms);   /* thread do kernel fora da CPU por ms (sched.c) */
 void      thread_exit(void) NORETURN;           /* threads do kernel */
 u64       sched_irq_exit(int_frame_t *f, bool timer);   /* devolve o frame a restaurar */
 u64       sched_switch(int_frame_t *f);         /* a thread atual bloqueou/saiu: escolhe outra */

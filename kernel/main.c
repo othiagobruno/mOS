@@ -48,6 +48,7 @@ void kmain(void) {
     nvme_smp_ready();     /* filas NVMe por CPU e MSI no LAPIC que o smp_init acabou de mapear */
     ahci_smp_ready();
     proc_init();          /* escalonador + processos de usuário (rodam quando o desktop fica ocioso) */
+    vm_pageout_start();   /* relógio de páginas e compressor (proc/process.c, mm/swap.c) */
     kprintf("Boot concluído em %llu ms, heap %llu KiB\n", timer_ticks(), (u64)heap_used() / 1024);
     desktop_run();
 }

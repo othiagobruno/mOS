@@ -101,17 +101,18 @@ u64    pmm_total_pages(void);
 u64    pmm_free_pages(void);
 bool   pmm_is_ram(u64 addr, u64 len);   /* buffer do kernel apto a DMA direto (identidade) */
 void   paging_init(void);
-void   swap_init(void);
-void   swap_use(void *mem, u32 n);
+void   swap_init(void);                /* swap comprimido na RAM (mm/swap.c, mm/vmcomp.c, vmcomp.h) */
 bool   swap_is(u64 pte);
 void   swap_hold(u64 pte);
 void   swap_release(u64 pte);
-u64    swap_store(u64 phys, int nx, int jwp);
-void   swap_load(u64 pte, u64 page);
+u64    swap_store(u64 phys, u64 pte);  /* PTE de swap com RW/JWP/NX de `pte`, ou 0 */
+bool   swap_load(u64 pte, u64 page);
 u64    swap_floor(void);
 int    swap_busy(void);
 void   swap_set_busy(int v);
-void   mem_pressure(void);
+void   mem_pressure(void);             /* uma rodada do relógio de páginas (process.c); só em ponto seguro */
+void   vm_pageout_kick(void);          /* pede uma rodada à thread vm_pageout; vale em qualquer contexto */
+void   vm_pageout_start(void);
 void   pmm_reclaim_boot(void);
 void   vmm_map_mmio(u64 phys, u64 size);
 void  *kmalloc(usize n);
