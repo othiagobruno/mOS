@@ -746,6 +746,28 @@ static void a_remove_range(id self, SEL c, nsrange_t g) {
 }
 static void a_remove_all(id self, SEL c) { (void)c; nsarr_t *r = (nsarr_t *)self; for (u64 i = 0; i < r->n; i++) objc_release(r->items[i]); r->n = 0; mutations++; }
 static void a_remove_obj(id self, SEL c, id o) { nsarr_t *r = (nsarr_t *)self; for (u64 i = r->n; i-- > 0;) if (obj_eq(r->items[i], o)) a_remove_at(self, c, i); }
+/* as variantes "IdenticalTo": comparação por ponteiro, não por -isEqual: */
+static u64 a_index_identical_range(id self, SEL c, id o, nsrange_t g) {
+    (void)c;
+    u64 n = MSG0(u64, self, "count"), end = g.loc + g.len;
+    if (end > n) end = n;
+    for (u64 i = g.loc; i < end; i++) if (MSG(id, self, "objectAtIndex:", i) == o) return i;
+    return 0x7fffffffffffffffULL;
+}
+static u64 a_index_identical(id self, SEL c, id o) { nsrange_t g = {0, ~0ULL >> 1}; return a_index_identical_range(self, c, o, g); }
+static void a_remove_identical(id self, SEL c, id o) { nsarr_t *r = (nsarr_t *)self; for (u64 i = r->n; i-- > 0;) if (r->items[i] == o) a_remove_at(self, c, i); }
+static void a_remove_identical_range(id self, SEL c, id o, nsrange_t g) {
+    nsarr_t *r = (nsarr_t *)self;
+    u64 end = g.loc + g.len;
+    if (end > r->n) end = r->n;
+    for (u64 i = end; i-- > g.loc;) if (r->items[i] == o) a_remove_at(self, c, i);
+}
+static void a_remove_obj_range(id self, SEL c, id o, nsrange_t g) {
+    nsarr_t *r = (nsarr_t *)self;
+    u64 end = g.loc + g.len;
+    if (end > r->n) end = r->n;
+    for (u64 i = end; i-- > g.loc;) if (obj_eq(r->items[i], o)) a_remove_at(self, c, i);
+}
 static void a_replace(id self, SEL c, u64 i, id o) { (void)c; nsarr_t *r = (nsarr_t *)self; if (i < r->n) { objc_retain(o); objc_release(r->items[i]); r->items[i] = o; } else if (i == r->n) cx_arr_add(self, o); }
 static void a_set_sub(id self, SEL c, id o, u64 i) { a_replace(self, c, i, o); }
 static SEL sort_sel;
@@ -1747,6 +1769,9 @@ void cx_foundation_init(void) {
     M(NSMutableArray, "removeObjectAtIndex:", a_remove_at); M(NSMutableArray, "removeLastObject", a_remove_last); M(NSMutableArray, "removeAllObjects", a_remove_all);
     M(NSMutableArray, "removeObjectsInRange:", a_remove_range);
     M(NSMutableArray, "removeObject:", a_remove_obj); M(NSMutableArray, "replaceObjectAtIndex:withObject:", a_replace);
+    M(NSMutableArray, "removeObjectIdenticalTo:", a_remove_identical); M(NSMutableArray, "removeObjectIdenticalTo:inRange:", a_remove_identical_range);
+    M(NSMutableArray, "removeObject:inRange:", a_remove_obj_range);
+    M(NSArray, "indexOfObjectIdenticalTo:", a_index_identical); M(NSArray, "indexOfObjectIdenticalTo:inRange:", a_index_identical_range);
     M(NSMutableArray, "setObject:atIndexedSubscript:", a_set_sub); M(NSMutableArray, "sortUsingSelector:", a_sort_sel);
 
     cx_define_class(&NSDictionary_c, &NSDictionary_m, "NSDictionary", &NSObject_c, sizeof(nsdict_t) - 8);
