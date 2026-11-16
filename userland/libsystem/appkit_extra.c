@@ -7,7 +7,7 @@
  * Todas ficam na superclasse certa, com símbolo exportado. As que o Electron chama de fato têm o
  * comportamento de um Mac sem o recurso:
  *   NSOpenPanel/NSSavePanel: só a hierarquia e as propriedades; o painel de verdade (janela, navegação, tipos,
- *   delegate) é registrado depois por appkit_panel.c e substitui runModal/begin*/URL/URLs daqui.
+ *   delegate) é registrado depois por appkit_panel.c e substitui runModal, begin…, URL e URLs daqui.
  *   NSStatusBar/NSStatusItem: a barra guarda o item e publica ícone, título e menu no
  *   window server (DEV_STATUS). O clique do kernel volta como GEV_STATUS e abre o menu.
  *   NSAnimation: termina na hora (progresso 1, animationDidEnd:). NSAnimationContext: grupos imediatos.
