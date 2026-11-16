@@ -8,16 +8,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 H=tools/corpus/harness.py
-# libSystem: o da main compilado pelo CI (harness.py libsystem-ci), senão o build/ local já copiado
-python3 "$H" libsystem-ci >/dev/null 2>&1 || true
-if [ -f build/ci-lib/libSystem.mos ]; then
-    LIBS=(--lib build/ci-lib/libSystem.mos --disco build/ci-lib/disco-x86 --disco build/disco-x86)
-    [ -f build/ci-lib/libSystem-arm64.mos ] && LIBS+=(--lib-arm64 build/ci-lib/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
-    echo "varrer-tudo: libSystem da main $(cat build/ci-lib/commit.txt 2>/dev/null | cut -c1-10)"
-else
-    LIBS=(--lib build/libSystem.mos --disco build/disco-x86 --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
-    echo "varrer-tudo: libSystem local ($(cat build/libSystem.origem 2>/dev/null))"
-fi
+# libSystem: o do build/ local (o build final pela fila renova; build/libSystem.origem diz de onde veio)
+LIBS=(--lib build/libSystem.mos --disco build/disco-x86 --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
+echo "varrer-tudo: libSystem local ($(cat build/libSystem.origem 2>/dev/null))"
 # libSystem diferente do da última medida: tudo o que foi medido com o outro é refeito
 atual=$(sha256sum "${LIBS[1]}" | cut -c1-16)
 if [ "$(cat build/corpus/libsystem-medido.txt 2>/dev/null)" != "$atual" ]; then
