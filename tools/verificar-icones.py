@@ -32,7 +32,9 @@ def main():
     digests = set()
     expected = set()
     runtime_files, runtime_pixels = [], []
-    destination = ROOT / "root/mOS/Sistema/Biblioteca/Icones"
+    destination = ROOT / "assets/icones/png"
+    runtime = ROOT / "root/mOS/Sistema/Biblioteca/Icones"
+    runtime_expected = set()
     artworks = [(name, originals / f"{name}.png", SIZES, (1, 2)) for name in names]
     bases = ROOT / "assets/icones/bases"
     require({p.stem for p in bases.glob("*.png")} == {"calendario", "relogio"}, "Bases dinâmicas faltantes ou excedentes")
@@ -49,7 +51,7 @@ def main():
                 suffix = "@2x" if density == 2 else ""
                 filename = f"{name}-{size}{suffix}.png"
                 expected.add(filename)
-                path = destination / filename
+                path = (runtime if name.endswith("-base") else destination) / filename
                 require(path.exists(), f"Exportação ausente: {filename}")
                 with Image.open(path) as image:
                     image.verify()
@@ -70,7 +72,11 @@ def main():
                         runtime_pixels.append((pixels, pixels, hash_value))
                 if density == 1 and size <= 256:
                     require(path.stat().st_size <= 512 * 1024, f"Acima do limite do carregador: {filename}")
-    require({p.name for p in destination.glob("*.png")} == expected, "Exportações excedentes")
+                    runtime_expected.add(filename)
+                    require((runtime / filename).exists() and (runtime / filename).read_bytes() == path.read_bytes(), f"Payload diferente: {filename}")
+    actual_names = {p.name for p in destination.glob("*.png")} | {p.name for p in runtime.glob("*-base-*.png")}
+    require(actual_names == expected, "Exportações excedentes")
+    require({p.name for p in runtime.glob("*.png")} == runtime_expected, "Payload contém variantes desnecessárias ou incompletas")
     if len(sys.argv) > 1:
         decoded = subprocess.run([str(Path(sys.argv[1]).resolve()), *runtime_files],
                                  capture_output=True, text=True, check=True)
@@ -78,6 +84,7 @@ def main():
         require(actual == runtime_pixels, "Pixels do decodificador do kernel diferem do Pillow")
         print(f"{len(actual)} PNGs de até 256 px: pixels idênticos entre kernel e Pillow")
     print(f"{len(names)}/{len(registered)} apps; {len(digests)} fontes distintas (inclui 2 bases); {len(expected)} PNGs válidos")
+    print(f"Payload: {len(runtime_expected)} PNGs, {sum(p.stat().st_size for p in runtime.glob('*.png'))} bytes")
 
 
 if __name__ == "__main__":

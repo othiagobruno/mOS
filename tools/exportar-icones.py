@@ -6,6 +6,7 @@ Os tamanhos @2x indicam densidade; não adicionam detalhe ao original.
 """
 from pathlib import Path
 import json
+import shutil
 
 from PIL import Image
 
@@ -24,8 +25,10 @@ def export_bases(destination):
 
 
 def main():
-    destination = ROOT / "root/mOS/Sistema/Biblioteca/Icones"
+    destination = ROOT / "assets/icones/png"
+    runtime = ROOT / "root/mOS/Sistema/Biblioteca/Icones"
     destination.mkdir(parents=True, exist_ok=True)
+    runtime.mkdir(parents=True, exist_ok=True)
     for name in NAMES:
         with Image.open(ROOT / f"assets/icones/originais/{name}.png") as source:
             source = source.convert("RGBA")
@@ -39,9 +42,12 @@ def main():
                     image = source.convert("RGBa").resize(
                         (pixels, pixels), Image.Resampling.LANCZOS
                     ).convert("RGBA")
-                    image.save(destination / f"{name}-{size}{suffix}.png")
+                    filename = f"{name}-{size}{suffix}.png"
+                    image.save(destination / filename)
+                    if density == 1 and size <= 256:
+                        shutil.copyfile(destination / filename, runtime / filename)
         print(f"{name}: 14 PNGs exportados")
-    export_bases(destination)
+    export_bases(runtime)
 
 
 if __name__ == "__main__":

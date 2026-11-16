@@ -68,7 +68,8 @@ As duas artes em `bases/` foram editadas com imagegen a partir dos próprios ori
 ## Arquivos
 
 - `originais/<exec>.png`: 48 originais RGBA preservados.
-- `../../root/mOS/Sistema/Biblioteca/Icones/<exec>-<tamanho>[@2x].png`: 672 exportações.
+- `png/<exec>-<tamanho>[@2x].png`: 672 exportações públicas.
+- `../../root/mOS/Sistema/Biblioteca/Icones/`: 250 arquivos pequenos para a imagem do sistema (240 variantes até 256 px e 10 bases dinâmicas), sem instalar as variantes grandes ou duplicações @2x.
 - `../../tools/exportar-icones.py`: reexportação com Pillow e alfa pré-multiplicado.
 - `../../tools/verificar-icones.py`: conferência de catálogo e arquivos; aceita o caminho do teste C para comparar a decodificação real do kernel com Pillow.
 
