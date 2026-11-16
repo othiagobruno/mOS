@@ -51,3 +51,19 @@ Atualizado a cada PR. "Host" = teste de host em Linux; VM/hardware só depois do
 não tem teste (o ffmpeg daqui não tem codificador HE-AAC; entra junto do codificador FDK). O `tools/build-libsystem.ps1`
 (Windows) e o libSystem arm64 ainda não ligam `audiodec.c` nem os codecs. A decodificação ainda é do arquivo inteiro
 ao abrir; a leitura em fluxo entra com o AVPlayer de vídeo.
+
+## H.264 Main/High: avaliação do OpenH264 2.6.0 (BSD-2)
+
+Critério: decodificação H.264 é determinística, então o decodificador tem de sair **bit-exato** ao ffmpeg.
+Harness de avaliação fora do repositório (Annex B → I420 → `cmp` contra `ffmpeg -f rawvideo`), 352x288, x264:
+
+| Fluxo x264 | Resultado |
+|---|---|
+| Baseline | bit-exato |
+| Main / High (padrão do x264, com B-frames) | **difere** só nos quadros B; I e P bit-exatos |
+| B sem subpartições (`partitions=none`), CAVLC ou CABAC, i4x4, i8x8 | bit-exato |
+| B com `b8x8` (direto espacial, temporal ou nenhum) ou com `p8x8` | **difere** |
+
+Conclusão: o OpenH264 tem defeito na predição/reconstrução de macroblocos B com subpartições 8x8. Próximo passo:
+corrigir no fonte vendido (com teste bit-exato) ou usar outro decodificador permissivo. Entrelaçado (PAFF/MBAFF)
+o OpenH264 não decodifica; isso fica como item separado.
