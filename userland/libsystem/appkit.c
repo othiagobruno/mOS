@@ -3248,6 +3248,13 @@ static void dispatch(gui_event_t *g) {
         ((cx_responds(w->isa, sel_registerName("canBecomeKeyWindow")) && !MSG0(BOOL, w, "canBecomeKeyWindow")) ||
          w_descends(w, g_key_window)))
         w = g_key_window;
+    {   /* janela com sheet aberta: cliques, rolagem e teclas param nela (appkit_sheets.c); a sheet vira chave */
+        extern int cx_sheet_blocks(id w);
+        if ((g->type == GEV_MOUSE_DOWN || g->type == GEV_RIGHT_DOWN || g->type == GEV_SCROLL || g->type == GEV_KEY_DOWN) && cx_sheet_blocks(w)) {
+            if (g->type == GEV_MOUSE_DOWN || g->type == GEV_RIGHT_DOWN) NSBeep();
+            return;
+        }
+    }
     wstate_t *s = ws(w);
     g_mods = mac_mods(g->mods);
     { extern void cx_gc_mouse_event(int type, int x, int y, int buttons, int scroll);   /* GCMouse */

@@ -522,11 +522,7 @@ void cx_appkit_apps_ui_init(void) {
     { cx_class_t *v = cl("NSView"); if (v) cx_add_method(v, "addGestureRecognizer:", (void *)view_add_gr); if (v) cx_add_method(v, "mouseDown:", (void *)view_mouse_down); }
     /* Símbolos Swift do overlay AppKit. O genérico (snapshot, diffable, metadata Mn)
      * não tem runtime Swift aqui: devolve vazio. NSApplicationMain chama a função C. */
-    { cx_class_t *w = cl("NSWindow"); if (w) {
-        cx_add_method(w, "beginSheet:completionHandler:", (void *)win_begin_sheet);
-        cx_add_method(w, "endSheet:", (void *)win_end_sheet0);
-        cx_add_method(w, "endSheet:returnCode:", (void *)win_end_sheet);
-    } }
+    /* sheets: appkit_sheets.c (janela filha de verdade) */
 }
 
 /* Overlay Swift do AppKit (libswiftAppKit). Sem metadata de tipo genérico: o dyld resolve
