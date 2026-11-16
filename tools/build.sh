@@ -69,6 +69,10 @@ gcc -O1 -DMOS_HOST_TEST -I kernel/dev/amdgpu -c kernel/dev/amdgpu/pm4check.c -o 
 gcc -std=gnu11 -O1 -w -fno-builtin -I tools/hostinc -I userland/libsystem tools/amdws_host.c userland/libsystem/amdws.c /tmp/pm4check_amdws.o -o /tmp/amdws_host
 /tmp/amdws_host > /tmp/amdws_host.log || { cat /tmp/amdws_host.log; exit 1; }
 tail -1 /tmp/amdws_host.log
+# montador GCN/GFX9 (libSystem)
+gcc -std=gnu11 -O1 -w -I userland/libsystem tools/amdisa_host.c userland/libsystem/amdisa.c -o /tmp/amdisa_host
+/tmp/amdisa_host > /tmp/amdisa_host.log || { cat /tmp/amdisa_host.log; exit 1; }
+tail -1 /tmp/amdisa_host.log
 # GPU AMD: interpretador ATOM e leitura do VBIOS (VFCT, atomfirmware). Com MOS_VFCT=<cópia da VFCT> confere o VBIOS real.
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu tools/amdgpu_atom_host.c kernel/dev/amdgpu/atom.c -o /tmp/amdgpu_atom_host
 /tmp/amdgpu_atom_host > /tmp/amdgpu_atom_host.log || { cat /tmp/amdgpu_atom_host.log; exit 1; }
