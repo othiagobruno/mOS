@@ -4,7 +4,7 @@
  *    (um item no topo vai direto para a pasta; vários itens vão para uma pasta com o nome do .zip).
  *    Links simbólicos do zip (frameworks de apps) viram links do mOS ("#mOS-link:alvo").
  *  - DiskImageMounter (com.apple.DiskImageMounter): monta .dmg/.img/.iso em /Volumes.
- *    Um .pkg/.mpkg flat (xar) tem o Payload extraído para /Aplicativos. Scripts não rodam.
+ *    Um .pkg/.mpkg vai para o /usr/sbin/installer (scripts, recibos, install-location do pacote).
  * Os dois são registrados no Launch Services (kernel/compat/launchsvc.c) como quem abre esses tipos; um app de
  * terceiros que declare o tipo com LSHandlerRank Owner, ou que o usuário escolha, passa na frente.
  */
@@ -13,7 +13,6 @@
 #include "fs.h"
 #include "launchsvc.h"
 #include "vfs.h"
-#include "pkgextract.h"
 
 void finder_open_path(const char *path);
 
@@ -163,127 +162,23 @@ static int ends_pkg(const char *name) {
     return n > 4 && (!strcasecmp(name + n - 4, ".pkg") || (n > 5 && !strcasecmp(name + n - 5, ".mpkg")));
 }
 
-/* Cada componente do meio precisa ser um diretório de verdade. vfs_mkdir segue link no meio do caminho. */
-static vnode_t *pkg_real_dir(const char *path) {
-    vnode_t *cur = vfs_lookup("/");
-    const char *p;
-    if (!cur || !path || path[0] != '/') return NULL;
-    p = path + 1;
-    if (!*p) return cur;
-    while (*p) {
-        char part[256];
-        int n = 0;
-        vnode_t *c;
-        while (*p && *p != '/' && n < 255) part[n++] = *p++;
-        part[n] = 0;
-        while (*p == '/') p++;
-        if (!n) continue;
-        c = vfs_child(cur, part);
-        if (!c || !c->dir) return NULL;
-        cur = c;
-    }
-    return cur;
-}
-
-static int pkg_rel_ok(const char *rel) {
-    const char *p;
-    if (!rel || !rel[0] || rel[0] == '/') return 0;
-    p = rel;
-    while (*p) {
-        const char *s = p;
-        int n;
-        while (*p && *p != '/') p++;
-        n = (int)(p - s);
-        if (n <= 0 || (n == 1 && s[0] == '.') || (n == 2 && s[0] == '.' && s[1] == '.')) return 0;
-        if (*p == '/') p++;
-    }
-    return 1;
-}
-
-static int pkg_vfs_write(void *ctx, const char *rel, const void *data, u64 n, int kind) {
-    const char *root = ctx;
-    char cur[1024], next[1024];
-    const char *p = rel;
-    vnode_t *parent;
-    if (!pkg_rel_ok(rel) || !root) return -1;
-    if (!pkg_real_dir(root) && !vfs_mkdir(root)) return -1;
-    parent = pkg_real_dir(root);
-    if (!parent) return -1;
-    snprintf(cur, sizeof cur, "%s", root);
-    while (*p) {
-        char part[256];
-        int ln = 0, last;
-        vnode_t *c;
-        while (*p && *p != '/' && ln < 255) part[ln++] = *p++;
-        part[ln] = 0;
-        while (*p == '/') p++;
-        last = !*p;
-        if (!ln || snprintf(next, sizeof next, "%s/%s", cur, part) >= (int)sizeof next) return -1;
-        c = vfs_child(parent, part);
-        if (!last) {
-            if (!c) {
-                if (!vfs_mkdir(next) || !(c = pkg_real_dir(next))) return -1;
-            }
-            if (!c->dir) return -1;
-            parent = c;
-            snprintf(cur, sizeof cur, "%s", next);
-            continue;
-        }
-        if (kind == 1) {
-            if (c && !c->dir) return -1;
-            if (!c && !vfs_mkdir(next)) return -1;
-            return pkg_real_dir(next) ? 0 : -1;
-        }
-        if (c && c->dir) return -1;
-        if (n > 512ull * 1024 * 1024) return -1;
-        return vfs_write_file(next, data ? data : "", (usize)n) ? 0 : -1;
-    }
-    return -1;
-}
-
-static void install_pkg_bytes(const u8 *data, u64 n) {
-    pkg_out_t o;
-    int r;
-    char msg[240];
-    memset(&o, 0, sizeof o);
-    o.write = pkg_vfs_write;
-    o.ctx = (void *)"/Aplicativos";
-    r = pkg_extract(data, n, &o);
-    if (r != 0) {
-        snprintf(msg, sizeof msg, "%s", o.reason[0] ? o.reason : "pacote malformado");
-        notify("Pacote recusado", msg);
-        kprintf("pkg: recusado (%s)\n", msg);
-        return;
-    }
-    kprintf("pkg: %d arquivo(s) em /Aplicativos; %d script(s) não executado(s)\n", o.files, o.scripts_skipped);
-    notify("Pacote instalado", "Os apps foram para Aplicativos. Scripts de pré e pós-instalação não foram executados.");
-    ls_rescan();
-}
-
-static void install_pkg_tree(vnode_t *dir) {
-    int any = 0;
-    vnode_t *pack;
-    char sub[512];
-    if (!dir) return;
-    for (vnode_t *c = dir->child; c; c = c->next) {
-        if (c->dir || !c->data || !ends_pkg(c->name)) continue;
-        install_pkg_bytes(c->data, c->size);
-        any = 1;
-    }
-    pack = vfs_child(dir, "Contents");
-    pack = pack ? vfs_child(pack, "Packages") : NULL;
-    if (pack && pack->dir) {
-        for (vnode_t *c = pack->child; c; c = c->next) {
-            if (c->dir || !c->data || !ends_pkg(c->name)) continue;
-            install_pkg_bytes(c->data, c->size);
-            any = 1;
-        }
-    }
-    if (!any) {
-        snprintf(sub, sizeof sub, "%s", dir->name);
-        notify("Pacote recusado", "O .mpkg não tem um xar com Payload. Nada foi copiado.");
-        kprintf("pkg: %s sem xar\n", sub);
-    }
+/* .pkg/.mpkg (flat xar ou pasta no formato antigo): o /usr/sbin/installer do mOS instala com scripts, recibos e o
+ * install-location do pacote (userland/cli-macos/installer.c, motor em userland/pkg/pkgengine.c) e avisa no fim
+ * com um banner do desktop. */
+#include "proc.h"
+#include "syscall.h"
+extern int proc_spawn_in(const char *path, const char *arg, tty_t *tty, char **xargv, int xargc, char **xenv, int xenvc,
+                         mos_spawn_fa_t *acts, int nacts, unsigned spawn_flags);
+static void install_pkg_path(const char *path) {
+    static char a0[] = "/usr/sbin/installer", a1[] = "-mosgui", a2[] = "-pkg", a4[] = "-target", a5[] = "/";
+    char a3[512];
+    snprintf(a3, sizeof a3, "%s", path);
+    char *argv[] = {a0, a1, a2, a3, a4, a5};
+    if (!vfs_lookup(a0)) { notify("Pacote recusado", "O /usr/sbin/installer não está no sistema."); return; }
+    int pid = proc_spawn_in(a0, NULL, NULL, argv, 6, NULL, 0, NULL, 0, 0);
+    if (pid < 0) { notify("Pacote recusado", "Não foi possível iniciar o instalador."); return; }
+    notify("Instalando pacote", path);
+    kprintf("pkg: /usr/sbin/installer (pid %d) para %s\n", pid, path);
 }
 
 static void install_apps_in(const char *dir) {
@@ -302,12 +197,7 @@ void diskimage_open_file(const char *path) {
     vnode_t *n = vfs_lookup(path);
     if (!n) return;
     char msg[300];
-    if (ends_pkg(n->name)) {
-        if (n->dir) install_pkg_tree(n);
-        else if (n->data) install_pkg_bytes(n->data, n->size);
-        else notify("Pacote recusado", "Arquivo vazio. Nada foi copiado.");
-        return;
-    }
+    if (ends_pkg(n->name)) { install_pkg_path(path); return; }
     char before[8][64];
     int nb = 0;
     vnode_t *vols = vfs_lookup("/Volumes");

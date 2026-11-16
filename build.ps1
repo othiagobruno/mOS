@@ -246,8 +246,10 @@ foreach ($f in Get-ChildItem "$stubOut\*.dylib") {
 Write-Host "libswift na imagem: $nSwiftStub stub(s); dylib já presente foi mantida"
 # ferramentas de linha de comando do macOS em Mach-O (userland\cli-macos\<nome>.c -> /usr/bin/<nome>): open(1)
 New-Item -ItemType Directory -Force "$esp\mOS\usr\bin" | Out-Null
+New-Item -ItemType Directory -Force "$esp\mOS\usr\sbin" | Out-Null
 foreach ($c in Get-ChildItem "$root\userland\cli-macos" -Filter *.c -ErrorAction SilentlyContinue) {
-    & $zig cc -target x86_64-macos -O2 $c.FullName -o "$esp\mOS\usr\bin\$($c.BaseName)" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+    $bindir = if ($c.BaseName -in @('installer', 'pkgutil')) { 'sbin' } else { 'bin' }   # como no macOS: /usr/sbin/installer
+    & $zig cc -target x86_64-macos -O2 "-I$root\userland\pkg" $c.FullName -o "$esp\mOS\usr\$bindir\$($c.BaseName)" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) {
         if (Test-MosWindows) { Write-Host "/usr/bin/$($c.BaseName) FAILED" -ForegroundColor Red; exit 1 }
         Write-Host "aviso: /usr/bin/$($c.BaseName) não compilou neste Linux" -ForegroundColor Yellow

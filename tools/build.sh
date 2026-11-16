@@ -433,8 +433,11 @@ if [ -d "$ROOT/userland/cli-macos" ]; then
     for c in "$ROOT"/userland/cli-macos/*.c; do
         [ -f "$c" ] || continue
         name=$(basename "$c" .c)
-        if ! "$ZIG" cc -target x86_64-macos -O2 "$c" -o "$ESP/mOS/usr/bin/$name" -Wl,-undefined,dynamic_lookup; then
-            echo "aviso: /usr/bin/$name não compilou" >&2
+        bindir=usr/bin
+        case "$name" in installer|pkgutil) bindir=usr/sbin ;; esac   # como no macOS: /usr/sbin/installer
+        mkdir -p "$ESP/mOS/$bindir"
+        if ! "$ZIG" cc -target x86_64-macos -O2 -I"$ROOT/userland/pkg" "$c" -o "$ESP/mOS/$bindir/$name" -Wl,-undefined,dynamic_lookup; then
+            echo "aviso: /$bindir/$name não compilou" >&2
         fi
     done
 fi

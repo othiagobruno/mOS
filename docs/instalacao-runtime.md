@@ -14,7 +14,7 @@ Frente do loader, do Launch Services, do dyld e do VFS: abrir, encerrar e persis
 - **Home.** `account_ensure_dirs` cria Mesa, Documentos, Downloads, Imagens, Música, Lixeira e `Library` com Preferences, Application Support, Logs, Saved Application State, Caches e LaunchAgents. Vale para a conta nova, para a sessão e para `/Users/Visitante` no `vfs_init`.
 - **Persistência.** Com a gravação ligada (instalado, primeiro boot ou Live após consentimento), `~/Library` entra no disco: `tracked_path` só exclui `/Volumes`, `/tmp` e o diretório de atualização. Caches também são gravados. Arquivo vindo da imagem ou do disco entra com mtime 0 e não é reescrito. `persist_capture_existing` marca, só depois de `persist_consent_live` ligar a gravação, nós com mtime diferente de 0 ou dirty. Não é chamado de `persist_enable`.
 - **Instalar de um .dmg.** Depois de montar, o DiskImageMounter copia os `.app` do topo do volume novo e de `Applications` e `Aplicativos` para `/Aplicativos` (`ls_install_app`). Não entra dentro do bundle. O destino que já existe não é sobrescrito.
-- **Instalar de um .pkg / .mpkg.** O DiskImageMounter extrai o Payload (cpio em gzip ou pbzx) de um xar flat, confere os caminhos no Bom e grava em `/Aplicativos` (`kernel/apps/pkgextract.c`). Um `.mpkg` que é diretório instala os `.pkg` do topo e de `Contents/Packages`. Scripts de pré e pós-instalação são contados e não executados. Symlink do cpio não é materializado. Caminho absoluto, `..` ou componente `SC_Info` recusa o pacote inteiro antes de qualquer escrita. O destino no VFS só cria diretório real, sem seguir `#mOS-link:` no meio do caminho.
+- **Instalar de um .pkg / .mpkg.** Abrir o pacote no Arquivos roda o `/usr/sbin/installer` do mOS (`userland/cli-macos/installer.c`, motor em `userland/pkg/pkgengine.c`): xar flat (TOC e checksums conferidos) ou pasta no formato antigo, Distribution com escolhas, PackageInfo (`install-location`), Scripts preinstall/postinstall (e pre/postflight no formato antigo) com os argumentos e o ambiente do Installer, Payload cpio (gzip, pbzx, bzip2, xz) com modo, datas e links simbólicos, recibos em `/var/db/receipts` e `pkgutil`. Caminho com `..` recusa. Detalhes e testes: `docs/pkg-instalador.md`.
 - **Agentes e login.** O init varre de novo, a cada 5 s, LaunchAgents/LaunchDaemons de sistema e de usuário, os de `Conteúdo/Library` dentro de cada `.app` em `/Aplicativos`, e `~/Library/Preferences/com.mos.loginitems` (um caminho absoluto por linha). No boot a varredura extra não inicia ninguém: o laço que já existia inicia os `RunAtLoad`. A cada 5 s só inicia job com `last_start == 0`, para não duplicar. `LSSharedFileListInsertItemURL`, `LSSharedFileListCopySnapshot` e `LSSharedFileListItemRemove` (`userland/libsystem/vscode_frameworks.c`, arquivo da frente Sistemas) chamam `userland/libsystem/loginitems.c`, que reescreve o arquivo. Cada arquivo só reconcilia jobs com `src` naquele caminho, então a lista vazia de outro usuário não apaga o resto. O rótulo é `mos.login.<nome do app>`. Item removido sai da lista e o init não o sobe (`runatload` e `keep` em 0; se o pid ainda é 0, o job some). Processo que já está no ar não é morto. O "abrir ao iniciar sessão" do Dock já é outro arquivo, da Interface (`com.mos.dock.cfg`).
 - **XPC no bundle.** Ao reler um `.app`, o Launch Services anuncia os `.xpc` de `Contents/XPCServices`, de `Frameworks/*.framework` (também `Versions/*/XPCServices` e `Updater.app`) e o init cria o job sob demanda (`runatload` 0, nome Mach = `CFBundleIdentifier`). O plugin em `Library/SecurityAgentPlugins` ou `AuthorizationPlugins`, ou com `AuthorizationPlugin` no nome, só é registrado ou recusado no log. Não é executado e não ganha privilégio. `tools/stage-xpc.ps1` copia esses bundles no stage do Chrome, do Electron, do VS Code e do layout Chromium (`stage-chromeapp.ps1`).
 - **dyld remove.** `_dyld_register_func_for_remove_image` guarda até 32 callbacks. `cx_dyld_notify_remove` os chama. O `dlclose` não chama: `MOS_DYLD_CLOSE` só tira uma referência e o kernel não desmapeia.
@@ -99,9 +99,7 @@ gcc -Wall -Wextra -o /tmp/quitpol_test tools/quitpol_test.c && /tmp/quitpol_test
 gcc -Wall -Wextra -o /tmp/dladdr_trie_test tools/dladdr_trie_test.c && /tmp/dladdr_trie_test
 gcc -Wall -Wextra -o /tmp/block_refcount_test tools/block_refcount_test.c && /tmp/block_refcount_test
 gcc -O2 -o /tmp/mkimg tools/mkimg.c && /tmp/mkimg /tmp/mos-fw.img /tmp/mos-fw-tree 32
-gcc -std=c11 -Wall -Wextra -O1 -DMOS_HOST_TEST -D_GNU_SOURCE -D_msize=malloc_usable_size \
-  -Ikernel/include -Ikernel/apps -Itools tools/pkgtest.c kernel/apps/pkgextract.c \
-  kernel/fs/inflate.c kernel/fs/xz.c -o /tmp/pkgtest && /tmp/pkgtest
+sh tools/installer_test.sh
 gcc -std=c11 -Wall -Wextra -O1 -D_GNU_SOURCE -Ikernel/include \
   tools/loginitemtest.c -o /tmp/loginitemtest && /tmp/loginitemtest
 gcc -std=c11 -Wall -Wextra -O1 -D_GNU_SOURCE -Ikernel/include \
@@ -126,7 +124,6 @@ pkg sc_info: r=-1 writes=0 motivo=SC_Info (FairPlay); o mOS não extrai nem cont
 pkg magic: r=-1 writes=0 motivo=não é um xar
 pkg bom-ruim: r=-1 writes=0 motivo=Bom malformado
 pkg truncado: r=-1 writes=0 motivo=xar truncado
-pkgtest: 58/58 PASS
 alocações vivas: 0
 login semente inicial: 214563360
 login lista: 2
