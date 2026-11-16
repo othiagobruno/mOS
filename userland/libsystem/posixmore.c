@@ -174,8 +174,6 @@ char *nl_langinfo(int item) {
 }
 
 /* ------------------------------------------------------------ matemática */
-long double frexpl(long double x, int *e) { return (long double)frexp((double)x, e); }
-long double ldexpl(long double x, int e) { return (long double)ldexp((double)x, e); }
 typedef struct { long long quot, rem; } cx_imaxdiv_t;
 cx_imaxdiv_t imaxdiv(long long a, long long b) { cx_imaxdiv_t r = {a / b, a % b}; return r; }
 

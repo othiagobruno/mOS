@@ -13,10 +13,6 @@ char *strrchr(const char *s, int c);
 typedef __builtin_va_list va_list;
 int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap);
 
-long long llroundl(long double x) {
-    if (x >= 0) return (long long)(x + 0.5L);
-    return -(long long)(-x + 0.5L);
-}
 
 int vsnprintf_l(char *buf, size_t n, void *loc, const char *fmt, va_list ap) {
     (void)loc;

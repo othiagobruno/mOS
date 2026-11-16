@@ -138,7 +138,26 @@ $fail = Run-Pool $uwsrc { param($f)
     @('clang') + ($uwflags | ForEach-Object { if ($_ -match ' ') { Q $_ } else { $_ } }) + $x + @('-c', (Q "$uw\src\$f"), '-o', (Q "$obj\uw_$f.o")) }
 if ($fail) { Write-Host 'libunwind arm64 FAILED' -ForegroundColor Red; exit 1 }
 
-$objs = @($src | ForEach-Object { "$obj\" + [IO.Path]::GetFileName($_) + '.o' }) + @($crt) + @($uwsrc | ForEach-Object { "$obj\uw_$_.o" })
+function Get-MuslSources($mu, $arch) {
+    # como o Makefile do musl: o arquivo de src\math\<arch> com o mesmo nome-base substitui o genérico (tools/build-libm-musl.sh)
+    $seen = @{}; $list = @()
+    foreach ($f in Get-ChildItem "$mu\src\math\$arch\*" -Include *.c, *.s) { $seen[$f.BaseName] = 1; $list += $f.FullName }
+    foreach ($f in Get-ChildItem "$mu\src\math\*.c") { if (-not $seen.ContainsKey($f.BaseName)) { $list += $f.FullName } }
+    $list += "$mu\mos\aliases.c", "$mu\mos\apple.c"
+    return $list
+}
+# libm do musl 1.2.5 (MIT, userland\third_party\musl), com os cabeçalhos de mos\include e o mesmo triplo Darwin
+# (long double = double): as definições daqui ganham dos símbolos fracos do compiler-rt
+$mu = "$root\userland\third_party\musl"
+New-Item -ItemType Directory -Force "$obj\libm" | Out-Null
+$libmFlags = @("--target=$triple", '-mcpu=apple-m1', '-O2', '-g0', '-ffreestanding', '-fno-stack-protector', '-fno-builtin', '-fPIC',
+    '-ffixed-x18', '-fsigned-char', '-fno-common', '-funwind-tables', '-w', '-std=c99', '-nostdinc', "-I$mu\mos\include",
+    "-I$mu\src\internal", "-I$mu\arch\aarch64", "-I$mu\arch\generic", '-isystem', $inc)
+$libmSrc = Get-MuslSources $mu 'aarch64'
+$fail = Run-Pool $libmSrc { param($f) @('clang') + ($libmFlags | ForEach-Object { if ($_ -match ' ') { Q $_ } else { $_ } }) + @('-c', (Q $f), '-o', (Q ("$obj\libm\" + [IO.Path]::GetFileName($f) + '.o'))) }
+if ($fail) { Write-Host 'libm arm64 FAILED' -ForegroundColor Red; exit 1 }
+
+$objs = @($src | ForEach-Object { "$obj\" + [IO.Path]::GetFileName($_) + '.o' }) + @($crt) + @($uwsrc | ForEach-Object { "$obj\uw_$_.o" }) + @($libmSrc | ForEach-Object { "$obj\libm\" + [IO.Path]::GetFileName($_) + '.o' })
 $rsp = "$obj\link.rsp"
 [IO.File]::WriteAllLines($rsp, ($objs | ForEach-Object { '"' + ($_ -replace '\\', '/') + '"' }))
 & $zig ld.lld -m aarch64elf -pie --no-dynamic-linker -z notext -e cx_start --no-gc-sections --hash-style=sysv `

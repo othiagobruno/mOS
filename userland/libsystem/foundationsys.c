@@ -51,15 +51,6 @@ void *malloc_type_zone_realloc(void *zone, void *p, size_t n, u64 type_id) { (vo
 void malloc_type_zone_free(void *zone, void *p, u64 type_id) { (void)zone; (void)type_id; free(p); }
 
 /* ======================================================================== matemática e locale */
-float modff(float x, float *ip) { double i; double f = modf((double)x, &i); *ip = (float)i; return (float)f; }
-double remquo(double x, double y, int *quo) {
-    double q = round(x / y);
-    double r = x - q * y;
-    long long qi = (long long)q;
-    int s = qi < 0 ? -1 : 1;
-    *quo = s * (int)((qi < 0 ? -qi : qi) & 0x7fffffff);
-    return r;
-}
 double strtod_l(const char *s, char **end, void *loc) { (void)loc; return strtod(s, end); }
 float strtof_l(const char *s, char **end, void *loc) { (void)loc; return (float)strtod(s, end); }
 int strncasecmp_l(const char *a, const char *b, size_t n, void *loc) { (void)loc; return strncasecmp(a, b, n); }

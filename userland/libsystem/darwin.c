@@ -341,8 +341,6 @@ id_ CFStringCreateWithBytesNoCopy(void *alloc, const u8 *b, long n, u32 enc, u8 
     (void)dealloc;
     return CFStringCreateWithBytes(alloc, b, n, enc, ext);
 }
-long long llround(double x) { return x >= 0 ? (long long)(x + 0.5) : -(long long)(-x + 0.5); }
-long long llroundf(float x) { return llround((double)x); }
 
 id_ CFStringCreateWithCString(void *alloc, const char *s, u32 enc) { (void)enc; return CFStringCreateWithFileSystemRepresentation(alloc, s); }
 /* um ponto de código em UTF-8 */
