@@ -1519,17 +1519,6 @@ void $ss8DurationV10FoundationE15TimeFormatStyleV7PatternVMa(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleVAC0dE0ACMc(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleVMa(void) {}
 void $ss8DurationV10FoundationE9formattedy12FormatOutputQzxAC0D5StyleRzAB0D5InputRtzlF(void) {}
-void CCCalibratePBKDF(void) {}
-void CC_MD2_Final(void) {}
-void CC_MD2_Init(void) {}
-void CC_MD2_Update(void) {}
-void CC_MD4_Final(void) {}
-void CC_MD4_Init(void) {}
-void CC_MD4_Update(void) {}
-void CC_SHA224(void) {}
-void CC_SHA224_Final(void) {}
-void CC_SHA224_Init(void) {}
-void CC_SHA224_Update(void) {}
 void NXGetArchInfoFromCpuType(void) {}
 void NXGetLocalArchInfo(void) {}
 void *OBJC_CLASS_$_NSOutputStream;
