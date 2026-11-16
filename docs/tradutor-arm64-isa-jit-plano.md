@@ -73,6 +73,12 @@ O terceiro corrompe a memória logo depois do cache de código no processo real;
 | #308 | FCVTN/P/M/A (S e U) vetoriais e escalares de S/D |
 | #311 | DUP elemento → escalar, FMUL/FMLA/FMLS escalares por elemento, FADDP escalar e 2S |
 | #314 | FMAX/FMIN/FMAXNM/FMINNM, FABD, FMULX vetoriais de S/D |
+| #343 #398 | FP16: comparações, FMAX/FMIN/FMAXNM/FMINNM, FABD, FMULX; FMAXP/FMINP/FMAXNMP/FMINNMP de S/D |
+| #405 | FRECPS/FRSQRTS vetoriais (FMA), FDIV 2S (teste `jit_fstep`) |
+| #410 #413 | ADDV H/S, SADDLV/UADDLV, SADDLP/UADDLP/SADALP/UADALP; FMAXV/FMINV/FMAXNMV/FMINNMV de 4S |
+| #417 #420 #424 | FCVTL/FCVTN (H↔S, S↔D); FSQRT/FRINTX vetoriais, SHLL; CLZ/CLS |
+| #433 | SRI/SLI; SQ(R)SHRN/UQ(R)SHRN/SQ(R)SHRUN 16→8 e 32→16; SCVTF/UCVTF/FCVTZS/FCVTZU #fbits vetoriais (teste `jit_fixcvt`) |
+| #439 #442 | FRINTA e FRINT32Z/32X/64Z/64X vetoriais; RBIT |
 
 Cada lote: fuzz interp × JIT (`a64fuzz --sem-qemu`) com 3–4 sementes, de 75 000 a 250 000 casos,
 0 divergências. O interpretador é o oráculo verificado contra o QEMU.
