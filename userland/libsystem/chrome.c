@@ -128,8 +128,6 @@ wchar32 *wcspbrk(const wchar32 *s, const wchar32 *set) {
     for (; *s; s++) for (const wchar32 *k = set; *k; k++) if (*s == *k) return (wchar32 *)s;
     return 0;
 }
-float nanf(const char *tag) { (void)tag; return __builtin_nanf(""); }
-float log1pf(float x) { return (float)log1p(x); }
 
 /* getopt_long: o suficiente para "--nome", "--nome=valor", "--nome valor" e "-x" */
 struct option { const char *name; int has_arg; int *flag; int val; };

@@ -21,6 +21,29 @@ $src += Get-ChildItem "$br\c\common","$br\c\dec","$br\c\enc" -Filter *.c | ForEa
 # x86_64: _Unwind_* e a personality C++ estão em userland/libsystem/cxx_unwind.c.
 # Não ligar os .o do libunwind do zig: os nomes _Unwind_* batem. arm64 segue em build-libsystem-arm64.ps1.
 
+function Get-MuslSources($mu, $arch) {
+    # como o Makefile do musl: o arquivo de src\math\<arch> com o mesmo nome-base substitui o genérico (tools/build-libm-musl.sh)
+    $seen = @{}; $list = @()
+    foreach ($f in Get-ChildItem "$mu\src\math\$arch\*" -Include *.c, *.s) { $seen[$f.BaseName] = 1; $list += $f.FullName }
+    foreach ($f in Get-ChildItem "$mu\src\math\*.c") { if (-not $seen.ContainsKey($f.BaseName)) { $list += $f.FullName } }
+    $list += "$mu\mos\aliases.c", "$mu\mos\apple.c"
+    return $list
+}
+# libm do musl 1.2.5 (MIT, userland\third_party\musl): compilada à parte, com os cabeçalhos de mos\include
+$mu = "$root\userland\third_party\musl"
+$libmObj = "$root\build\libm-x86"
+New-Item -ItemType Directory -Force $libmObj | Out-Null
+$libmFlags = @('cc', '-target', 'x86_64-freestanding-none', '-O2', '-g0', '-ffreestanding', '-fno-stack-protector', '-fno-builtin', '-fpie',
+    '-mno-red-zone', '-w', '-std=c99', '-nostdinc', "-I$mu\mos\include", "-I$mu\src\internal", "-I$mu\arch\generic",
+    '-isystem', (Join-Path $zigdir 'lib\include'))
+$libmO = @()
+foreach ($s in Get-MuslSources $mu 'x86_64') {
+    $o = "$libmObj\" + [IO.Path]::GetFileName($s) + '.o'
+    & $zig @libmFlags -c $s -o $o 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) { Write-Host "libm: falhou $s" -ForegroundColor Red; exit 1 }
+    $libmO += $o
+}
+
 & $zig cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie `
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header `
     "-I$root\userland\libsystem\kshim" "-I$root\userland\libsystem\fsinc" "-I$root\kernel\include" "-I$root\userland\third_party\h264bsd" `
@@ -33,7 +56,7 @@ $src += Get-ChildItem "$br\c\common","$br\c\dec","$br\c\enc" -Filter *.c | ForEa
     -DHAVE_CONFIG_H -DTUKLIB_SYMBOL_PREFIX=lzma_ -DMOS_LIBSYSTEM `
     "-isystem", (Join-Path $zigdir 'lib\include') `
     "-Wl,--image-base=0x400000100000" "-Wl,-e,cx_start" "-Wl,--no-gc-sections" `
-    $src -o "$root\build\libSystem.mos" 2>&1 | ForEach-Object { "$_" }
+    $src $libmO -o "$root\build\libSystem.mos" 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0) { Write-Host 'libSystem build FAILED' -ForegroundColor Red; exit 1 }
 & "$PSScriptRoot\patch-ehframe.ps1" "$root\build\libSystem.mos" | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Host 'libSystem: .eh_frame nao gravado' -ForegroundColor Red; exit 1 }

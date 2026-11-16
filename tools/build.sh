@@ -290,6 +290,10 @@ cc -O2 -I"$ROOT/userland/third_party/zlib" \
     "${LZMA_OBJS[@]}" "${BR_OBJS[@]}" \
     -lm -o "$OUT/compression_libsystem_host"
 "$OUT/compression_libsystem_host"
+echo "==> libm (musl 1.2.5, MIT; teste de host contra a glibc)"
+bash "$ROOT/tools/build-libm-musl.sh" "$ZIG" x86_64 "$OUT/libm-x86" "$JOBS"
+mapfile -t LIBM_OBJS < "$OUT/libm-x86/objs.txt"
+ZIG="$ZIG" bash "$ROOT/tools/libm_hosttest.sh" "$OUT/libm-hosttest" "$OUT/libm-x86"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
@@ -300,7 +304,7 @@ cc -O2 -I"$ROOT/userland/third_party/zlib" \
     "$OUT/compression.o" "$OUT/lz4.o" "$OUT/lz4hc.o" "$OUT/lz4frame.o" "$OUT/xxhash.o" \
     "$OUT/lzfse_decode.o" "$OUT/lzfse_decode_base.o" "$OUT/lzfse_encode.o" \
     "$OUT/lzfse_encode_base.o" "$OUT/lzfse_fse.o" "$OUT/lzvn_decode_base.o" "$OUT/lzvn_encode_base.o" \
-    "${LZMA_OBJS[@]}" "${BR_OBJS[@]}" \
+    "${LZMA_OBJS[@]}" "${BR_OBJS[@]}" "${LIBM_OBJS[@]}" \
     -o "$OUT/libSystem.mos"
 python3 "$ROOT/tools/patch-ehframe.py" "$OUT/libSystem.mos"
 HASH=$(sha256sum "$OUT/libSystem.mos" | cut -c1-16)

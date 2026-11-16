@@ -104,5 +104,3 @@ void cxx_call_once(volatile unsigned long *flag, void *arg, void (*fn)(void *)) 
 void __cxa_pure_virtual(void) { cx_puts_fd(2, "libc++abi: chamada de função virtual pura\n"); abort(); }
 void __cxa_deleted_virtual(void) { cx_puts_fd(2, "libc++abi: chamada de função virtual removida\n"); abort(); }
 
-/* produto de dois float é exato em double; uma única soma arredondada fica dentro do erro do fmaf */
-float fmaf(float a, float b, float c) { return (float)((double)a * (double)b + (double)c); }

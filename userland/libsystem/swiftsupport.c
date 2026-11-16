@@ -34,31 +34,10 @@ i128 __modti3(i128 a, i128 b) {
     return a < 0 ? -(i128)r : (i128)r;
 }
 
-/* ---- libm: long double (80 bits no x86-64) e float via double */
+/* libm (long double, float): musl em userland/third_party/musl */
 double ceil(double), floor(double), cos(double), sin(double), exp(double), exp2(double), log(double), log2(double), log10(double),
        fmod(double, double), remainder(double, double), nearbyint(double), rint(double), round(double), trunc(double), fma(double, double, double),
        strtod(const char *, char **);
-long double ceill(long double x) { return ceil((double)x); }
-long double floorl(long double x) { return floor((double)x); }
-long double cosl(long double x) { return cos((double)x); }
-long double sinl(long double x) { return sin((double)x); }
-long double expl(long double x) { return exp((double)x); }
-long double exp2l(long double x) { return exp2((double)x); }
-long double logl(long double x) { return log((double)x); }
-long double log2l(long double x) { return log2((double)x); }
-long double log10l(long double x) { return log10((double)x); }
-long double fmodl(long double x, long double y) { return fmod((double)x, (double)y); }
-long double remainderl(long double x, long double y) { return remainder((double)x, (double)y); }
-long double nearbyintl(long double x) { return nearbyint((double)x); }
-long double rintl(long double x) { return rint((double)x); }
-long double roundl(long double x) { return round((double)x); }
-long double truncl(long double x) { return trunc((double)x); }
-long double fmal(long double x, long double y, long double z) { return fma((double)x, (double)y, (double)z); }
-float exp2f(float x) { return (float)exp2(x); }
-float log2f(float x) { return (float)log2(x); }
-float log10f(float x) { return (float)log10(x); }
-float fmodf(float x, float y) { return (float)fmod(x, y); }
-float remainderf(float x, float y) { return (float)remainder(x, y); }
 long double strtold_l(const char *s, char **end, void *loc) { (void)loc; return strtod(s, end); }
 
 /* ---- caracteres largos (wchar_t = 32 bits) */

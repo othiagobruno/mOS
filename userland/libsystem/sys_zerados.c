@@ -1546,26 +1546,11 @@ void __lshrti3(void) {}
 void __pthread_workqueue_setkill(void) {}
 void __syscall_logger(void) {}
 void _nw_content_context_default_message(void) {}
-void acoshl(void) {}
-void acosl(void) {}
-void asinhl(void) {}
-void asinl(void) {}
-void atan2l(void) {}
-void atanhl(void) {}
-void atanl(void) {}
 void backtrace_async(void) {}
 void backtrace_from_fp(void) {}
-void cbrtl(void) {}
-void coshl(void) {}
 void endfsent(void) {}
-void erfcl(void) {}
-void erfl(void) {}
-void expm1l(void) {}
 void flsl(void) {}
-void fmaxf(void) {}
-void fminf(void) {}
 void getfsent(void) {}
-void hypotl(void) {}
 void initstate(void) {}
 void *kCFNetworkProxiesExceptionsList;
 void *kCFNetworkProxiesHTTPEnable;
@@ -1586,10 +1571,7 @@ void *kCFStreamPropertySOCKSVersion;
 void *kCFStreamPropertyShouldCloseNativeSocket;
 void *kCFStreamPropertySocketNativeHandle;
 void *kCFStreamSocketSOCKSVersion5;
-void lgammaf_r(void) {}
-void lgammal_r(void) {}
 void lldiv(void) {}
-void log1pl(void) {}
 void mach_port_guard(void) {}
 void mach_port_set_mscount(void) {}
 void mach_port_unguard(void) {}
@@ -1632,17 +1614,12 @@ void pthread_fchdir_np(void) {}
 void pthread_from_mach_thread_np(void) {}
 void pthread_get_qos_class_np(void) {}
 void pthread_introspection_hook_install(void) {}
-void rintf(void) {}
 void setfsent(void) {}
 void setstate(void) {}
-void sinhl(void) {}
 void strtoll_l(void) {}
 void strtoull_l(void) {}
 void sys_nerr(void) {}
 void syscall(void) {}
-void tanhl(void) {}
-void tanl(void) {}
-void tgammal(void) {}
 void timingsafe_bcmp(void) {}
 void vasprintf_l(void) {}
 void vm_read(void) {}

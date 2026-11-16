@@ -312,10 +312,11 @@ funções**.
   struct (certa nas duas arquiteturas); NSInvocation com o PCS da Apple (HFA, x8, cópia de structs > 16 bytes,
   pilha empacotada, extensão de char/short); aliases (`__attribute__((alias))` não existe no triplo Darwin) viraram
   funções; `__builtin_setjmp` → `_setjmp`.
-- libm: o x87/SSE do x86 vira `fsqrt`/`frint*`; sin/cos/tan/fmod/log2/exp2 vêm do **compiler-rt do zig** compilado
-  como bitcode `aarch64-macos` (long double = double) e baixado para o mesmo triplo ELF (também `__udivti3` & cia.);
-  atan2 próprio (`libm_arm64.c`). Os símbolos fracos/hidden do compiler-rt são promovidos a GLOBAL/default no
-  script (o carregador só indexa GLOBAL, e o lld aplicava hidden ao memcpy do libSystem).
+- libm: a do **musl 1.2.5** (`userland/third_party/musl`, [runtime-c-cxx.md](runtime-c-cxx.md)), com o mesmo triplo
+  Darwin (long double = double). O **compiler-rt do zig** (bitcode `aarch64-macos`, baixado para o mesmo triplo ELF)
+  continua para `__udivti3` & cia.; os símbolos de libm dele são fracos e perdem para os do musl. Os símbolos
+  fracos/hidden do compiler-rt são promovidos a GLOBAL/default no script (o carregador só indexa GLOBAL, e o lld
+  aplicava hidden ao memcpy do libSystem).
 - Desenrolar: o **libunwind do LLVM** (o do zig) entra no blob: C/C++ no modo Apple (compact unwind + DWARF das
   imagens Mach-O por `_dyld_find_unwind_sections`), `.S` sem `__APPLE__`. Para um pc dentro do próprio libSystem,
   `_dyld_find_unwind_sections` (dlfcn.c) devolve o `.eh_frame` do blob (`cx_ls_unwind_sections`, unwind_ls.c; o
