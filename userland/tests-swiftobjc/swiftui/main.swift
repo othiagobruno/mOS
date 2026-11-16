@@ -134,13 +134,6 @@ check(perto(m["g"], 0, 0, 200, 100), "GeometryReader ocupa a proposta: \(desc(m[
 m = medir(200, 200) { Color.red.aspectRatio(2, contentMode: .fit).background(Sonda(id: "r")) }
 check(perto(m["r"], 0, 50, 200, 100), "aspectRatio(2, .fit) em 200x200: \(desc(m["r"]))")
 
-// Text tem tamanho de texto, não da proposta
-m = medir(200, 100) { Text("Olá, mOS").background(Sonda(id: "t")) }
-if let t = m["t"] {
-    check(t.width > 10 && t.width < 200 && t.height > 5 && t.height < 100 && abs(t.midX - 100) < 1 && abs(t.midY - 50) < 1,
-          "Text com tamanho próprio e centralizado: \(desc(t))")
-} else { check(false, "Text: sonda não apareceu") }
-
 // ScrollView: conteúdo no topo, centralizado na horizontal
 m = medir(200, 100) {
     ScrollView {
@@ -195,5 +188,12 @@ for h in hosts { h.setFrameSize(NSSize(width: 200, height: 101)); h.layout() }
 check(abs((medidas["e"]?.width ?? 0) - 80) < 0.5, "@State mudado no onAppear: \(desc(medidas["e"]))")
 check(abs((medidas["p"]?.width ?? 0) - 40) < 0.5, "@Binding escreve no estado do pai: \(desc(medidas["p"]))")
 check(abs((medidas["o"]?.width ?? 0) - 120) < 0.5, "@Observable redesenha com o valor novo: \(desc(medidas["o"]))")
+
+// Text tem tamanho de texto, não da proposta (por último: depende do CoreText do libSystem)
+m = medir(200, 100) { Text("Olá, mOS").background(Sonda(id: "t")) }
+if let t = m["t"] {
+    check(t.width > 10 && t.width < 200 && t.height > 5 && t.height < 100 && abs(t.midX - 100) < 1 && abs(t.midY - 50) < 1,
+          "Text com tamanho próprio e centralizado: \(desc(t))")
+} else { check(false, "Text: sonda não apareceu") }
 
 print("swiftui: \(passou)/\(total) ok")

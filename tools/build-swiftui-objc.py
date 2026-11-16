@@ -56,6 +56,7 @@ NAT = os.path.join(SWB, 'openswiftui' + SFX)  # objetos C/C++ da variante nativa
 NSDK = os.path.join(ROOT, 'userland', 'sdk', 'openswiftui')
 MINE = os.path.join(ROOT, 'userland', 'sdk', 'swift-objc', 'SwiftUI')
 SHIM = os.path.join(NSDK, 'include')
+CTINC = os.path.join(ROOT, 'userland', 'sdk', 'swift-objc', 'SwiftUI', 'CoreText', 'include')
 SDKSWIFT = os.path.join(NSDK, 'swift')
 IMPORTER = os.path.join(NSDK, 'importer')
 STAGES = ['Src', 'Native', 'Deps', 'Core', 'UI', 'Link']
@@ -223,9 +224,7 @@ def stage_native():
         files.append(f)
     cinc += ['-iquote', spi + '/Util', '-iquote', spi + '/Overlay']
     build_files('OpenSwiftUI_SPI', files, cinc + ['-std=gnu11'], cinc + CXX)
-    # CoreText do mOS (ctfont.c: tipos CF CTFont/CTFontDescriptor)
-    ct = ['-I' + IMPORTER, '-I' + os.path.join(SDKSWIFT, 'CoreText', 'include')]
-    build_files('CoreText', [os.path.join(SDKSWIFT, 'CoreText', 'ctfont.c')], ct + ['-std=gnu11'], ct + CXX)
+    # CoreText: nesta variante é o do libSystem (o ctfont.c da variante nativa cria CF no formato Swift e não entra)
 
 
 # ---------------------------------------------------------------- SDK desta variante e Swift
@@ -458,9 +457,9 @@ def availability_names():
 
 def osui_flags():
     f = ['-I', os.path.join(SDKSWIFT, 'COpenSwiftUI'), '-I', SPIINC, '-I', CMP + '/ComputeCxx/include', '-I', ORBINC,
-         '-I', os.path.join(SDKSWIFT, 'CoreText', 'include'), '-I', os.path.join(ROOT, 'userland', 'sdk', 'swift', 'MOSBridge')]
+         '-I', CTINC, '-I', os.path.join(ROOT, 'userland', 'sdk', 'swift', 'MOSBridge')]
     for a in ['-I' + SPIINC, '-I' + ORBINC, '-I' + CMP + '/Platform/include', '-I' + CMP + '/ComputeCxx/include',
-              '-I' + os.path.join(SDKSWIFT, 'CoreText', 'include'), '-DOPENSWIFTUI', '-DOPENSWIFTUI_MOS', '-DOPENSWIFTUI_CF_CGTYPES',
+              '-I' + CTINC, '-DOPENSWIFTUI', '-DOPENSWIFTUI_MOS', '-DOPENSWIFTUI_CF_CGTYPES',
               '-DOPENRENDERBOX_CF_CGTYPES', '-DOPENRENDERBOX_MOS', '-DOPENSWIFTUI_LINK_COREUI=0']:
         f += ['-Xcc', a]
     for d in OSUI_DEFS:
@@ -481,9 +480,9 @@ def stage_deps():
     build_swift('Glibc', [os.path.join(MINE, 'Glibc', 'Glibc.swift')], [])
     build_swift('Logging', swift_files(os.path.join(SDKSWIFT, 'Logging')), [])
     build_swift('MOSFoundationExtras', swift_files(os.path.join(MINE, 'Extras')), ['-module-abi-name', 'Foundation'])
-    ct = ['-I', os.path.join(SDKSWIFT, 'CoreText', 'include'), '-Xcc', '-I' + os.path.join(SDKSWIFT, 'CoreText', 'include')]
-    ct_src = prepare_src('CoreText', os.path.join(SDKSWIFT, 'CoreText'), [os.path.join(MINE, 'Replace', 'CoreText')])
-    build_swift('CoreText', swift_files(ct_src), ct)
+    # CoreText desta variante: cabeçalho com a API da Apple sobre o CoreText do libSystem (SwiftUI/CoreText)
+    ct = ['-I', CTINC, '-Xcc', '-I' + CTINC]
+    build_swift('CoreText', swift_files(os.path.join(MINE, 'CoreText')), ct)
     build_swift('CoreText_Private', swift_files(os.path.join(SDKSWIFT, 'CoreText_Private')), ct)
     ov2 = os.path.join(NSDK, 'overlay')
     sup = prepare_src('ComputeCxxSwiftSupport', CMP + '/ComputeCxxSwiftSupport', [ov2 + '/Compute/ComputeCxxSwiftSupport'])
@@ -577,7 +576,6 @@ def stage_link():
     for d in ['Compute', 'OpenRenderBox', 'OpenSwiftUI_SPI']:
         dd = os.path.join(NAT, d)
         objs += [os.path.join(dd, f) for f in sorted(os.listdir(dd)) if f.endswith('.o') and not f.endswith('_swift.o') and os.path.getsize(os.path.join(dd, f)) > 0]
-    objs.append(os.path.join(NAT, 'CoreText', 'ctfont.o'))
     dy = os.path.join(OBJC, 'dylib')
     install = '/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI'
     out = dy + install

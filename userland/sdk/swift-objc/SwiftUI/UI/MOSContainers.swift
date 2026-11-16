@@ -160,6 +160,10 @@ public struct ScrollView<Content>: View where Content: View {
             ZStack(alignment: .topLeading) {
                 content
                     .fixedSize(horizontal: horizontal, vertical: vertical)
+                    // no eixo que não rola o conteúdo ocupa ao menos o viewport e fica centralizado, como na Apple
+                    .frame(minWidth: vertical && !horizontal ? proxy.size.width : nil,
+                           minHeight: horizontal && !vertical ? proxy.size.height : nil,
+                           alignment: vertical && !horizontal ? .top : (horizontal && !vertical ? .leading : .topLeading))
                     .background(
                         MOSScrollMeasure(slot: slot, viewport: proxy.size, frame: proxy.frame(in: .global),
                                          vertical: vertical, horizontal: horizontal, showsIndicators: showsIndicators)
