@@ -141,11 +141,17 @@ o `IOSurface` de software do libSystem; quem precisa dos dois associa o
 (`bo` 0 mantém o framebuffer do firmware). É troca de framebuffer e de modo,
 sem aceleração 3D. Conector sem hardware devolve `-MOS_ENOENT`.
 
-## Revisão 3 (proposta, GPU AMD nativa): combinada entre Thais e Otavio
+## Revisão 3 (GPU AMD nativa): combinada entre Thais e Otavio
 
-Ainda não está em `mos_gpu.h` nem no kernel: entra junto com o código (GFX9 e VM por processo,
-`docs/gpu-amd.md` F8/F9). Até lá `MOS_GPU_ABI` continua 2. Tudo abaixo só acrescenta campos no fim e
-valores novos. Nenhum campo da revisão 2 muda de sentido.
+Em `mos_gpu.h` e no kernel (`kernel/dev/gpu_abi.c` + `kernel/dev/amdgpu/abi.c`): `MOS_GPU_ABI` = 3. Tudo abaixo só
+acrescenta campos no fim e valores novos; nenhum campo da revisão 2 muda de sentido. Quem passa as estruturas da
+revisão 2 (`mos_gpu_info_t` de 48 bytes, `mos_gpu_bo_t` de 24) continua funcionando e recebe só a parte antiga.
+
+Como o kernel implementa: cada processo ganha uma VM de GPU (VMID 1..15) no primeiro BO de um contexto AMD; os
+BOs de contexto AMD recebem VA na VM (com um buraco de 64 KiB entre eles); o lote é copiado para uma área do
+kernel antes de validar (o processo não troca o IB depois da validação) e os INDIRECT_BUFFER de IB2 apontam para
+a cópia; a fence sinaliza pelo EOP. Na saída ou no exec do processo, a GPU termina o que é dele e a VM, os BOs,
+os contextos, as fences e as superfícies voltam (vale também para virgl/venus).
 
 Decisões:
 
@@ -184,7 +190,10 @@ Lote AMD (`cmd_bytes` até 4096, little-endian):
 
 Validação do kernel: só passam pacotes de desenho, dispatch, `SET_SH_REG`, `SET_CONTEXT_REG` e
 `SET_UCONFIG_REG` nas faixas de usuário, `WRITE_DATA`/`COPY_DATA` com destino em memória,
-`INDIRECT_BUFFER` para BOs da lista, `EVENT_WRITE`, `ACQUIRE_MEM` e `NOP`. Registrador privilegiado,
+`INDIRECT_BUFFER` para BOs da lista, `EVENT_WRITE`, `ACQUIRE_MEM` e `NOP`; também `WAIT_REG_MEM` esperando
+memória, `RELEASE_MEM` sem interrupção, `SET_BASE` de desenho/dispatch indireto, `CONTEXT_CONTROL`,
+`CLEAR_STATE` e `PFP_SYNC_ME` (lista exata em `kernel/dev/amdgpu/pm4check.c`). `SET_UCONFIG_REG` vale a partir do
+deslocamento 0x201. O BO de cada IB também precisa estar na lista de BOs do lote. Registrador privilegiado,
 `WRITE_DATA` para registrador ou VA fora dos BOs do processo dão `-MOS_EINVAL`, e a fence não sinaliza.
 Uma falha de página da GPU no VMID do contexto o marca como perdido: os submits seguintes devolvem
 `-MOS_EIO`.

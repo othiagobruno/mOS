@@ -57,6 +57,16 @@ static u64 vram_get(u64 n) { (void)n; return 0; }
 static bool vram_is(u64 ph, u64 n) { (void)ph; (void)n; return false; }
 static void vram_put(u64 ph, u64 n) { (void)ph; (void)n; }
 #endif
+/* revisão 3: GPU AMD nativa (dev/amdgpu/abi.c). No host do teste da ABI não há AMD. */
+#ifndef MOS_GPU_HOST
+static bool amd_on(void) { return amdgpu_abi_available(); }
+#else
+static bool amd_on(void) { return false; }
+static int amdgpu_abi_bo_map(int pid, u64 phys, u64 size, bool vram, bool exec, u64 *va) { (void)pid; (void)phys; (void)size; (void)vram; (void)exec; (void)va; return -MOS_EINVAL; }
+static void amdgpu_abi_bo_unmap(int pid, u64 va, u64 size) { (void)pid; (void)va; (void)size; }
+static bool amdgpu_abi_done(u64 t) { (void)t; return true; }
+static void amdgpu_abi_proc_exit(int pid) { (void)pid; }
+#endif
 
 #define GPU_N 64
 #define GPU_CMD_MAX 400u
@@ -66,6 +76,7 @@ typedef struct {
     int used, pid, mapped, ios;
     u32 handle, ctx, flags, token;
     u64 size, phys, map;
+    u64 gpu_va, ticket;   /* revisão 3: VA na VM do processo e o último lote que usou o BO */
 } bo_t;
 typedef struct { int used, pid; u32 id, seq, flags; } fen_t;
 typedef struct {
@@ -352,6 +363,87 @@ int gpu_batch_translate(int pid, u32 kind, const void *src, u32 n, void *dst, u3
     return 0;
 }
 
+#ifndef MOS_GPU_HOST
+/* revisão 3: lote AMD (docs/gpu-abi.md). Os handles viram {VA, tamanho, memória}; dev/amdgpu/abi.c copia, valida
+ * e envia; a fence sinaliza pelo EOP. */
+static int amd_submit(process_t *p, ctx_t *c, const mos_gpu_submit_t *in) {
+    int pid = p->pid;
+    if (c->kind != MOS_GPU_CTX_AMD || !amd_on()) return -MOS_EINVAL;
+    if (in->cmd_bytes < sizeof(mos_gpu_amd_batch_t) || in->cmd_bytes > MOS_GPU_AMD_BATCH_MAX) return -MOS_EINVAL;
+    if (in->fence && !fen_of(pid, in->fence)) return -MOS_ENOENT;
+    static u8 buf[MOS_GPU_AMD_BATCH_MAX];
+    int e = rd(p, buf, in->cmds, in->cmd_bytes, in->cmd_bytes);
+    if (e) return e;
+    mos_gpu_amd_batch_t h;
+    memcpy(&h, buf, sizeof h);
+    if (h.version != MOS_GPU_AMD_BATCH_VER || !h.nib || h.nib > 16 || h.nbo > 256 || h.pad) return -MOS_EINVAL;
+    u64 need = sizeof h + (u64)h.nib * sizeof(mos_gpu_amd_ib_t) + (u64)h.nbo * 4;
+    if (need != in->cmd_bytes) return -MOS_EINVAL;
+    static amd_abi_bo_t ab[256];
+    static bo_t *used[256];
+    const u8 *hp = buf + sizeof h + (u64)h.nib * sizeof(mos_gpu_amd_ib_t);
+    for (u32 i = 0; i < h.nbo; i++) {
+        u32 hd;
+        memcpy(&hd, hp + 4 * i, 4);
+        bo_t *b = bo_of(pid, hd);
+        if (!b || !b->gpu_va) return -MOS_EINVAL;
+        ab[i].va = b->gpu_va; ab[i].size = b->size; ab[i].phys = b->phys; ab[i].vram = vram_is(b->phys, b->size);
+        used[i] = b;
+    }
+    amd_abi_ib_t ibs[16];
+    u32 ring = 0;
+    for (u32 k = 0; k < h.nib; k++) {
+        mos_gpu_amd_ib_t ib;
+        memcpy(&ib, buf + sizeof h + k * sizeof ib, sizeof ib);
+        bo_t *b = bo_of(pid, ib.bo);
+        if (!b || !b->gpu_va || ib.ring > MOS_GPU_AMD_RING_COMPUTE || (k && ib.ring != ring) || !ib.size_dw ||
+            (u64)(ib.offset_dw + (u64)ib.size_dw) * 4 > b->size)
+            return -MOS_EINVAL;
+        bool listed = false;
+        for (u32 i = 0; i < h.nbo; i++) if (used[i] == b) listed = true;
+        if (!listed) return -MOS_EINVAL;                       /* o BO do IB também vai na lista */
+        ring = ib.ring;
+        ibs[k].va = b->gpu_va + 4ull * ib.offset_dw;
+        ibs[k].ndw = ib.size_dw;
+    }
+    u64 ticket = 0;
+    e = amdgpu_abi_submit(pid, ring, ibs, h.nib, ab, h.nbo, in->fence, &ticket);
+    if (e) return e;
+    for (u32 i = 0; i < h.nbo; i++) used[i]->ticket = ticket;   /* residente até o lote passar */
+    return 0;
+}
+#else
+static int amd_submit(process_t *p, ctx_t *c, const mos_gpu_submit_t *in) { (void)p; (void)c; (void)in; return -MOS_EINVAL; }
+#endif
+
+/* Saída (ou exec) do processo: a GPU termina o que é dele, a VM some, e os BOs, contextos, fences e superfícies
+ * voltam. Os mapas de usuário saem antes de o espaço de endereços ser desmontado. */
+void gpu_proc_exit(process_t *p) {
+    if (!p) return;
+    int pid = p->pid;
+    amdgpu_abi_proc_exit(pid);
+    for (int i = 0; i < GPU_N; i++) if (ios[i].used && ios[i].pid == pid) ios[i].used = 0;
+    for (int i = 0; i < GPU_N; i++) {
+        bo_t *b = &bos[i];
+        if (!b->used || b->pid != pid) continue;
+#ifndef MOS_GPU_HOST
+        if (b->mapped) { if (vram_is(b->phys, b->size)) gpu_user_unmap_io(p, b->map, b->size); else gpu_user_unmap(p, b->map, b->size); }
+        if (b->ctx && !b->gpu_va && (caps_now() & (MOS_GPU_CAP_VIRGL | MOS_GPU_CAP_VENUS))) virtio_gpu_bo(b->ctx, b->handle, b->size, 0);
+#endif
+        int sharers = 0;
+        for (int j = 0; j < GPU_N; j++) if (bos[j].used && bos[j].phys == b->phys) sharers++;
+        if (sharers == 1) { if (vram_is(b->phys, b->size)) vram_put(b->phys, b->size); else pmm_free(b->phys, b->size / 4096); }
+        b->used = 0;
+    }
+    for (int i = 0; i < GPU_N; i++) if (ctxs[i].used && ctxs[i].pid == pid) {
+#ifndef MOS_GPU_HOST
+        if (ctxs[i].kind != MOS_GPU_CTX_AMD) virtio_gpu_ctx(ctxs[i].id, ctxs[i].kind, 0);
+#endif
+        ctxs[i].used = 0;
+    }
+    for (int i = 0; i < GPU_N; i++) if (fens[i].used && fens[i].pid == pid) fens[i].used = 0;
+}
+
 i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *blocked) {
     if (blocked) *blocked = 0;
     if (!p) return -MOS_EINVAL;
@@ -364,20 +456,28 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         n.caps = caps_now();
         strncpy(n.name, n.caps & (MOS_GPU_CAP_VIRGL | MOS_GPU_CAP_VENUS) ? "virtio-gpu" : "framebuffer", 31);
 #ifndef MOS_GPU_HOST
+        if (amd_on()) {
+            n.caps |= MOS_GPU_CAP_AMD;
+            memset(n.name, 0, sizeof n.name);
+            strncpy(n.name, "amdgpu-gfx9", 31);
+            amdgpu_abi_info(&n.amd_family, &n.num_cu, &n.vram_bytes, &n.gtt_bytes);
+        }
+#endif
+#ifndef MOS_GPU_HOST
         if (gpu_count()) {
             const gpu_info_t *g = gpu_get(0);
             n.vendor = g->vendor;
             n.device = g->device;
         }
 #endif
-        if (len < sizeof n) return -MOS_EINVAL;
-        return wr(p, user, &n, sizeof n);
+        if (len < MOS_GPU_INFO_V2_SIZE) return -MOS_EINVAL;
+        return wr(p, user, &n, len < sizeof n ? MOS_GPU_INFO_V2_SIZE : sizeof n);   /* a revisão 2 recebe só até name */
     }
     case MOS_GPU_CTX_CREATE: {
         mos_gpu_ctx_t in;
         int e = rd(p, &in, user, len, sizeof in);
         if (e) return e;
-        if (in.kind != MOS_GPU_CTX_VIRGL && in.kind != MOS_GPU_CTX_VENUS) return -MOS_EINVAL;
+        if (in.kind != MOS_GPU_CTX_VIRGL && in.kind != MOS_GPU_CTX_VENUS && !(in.kind == MOS_GPU_CTX_AMD && amd_on())) return -MOS_EINVAL;
         ctx_t *c = 0;
         for (int i = 0; i < GPU_N; i++) if (!ctxs[i].used) { c = &ctxs[i]; break; }
         if (!c) return -MOS_ENOMEM;
@@ -400,14 +500,15 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         ctx_t *c = ctx_of(pid, in.ctx);
         if (!c) return -MOS_ENOENT;
 #ifndef MOS_GPU_HOST
-        virtio_gpu_ctx(c->id, c->kind, 0);
+        if (c->kind != MOS_GPU_CTX_AMD) virtio_gpu_ctx(c->id, c->kind, 0);
 #endif
         c->used = 0;
         return 0;
     }
     case MOS_GPU_BO_CREATE: {
         mos_gpu_bo_t in;
-        int e = rd(p, &in, user, len, sizeof in);
+        memset(&in, 0, sizeof in);
+        int e = rd(p, &in, user, len, len >= sizeof in ? sizeof in : MOS_GPU_BO_V2_SIZE);
         if (e) return e;
         bool in_vram = (in.flags & MOS_GPU_BO_GPU) && vram_avail();
         if (!in.size || (in.size & 0xFFF) || in.size > (in_vram ? GPU_VRAM_BO_MAX : (16ull << 20))) return -MOS_EINVAL;
@@ -420,15 +521,21 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         else if (!dma_alloc((usize)in.size, &phys)) return -MOS_ENOMEM;
         u32 id = seq_id++;
 #ifndef MOS_GPU_HOST
-        if (in.ctx && (caps_now() & (MOS_GPU_CAP_VIRGL | MOS_GPU_CAP_VENUS))) {
+        if (in.ctx && ctx_of(pid, in.ctx)->kind != MOS_GPU_CTX_AMD && (caps_now() & (MOS_GPU_CAP_VIRGL | MOS_GPU_CAP_VENUS))) {
             e = virtio_gpu_bo(in.ctx, id, in.size, 1);
             if (e) { if (in_vram) vram_put(phys, in.size); else pmm_free(phys, in.size / 4096); return e; }
         }
 #endif
+        in.gpu_va = 0;
+        if (in.ctx && ctx_of(pid, in.ctx)->kind == MOS_GPU_CTX_AMD) {   /* VA na VM do processo */
+            e = amdgpu_abi_bo_map(pid, phys, in.size, in_vram, !!(in.flags & MOS_GPU_BO_EXEC), &in.gpu_va);
+            if (e) { if (in_vram) vram_put(phys, in.size); else pmm_free(phys, in.size / 4096); return e; }
+        }
         memset(b, 0, sizeof *b);
         b->used = 1; b->pid = pid; b->handle = id; b->ctx = in.ctx; b->flags = in.flags; b->size = in.size; b->phys = phys;
+        b->gpu_va = in.gpu_va;
         in.handle = id;
-        return wr(p, user, &in, sizeof in);
+        return wr(p, user, &in, len >= sizeof in ? sizeof in : MOS_GPU_BO_V2_SIZE);
     }
     case MOS_GPU_BO_DESTROY: {
         mos_gpu_bo_t in;
@@ -436,11 +543,12 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         if (e) return e;
         bo_t *b = bo_of(pid, in.handle);
         if (!b) return -MOS_ENOENT;
-        if (b->mapped || b->ios) return -MOS_EBUSY;
+        if (b->mapped || b->ios || !amdgpu_abi_done(b->ticket)) return -MOS_EBUSY;
+        if (b->gpu_va) amdgpu_abi_bo_unmap(pid, b->gpu_va, b->size);
         int sharers = 0;
         for (int i = 0; i < GPU_N; i++) if (bos[i].used && bos[i].phys == b->phys) sharers++;
 #ifndef MOS_GPU_HOST
-        if (b->ctx) virtio_gpu_bo(b->ctx, b->handle, b->size, 0);
+        if (b->ctx && !b->gpu_va) virtio_gpu_bo(b->ctx, b->handle, b->size, 0);
 #endif
         if (sharers == 1) {
             if (vram_is(b->phys, b->size)) vram_put(b->phys, b->size);
@@ -502,7 +610,8 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
     }
     case MOS_GPU_BO_IMPORT: {
         mos_gpu_bo_t in;
-        int e = rd(p, &in, user, len, sizeof in);
+        memset(&in, 0, sizeof in);
+        int e = rd(p, &in, user, len, len >= sizeof in ? sizeof in : MOS_GPU_BO_V2_SIZE);
         if (e) return e;
         bo_t *src = 0;
         for (int i = 0; i < GPU_N; i++) if (bos[i].used && bos[i].token && bos[i].token == in.token) { src = &bos[i]; break; }
@@ -513,10 +622,17 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         memset(b, 0, sizeof *b);
         b->used = 1; b->pid = pid; b->handle = seq_id++; b->flags = src->flags; b->token = src->token;
         b->size = src->size; b->phys = src->phys; b->ctx = 0;
+        in.gpu_va = 0;
+        if (in.ctx && ctx_of(pid, in.ctx) && ctx_of(pid, in.ctx)->kind == MOS_GPU_CTX_AMD) {
+            e = amdgpu_abi_bo_map(pid, b->phys, b->size, vram_is(b->phys, b->size), !!(b->flags & MOS_GPU_BO_EXEC), &in.gpu_va);
+            if (e) { b->used = 0; return e; }
+            b->ctx = in.ctx;
+        }
+        b->gpu_va = in.gpu_va;
         in.handle = b->handle;
         in.size = b->size;
         in.flags = b->flags;
-        return wr(p, user, &in, sizeof in);
+        return wr(p, user, &in, len >= sizeof in ? sizeof in : MOS_GPU_BO_V2_SIZE);
     }
     case MOS_GPU_SUBMIT: {
         mos_gpu_submit_t in;
@@ -524,6 +640,7 @@ i64 gpu_syscall(process_t *p, u64 op, u64 user, u64 len, thread_t *self, int *bl
         if (e) return e;
         ctx_t *c = ctx_of(pid, in.ctx);
         if (!c) return -MOS_ENOENT;
+        if (in.flags & MOS_GPU_SUBMIT_AMD) return amd_submit(p, c, &in);
         if (!in.cmd_bytes || in.cmd_bytes > GPU_CMD_MAX || !(in.flags & MOS_GPU_SUBMIT_3D)) return -MOS_EINVAL;
         if (in.fence && !fen_of(pid, in.fence)) return -MOS_ENOENT;
         u8 tmp[GPU_CMD_MAX];
