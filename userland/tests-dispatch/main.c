@@ -164,21 +164,26 @@ int main(void) {
     }
     CHECK(!herdou, "specific de fila liberada não passa para a fila nova no mesmo endereço");
 
-    /* um bloco que se reagenda na mesma fila (laço por dispatch_async) não pode virar recursão na pilha */
+    /* um bloco que se reagenda na mesma fila (laço por dispatch_async) não pode virar recursão na pilha. Como no macOS,
+     * um dispatch_sync logo depois não espera os reagendamentos (ele entra na fila antes deles): quem espera é o grupo. */
     dispatch_queue_t ql = dispatch_queue_create("mos.laco", 0);
+    dispatch_group_t gl = dispatch_group_create();
     __block int voltas = 0;
     __block void (^passo)(void);
-    passo = ^{ if (++voltas < 100000) dispatch_async(ql, passo); };
-    dispatch_async(ql, passo);
-    dispatch_sync(ql, ^{});
+    passo = ^{ if (++voltas < 100000) dispatch_group_async(gl, ql, passo); };
+    dispatch_group_async(gl, ql, passo);
+    dispatch_group_wait(gl, DISPATCH_TIME_FOREVER);
     CHECK(voltas == 100000, "dispatch_async que se reagenda 100 mil vezes (%d)", voltas);
-    /* ordem serial: o async pedido dentro de um bloco roda depois dele, antes do sync seguinte */
+    /* ordem serial: o bloco aninhado roda depois do bloco que o pediu (a antes de b, c depois de b); o sync pedido de fora
+     * fica entre eles na ordem da fila, como no macOS. A __block k é a mesma nos quatro blocos (cópia de dentro de outro). */
     static char ordem[8];
     char *ord = ordem;
     __block int k = 0;
     dispatch_async(ql, ^{ ord[k++] = 'a'; dispatch_async(ql, ^{ ord[k++] = 'c'; }); ord[k++] = 'b'; });
     dispatch_sync(ql, ^{ ord[k++] = 'd'; });
-    CHECK(strcmp(ordem, "abcd") == 0, "ordem serial com async aninhado (%s)", ordem);
+    dispatch_sync(ql, ^{});
+    CHECK(k == 4 && ordem[0] == 'a' && ordem[1] == 'b' && strchr(ordem, 'c') > strchr(ordem, 'b') && strchr(ordem, 'd'),
+          "ordem serial com async aninhado (%s)", ordem);
 
     printf("dispatchteste: %d/%d ok\n", total - fails, total);
     return fails;

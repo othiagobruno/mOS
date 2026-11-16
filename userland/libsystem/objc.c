@@ -994,6 +994,24 @@ void _Block_release(const void *arg) {
     }
 }
 id objc_retainBlock(id b) { return _Block_copy(b); }
+/* variável __block no heap: contagem nos bits 1..15 de flags, como nos blocos */
+static void byref_retain(byref_t *b) {
+    int f;
+    do { f = b->flags; if ((f & 0xfffe) == 0xfffe) return; } while (!__sync_bool_compare_and_swap(&b->flags, f, f + 2));
+}
+static void byref_release(byref_t *b) {
+    b = b->forwarding;
+    if (!(b->flags & (1 << 24))) return;                  /* ainda na pilha */
+    int f;
+    do {
+        f = b->flags;
+        if ((f & 0xfffe) == 0xfffe || (f & 0xfffe) == 0) return;
+    } while (!__sync_bool_compare_and_swap(&b->flags, f, f - 2));
+    if (((f - 2) & 0xfffe) == 0) {
+        if (b->flags & (1 << 25)) b->destroy(b);
+        free(b);
+    }
+}
 /* flags: 3 objeto, 7 block, 8 __block (byref), +16 __weak, +128 chamado de um helper de byref */
 void _Block_object_assign(void *dst, const void *obj, int flags) {
     if (flags & 0x80) {                                   /* campo dentro de uma variável __block */
@@ -1002,15 +1020,23 @@ void _Block_object_assign(void *dst, const void *obj, int flags) {
     }
     switch (flags & 0x1F) {
     case 8: {                                             /* __block: move para o heap uma vez */
-        byref_t *src = (byref_t *)obj;
-        if (src->forwarding == src) {
-            byref_t *cp = malloc((size_t)src->size);
-            memcpy(cp, src, (size_t)src->size);
-            cp->forwarding = cp;
-            src->forwarding = cp;
-            if (src->flags & (1 << 25)) src->keep(cp, src);
-            *(void **)dst = cp;
-        } else *(void **)dst = src->forwarding;
+        /* Como o libclosure: a variável já no heap (BLOCK_BYREF_NEEDS_FREE, 1 << 24) só ganha uma referência.
+         * Antes, um bloco copiado de dentro de outro bloco (dispatch_async aninhado) copiava de novo a variável que já
+         * estava no heap: quem já tinha o endereço antigo passava a ler um valor velho. */
+        byref_t *src = ((byref_t *)obj)->forwarding;
+        if (src->flags & (1 << 24)) { byref_retain(src); *(void **)dst = src; return; }
+        byref_t *cp = malloc((size_t)src->size);
+        memcpy(cp, src, (size_t)src->size);
+        cp->flags = (src->flags & ~0xfffe) | (1 << 24) | 4;   /* duas referências: quem copiou e a pilha */
+        cp->forwarding = cp;
+        if (!__sync_bool_compare_and_swap(&src->forwarding, src, cp)) {   /* outra thread moveu antes */
+            free(cp);
+            byref_retain(src->forwarding);
+            *(void **)dst = src->forwarding;
+            return;
+        }
+        if (src->flags & (1 << 25)) src->keep(cp, src);
+        *(void **)dst = cp;
         return;
     }
     case 7: *(void **)dst = _Block_copy(obj); return;
@@ -1022,6 +1048,7 @@ void _Block_object_dispose(const void *obj, int flags) {
     if (flags & 0x80) return;
     if ((flags & 0x1F) == 3) objc_release((id)obj);
     else if ((flags & 0x1F) == 7) _Block_release(obj);   /* o assign fez _Block_copy */
+    else if ((flags & 0x1F) == 8) byref_release((byref_t *)obj);   /* solta a variável __block */
 }
 static id block_copy_m(id self, SEL s) { (void)s; return _Block_copy(self); }
 static id block_self_m(id self, SEL s) { (void)s; return self; }
