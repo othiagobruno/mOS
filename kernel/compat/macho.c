@@ -268,6 +268,8 @@ static bool map_libsystem(process_t *p, char *err, usize errlen) {
 #define LC_RPATH               0x8000001C
 #define LC_DYLD_EXPORTS_TRIE   0x80000033
 #define MH_PIE                 0x200000
+#define MH_WEAK_DEFINES        0x8000
+#define MH_BINDS_TO_WEAK       0x10000
 #define MH_EXECUTE             2
 #define MH_DYLIB               6
 #define MH_BUNDLE              8       /* plugins carregados com dlopen (ex.: os .node do Node.js) */
@@ -1069,14 +1071,41 @@ static u64 image_export(link_t *K, int idx, const char *name, int depth) {
     return I->hdr + v;
 }
 
-/* ord: ordinal da biblioteca (1..n) ou especial (0 a própria imagem, -1 o executável, -2 busca plana) */
+/* coalescência de definições weak, como o dyld: entre as imagens que definem ou usam símbolos weak
+ * (MH_WEAK_DEFINES/MH_BINDS_TO_WEAK), em ordem de carga (o executável primeiro), a primeira definição não weak
+ * ganha; sem ela, a primeira weak. Assim um operator new do app ou um typeinfo/estático de template inline
+ * vira um só no processo. 0: nenhuma dessas imagens define o nome. */
+static u64 coalesced_export(link_t *K, const char *name) {
+    u64 first_weak = 0;
+    int weak_stub = 0;
+    for (int i = 0; i < K->n; i++) {
+        image_t *I = K->im[i];
+        if (!(I->mo.flags & (MH_WEAK_DEFINES | MH_BINDS_TO_WEAK)) || !I->mo.trie) continue;
+        const u8 *end = I->mo.trie + I->mo.triesz;
+        const u8 *p = trie_find(I->mo.trie, I->mo.triesz, name);
+        if (!p) continue;
+        u64 flags = uleb(&p, end);
+        if (flags & 0x08) continue;                      /* reexport: a definição é de outra imagem */
+        exp_from_stub = 0;
+        u64 a = image_export(K, i, name, 0);
+        if (!a) continue;
+        if (!(flags & 0x04)) return a;                   /* EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION ausente: forte */
+        if (!first_weak) { first_weak = a; weak_stub = exp_from_stub; }
+    }
+    exp_from_stub = weak_stub;
+    return first_weak;
+}
+
+/* ord: ordinal da biblioteca (1..n) ou especial (0 a própria imagem, -1 o executável, -2 busca plana,
+ * -3 busca weak: definição coalescida, depois o caminho normal) */
 static u64 resolve(load_t *L, int ord, const char *name, bool weak) {
     link_t *K = L->K;
     image_t *I = L->I;
     u64 a = 0;
     exp_from_stub = 0;
     if (K->tlv_per_thread && !strcmp(name, "__tlv_bootstrap")) return ls_lookup("_cx_tlv_bootstrap");
-    if (ord > 0 && ord <= I->mo.ndylibs && I->dep[ord - 1] >= 0) a = image_export(K, I->dep[ord - 1], name, 0);
+    if (ord == -3) a = coalesced_export(K, name);
+    else if (ord > 0 && ord <= I->mo.ndylibs && I->dep[ord - 1] >= 0) a = image_export(K, I->dep[ord - 1], name, 0);
     else if (ord == 0) a = image_export(K, I->idx, name, 0);
     else if (ord == -1) a = image_export(K, 0, name, 0);
     if (!a) { ls_vazio = 0; a = ls_lookup(name); if (a && ls_vazio) exp_from_stub = 1; }
@@ -1183,6 +1212,52 @@ static bool run_bind(load_t *L, const u8 *p, const u8 *end, bool lazy) {
             if (!do_bind(L, mo->segs[seg].vmaddr + off, sym, weak, addend, ordinal)) return false;
             off += 8 + skip;
             if (L->report_only) { off += (count - i - 1) * (8 + skip); break; }
+        }
+    }
+    return true;
+}
+
+/* tabela de weak binds (dyld_info clássico): cada local listado passa a apontar para a definição coalescida do
+ * nome. Sem definição em nenhuma imagem weak, o local fica com o que o bind/rebase normal pôs. Entradas com
+ * BIND_SYMBOL_FLAGS_NON_WEAK_DEFINITION só marcam a definição forte da imagem (coalesced_export já a prefere). */
+static bool run_weak_bind(load_t *L, const u8 *p, const u8 *end) {
+    mach_t *mo = L->mo;
+    int seg = 0;
+    u64 off = 0;
+    i64 addend = 0;
+    const char *sym = "";
+    if (L->report_only) return true;
+    while (p < end) {
+        u8 b = *p++, op = b & 0xF0, imm = b & 0x0F;
+        u64 count, skip;
+        switch (op) {
+        case 0x00: return true;
+        case 0x10: case 0x30: break;
+        case 0x20: uleb(&p, end); break;
+        case 0x40:
+            sym = (const char *)p;
+            while (p < end && *p) p++;
+            p++;
+            break;
+        case 0x50: break;
+        case 0x60: addend = sleb(&p, end); break;
+        case 0x70: seg = imm; off = uleb(&p, end); break;
+        case 0x80: off += uleb(&p, end); break;
+        case 0x90: count = 1; skip = 0; goto bind;
+        case 0xA0: count = 1; skip = uleb(&p, end); goto bind;
+        case 0xB0: count = 1; skip = (u64)imm * 8; goto bind;
+        case 0xC0: count = uleb(&p, end); skip = uleb(&p, end); goto bind;
+        default: snprintf(L->err, L->errlen, "opcode de weak bind desconhecido 0x%x", b); return false;
+        }
+        continue;
+    bind:
+        if (seg >= mo->nsegs) { snprintf(L->err, L->errlen, "weak bind em segmento inválido"); return false; }
+        u64 a = coalesced_export(L->K, sym);
+        for (u64 i = 0; i < count; i++) {
+            u64 *s = slot_at(L, mo->segs[seg].vmaddr + off);
+            if (!s) { snprintf(L->err, L->errlen, "weak bind fora da imagem (%s)", sym); return false; }
+            if (a) *s = a + (u64)addend;
+            off += 8 + skip;
         }
     }
     return true;
@@ -1397,8 +1472,8 @@ static bool apply_dyld_info(load_t *L) {
         const u8 *m = mo->m;
         if (part[0].size && !run_rebase(L, m + part[0].off, m + part[0].off + part[0].size)) return false;
         if (part[1].size && !run_bind(L, m + part[1].off, m + part[1].off + part[1].size, false)) return false;
-        /* weak binds: só substituem se o libSystem tiver o símbolo — ignorados */
         if (part[3].size && !run_bind(L, m + part[3].off, m + part[3].off + part[3].size, true)) return false;
+        if (part[2].size && !run_weak_bind(L, m + part[2].off, m + part[2].off + part[2].size)) return false;
         return true;
     }
     if (mo->ftype == MH_EXECUTE && !(mo->flags & MH_PIE)) { snprintf(L->err, L->errlen, "executável sem informações de relocação (não é PIE)"); return false; }
