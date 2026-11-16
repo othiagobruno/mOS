@@ -63,6 +63,11 @@ typedef struct {
     msl_samp_t *sstore; int nsstore;
     int needs_compat_uniforms;
     char *vsrc_user, *fsrc_user;   /* texto traduzido (sem prelúdio), para achar o que o shader usa */
+    /* geometry shader */
+    msl_lib_t *glib; msl_fn_t *gmain; gl_shinfo_t ginfo; u8 *ginit; gv_t *gplain; int ngplain; char *gsrc_user;
+    pv_t gvar[GLX_VAR]; int ngvar;          /* vértice -> geometria: off[0] no VS, off[1] = base do array no GS */
+    int gs_n, gs_cut, gs_pos, gs_psize, gs_pidout, gs_in_arr, gs_pidin, gs_invid, gs_max, gs_inv;
+    GLenum gs_inp, gs_outp;
 } pg_t;
 
 /* ================================================================ nomes compartilhados */
@@ -140,6 +145,38 @@ static msl_lib_t *compile_stage(gl_ctx_t *C, int stage, const char *src, gl_shin
     char *tr = gl_glsl_translate(pp, I);
     free(pp);
     if (!tr) { set_log(log, "ERROR: sem memória\n"); return 0; }
+    if (stage == 2) {
+        /* geometry shader: EmitVertex copia as saídas para arrays de max_vertices posições */
+        if (!I->gs_in_set || !I->gs_out_set) { set_log(log, "ERROR: 0:0: o geometry shader precisa de layout(...) in e layout(..., max_vertices = N) out\n"); free(tr); return 0; }
+        if (I->gs_max <= 0 || I->gs_max > 1024) { set_log(log, "ERROR: 0:0: max_vertices fora de 1..1024\n"); free(tr); return 0; }
+        u64 cap = 4096 + (u64)I->ndecl * 512, len = 0;
+        char *ep = malloc(cap);
+        if (!ep) { free(tr); return 0; }
+        int M = I->gs_max;
+#define EP(...) do { int _n = snprintf(ep + len, cap - len, __VA_ARGS__); if (_n > 0) len += (u64)_n < cap - len ? (u64)_n : cap - len - 1; } while (0)
+        EP("\nint __gs_n; int __gs_cut[%d]; float4 __gs_pos[%d]; float __gs_psize[%d]; int __gs_pid[%d];\n", M + 1, M, M, M);
+        for (int i = 0; i < I->ndecl; i++) {
+            gl_decl_t *d = &I->decl[i];
+            if (d->storage != GS_OUT || !d->type) continue;
+            EP("%s __gs_%s[%d]%s;\n", d->type, d->name, M, d->dims ? d->dims : "");
+        }
+        EP("void EmitVertex() { if (__gs_n >= %d) return; __gs_pos[__gs_n] = gl_Position; __gs_psize[__gs_n] = gl_PointSize; __gs_pid[__gs_n] = gl_PrimitiveID;", M);
+        for (int i = 0; i < I->ndecl; i++) {
+            gl_decl_t *d = &I->decl[i];
+            if (d->storage != GS_OUT || !d->type) continue;
+            if (d->dims) { int n = (int)strtol(d->dims + 1, 0, 10); EP(" for (int __i = 0; __i < %d; __i++) __gs_%s[__gs_n][__i] = %s[__i];", n > 0 ? n : 1, d->name, d->name); }
+            else EP(" __gs_%s[__gs_n] = %s;", d->name, d->name);
+        }
+        EP(" __gs_n++; }\nvoid EndPrimitive() { __gs_cut[__gs_n] = 1; }\n");
+#undef EP
+        char *nt = malloc(strlen(tr) + len + 1);
+        if (!nt) { free(ep); free(tr); return 0; }
+        memcpy(nt, tr, strlen(tr));
+        memcpy(nt + strlen(tr), ep, len + 1);
+        free(ep);
+        free(tr);
+        tr = nt;
+    }
     u64 plen;
     const char *pre = gl_glsl_prelude(stage, compat, &plen);
     u64 tlen = strlen(tr);
@@ -223,15 +260,15 @@ void glCompileShader(GLuint n) {
     gl_shader_t *s = sh_get(C, n);
     if (!s) GLERR(obj_get(C, n) ? GL_INVALID_OPERATION : GL_INVALID_VALUE, );
     s->compiled = 0;
-    if (s->type != GL_VERTEX_SHADER && s->type != GL_FRAGMENT_SHADER) {
-        set_log(&s->log, "ERROR: 0:0: shaders de geometria e de tesselação ainda não são executados pelo OpenGL por software do mOS\n");
+    if (s->type != GL_VERTEX_SHADER && s->type != GL_FRAGMENT_SHADER && s->type != GL_GEOMETRY_SHADER) {
+        set_log(&s->log, "ERROR: 0:0: shaders de tesselação ainda não são executados pelo OpenGL por software do mOS\n");
         return;
     }
     gl_shinfo_t I;
     char *user = 0;
-    msl_lib_t *L = compile_stage(C, s->type == GL_FRAGMENT_SHADER, s->src ? s->src : "", &I, &user, &s->log);
+    msl_lib_t *L = compile_stage(C, s->type == GL_FRAGMENT_SHADER ? 1 : s->type == GL_GEOMETRY_SHADER ? 2 : 0, s->src ? s->src : "", &I, &user, &s->log);
     if (L) { s->compiled = 1; msl_lib_free(L); }
-    for (int i = 0; i < I.ndecl; i++) { free(I.decl[i].name); free(I.decl[i].block); }
+    for (int i = 0; i < I.ndecl; i++) { free(I.decl[i].name); free(I.decl[i].block); free(I.decl[i].type); free(I.decl[i].dims); }
     free(I.decl);
     free(user);
 }
@@ -284,7 +321,7 @@ static void pg_free(pg_t *g) {
         msl_lib_free(g->lib[s]);
         free(g->init[s]);
         free(g->plain[s]);
-        for (int i = 0; i < g->info[s].ndecl; i++) { free(g->info[s].decl[i].name); free(g->info[s].decl[i].block); }
+        for (int i = 0; i < g->info[s].ndecl; i++) { free(g->info[s].decl[i].name); free(g->info[s].decl[i].block); free(g->info[s].decl[i].type); free(g->info[s].decl[i].dims); }
         free(g->info[s].decl);
     }
     for (int i = 0; i < g->nattr; i++) free(g->attr[i].name);
@@ -296,6 +333,13 @@ static void pg_free(pg_t *g) {
     free(g->sstore);
     free(g->vsrc_user);
     free(g->fsrc_user);
+    msl_lib_free(g->glib);
+    free(g->ginit);
+    free(g->gplain);
+    for (int i = 0; i < g->ginfo.ndecl; i++) { free(g->ginfo.decl[i].name); free(g->ginfo.decl[i].block); free(g->ginfo.decl[i].type); free(g->ginfo.decl[i].dims); }
+    free(g->ginfo.decl);
+    for (int i = 0; i < g->ngvar; i++) free(g->gvar[i].name);
+    free(g->gsrc_user);
     free(g);
 }
 void gl_prog_unref(gl_ctx_t *C, gl_prog_t *p) {
@@ -600,13 +644,13 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
     pg_t *g = calloc(1, sizeof *g);
     if (!g) return 0;
     /* fontes por estágio (vários shaders do mesmo estágio são concatenados; só um #version vale) */
-    char *src[2] = {0, 0};
-    int has[2] = {0, 0};
+    char *src[3] = {0, 0, 0};
+    int has[3] = {0, 0, 0};
     for (int i = 0; i < p->nsh; i++) {
         gl_shader_t *s = p->sh[i];
-        int st = s->type == GL_FRAGMENT_SHADER ? 1 : s->type == GL_VERTEX_SHADER ? 0 : -1;
-        if (st < 0) { plog(p, "ERROR: shaders de geometria e de tesselação ainda não são executados\n", 0); pg_free(g); free(src[0]); free(src[1]); return 0; }
-        if (!s->compiled) { plog(p, "ERROR: shader anexado não compilou\n", 0); pg_free(g); free(src[0]); free(src[1]); return 0; }
+        int st = s->type == GL_FRAGMENT_SHADER ? 1 : s->type == GL_VERTEX_SHADER ? 0 : s->type == GL_GEOMETRY_SHADER ? 2 : -1;
+        if (st < 0) { plog(p, "ERROR: shaders de tesselação ainda não são executados\n", 0); pg_free(g); free(src[0]); free(src[1]); free(src[2]); return 0; }
+        if (!s->compiled) { plog(p, "ERROR: shader anexado não compilou\n", 0); pg_free(g); free(src[0]); free(src[1]); free(src[2]); return 0; }
         u64 a = src[st] ? strlen(src[st]) : 0, b = s->src ? strlen(s->src) : 0;
         char *n = realloc(src[st], a + b + 2);
         if (!n) { pg_free(g); free(src[0]); free(src[1]); return 0; }
@@ -637,9 +681,50 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
         g->init[st] = malloc((size_t)(g->lib[st]->gsize ? g->lib[st]->gsize : 1));
         if (g->init[st]) memcpy(g->init[st], g->lib[st]->gmem, (size_t)g->lib[st]->gsize);
     }
+    if (has[2]) {
+        char *user = 0;
+        g->glib = compile_stage(C, 2, src[2], &g->ginfo, &user, &log);
+        if (!g->glib) { plog(p, "%s", log); free(log); free(src[0]); free(src[1]); free(src[2]); pg_free(g); return 0; }
+        g->gsrc_user = user;
+        g->gmain = msl_find(g->glib, "main");
+        g->ginit = malloc((size_t)(g->glib->gsize ? g->glib->gsize : 1));
+        if (g->ginit) memcpy(g->ginit, g->glib->gmem, (size_t)g->glib->gsize);
+        g->gplain = calloc((size_t)(g->ginfo.ndecl + 1), sizeof(gv_t));
+        for (int i = 0; i < g->ginfo.ndecl; i++)
+            if (g->ginfo.decl[i].storage == GS_PLAIN) { gv_t v = find_glob(g->glib, g->ginfo.decl[i].name); if (v.off >= 0) g->gplain[g->ngplain++] = v; }
+        g->gs_n = g_off(g->glib, "__gs_n"); g->gs_cut = g_off(g->glib, "__gs_cut"); g->gs_pos = g_off(g->glib, "__gs_pos");
+        g->gs_psize = g_off(g->glib, "__gs_psize"); g->gs_pidout = g_off(g->glib, "__gs_pid"); g->gs_in_arr = g_off(g->glib, "gl_in");
+        g->gs_pidin = g_off(g->glib, "gl_PrimitiveIDIn"); g->gs_invid = g_off(g->glib, "gl_InvocationID");
+        g->gs_max = g->ginfo.gs_max;
+        g->gs_inv = g->ginfo.gs_inv > 0 ? g->ginfo.gs_inv : 1;
+        g->gs_inp = g->ginfo.gs_in;
+        g->gs_outp = g->ginfo.gs_out;
+        /* vértice -> geometria: cada entrada do GS é um array de 6 com o tipo da saída do VS */
+        int gslot = 0;
+        for (int i = 0; i < g->ginfo.ndecl; i++) {
+            gl_decl_t *d = &g->ginfo.decl[i];
+            if (d->storage != GS_IN) continue;
+            gl_decl_t *vd = d->block ? decl_find(&g->info[0], GS_OUT, d->block, 1) : decl_find(&g->info[0], GS_OUT, d->name, 0);
+            if (!vd) { plog(p, "ERROR: o geometry shader lê '%s', que o vertex shader não escreve\n", d->block ? d->block : d->name); free(log); free(src[0]); free(src[1]); free(src[2]); pg_free(g); return 0; }
+            gv_t vv = find_glob(g->lib[0], vd->name), gg = find_glob(g->glib, d->name);
+            if (vv.off < 0 || gg.off < 0) continue;
+            if (gg.t->k != K_ARRAY || gg.t->e->size != vv.size) { plog(p, "ERROR: tipos diferentes na entrada '%s' do geometry shader\n", d->name); free(log); free(src[0]); free(src[1]); free(src[2]); pg_free(g); return 0; }
+            int ns = (vv.size + 15) / 16;
+            if (gslot + ns > GLX_VAR) { plog(p, "ERROR: varyings demais\n", 0); free(log); free(src[0]); free(src[1]); free(src[2]); pg_free(g); return 0; }
+            pv_t *pv = &g->gvar[g->ngvar++];
+            pv->name = strdup(d->block ? d->block : d->name);
+            pv->off[0] = vv.off;
+            pv->off[1] = gg.off;
+            pv->size = vv.size;
+            pv->slot = gslot;
+            pv->nslots = ns;
+            gslot += ns;
+        }
+    }
     free(log);
     free(src[0]);
     free(src[1]);
+    free(src[2]);
     g->compat = g->info[0].compat || g->info[1].compat;
     msl_lib_t *VL = g->lib[0], *FL = g->lib[1];
     /* globais comuns que voltam ao valor inicial */
@@ -681,6 +766,7 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
         if (uses(g->fsrc_user, "gl_FogFragCoord")) g->c_in[12] = g_off(FL, "gl_FogFragCoord");
         g->slot0 = 13;
     }
+    if (g->glib) for (int i = 0; i < 13; i++) g->c_out[i] = g->c_in[i] = -1;   /* com GS os slots são todos do usuário */
     /* atributos */
     u32 used = 0;
     gl_shinfo_t *VI = &g->info[0], *FI = &g->info[1];
@@ -715,13 +801,21 @@ static int link_prog(gl_ctx_t *C, gl_prog_t *p) {
             if (arr > 1) a->gltype = num_gltype(t);
         }
     /* varyings */
-    int slot = g->slot0;
+    int slot = g->glib ? 0 : g->slot0;
+    gl_shinfo_t *PI = g->glib ? &g->ginfo : VI;   /* estágio anterior ao fragmento */
     for (int i = 0; i < FI->ndecl; i++) {
         gl_decl_t *d = &FI->decl[i];
         if (d->storage != GS_IN) continue;
-        gl_decl_t *vd = d->block ? decl_find(VI, GS_OUT, d->block, 1) : decl_find(VI, GS_OUT, d->name, 0);
-        if (!vd) { plog(p, "ERROR: o fragment shader lê '%s', que o vertex shader não escreve\n", d->block ? d->block : d->name); pg_free(g); return 0; }
-        gv_t vv = find_glob(VL, vd->name), fv = find_glob(FL, d->name);
+        gl_decl_t *vd = d->block ? decl_find(PI, GS_OUT, d->block, 1) : decl_find(PI, GS_OUT, d->name, 0);
+        if (!vd) { plog(p, "ERROR: o fragment shader lê '%s', que o estágio anterior não escreve\n", d->block ? d->block : d->name); pg_free(g); return 0; }
+        gv_t vv, fv = find_glob(FL, d->name);
+        if (g->glib) {
+            /* do array de saída do GS: o elemento é do tipo da saída */
+            char bn[160];
+            snprintf(bn, sizeof bn, "__gs_%s", vd->name);
+            vv = find_glob(g->glib, bn);
+            if (vv.off >= 0 && vv.t->k == K_ARRAY) vv.size = vv.t->e->size;
+        } else vv = find_glob(VL, vd->name);
         if (vv.off < 0 || fv.off < 0) continue;
         if (vv.size != fv.size) { plog(p, "ERROR: tipos diferentes no varying '%s'\n", d->name); pg_free(g); return 0; }
         int ns = (fv.size + 15) / 16;
@@ -896,7 +990,10 @@ void glGetProgramiv(GLuint pn, GLenum q, GLint *v) {
     case GL_PROGRAM_SEPARABLE: *v = p->separable; return;
     case GL_PROGRAM_BINARY_LENGTH: *v = 0; return;
     case GL_PROGRAM_BINARY_RETRIEVABLE_HINT: *v = 0; return;
-    case GL_GEOMETRY_VERTICES_OUT: case GL_GEOMETRY_INPUT_TYPE: case GL_GEOMETRY_OUTPUT_TYPE: case GL_GEOMETRY_SHADER_INVOCATIONS:
+    case GL_GEOMETRY_VERTICES_OUT: if (!g || !g->glib) GLERR(GL_INVALID_OPERATION, ); *v = g->gs_max; return;
+    case GL_GEOMETRY_INPUT_TYPE: if (!g || !g->glib) GLERR(GL_INVALID_OPERATION, ); *v = (GLint)g->gs_inp; return;
+    case GL_GEOMETRY_OUTPUT_TYPE: if (!g || !g->glib) GLERR(GL_INVALID_OPERATION, ); *v = (GLint)g->gs_outp; return;
+    case GL_GEOMETRY_SHADER_INVOCATIONS: if (!g || !g->glib) GLERR(GL_INVALID_OPERATION, ); *v = g->gs_inv; return;
     case GL_TESS_CONTROL_OUTPUT_VERTICES: case GL_TESS_GEN_MODE: case GL_TESS_GEN_SPACING: case GL_TESS_GEN_VERTEX_ORDER: case GL_TESS_GEN_POINT_MODE:
         GLERR(GL_INVALID_OPERATION, );
     }
@@ -1494,7 +1591,8 @@ static void glsl_vs(gl_ctx_t *C, u32 e, u32 iid, gl_vtx_t *o) {
         for (int i = 0; i < GLX_CLIP; i++) o->cd[i] = (float)(C->clip_plane[i][0] * cv[0] + C->clip_plane[i][1] * cv[1] + C->clip_plane[i][2] * cv[2] + C->clip_plane[i][3] * cv[3]);
     }
     for (int i = 0; i < 13; i++) if (g->c_out[i] >= 0) memcpy(o->v[i], L->gmem + g->c_out[i], i == 12 ? 4 : 16);
-    for (int i = 0; i < g->nvar; i++) {
+    if (g->glib) for (int i = 0; i < g->ngvar; i++) { pv_t *v = &g->gvar[i]; memcpy(o->v[v->slot], L->gmem + v->off[0], (size_t)v->size); }
+    else for (int i = 0; i < g->nvar; i++) {
         pv_t *v = &g->var[i];
         memcpy(o->v[v->slot], L->gmem + v->off[0], (size_t)v->size);
     }
@@ -1587,6 +1685,64 @@ static void glsl_fs(gl_ctx_t *C, gl_frag_t *f) {
         }
     }
     if (g->w_depth) memcpy(&f->depth, L->gmem + g->b_depth, 4);
+}
+/* geometry shader: roda sobre um primitivo de entrada e manda as saídas ao raster */
+void gl_raster_gs_emit(gl_ctx_t *C, GLenum outprim, gl_vtx_t *v, const u8 *cut, int n);
+static void glsl_gs(gl_ctx_t *C, gl_vtx_t **in, int n, u32 prim) {
+    pg_t *g = g_run.g;
+    msl_lib_t *L = g->glib;
+    for (int i = 0; i < g->ngplain; i++) memcpy(L->gmem + g->gplain[i].off, g->ginit + g->gplain[i].off, (size_t)g->gplain[i].size);
+    gv_t gin = find_glob(L, "gl_in");
+    int es = gin.t && gin.t->k == K_ARRAY ? gin.t->e->size : 0;
+    ty_t *pvt = gin.t && gin.t->k == K_ARRAY ? gin.t->e : 0;
+    for (int k = 0; k < n && k < 6; k++) {
+        if (pvt) {
+            u8 *b = L->gmem + gin.off + (i64)k * es;
+            for (int f = 0; f < pvt->nf; f++) {
+                if (!strcmp(pvt->f[f].name, "gl_Position")) memcpy(b + pvt->f[f].off, in[k]->clip, 16);
+                else if (!strcmp(pvt->f[f].name, "gl_PointSize")) memcpy(b + pvt->f[f].off, &in[k]->psize, 4);
+                else if (!strcmp(pvt->f[f].name, "gl_ClipDistance")) memcpy(b + pvt->f[f].off, in[k]->cd, 4 * GLX_CLIP);
+            }
+        }
+        for (int i = 0; i < g->ngvar; i++) { pv_t *v = &g->gvar[i]; memcpy(L->gmem + v->off[1] + (i64)k * v->size, in[k]->v[v->slot], (size_t)v->size); }
+    }
+    if (g->gs_pidin >= 0) { i32 v = (i32)prim; memcpy(L->gmem + g->gs_pidin, &v, 4); }
+    int M = g->gs_max;
+    gl_vtx_t *out = malloc(sizeof(gl_vtx_t) * (size_t)(M > 0 ? M : 1));
+    u8 *cut = malloc((size_t)M + 1);
+    if (!out || !cut) { free(out); free(cut); return; }
+    for (int inv = 0; inv < g->gs_inv; inv++) {
+        if (g->gs_invid >= 0) { i32 v = inv; memcpy(L->gmem + g->gs_invid, &v, 4); }
+        i32 zero = 0;
+        if (g->gs_n >= 0) memcpy(L->gmem + g->gs_n, &zero, 4);
+        if (g->gs_cut >= 0) memset(L->gmem + g->gs_cut, 0, (size_t)(M + 1) * 4);
+        msl_ctx_t ctx;
+        memset(&ctx, 0, sizeof ctx);
+        u8 dummy[64];
+        msl_run(g->gmain, &ctx, dummy);
+        i32 cnt = 0;
+        memcpy(&cnt, L->gmem + g->gs_n, 4);
+        if (cnt > M) cnt = M;
+        for (int v = 0; v < cnt; v++) {
+            gl_vtx_t *o = &out[v];
+            memset(o, 0, sizeof *o);
+            memcpy(o->clip, L->gmem + g->gs_pos + 16 * v, 16);
+            memcpy(&o->psize, L->gmem + g->gs_psize + 4 * v, 4);
+            if (!gl_is_on(C, GL_PROGRAM_POINT_SIZE)) o->psize = C->point_s;
+            for (int c = 0; c < GLX_CLIP; c++) o->cd[c] = 1;
+            o->edge = 1;
+            for (int i = 0; i < g->nvar; i++) { pv_t *pv = &g->var[i]; memcpy(o->v[pv->slot], L->gmem + pv->off[0] + (i64)v * pv->size, (size_t)pv->size); }
+            i32 c = 0;
+            memcpy(&c, L->gmem + g->gs_cut + 4 * v, 4);
+            cut[v] = (u8)(c != 0);
+        }
+        i32 c = 0;
+        memcpy(&c, L->gmem + g->gs_cut + 4 * cnt, 4);
+        cut[cnt] = (u8)(c != 0);
+        gl_raster_gs_emit(C, g->gs_outp, out, cut, cnt);
+    }
+    free(out);
+    free(cut);
 }
 /* embutidas uniformes do compat */
 static void set_glob(pg_t *g, const char *name, int idx, const float *v, int n) {
@@ -1781,6 +1937,7 @@ void gl_glsl_stage(gl_ctx_t *C) {
     }
     if (g_need_deriv) S->dmask = g->nslots >= 32 ? 0xffffffffu : (1u << g->nslots) - 1;
     S->nclip = GLX_CLIP;
+    if (g->glib) { S->gs = glsl_gs; S->gs_in = g->gs_inp; }
     S->vs = glsl_vs;
     S->fs = glsl_fs;
     S->writes_depth = g->w_depth;

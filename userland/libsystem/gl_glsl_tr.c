@@ -13,6 +13,8 @@
 #include "gl_glsl.h"
 
 int snprintf(char *b, size_t n, const char *fmt, ...);
+char *strcat(char *d, const char *s);
+char *strncat(char *d, const char *s, size_t n);
 
 typedef struct { int k; const char *p; int n, line; } gt_t;   /* k: 'i' id, 'n' número, 'p' pontuação */
 typedef struct { gt_t *v; int n, cap; } gtv_t;
@@ -92,6 +94,7 @@ typedef struct {
     char *arrn[256]; int arrv[256]; int narr;          /* tamanhos de array conhecidos (x.length()) */
     char *bmem[256]; char *bmap[256]; int nbmem;       /* membro de bloco sem instância -> "inst.membro" */
     int anon;
+    int unsized6;              /* geometry shader: "in T x[]" vira [6] */
 } tr_t;
 static int is_type_tok(tr_t *R, const gt_t *t) {
     if (t->k != 'i') return 0;
@@ -148,6 +151,7 @@ static void body(tr_t *R, int a, int b) {
             ob_tok(&R->o, &d);
             continue;
         } else {
+            if (R->unsized6 && teq(t, "[") && i + 1 < b && teq(&T[i + 1], "]")) { gt_t d = *t; d.p = "[6]"; d.n = 3; ob_tok(&R->o, &d); i++; continue; }
             if (teq(t, "^^")) { gt_t d = *t; d.p = "!="; ob_tok(&R->o, &d); continue; }
             if (teq(t, "(")) pd++;
             if (teq(t, ")")) {
@@ -159,7 +163,7 @@ static void body(tr_t *R, int a, int b) {
     }
 }
 /* qualificadores de uma declaração; devolve o índice do primeiro token depois deles */
-typedef struct { int storage, loc, index, interp, rowmajor, centroid, origin_ul, pixel_int, isconst; } qual_t;
+typedef struct { int storage, loc, index, interp, rowmajor, centroid, origin_ul, pixel_int, isconst, maxv, inv, hasprim; GLenum prim; } qual_t;
 static int quals(tr_t *R, int i, int e, qual_t *q) {
     gt_t *T = R->T.v;
     memset(q, 0, sizeof *q);
@@ -177,6 +181,12 @@ static int quals(tr_t *R, int i, int e, qual_t *q) {
                 if (teq(&T[j], "column_major")) q->rowmajor = 0;
                 if (teq(&T[j], "origin_upper_left")) q->origin_ul = 1;
                 if (teq(&T[j], "pixel_center_integer")) q->pixel_int = 1;
+                static const struct { const char *n; GLenum p; } GP[] = {{"points", GL_POINTS}, {"lines", GL_LINES},
+                    {"lines_adjacency", GL_LINES_ADJACENCY}, {"triangles", GL_TRIANGLES}, {"triangles_adjacency", GL_TRIANGLES_ADJACENCY},
+                    {"line_strip", GL_LINE_STRIP}, {"triangle_strip", GL_TRIANGLE_STRIP}, {0, 0}};
+                for (int g = 0; GP[g].n; g++) if (teq(&T[j], GP[g].n)) { q->prim = GP[g].p; q->hasprim = 1; }
+                if (teq(&T[j], "max_vertices") && j + 2 < e && teq(&T[j + 1], "=")) q->maxv = (int)strtol(T[j + 2].p, 0, 0);
+                if (teq(&T[j], "invocations") && j + 2 < e && teq(&T[j + 1], "=")) q->inv = (int)strtol(T[j + 2].p, 0, 0);
                 j++;
             }
             i = j;
@@ -222,7 +232,20 @@ static void top_decl(tr_t *R, int a, int e) {
     }
     qual_t q;
     int i = quals(R, a, e, &q);
-    if (i >= e) return;   /* "layout(...) in;" e parecidos */
+    if (i >= e) {
+        /* "layout(triangles) in;" / "layout(triangle_strip, max_vertices = 3) out;" */
+        if (q.storage == GS_IN && q.hasprim) {
+            R->I->gs_in = q.prim;
+            R->I->gs_in_set = 1;
+            if (q.inv) R->I->gs_inv = q.inv;
+            int n = q.prim == GL_POINTS ? 1 : q.prim == GL_LINES ? 2 : q.prim == GL_LINES_ADJACENCY ? 4 : q.prim == GL_TRIANGLES ? 3 : 6;
+            gt_t g = {'i', "gl_in", 5, 0};
+            arr_note(R, &g, n);
+        }
+        if (q.storage == GS_OUT && q.hasprim) { R->I->gs_out = q.prim; R->I->gs_out_set = 1; if (q.maxv) R->I->gs_max = q.maxv; }
+        if (q.storage == GS_OUT && q.maxv) R->I->gs_max = q.maxv;
+        return;
+    }
     /* invariant gl_Position; / redeclaração de embutida */
     if (T[i].k == 'i' && (i + 1 == e || teq(&T[i + 1], ",")) && !is_type_tok(R, &T[i])) return;
     if (!q.storage) {
@@ -284,8 +307,10 @@ static void top_decl(tr_t *R, int a, int e) {
         ob_s(&R->o, iname);
         int arr = 0;
         if (has_inst && j + 1 < e && teq(&T[j + 1], "[")) {
-            arr = j + 2 < e ? (int)strtol(T[j + 2].p, 0, 0) : 0;
+            arr = j + 2 < e && T[j + 2].k == 'n' ? (int)strtol(T[j + 2].p, 0, 0) : (R->I->stage == 2 && q.storage == GS_IN ? 6 : 0);
+            R->unsized6 = R->I->stage == 2 && q.storage == GS_IN;
             body(R, j + 1, e);
+            R->unsized6 = 0;
         }
         ob_s(&R->o, ";");
         gt_t nm = {'i', iname, (int)strlen(iname), 0};
@@ -293,6 +318,8 @@ static void top_decl(tr_t *R, int a, int e) {
         dd->block = strdup(sname + 6);
         dd->arr = arr;
         dd->has_inst = has_inst;
+        dd->type = strdup(sname);
+        if (arr) { char dm[16]; snprintf(dm, sizeof dm, "[%d]", arr); dd->dims = strdup(dm); }
         return;
     }
     /* uniform/in/out comum: emite sem os qualificadores e anota cada nome */
@@ -300,7 +327,9 @@ static void top_decl(tr_t *R, int a, int e) {
     int ti = i;
     if (!is_type_tok(R, &T[ti])) { body(R, i, e); ob_s(&R->o, ";"); return; }
     for (int k = ti + 1; k < e; k++) if (T[k].n > 3 && !memcmp(T[k].p, "gl_", 3) && T[k].k == 'i') return;   /* "out vec4 gl_FragColor;" */
+    R->unsized6 = R->I->stage == 2 && q.storage == GS_IN;
     body(R, i, e);
+    R->unsized6 = 0;
     ob_s(&R->o, ";");
     int depth = 0;
     for (int k = ti + 1; k < e; k++) {
@@ -312,7 +341,18 @@ static void top_decl(tr_t *R, int a, int e) {
             if (k > ti + 1 && teq(pv, "]")) {
                 /* "vec4 x[2]" — o ] é do tipo: o nome vem agora */
             }
-            decl_new(R, &T[k], &q);
+            gl_decl_t *dd = decl_new(R, &T[k], &q);
+            dd->type = tdup(&T[ti]);
+            if (k + 1 < e && teq(&T[k + 1], "[")) {
+                char dm[32] = "";
+                int m = k + 1;
+                while (m < e && !teq(&T[m], ",") && !teq(&T[m], "=") && (int)strlen(dm) + T[m].n + 2 < (int)sizeof dm) {
+                    if (teq(&T[m], "]") && teq(&T[m - 1], "[")) strcat(dm, "6");
+                    strncat(dm, T[m].p, (size_t)T[m].n);
+                    m++;
+                }
+                dd->dims = strdup(dm);
+            }
             if (k + 3 < e && teq(&T[k + 1], "[") && T[k + 2].k == 'n') arr_note(R, &T[k], (int)strtol(T[k + 2].p, 0, 0));
         }
     }

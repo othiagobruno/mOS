@@ -50,8 +50,9 @@ Cada passo tem teste de host em `tools/` e entra por PR na `main`. Build complet
 | (este) | OpenGL por software inteiro (fixed function, GLSL, FBO, UBO, transform feedback, queries), CGL/NSOpenGL apresentando na view; compilador MSL com modo GLSL; swizzle e cor de borda no amostrador | `gl_host` 66/66, `nsopengl_host` 0 falhas, `host-metal-gpu` ok |
 | #341 | Avaliadores e `glAccum` (`gl_eval.c`) | `gl_host` 73/73 |
 | #359 | `ARB_vertex_program`/`ARB_fragment_program`, `EXT_bindable_uniform`: todos os 1203 comandos | `gl_host` 83/83, `nsopengl_host` 0 falhas |
-| (este) | Derivadas no GLSL por reexecução e lod implícita de mipmap | `gl_host` 88/88, `host-metal-gpu` ok |
+| #363 | Derivadas no GLSL por reexecução e lod implícita de mipmap | `gl_host` 88/88, `host-metal-gpu` ok |
+| (este) | Geometry shader | `gl_host` 95/95 |
 
 ## Próximo (OpenGL)
 
-geometry shader; pontilhado de linha/polígono; teste com app real na VM.
+pontilhado de linha/polígono; teste com app real na VM.

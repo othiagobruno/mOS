@@ -41,12 +41,12 @@ gcc -std=gnu11 -O1 -w -fno-builtin -I tools/hostinc -I $L -o /tmp/gl_host tools/
     $L/gl_glsl_tr.c $L/gl_glsl_pre.c $L/mtltex.c $L/mtlshader.c $L/mtlexec.c $L/mslspirv.c -lm -lpthread && /tmp/gl_host
 ```
 
-Resultado registrado (16 nov.): `gl_host: 88/88 ok`. Confere clear/scissor, cobertura exata de um triângulo
+Resultado registrado (16 nov.): `gl_host: 95/95 ok`. Confere clear/scissor, cobertura exata de um triângulo
 (496 pixels em 32×32), gradiente, flat, depth, stencil, blending, textura nearest/modulate/luminância, BGRA, DXT1,
 FBO + blit + renderbuffer, lista de exibição, luz difusa, fog, seleção, arrays de cliente, VBO/EBO, VAO do APPLE com
 buffer apagado, GLSL 4.10 core (atributos, uniforms, `out`, função com `out`, erro de compilação no log), textura +
 `discard` + UBO std140 (offsets e tamanho), GLSL 1.10 compat (`ftransform`, `gl_Color`, `gl_TexCoord`), MRT com
-`gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`, programas ARB (vp com `state.matrix.mvp`, fp com `TEX`, `program.local`, `KIL`, `MUL_SAT`, erro de sintaxe com posição), `EXT_bindable_uniform`, `dFdx`/`dFdy`/`fwidth` com valor conhecido, nível de mipmap escolhido pela lod implícita. Também roda no `tools/build.sh`.
+`gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`, programas ARB (vp com `state.matrix.mvp`, fp com `TEX`, `program.local`, `KIL`, `MUL_SAT`, erro de sintaxe com posição), `EXT_bindable_uniform`, `dFdx`/`dFdy`/`fwidth` com valor conhecido, nível de mipmap escolhido pela lod implícita, geometry shader (ponto → quadrado com cor interpolada, triângulos com bloco e `gl_PrimitiveIDIn`, erro de modo incompatível). Também roda no `tools/build.sh`.
 
 `tools/nsopengl_host.c` (objetos compilados com as flags do libSystem): `CGLChoosePixelFormat`, contexto legado (2.1)
 e core (4.1), `flushBuffer` pondo o quadro BGRA no layer da view, `CGLSetOffScreen`. Resultado: 0 falhas.
@@ -59,7 +59,11 @@ Não houve VM nem app real nesta entrega: nada aqui diz que um app OpenGL espec�
 
 ## Limites conhecidos
 
-- Shaders de geometria e de tesselação: a compilação falha com mensagem no log.
+- Geometry shader (GL 3.2): todas as entradas (pontos, linhas, triângulos, com adjacência), saídas `points`/`line_strip`/
+  `triangle_strip`, `max_vertices`, `invocations`, `gl_in[]`, `gl_PrimitiveIDIn`, blocos de interface. `EmitVertex` grava as
+  saídas em arrays gerados no link. Sem renderização em camadas (`gl_Layer` é ignorado), sem `gl_ClipDistance` vindo do GS
+  e sem transform feedback das saídas do GS (captura as do vértice só quando não há GS).
+- Tesselação (GL 4.0): a compilação falha com mensagem no log.
 - Derivadas no GLSL são por reexecução: quando o shader usa `dFdx`/`dFdy`/`fwidth` ou amostra uma textura com
   mipmap (ou filtros min e mag diferentes), o fragmento roda antes nos vizinhos x+1 e y+1 (varyings pelas derivadas
   analíticas do raster) e cada chamada usa a diferença; a lod implícita do `texture()` sai disso. Custa 3 execuções

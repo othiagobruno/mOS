@@ -9,6 +9,7 @@ typedef struct {
     char *name;               /* nome da global no MSL (a instância, nos blocos) */
     char *block;              /* bloco de interface: nome do bloco */
     int storage, loc, index, interp, rowmajor, arr, has_inst;
+    char *type, *dims;        /* texto do tipo e das dimensões (o geometry shader gera as cópias de EmitVertex) */
 } gl_decl_t;
 typedef struct {
     int stage;                /* 0 vértice, 1 fragmento */
@@ -17,6 +18,8 @@ typedef struct {
     int ndecl, capdecl;
     int prelude_lines;
     int origin_ul, pixel_int;
+    GLenum gs_in, gs_out;     /* geometry shader: primitivos de entrada e de saída */
+    int gs_max, gs_inv, gs_in_set, gs_out_set;
 } gl_shinfo_t;
 char *gl_glsl_translate(const char *pp_text, gl_shinfo_t *I);
 const char *gl_glsl_prelude(int stage, int compat, u64 *len);

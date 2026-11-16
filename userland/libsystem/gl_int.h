@@ -251,6 +251,8 @@ typedef struct {
     int alpha_test;            /* compat: o teste de alfa vale (fixed function e GLSL no perfil compat) */
     int nxfb;                  /* floats por vértice no transform feedback */
     void *self;
+    void (*gs)(struct gl_ctx *C, gl_vtx_t **in, int n, u32 prim);   /* geometry shader (0 = não há) */
+    GLenum gs_in;              /* primitivo de entrada do GS */
 } gl_stage_t;
 
 /* ---- contexto */
