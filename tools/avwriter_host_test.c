@@ -22,11 +22,15 @@ typedef struct {
 extern char AVAssetWriter_c[] __asm__("OBJC_CLASS_$_AVAssetWriter");
 extern char AVAssetWriterInput_c[] __asm__("OBJC_CLASS_$_AVAssetWriterInput");
 extern char AVAssetWriterInputPixelBufferAdaptor_c[] __asm__("OBJC_CLASS_$_AVAssetWriterInputPixelBufferAdaptor");
+extern char AVAssetExportSession_c[] __asm__("OBJC_CLASS_$_AVAssetExportSession");
 void cx_avwriter_init(void);
+void cx_avexport_init(void);
+char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
+int usleep(unsigned us);
 
 /* ------------------------------------------------ objetos falsos da Foundation */
 static char FAKE;   /* isa dos objetos falsos */
-enum { K_STR = 1, K_NUM, K_DICT, K_ARR, K_ERR, K_CLASS };
+enum { K_STR = 1, K_NUM, K_DICT, K_ARR, K_ERR, K_CLASS, K_ASSET };
 typedef struct fobj { void *isa; int kind; const char *str; double num; struct fobj **k, **v; int n, cap; long long code; struct fobj *info; } fobj;
 static fobj *fnew(int kind) { fobj *o = calloc(1, sizeof *o); o->isa = &FAKE; o->kind = kind; return o; }
 void *cx_str(const char *s) { fobj *o = fnew(K_STR); o->str = strdup(s); return o; }
@@ -58,6 +62,7 @@ static void *f_arr_at(fobj *s, const char *c, unsigned long long i) { (void)c; r
 static void f_arr_add(fobj *s, const char *c, fobj *o) { (void)c; push(s, 0, o); }
 static double f_double(fobj *s, const char *c) { (void)c; return s->num; }
 static signed char f_bool(fobj *s, const char *c) { (void)c; return s->num != 0; }
+static void *f_asset_url(fobj *s, const char *c) { (void)c; return s->info; }
 static fobj cls_marr = {&FAKE, K_CLASS, "NSMutableArray"}, cls_arr = {&FAKE, K_CLASS, "NSArray"},
             cls_mdict = {&FAKE, K_CLASS, "NSMutableDictionary"}, cls_err = {&FAKE, K_CLASS, "NSError"};
 static char ns_object_k;
@@ -113,6 +118,9 @@ void *fake_lookup(void *self, const char *sel) {
         if (!strcmp(sel, "objectAtIndex:")) return (void *)f_arr_at;
         if (!strcmp(sel, "addObject:")) return (void *)f_arr_add;
         if (!strcmp(sel, "copy")) return (void *)f_self;
+        break;
+    case K_ASSET:
+        if (!strcmp(sel, "URL")) return (void *)f_asset_url;
         break;
     case K_NUM:
         if (!strcmp(sel, "doubleValue")) return (void *)f_double;
@@ -473,15 +481,91 @@ static void erros(void) {
     if (f) fclose(f);
 }
 
+/* AVAssetExportSession (avexport_objc.c) sobre o src.mp4 do teste do núcleo (64x48 H.264 + AAC, 2 s) */
+typedef struct { cmt_t start, duration; } cmrange_t;
+static int done_calls, compat_ok;
+static void done_invoke(void *b) { (void)b; done_calls++; }
+static void compat_invoke(void *b, signed char ok) { (void)b; compat_ok = ok; }
+static struct { void *isa; int flags, res; void (*invoke)(void *); } done_blk = {0, 0, 0, done_invoke};
+static struct { void *isa; int flags, res; void (*invoke)(void *, signed char); } compat_blk = {0, 0, 0, compat_invoke};
+static void *new_export(fobj *asset, const char *preset) { return CCALL(AVAssetExportSession_c, "exportSessionWithAsset:presetName:", void *, asset, cx_str(preset)); }
+static long wait_export(void *x) {
+    for (int i = 0; i < 500 && CALL(x, "status", long) < 3; i++) usleep(10000);
+    return CALL(x, "status", long);
+}
+static long long xerr(void *x) { fobj *e = CALL(x, "error", void *); return e ? e->code : 0; }
+static const char *xmsg(void *x) { fobj *e = CALL(x, "error", void *); fobj *m = e && e->info ? dfind(e->info, "NSLocalizedDescription") : 0; return m ? m->str : ""; }
+static void case_export(const char *src) {
+    fobj *asset = fnew(K_ASSET);
+    asset->info = cx_str(src);
+    fobj *pres = CCALL(AVAssetExportSession_c, "exportPresetsCompatibleWithAsset:", void *, asset);
+    CHECK(pres && pres->n == 13, "x: presets compatíveis %d (esperado 13)", pres ? pres->n : -1);
+    void *x = new_export(asset, "AVAssetExportPresetPassthrough");
+    CHECK(x, "x: sessão");
+    fobj *types = CALL(x, "supportedFileTypes", void *);
+    CHECK(types && types->n == 3, "x: supportedFileTypes %d", types ? types->n : -1);
+    remove(P("x1.mov"));
+    CALL(x, "setOutputURL:", void, cx_str(P("x1.mov")));
+    CALL(x, "setOutputFileType:", void, cx_str("com.apple.quicktime-movie"));
+    cmrange_t r = {T(1, 2), T(4, 5)};   /* [0,5 s, 1,3 s) */
+    ((void (*)(void *, const char *, cmrange_t))imp(AVAssetExportSession_c, "setTimeRange:"))(x, "setTimeRange:", r);
+    CALL(x, "exportAsynchronouslyWithCompletionHandler:", void, &done_blk);
+    long st = wait_export(x);
+    float pr = ((float (*)(void *, const char *))imp(AVAssetExportSession_c, "progress"))(x, "progress");
+    CHECK(st == 3 && done_calls == 1 && pr == 1.0f, "x: passthrough status %ld, %d chamadas, progresso %.2f: %s", st, done_calls, pr, xmsg(x));
+    FILE *f = fopen(P("x1.mov"), "rb");
+    if (f) {
+        fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+        uint8_t *b = malloc((size_t)n);
+        if (fread(b, 1, (size_t)n, f) != (size_t)n) n = 0;
+        fclose(f);
+        mp4_file m;
+        CHECK(n && !mp4_open_mem(&m, b, (uint64_t)n) && m.duration == 800 && m.ntracks == 2, "x: x1.mov com 0,8 s e 2 faixas");
+    } else CHECK(0, "x: x1.mov não existe");
+    /* M4A só com o áudio AAC */
+    x = new_export(asset, "AVAssetExportPresetAppleM4A");
+    remove(P("x2.m4a"));
+    CALL(x, "setOutputURL:", void, cx_str(P("x2.m4a")));
+    CALL(x, "setOutputFileType:", void, cx_str("com.apple.m4a-audio"));
+    CALL(x, "exportAsynchronouslyWithCompletionHandler:", void, &done_blk);
+    CHECK(wait_export(x) == 3 && done_calls == 2, "x: M4A: %s", xmsg(x));
+    CCALL(AVAssetExportSession_c, "determineCompatibilityOfExportPreset:withAsset:outputFileType:completionHandler:", void,
+          cx_str("AVAssetExportPresetAppleM4A"), asset, cx_str("com.apple.m4a-audio"), &compat_blk);
+    CHECK(compat_ok == 1, "x: determineCompatibility M4A");
+    CCALL(AVAssetExportSession_c, "determineCompatibilityOfExportPreset:withAsset:outputFileType:completionHandler:", void,
+          cx_str("AVAssetExportPresetAppleM4A"), asset, cx_str("com.apple.m4v-video"), &compat_blk);
+    CHECK(compat_ok == 0, "x: determineCompatibility M4A em M4V");
+    /* arquivo existente; videoComposition; cancelamento antes de começar */
+    x = new_export(asset, "AVAssetExportPresetPassthrough");
+    CALL(x, "setOutputURL:", void, cx_str(P("x1.mov")));
+    CALL(x, "setOutputFileType:", void, cx_str("com.apple.quicktime-movie"));
+    CALL(x, "exportAsynchronouslyWithCompletionHandler:", void, &done_blk);
+    CHECK(wait_export(x) == 4 && xerr(x) == -11823, "x: arquivo existente: %lld", xerr(x));
+    x = new_export(asset, "AVAssetExportPresetHighestQuality");
+    remove(P("x3.mp4"));
+    CALL(x, "setOutputURL:", void, cx_str(P("x3.mp4")));
+    CALL(x, "setOutputFileType:", void, cx_str("public.mpeg-4"));
+    CALL(x, "setVideoComposition:", void, dict());
+    CALL(x, "exportAsynchronouslyWithCompletionHandler:", void, &done_blk);
+    CHECK(wait_export(x) == 4 && xerr(x) == -11820 && strstr(xmsg(x), "videoComposition"), "x: videoComposition: %s", xmsg(x));
+    x = new_export(asset, "AVAssetExportPresetPassthrough");
+    CALL(x, "cancelExport", void);
+    CHECK(CALL(x, "status", long) == 5, "x: cancelExport antes de exportar");
+    fobj *bad = fnew(K_ASSET); bad->info = cx_str(P("nao-existe.mp4"));
+    CHECK(!new_export(bad, "AVAssetExportPresetPassthrough"), "x: asset ilegível devolve nil");
+}
+
 int main(int argc, char **argv) {
-    if (argc < 3) return 2;
+    if (argc < 4) return 2;
     snprintf(dir, sizeof dir, "%s", argv[1]);
     kCMSampleAttachmentKey_NotSync = cx_str("NotSync");
     cx_avwriter_init();
+    cx_avexport_init();
     case_mov();
     case_passthrough(argv[2]);
     case_wav();
     erros();
+    case_export(argv[3]);
     if (!fails) puts("avwriter_host ok");
     return fails != 0;
 }
