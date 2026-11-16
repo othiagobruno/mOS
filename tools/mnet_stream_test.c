@@ -1,9 +1,9 @@
 /* Teste de host dos streams do mnet (userland/libsystem/mnet_stream.c), a base do CFStream/NSStream do mOS.
  *   gcc -std=gnu11 -O1 -g -Wall -DMNET_HOST -DMOS_HOST_TEST -I userland/libsystem -I kernel/include -I tools \
  *       userland/libsystem/mnet_*.c tools/mnet_stream_test.c kernel/net/crypto.c kernel/net/tls.c kernel/net/pk.c \
- *       kernel/net/x509.c -lz -l:libbrotlidec.so.1 -lpthread -o /tmp/mnet_stream_test
+ *       kernel/net/x509.c -lz -l:libbrotlidec.so.1 -lpthread -lresolv -o /tmp/mnet_stream_test
  *   /tmp/mnet_stream_test          (memória, arquivo, par entre fios, socket com eco local, SOCKS4a/5, erros)
- *   /tmp/mnet_stream_test rede     (da raiz do repositório; + TLS de verdade: example.com com TLS no open e com STARTTLS depois do open)
+ *   /tmp/mnet_stream_test rede     (da raiz do repositório; + TLS de verdade no example.com, no open e por STARTTLS, e DNS reverso)
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -465,6 +465,129 @@ static void rede(void) {
     CHECK(mnet_stream_error(r, &code, 0) == MNET_SD_SSL);
     printf("  (erro TLS esperado: %ld)\n", code);
     mnet_stream_free(r); mnet_stream_free(w);
+    /* DNS reverso de verdade (o caminho do CFHost kCFHostNames): 8.8.8.8 -> dns.google */
+    {
+        extern int res_query(const char *, int, int, unsigned char *, int);
+        uint8_t sa[16] = {16, 2, 0, 0, 8, 8, 8, 8};
+        char q[80], nm[256];
+        uint8_t ans[1024];
+        CHECK(!mnet_dns_ptr_name(sa, 16, q, sizeof q));
+        int len = res_query(q, 1, 12, ans, sizeof ans);
+        CHECK(len > 12 && !mnet_dns_first_ptr(ans, (size_t)len, nm, sizeof nm) && !strcmp(nm, "dns.google"));
+    }
+}
+
+/* ---------------------------------------------------------------- corpo HTTP por um par (o stream de CFReadStreamCreateForHTTPRequest) */
+static void *http_conn(void *a) {
+    int c = (int)(long)a;
+    char req[2048]; size_t n = 0;
+    while (n < sizeof req - 1) { ssize_t k = read(c, req + n, sizeof req - 1 - n); if (k <= 0) break; n += (size_t)k; req[n] = 0; if (strstr(req, "\r\n\r\n")) break; }
+    if (!strncmp(req, "GET /grande", 11)) {
+        size_t len = 600 * 1024;
+        char h[128]; int hl = snprintf(h, sizeof h, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", len);
+        write(c, h, (size_t)hl);
+        char *b = malloc(len);
+        for (size_t i = 0; i < len; i++) b[i] = (char)(i * 13);
+        size_t off = 0;
+        while (off < len) { ssize_t k = write(c, b + off, len - off); if (k <= 0) break; off += (size_t)k; }
+        free(b);
+    } else {
+        const char *r = "HTTP/1.1 404 Not Found\r\nContent-Length: 3\r\nX-Teste: sim\r\nConnection: close\r\n\r\nnao";
+        write(c, r, strlen(r));
+    }
+    close(c);
+    return 0;
+}
+static void *http_server(void *a) {
+    int s = (int)(long)a;
+    for (;;) { int c = accept(s, 0, 0); if (c < 0) break; pthread_t t; pthread_create(&t, 0, http_conn, (void *)(long)c); pthread_detach(t); }
+    return 0;
+}
+typedef struct { mnet_client_t *cl; const char *url; mnet_stream_t *w; int err, status; char hdr[32]; } hjob_t;
+static int hj_resp(void *ctx, const mnet_resp_t *r) {
+    hjob_t *j = ctx; j->status = r->status;
+    const char *x = mnet_hdrs_get(&r->hdrs, "x-teste");
+    snprintf(j->hdr, sizeof j->hdr, "%s", x ? x : "");
+    return mnet_stream_peer_gone(j->w);
+}
+static int hj_body(void *ctx, const uint8_t *d, size_t n) {
+    hjob_t *j = ctx; size_t off = 0;
+    while (off < n) { long k = mnet_stream_write(j->w, d + off, n - off); if (k <= 0) return 1; off += (size_t)k; }
+    return 0;
+}
+static void *hj_thread(void *a) {
+    hjob_t *j = a;
+    mnet_req_t q; mnet_resp_t r; char msg[128];
+    memset(&q, 0, sizeof q); memset(&r, 0, sizeof r);
+    q.method = "GET"; q.url = j->url; q.max_redirects = -1; q.no_cookies = 1;
+    q.ctx = j; q.on_response = hj_resp; q.on_body = hj_body;
+    j->err = mnet_fetch(j->cl, &q, &r, msg, sizeof msg);
+    if (j->err && j->err != MNET_E_CANCELLED && !mnet_stream_peer_gone(j->w)) mnet_stream_fail_peer(j->w, MNET_SD_POSIX, 61, msg);
+    mnet_resp_free(&r);
+    mnet_stream_close(j->w);
+    return 0;
+}
+static void t_http_pipe(void) {
+    int hp, hs = listen_on(&hp);
+    pthread_t t;
+    pthread_create(&t, 0, http_server, (void *)(long)hs); pthread_detach(t);
+    mnet_client_t cl; mnet_client_init(&cl, &io_wait);
+    char url[128];
+    /* 600 KiB por um par de 256 KiB: o fio do fetch espera o leitor */
+    mnet_stream_t *r, *w;
+    mnet_stream_pair(256 * 1024, &r, &w);
+    mnet_stream_open(r); mnet_stream_open(w);
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/grande", hp);
+    hjob_t j = {&cl, url, w, 0, 0, ""};
+    pthread_create(&t, 0, hj_thread, &j);
+    static uint8_t b[70000];
+    size_t got = 0; int bad = 0;
+    for (;;) {
+        long k = mnet_stream_read(r, b, sizeof b);
+        if (k <= 0) { CHECK(k == 0); break; }
+        for (long i = 0; i < k; i++) if (b[i] != (uint8_t)((got + (size_t)i) * 13)) bad++;
+        got += (size_t)k;
+    }
+    pthread_join(t, 0);
+    CHECK(j.err == 0 && j.status == 200 && got == 600 * 1024 && !bad);
+    CHECK(mnet_stream_status(r) == MNET_SS_AT_END);
+    mnet_stream_free(r); mnet_stream_free(w);
+    /* resposta 404 com cabeçalho: o corpo chega e o status fica com o produtor */
+    mnet_stream_pair(4096, &r, &w);
+    mnet_stream_open(r); mnet_stream_open(w);
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/x", hp);
+    hjob_t j2 = {&cl, url, w, 0, 0, ""};
+    pthread_create(&t, 0, hj_thread, &j2);
+    long k = mnet_stream_read(r, b, sizeof b);
+    pthread_join(t, 0);
+    CHECK(k == 3 && !memcmp(b, "nao", 3) && j2.status == 404 && !strcmp(j2.hdr, "sim"));
+    CHECK(mnet_stream_read(r, b, sizeof b) == 0);
+    mnet_stream_free(r); mnet_stream_free(w);
+    /* o app larga o stream no meio: o fetch é cancelado (sem travar) */
+    mnet_stream_pair(4096, &r, &w);
+    mnet_stream_open(r); mnet_stream_open(w);
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/grande", hp);
+    hjob_t j3 = {&cl, url, w, 0, 0, ""};
+    pthread_create(&t, 0, hj_thread, &j3);
+    CHECK(mnet_stream_read(r, b, 100) == 100);
+    mnet_stream_free(r);
+    pthread_join(t, 0);
+    CHECK(j3.err == MNET_E_CANCELLED);
+    mnet_stream_free(w);
+    /* conexão recusada: o erro chega ao leitor */
+    int dead; int ds = listen_on(&dead); close(ds);
+    mnet_stream_pair(4096, &r, &w);
+    mnet_stream_open(r); mnet_stream_open(w);
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/", dead);
+    hjob_t j4 = {&cl, url, w, 0, 0, ""};
+    pthread_create(&t, 0, hj_thread, &j4);
+    CHECK(mnet_stream_read(r, b, 10) == -1);
+    pthread_join(t, 0);
+    long code = 0;
+    CHECK(j4.err == MNET_E_CONNECT && mnet_stream_error(r, &code, 0) == MNET_SD_POSIX && code == 61);
+    CHECK(mnet_stream_events(r) == (MNET_SE_OPEN | MNET_SE_ERROR));
+    mnet_stream_free(r); mnet_stream_free(w);
+    mnet_client_close_idle(&cl);
 }
 
 int main(int argc, char **argv) {
@@ -482,6 +605,7 @@ int main(int argc, char **argv) {
     t_socket(&io);           /* leitura com tempo (transporte sem wait) */
     t_socket(&io_wait);      /* com wait, como no mOS */
     t_socks(&io_wait, sp);
+    t_http_pipe();
     if (argc > 1 && !strcmp(argv[1], "rede")) rede();
     printf("mnet_stream: %d/%d ok\n", checks - fails, checks);
     return fails ? 1 : 0;

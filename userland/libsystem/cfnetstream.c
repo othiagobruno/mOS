@@ -136,6 +136,12 @@ typedef struct {
     void (*perform)(void *);
 } src_ctx_t;
 #define MAX_RL 8
+/* stream com propriedades próprias (o do pedido HTTP em cfhttp.c) */
+typedef struct {
+    id (*get)(void *ext, id key);                       /* 0 = não é minha */
+    int (*set)(void *ext, id key, id v);                /* -1 = não é minha, 0 recusou, 1 aceitou */
+    void (*release)(void *ext);
+} cx_stream_ext_t;
 
 typedef struct ns {
     unsigned lock;                       /* os_unfair_lock: campos de agendamento e refs */
@@ -158,6 +164,8 @@ typedef struct ns {
     char host[256]; int port;
     int close_native;                    /* kCFStreamPropertyShouldCloseNativeSocket */
     int native;                          /* criado sobre um fd do app */
+    void *ext;
+    const cx_stream_ext_t *ext_ops;
 } ns_t;
 
 cx_class_t NSStream_c __asm__("OBJC_CLASS_$_NSStream"), NSStream_m __asm__("OBJC_METACLASS_$_NSStream");
@@ -364,6 +372,7 @@ static void store(id *slotp, id v) { id old = *slotp; *slotp = v ? objc_retain(v
 static BOOL set_prop(ns_t *n, id key, id v) {
     if (!n || !key) return NO;
     mnet_stream_t *m = n->m;
+    if (n->ext_ops && n->ext_ops->set) { int r = n->ext_ops->set(n->ext, key, v); if (r >= 0) return r ? YES : NO; }
     if (str_eq(key, kCFStreamPropertyFileCurrentOffset)) return m && mnet_stream_seek(m, numv(v)) == 0;
     if (str_eq(key, kCFStreamPropertyAppendToFile)) return m && mnet_stream_set_append(m, boolv(v)) == 0;   /* antes do open */
     if (mnet_stream_is_socket(m)) {
@@ -388,6 +397,7 @@ static BOOL set_prop(ns_t *n, id key, id v) {
 static id get_prop(ns_t *n, id key) {
     if (!n || !key) return 0;
     mnet_stream_t *m = n->m;
+    if (n->ext_ops && n->ext_ops->get) { id v = n->ext_ops->get(n->ext, key); if (v) return v; }
     if (m && (str_eq(key, kCFStreamPropertyDataWritten) || str_eq(key, NSStreamDataWrittenToMemoryStreamKey))) {
         size_t len; const uint8_t *d = mnet_stream_mem_data(m, &len);
         if (d) return MSG(id, cls("NSData"), "dataWithBytes:length:", d, (u64)len);
@@ -448,6 +458,8 @@ static void st_dealloc(id s, SEL c) {
         if (q) dispatch_release(q);
         if (n->ctx.release && n->ctx.info) n->ctx.release(n->ctx.info);
         mnet_stream_free(n->m); n->m = 0;
+        if (n->ext_ops && n->ext_ops->release) n->ext_ops->release(n->ext);
+        n->ext = 0; n->ext_ops = 0;
         if (n->props) objc_release(n->props);
         if (n->err) objc_release(n->err);
         if (n->ssl_settings) objc_release(n->ssl_settings);
@@ -633,6 +645,15 @@ static void ns_get_bound(id k, SEL c, u64 size, id *in, id *out) {
     if (out) *out = w ? objc_autorelease(w) : 0;
 }
 
+/* NSInputStream (+1) sobre um núcleo, com propriedades próprias */
+id cx_netstream_new_input(mnet_stream_t *m, void *ext, const cx_stream_ext_t *ops) {
+    id s = new_in(m);
+    ns_t *n = s ? NS(s) : 0;
+    if (n) { n->ext = ext; n->ext_ops = ops; }
+    else if (ops && ops->release) ops->release(ext);
+    return s;
+}
+
 /* ---------------------------------------------------------------- CFReadStream / CFWriteStream */
 u64 CFReadStreamGetTypeID(void) { return 38; }
 u64 CFWriteStreamGetTypeID(void) { return 39; }
@@ -758,6 +779,7 @@ void cx_netstream_init(void) {
     if (done) return;
     done = 1;
     cx_class_t *obj = cx_class_named("NSObject");
+    { void cx_cfhttp_init(void); cx_cfhttp_init(); }                  /* CFHTTPMessage/Authentication (cfhttp.c) */
     cx_define_class(&NSStream_c, &NSStream_m, "NSStream", obj, 8);
     cx_class_t *k = &NSStream_c;
     cx_add_method(k, "dealloc", (void *)st_dealloc);

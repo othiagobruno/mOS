@@ -213,3 +213,77 @@ size_t mnet_fmt_date(long long t, char out[30]) {
     *p = 0;
     return (size_t)(p - out);
 }
+
+/* ---- DNS reverso (CFHost kCFHostNames, NSHost): nome PTR e leitura da resposta (RFC 1035 §4.1, compressão §4.1.4) */
+int mnet_dns_ptr_name(const uint8_t *sa, size_t n, char *q, size_t qn) {
+    static const char hx[] = "0123456789abcdef";
+    size_t k = 0;
+    if (n >= 8 && sa[1] == 2) {
+        for (int i = 7; i >= 4; i--) {
+            unsigned v = sa[i];
+            char t[4]; int tl = 0;
+            do { t[tl++] = (char)('0' + v % 10); v /= 10; } while (v);
+            if (k + (size_t)tl + 1 >= qn) return -1;
+            while (tl) q[k++] = t[--tl];
+            q[k++] = '.';
+        }
+        if (k + 13 > qn) return -1;
+        memcpy(q + k, "in-addr.arpa", 13);
+        return 0;
+    }
+    if (n >= 24 && sa[1] == 30) {
+        if (qn < 64 + 9) return -1;
+        for (int i = 15; i >= 0; i--) { q[k++] = hx[sa[8 + i] & 15]; q[k++] = '.'; q[k++] = hx[sa[8 + i] >> 4]; q[k++] = '.'; }
+        memcpy(q + k, "ip6.arpa", 9);
+        return 0;
+    }
+    return -1;
+}
+/* nome no formato DNS a partir de off (com ponteiros); devolve o tamanho ocupado no lugar, ou -1 */
+static long dns_name(const uint8_t *m, size_t len, size_t off, char *out, size_t on) {
+    size_t k = 0, used = 0;
+    int jumped = 0, hops = 0;
+    for (;;) {
+        if (off >= len) return -1;
+        uint8_t l = m[off];
+        if ((l & 0xc0) == 0xc0) {
+            if (off + 1 >= len || ++hops > 32) return -1;
+            if (!jumped) used += 2;
+            jumped = 1;
+            off = (size_t)(l & 0x3f) << 8 | m[off + 1];
+            continue;
+        }
+        if (l & 0xc0) return -1;
+        if (!jumped) used += 1u + l;
+        if (!l) break;
+        if (off + 1 + l > len) return -1;
+        if (out) {
+            if (k + l + 2 > on) return -1;
+            if (k) out[k++] = '.';
+            memcpy(out + k, m + off + 1, l);
+            k += l;
+        }
+        off += 1u + l;
+    }
+    if (out) { if (!on) return -1; out[k] = 0; }
+    return (long)used;
+}
+int mnet_dns_first_ptr(const uint8_t *m, size_t len, char *out, size_t on) {
+    if (len < 12) return -1;
+    if ((m[3] & 15) != 0) return -1;                                  /* RCODE */
+    int qd = m[4] << 8 | m[5], an = m[6] << 8 | m[7];
+    size_t p = 12;
+    for (int i = 0; i < qd; i++) { long k = dns_name(m, len, p, 0, 0); if (k < 0) return -1; p += (size_t)k + 4; }
+    for (int i = 0; i < an; i++) {
+        long k = dns_name(m, len, p, 0, 0);
+        if (k < 0 || p + (size_t)k + 10 > len) return -1;
+        p += (size_t)k;
+        int type = m[p] << 8 | m[p + 1];
+        size_t rdlen = (size_t)(m[p + 8] << 8 | m[p + 9]);
+        p += 10;
+        if (p + rdlen > len) return -1;
+        if (type == 12) return dns_name(m, len, p, out, on) < 0 ? -1 : 0;
+        p += rdlen;
+    }
+    return -1;
+}

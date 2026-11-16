@@ -93,6 +93,10 @@ static int param(const char *s, const char *p, char *out, size_t on) {
     }
     return 0;
 }
+int mnet_auth_param(const char *challenge, const char *name, char *out, size_t n) {
+    const char *sp = challenge ? strchr(challenge, ' ') : 0;
+    return sp ? param(sp + 1, name, out, n) : 0;
+}
 const char *mnet_auth_pick(const mnet_hdrs_t *h, const char *field, int *score) {
     const char *best = 0; int sc0 = 0;
     for (int i = 0; i < h->n; i++) {
