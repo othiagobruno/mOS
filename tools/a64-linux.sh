@@ -6,6 +6,8 @@
 #   tools/a64-linux.sh cmp [nome...]    # interp × JIT × QEMU em cada ELF (ou só nos nomes dados)
 #   tools/a64-linux.sh oracle x.elf     # saída do QEMU (mesmo formato do a64host)
 #   tools/a64-linux.sh fuzz [args...]   # build/a64l/a64fuzz (mesmos argumentos do a64fuzz.c)
+#   tools/a64-linux.sh litmus [n]       # modelo de memória: SB/MP com duas threads (JIT e interp)
+#   tools/a64-linux.sh jitcache         # testes ELF com cache de código de 16 KiB (estouro e esvaziamento)
 #
 # Trabalho pesado (compilação, QEMU, fuzz) entra na trava compartilhada /tmp/mos-pesado.lock com
 # nice 10 e espera ter 3000 MB livres (regras de RAM do time).
@@ -104,6 +106,21 @@ case "$cmd" in
     cmp) pesado bash "$0" _cmp "$@" ;;
     _cmp) cmp_all "$@" ;;
     oracle) oracle "$@" ;;
+    litmus)
+        (cd "$R" && $CC -O2 -pthread -DA64_HAVE_JIT -Iuserland/a64 tools/a64litmus_host.c userland/a64/a64_fp.c \
+            userland/a64/a64_xmon.c userland/a64/engine.c userland/a64/interp*.c userland/a64/jit*.c -lm -o "$O/a64litmus") \
+            && pesado timeout 600 "$O/a64litmus" "${1:-200000}" ;;
+    jitcache)
+        (cd "$R" && $CC -O2 -mcx16 -w -fno-strict-aliasing -pthread -DA64_HAVE_JIT -DA64_HOST_TOOL -DA64_JIT_CODE_KIB=16 \
+            tools/a64host.c userland/a64/a64_fp.c userland/a64/a64_xmon.c userland/a64/engine.c userland/a64/interp*.c \
+            userland/a64/jit*.c -o "$O/a64host-jit16" -lm) || exit 1
+        bad=0
+        for e in "$O"/tests/*.elf; do
+            a=$(timeout "$TMO" "$O/a64host" --argv0 prog "$e" 2>&1; echo "rc=$?")
+            b=$(timeout "$TMO" "$O/a64host-jit16" --jit --argv0 prog "$e" 2>&1; echo "rc=$?")
+            [[ "$a" == "$b" ]] || { echo "DIFERE $(basename "$e")"; bad=$((bad + 1)); }
+        done
+        echo "jitcache: $bad diferença(s)"; [[ $bad -eq 0 ]] ;;
     fuzz) MOS_QEMU_A64=$QEMU MOS_LLVM_OBJDUMP=$LLVM_OBJDUMP pesado timeout 3000 "$O/a64fuzz" "$@" ;;
     *) sed -n 2,9p "$0"; exit 2 ;;
 esac
