@@ -426,7 +426,7 @@ int CGSSetWindowTransform(int cid, int wid, cg_affine_t t) { (void)cid; (void)wi
 int CGSSetWindowCaptureExcludeShape(int cid, int wid, void *region) { (void)cid; (void)wid; (void)region; return 0; }
 void *CGRegionCreateWithRect(cg_rect_t r) { (void)r; return token(); }
 /* PDF: sem gerador de PDF; o "Salvar como PDF" do Chromium informa a falha */
-void *CGDataConsumerCreateWithCFData(id data) { (void)data; return 0; }
+/* CGDataConsumer está em cg_consumer.c */
 void *CGPDFContextCreate(void *consumer, const cg_rect_t *box, id info) { (void)consumer; (void)box; (void)info; return 0; }
 void CGPDFContextClose(void *c) { (void)c; }
 void CGContextBeginPage(void *c, const cg_rect_t *box) { (void)c; (void)box; }

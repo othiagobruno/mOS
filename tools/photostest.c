@@ -1,6 +1,6 @@
-/* gcc -DPHOTOS_HOST -I userland/frameworks/Photos -I userland/frameworks/ImageIO \
+/* gcc -DPHOTOS_HOST -DIIO_HOST -I userland/frameworks/Photos -I userland/libsystem \
  *   tools/photostest.c userland/frameworks/Photos/photos_index.c \
- *   userland/frameworks/ImageIO/imageio_decode.c -lm -o /tmp/photostest && /tmp/photostest
+ *   userland/libsystem/imageio.c -lz -lm -o /tmp/photostest && /tmp/photostest
  * Índice real de uma pasta. Não sobe a VM. */
 #define _POSIX_C_SOURCE 200809L
 #include "photos_index.h"

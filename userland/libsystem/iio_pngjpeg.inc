@@ -1,10 +1,9 @@
 /*
- * mOS — decodificador PNG e JPEG do ImageIO.
- * O mesmo algoritmo de kernel/web/image.c (inflate, PNG com Adam7, JPEG baseline e progressivo),
- * com alfa reto (0xAARRGGBB) em vez do pré-multiplicado do compositor. GIF, BMP e PPM ficam de fora:
- * o ImageIO desta versão só promete PNG e JPEG.
+ * mOS ImageIO — PNG/APNG e JPEG (baseline e progressivo; cinza, YCbCr, CMYK e YCCK da Adobe).
+ * Incluído por imageio.c. Mesmo inflate/IDCT de kernel/web/image.c, com alfa reto (0xAARRGGBB).
+ * Metadados: pHYs, gAMA, sRGB, iCCP, acTL/fcTL/fdAT; JFIF (densidade), APP2 ICC_PROFILE, APP14 Adobe.
  */
-#include "imageio_codec.h"
+#include "iio.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -32,8 +31,6 @@ typedef size_t usize;
 #define RGBA(r, g, b, a) (((u32)(a) << 24) | ((u32)(r) << 16) | ((u32)(g) << 8) | (u32)(b))
 #define PI_F 3.14159265f
 static float fcos(float x) { return cosf(x); }
-/* alfa reto: o CGImage é criado com kCGImageAlphaLast */
-static u32 color_premul(u32 c) { return c; }
 
 typedef struct { int w, h, stride; u32 *px; } surface_t;
 static surface_t *surface_new(int w, int h) {
@@ -46,7 +43,8 @@ static surface_t *surface_new(int w, int h) {
 }
 static void surface_free(surface_t *s) { if (!s) return; free(s->px); free(s); }
 
-#define MAX_PIXELS (6000u * 6000u)
+/* 128 Mpx (512 MiB em ARGB): acima disso o arquivo é recusado */
+#define MAX_PIXELS (1u << 27)
 
 /* ============================================================ inflate (RFC 1951) */
 typedef struct {
@@ -236,17 +234,6 @@ static bool zlib_inflate(const u8 *d, usize n, u8 *out, usize cap, usize *olen) 
 }
 
 /* deflate cru (entradas de .zip/.epub): out com capacidade fixa; devolve true se algo foi descomprimido */
-static bool raw_inflate(const u8 *d, usize n, u8 *out, usize cap, usize *olen) {
-    inf_t s = {0};
-    s.in = d;
-    s.n = n;
-    s.out = out;
-    s.ocap = cap;
-    s.fixed_cap = true;
-    bool ok = inflate_raw(&s);
-    *olen = s.olen;
-    return ok || s.olen > 0;
-}
 
 /* ============================================================ PNG */
 static u32 be32(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
@@ -296,6 +283,7 @@ typedef struct {
     u16 key[3];
 } png_t;
 
+/* amostra reduzida a 8 bits; índice cru na paleta */
 static int sample(const u8 *row, int x, int c, png_t *P) {
     int d = P->depth;
     if (d == 8) return row[x * P->ch + c];
@@ -306,10 +294,13 @@ static int sample(const u8 *row, int x, int c, png_t *P) {
     if (P->ctype == 3) return v;
     return v * 255 / ((1 << d) - 1);
 }
-static int sample16(const u8 *row, int x, int c, png_t *P) {
-    if (P->depth == 16) return row[(x * P->ch + c) * 2] << 8 | row[(x * P->ch + c) * 2 + 1];
-    int v = sample(row, x, c, P);
-    return P->ctype == 3 ? v : v * 257;
+/* amostra crua na profundidade do arquivo (para comparar com a cor do tRNS) */
+static int sample_raw(const u8 *row, int x, int c, png_t *P) {
+    int d = P->depth;
+    if (d == 16) return row[(x * P->ch + c) * 2] << 8 | row[(x * P->ch + c) * 2 + 1];
+    if (d == 8) return row[x * P->ch + c];
+    int bit = (x * P->ch + c) * d;
+    return (row[bit >> 3] >> (8 - d - (bit & 7))) & ((1 << d) - 1);
 }
 
 static u32 png_px(const u8 *row, int x, png_t *P) {
@@ -317,36 +308,118 @@ static u32 png_px(const u8 *row, int x, png_t *P) {
     switch (P->ctype) {
     case 0:
         r = g = b = sample(row, x, 0, P);
-        if (P->has_key && sample16(row, x, 0, P) == (P->depth == 16 ? P->key[0] : P->key[0] * 257 / (P->depth < 8 ? 257 : 1) * (P->depth < 8 ? 1 : 1))) a = 0;
+        if (P->has_key && sample_raw(row, x, 0, P) == P->key[0]) a = 0;
         break;
     case 2:
         r = sample(row, x, 0, P); g = sample(row, x, 1, P); b = sample(row, x, 2, P);
-        if (P->has_key && P->depth == 8 && r == P->key[0] && g == P->key[1] && b == P->key[2]) a = 0;
+        if (P->has_key && sample_raw(row, x, 0, P) == P->key[0] && sample_raw(row, x, 1, P) == P->key[1] &&
+            sample_raw(row, x, 2, P) == P->key[2]) a = 0;
         break;
     case 3: {
         int i = sample(row, x, 0, P);
-        u32 c = i < P->npal ? P->pal[i] : 0xFF000000u;
-        return color_premul(c);
+        return i < P->npal ? P->pal[i] : 0xFF000000u;
     }
     case 4: r = g = b = sample(row, x, 0, P); a = sample(row, x, 1, P); break;
     default: r = sample(row, x, 0, P); g = sample(row, x, 1, P); b = sample(row, x, 2, P); a = sample(row, x, 3, P); break;
     }
-    return color_premul(RGBA(r, g, b, a));
+    return RGBA(r, g, b, a);
 }
 
-static surface_t *decode_png(const u8 *d, usize n) {
-    if (n < 33 || memcmp(d, "\x89PNG\r\n\x1a\n", 8)) return NULL;
+/* um fluxo zlib (IDAT ou fdAT juntados) de uma imagem w×h vira pixels */
+static u32 *png_image(png_t *P, const u8 *z, usize zn, int w, int h, int interlace) {
+    static const int ax[7] = {0, 4, 0, 2, 0, 1, 0}, ay[7] = {0, 0, 4, 0, 2, 0, 1}, dx7[7] = {8, 8, 4, 4, 2, 2, 1}, dy7[7] = {8, 8, 8, 4, 4, 2, 2};
+    int bpp = MAX(1, P->ch * P->depth / 8);
+    usize total = 0;
+    if (w <= 0 || h <= 0 || (u64)w * h > MAX_PIXELS) return NULL;
+    if (!interlace) total = (usize)h * (((usize)w * P->ch * P->depth + 7) / 8 + 1);
+    else for (int p = 0; p < 7; p++) {
+        int pw = (w - ax[p] + dx7[p] - 1) / dx7[p], ph = (h - ay[p] + dy7[p] - 1) / dy7[p];
+        if (pw > 0 && ph > 0) total += (usize)ph * (((usize)pw * P->ch * P->depth + 7) / 8 + 1);
+    }
+    u8 *raw = kmalloc(total + 16);
+    if (!raw) return NULL;
+    memset(raw, 0, total);
+    usize got = 0;
+    if (!zlib_inflate(z, zn, raw, total, &got)) { kfree(raw); return NULL; }
+    u32 *px = kcalloc((usize)w * h, 4);
+    if (!px) { kfree(raw); return NULL; }
+    if (!interlace) {
+        usize rb = ((usize)w * P->ch * P->depth + 7) / 8;
+        if (!unfilter(raw, h, rb, bpp)) { kfree(raw); kfree(px); return NULL; }
+        for (int y = 0; y < h; y++) {
+            const u8 *row = raw + (usize)y * (rb + 1) + 1;
+            u32 *o = px + (usize)y * w;
+            for (int x = 0; x < w; x++) o[x] = png_px(row, x, P);
+        }
+    } else {
+        usize off = 0;
+        for (int p = 0; p < 7; p++) {
+            int pw = (w - ax[p] + dx7[p] - 1) / dx7[p], ph = (h - ay[p] + dy7[p] - 1) / dy7[p];
+            if (pw <= 0 || ph <= 0) continue;
+            usize rb = ((usize)pw * P->ch * P->depth + 7) / 8;
+            if (!unfilter(raw + off, ph, rb, bpp)) { kfree(raw); kfree(px); return NULL; }
+            for (int y = 0; y < ph; y++) {
+                const u8 *row = raw + off + (usize)y * (rb + 1) + 1;
+                int yy = ay[p] + y * dy7[p];
+                for (int x = 0; x < pw; x++) px[(usize)yy * w + ax[p] + x * dx7[p]] = png_px(row, x, P);
+            }
+            off += (usize)ph * (rb + 1);
+        }
+    }
+    kfree(raw);
+    return px;
+}
+
+typedef struct { u8 *b; usize n, cap; } zbuf_t;
+static bool zbuf_add(zbuf_t *z, const u8 *p, usize n) {
+    if (z->n + n > z->cap) {
+        usize nc = MAX(z->cap * 2, z->n + n + 65536);
+        u8 *nb = kmalloc(nc);
+        if (!nb) return false;
+        if (z->b) { memcpy(nb, z->b, z->n); kfree(z->b); }
+        z->b = nb;
+        z->cap = nc;
+    }
+    memcpy(z->b + z->n, p, n);
+    z->n += n;
+    return true;
+}
+
+/* mistura "source over" de alfa reto */
+static u32 over_straight(u32 dst, u32 src) {
+    u32 sa = src >> 24, da = dst >> 24;
+    if (sa == 255 || da == 0) return src;
+    if (sa == 0) return dst;
+    u32 oa = sa + da * (255 - sa) / 255;
+    u32 o = oa << 24;
+    for (int s = 0; s < 24; s += 8) {
+        u32 sc = src >> s & 255, dc = dst >> s & 255;
+        u32 c = (sc * sa + dc * da * (255 - sa) / 255) / (oa ? oa : 1);
+        o |= (c > 255 ? 255 : c) << s;
+    }
+    return o;
+}
+
+typedef struct { u32 w, h, x, y; u16 dn, dd; u8 dispose, blend; zbuf_t z; } apng_fc;
+
+/* PNG e APNG. Sem acTL (ou com IDAT fora da animação e um quadro só) sai uma imagem. */
+static int iio_png(const u8 *d, usize n, iio_image *out) {
+    if (n < 33 || memcmp(d, "\x89PNG\r\n\x1a\n", 8)) return -1;
     png_t P = {0};
     usize pos = 8;
-    u8 *idat = NULL;
-    usize ilen = 0, icap = 0;
-    int interlace = 0;
+    zbuf_t idat = {0};
+    int interlace = 0, actl = 0, nplays = 0, idat_is_frame = 0, phys_unit = 0, nfc = 0, cfc = 0;
+    double dpmx = 0, dpmy = 0;
+    apng_fc *fc = NULL;
+    int rc = -1;
     for (int i = 0; i < 256; i++) P.pal[i] = 0xFF000000u;
+    out->gamma = 0;
+    out->srgb_intent = -1;
+    out->loop_count = -1;
     while (pos + 12 <= n) {
         u32 len = be32(d + pos);
-        const u8 *type = d + pos + 4;
-        const u8 *data = d + pos + 8;
-        if (pos + 12 + (usize)len > n) break;
+        const u8 *type = d + pos + 4, *data = d + pos + 8;
+        if ((usize)len > n - pos - 12) break;
         if (!memcmp(type, "IHDR", 4) && len >= 13) {
             P.w = (int)be32(data); P.h = (int)be32(data + 4);
             P.depth = data[8]; P.ctype = data[9]; interlace = data[12];
@@ -358,71 +431,123 @@ static surface_t *decode_png(const u8 *d, usize n) {
             else if (P.ctype == 0 && len >= 2) { P.has_key = true; P.key[0] = (u16)(data[0] << 8 | data[1]); }
             else if (P.ctype == 2 && len >= 6) {
                 P.has_key = true;
-                for (int k = 0; k < 3; k++) P.key[k] = (u16)(P.depth == 16 ? (data[k * 2] << 8 | data[k * 2 + 1]) : data[k * 2 + 1]);
+                for (int k = 0; k < 3; k++) P.key[k] = (u16)(data[k * 2] << 8 | data[k * 2 + 1]);
             }
+        } else if (!memcmp(type, "pHYs", 4) && len >= 9) {
+            dpmx = be32(data); dpmy = be32(data + 4); phys_unit = data[8];
+        } else if (!memcmp(type, "gAMA", 4) && len >= 4) {
+            out->gamma = be32(data) / 100000.0;
+        } else if (!memcmp(type, "sRGB", 4) && len >= 1) {
+            out->srgb_intent = data[0];
+        } else if (!memcmp(type, "iCCP", 4) && !out->icc) {
+            usize k = 0;
+            while (k < len && data[k]) k++;                       /* nome do perfil, NUL, método 0, zlib */
+            if (k + 2 < len && data[k + 1] == 0) {
+                usize cap = 4u << 20, got = 0;
+                u8 *prof = kmalloc(cap);
+                if (prof && zlib_inflate(data + k + 2, len - k - 2, prof, cap, &got) && got >= 128) { out->icc = prof; out->icc_n = got; }
+                else kfree(prof);
+            }
+        } else if (!memcmp(type, "acTL", 4) && len >= 8) {
+            actl = (int)be32(data);
+            nplays = (int)be32(data + 4);
+        } else if (!memcmp(type, "fcTL", 4) && len >= 26) {
+            if (nfc == cfc) {
+                int nc = cfc ? cfc * 2 : 8;
+                apng_fc *nf = kcalloc((usize)nc, sizeof *nf);
+                if (!nf) goto done;
+                if (fc) { memcpy(nf, fc, (usize)nfc * sizeof *nf); kfree(fc); }
+                fc = nf;
+                cfc = nc;
+            }
+            apng_fc *f = &fc[nfc++];
+            f->w = be32(data + 4); f->h = be32(data + 8); f->x = be32(data + 12); f->y = be32(data + 16);
+            f->dn = (u16)(data[20] << 8 | data[21]); f->dd = (u16)(data[22] << 8 | data[23]);
+            f->dispose = data[24]; f->blend = data[25];
         } else if (!memcmp(type, "IDAT", 4)) {
-            if (ilen + len > icap) {
-                usize nc = MAX(icap * 2, ilen + len + 65536);
-                u8 *ni = kmalloc(nc);
-                if (!ni) { kfree(idat); return NULL; }
-                if (idat) { memcpy(ni, idat, ilen); kfree(idat); }
-                idat = ni;
-                icap = nc;
-            }
-            memcpy(idat + ilen, data, len);
-            ilen += len;
+            if (nfc == 1 && !idat.n) idat_is_frame = 1;          /* fcTL antes do IDAT: a imagem padrão é o quadro 0 */
+            if (!zbuf_add(&idat, data, len)) goto done;
+        } else if (!memcmp(type, "fdAT", 4) && len >= 4) {
+            if (nfc && !zbuf_add(&fc[nfc - 1].z, data + 4, len - 4)) goto done;
         } else if (!memcmp(type, "IEND", 4)) break;
         pos += 12 + (usize)len;
     }
-    if (!idat || P.w <= 0 || P.h <= 0 || (u64)P.w * P.h > MAX_PIXELS) { kfree(idat); return NULL; }
-    switch (P.ctype) { case 0: P.ch = 1; break; case 2: P.ch = 3; break; case 3: P.ch = 1; break; case 4: P.ch = 2; break; case 6: P.ch = 4; break; default: kfree(idat); return NULL; }
-    if (P.depth != 1 && P.depth != 2 && P.depth != 4 && P.depth != 8 && P.depth != 16) { kfree(idat); return NULL; }
-    int bpp = MAX(1, P.ch * P.depth / 8);
-    /* tamanho total esperado */
-    usize total = 0;
-    static const int ax[7] = {0, 4, 0, 2, 0, 1, 0}, ay[7] = {0, 0, 4, 0, 2, 0, 1}, dx7[7] = {8, 8, 4, 4, 2, 2, 1}, dy7[7] = {8, 8, 8, 4, 4, 2, 2};
-    if (!interlace) total = (usize)P.h * (((usize)P.w * P.ch * P.depth + 7) / 8 + 1);
-    else for (int p = 0; p < 7; p++) {
-        int pw = (P.w - ax[p] + dx7[p] - 1) / dx7[p], ph = (P.h - ay[p] + dy7[p] - 1) / dy7[p];
-        if (pw > 0 && ph > 0) total += (usize)ph * (((usize)pw * P.ch * P.depth + 7) / 8 + 1);
-    }
-    u8 *raw = kmalloc(total + 16);
-    if (!raw) { kfree(idat); return NULL; }
-    memset(raw, 0, total);
-    usize got = 0;
-    bool ok = zlib_inflate(idat, ilen, raw, total, &got);
-    kfree(idat);
-    if (!ok) { kfree(raw); return NULL; }
-    surface_t *s = surface_new(P.w, P.h);
-    if (!s) { kfree(raw); return NULL; }
-    if (!interlace) {
-        usize rb = ((usize)P.w * P.ch * P.depth + 7) / 8;
-        unfilter(raw, P.h, rb, bpp);
-        for (int y = 0; y < P.h; y++) {
-            const u8 *row = raw + (usize)y * (rb + 1) + 1;
-            u32 *o = s->px + (usize)y * s->stride;
-            for (int x = 0; x < P.w; x++) o[x] = png_px(row, x, &P);
-        }
-    } else {
-        usize off = 0;
-        for (int p = 0; p < 7; p++) {
-            int pw = (P.w - ax[p] + dx7[p] - 1) / dx7[p], ph = (P.h - ay[p] + dy7[p] - 1) / dy7[p];
-            if (pw <= 0 || ph <= 0) continue;
-            usize rb = ((usize)pw * P.ch * P.depth + 7) / 8;
-            unfilter(raw + off, ph, rb, bpp);
-            for (int y = 0; y < ph; y++) {
-                const u8 *row = raw + off + (usize)y * (rb + 1) + 1;
-                int yy = ay[p] + y * dy7[p];
-                for (int x = 0; x < pw; x++) {
-                    int xx = ax[p] + x * dx7[p];
-                    s->px[(usize)yy * s->stride + xx] = png_px(row, x, &P);
-                }
+    if (!idat.n || P.w <= 0 || P.h <= 0 || (u64)P.w * P.h > MAX_PIXELS) goto done;
+    switch (P.ctype) { case 0: P.ch = 1; break; case 2: P.ch = 3; break; case 3: P.ch = 1; break; case 4: P.ch = 2; break; case 6: P.ch = 4; break; default: goto done; }
+    if (P.depth != 1 && P.depth != 2 && P.depth != 4 && P.depth != 8 && P.depth != 16) goto done;
+    if ((P.ctype == 2 || P.ctype == 4 || P.ctype == 6) && P.depth < 8) goto done;
+    if (P.ctype == 3 && P.depth > 8) goto done;
+    int has_alpha = P.ctype == 4 || P.ctype == 6 || P.has_key;
+    if (P.ctype == 3) for (int i = 0; i < P.npal; i++) if ((P.pal[i] >> 24) != 255) has_alpha = 1;
+    double dpix = phys_unit == 1 ? dpmx * 0.0254 : 0, dpiy = phys_unit == 1 ? dpmy * 0.0254 : 0;
+    out->w = P.w;
+    out->h = P.h;
+    out->interlaced = interlace;
+    int anim = actl > 0 && nfc > 0;
+    if (anim) {
+        if (idat_is_frame) fc[0].z = idat, idat.b = NULL, idat.n = 0;
+        int nf = 0;
+        for (int i = 0; i < nfc; i++) if (fc[i].z.n) nf++;
+        out->f = kcalloc((usize)(nf ? nf : 1), sizeof(iio_frame));
+        u32 *canvas = kcalloc((usize)P.w * P.h, 4);
+        if (!out->f || !canvas) { kfree(canvas); goto done; }
+        for (int i = 0; i < nfc; i++) {
+            apng_fc *f = &fc[i];
+            if (!f->z.n) continue;
+            if (!f->w || !f->h || f->x + f->w > (u32)P.w || f->y + f->h > (u32)P.h) break;
+            u32 *sub = png_image(&P, f->z.b, f->z.n, (int)f->w, (int)f->h, interlace);
+            if (!sub) break;
+            u32 *saved = NULL;
+            if (f->dispose == 2 && !out->nframes) f->dispose = 1;   /* PREVIOUS no primeiro quadro vale como BACKGROUND */
+            if (f->dispose == 2) {                               /* APNG_DISPOSE_OP_PREVIOUS */
+                saved = kmalloc((usize)P.w * P.h * 4);
+                if (saved) memcpy(saved, canvas, (usize)P.w * P.h * 4);
             }
-            off += (usize)ph * (rb + 1);
+            for (u32 y = 0; y < f->h; y++)
+                for (u32 x = 0; x < f->w; x++) {
+                    u32 *dp = &canvas[(usize)(f->y + y) * P.w + f->x + x], s = sub[(usize)y * f->w + x];
+                    *dp = f->blend ? over_straight(*dp, s) : s;
+                }
+            kfree(sub);
+            iio_frame *o = &out->f[out->nframes];
+            o->px = kmalloc((usize)P.w * P.h * 4);
+            if (!o->px) { kfree(saved); break; }
+            memcpy(o->px, canvas, (usize)P.w * P.h * 4);
+            o->w = P.w; o->h = P.h;
+            o->delay_ms = (int)((u32)f->dn * 1000u / (f->dd ? f->dd : 100));
+            out->nframes++;
+            if (f->dispose == 1)
+                for (u32 y = 0; y < f->h; y++) memset(&canvas[(usize)(f->y + y) * P.w + f->x], 0, (usize)f->w * 4);
+            else if (f->dispose == 2 && saved) memcpy(canvas, saved, (usize)P.w * P.h * 4);
+            kfree(saved);
         }
+        kfree(canvas);
+        out->loop_count = nplays;
+        if (!out->nframes) goto done;
+    } else {
+        out->f = kcalloc(1, sizeof(iio_frame));
+        if (!out->f) goto done;
+        out->f[0].px = png_image(&P, idat.b, idat.n, P.w, P.h, interlace);
+        if (!out->f[0].px) goto done;
+        out->f[0].w = P.w; out->f[0].h = P.h;
+        out->nframes = 1;
     }
-    kfree(raw);
-    return s;
+    for (int i = 0; i < out->nframes; i++) {
+        iio_frame *o = &out->f[i];
+        o->depth = P.depth;
+        o->color = P.ctype == 0 || P.ctype == 4 ? IIO_GRAY : IIO_RGB;
+        o->has_alpha = has_alpha;
+        o->indexed = P.ctype == 3;
+        o->orientation = 1;
+        o->dpi_x = dpix; o->dpi_y = dpiy;
+    }
+    out->uti = "public.png";
+    rc = 0;
+done:
+    kfree(idat.b);
+    for (int i = 0; i < nfc; i++) kfree(fc[i].z.b);
+    kfree(fc);
+    return rc;
 }
 
 /* ============================================================ JPEG */
@@ -466,7 +591,8 @@ typedef struct {
     int eobrun;
     int ss, se, ah, al;
     int scomp[4], ns;
-    bool adobe_rgb;
+    bool adobe_rgb, adobe;
+    int adobe_transform;
 } jpeg_t;
 
 static void jbuild(jhuff_t *h, const u8 *counts) {
@@ -693,7 +819,7 @@ static void idct_block(const short *in, const u16 *q, u8 *out, int stride) {
 
 static u16 be16(const u8 *p) { return (u16)(p[0] << 8 | p[1]); }
 
-static surface_t *decode_jpeg(const u8 *d, usize n) {
+static surface_t *decode_jpeg(const u8 *d, usize n, iio_image *meta) {
     if (n < 4 || d[0] != 0xFF || d[1] != 0xD8) return NULL;
     jpeg_t *J = kcalloc(1, sizeof(jpeg_t));
     if (!J) return NULL;
@@ -740,7 +866,7 @@ static surface_t *decode_jpeg(const u8 *d, usize n) {
             J->h = be16(p + 1);
             J->w = be16(p + 3);
             J->nc = p[5];
-            if (J->nc != 1 && J->nc != 3) { ok = false; break; }
+            if (J->nc != 1 && J->nc != 3 && J->nc != 4) { ok = false; break; }
             if (!J->w || !J->h || (u64)J->w * J->h > MAX_PIXELS) { ok = false; break; }
             J->hmax = J->vmax = 1;
             for (int i = 0; i < J->nc; i++) {
@@ -770,6 +896,23 @@ static surface_t *decode_jpeg(const u8 *d, usize n) {
             J->restart = be16(p);
         } else if (m == 0xEE && len >= 12 && !memcmp(p, "Adobe", 5)) {
             J->adobe_rgb = p[11] == 0;
+            J->adobe_transform = p[11];
+            J->adobe = true;
+        } else if (m == 0xE0 && len >= 16 && !memcmp(p, "JFIF", 5) && meta) {
+            int unit = p[7], xd = be16(p + 8), yd = be16(p + 10);
+            if (unit == 1) { meta->f[0].dpi_x = xd; meta->f[0].dpi_y = yd; }
+            else if (unit == 2) { meta->f[0].dpi_x = xd * 2.54; meta->f[0].dpi_y = yd * 2.54; }
+        } else if (m == 0xE2 && len >= 16 && !memcmp(p, "ICC_PROFILE", 12) && meta) {
+            /* perfil em pedaços: p[12] = número do pedaço (1..), p[13] = total; juntados em ordem */
+            usize part = len - 16;
+            u8 *nb = kmalloc(meta->icc_n + part);
+            if (nb) {
+                if (meta->icc) memcpy(nb, meta->icc, meta->icc_n);
+                memcpy(nb + meta->icc_n, p + 14, part);
+                kfree(meta->icc);
+                meta->icc = nb;
+                meta->icc_n += part;
+            }
         } else if (m == 0xDA) {
             if (!frame) { ok = false; break; }
             J->ns = p[0];
@@ -820,6 +963,29 @@ static surface_t *decode_jpeg(const u8 *d, usize n) {
                     for (int x = 0; x < J->w; x++) o[x] = RGB(r[x], r[x], r[x]);
                     continue;
                 }
+                if (J->nc == 4) {
+                    /* CMYK (Adobe transform 0) ou YCCK (2). Os arquivos da Adobe gravam os valores invertidos. */
+                    const u8 *rows4[4];
+                    for (int k = 0; k < 4; k++) {
+                        jcomp_t *c = &J->c[k];
+                        rows4[k] = c->plane + (usize)(y * c->v / J->vmax) * c->bw * 8;
+                    }
+                    for (int x = 0; x < J->w; x++) {
+                        int v[4];
+                        for (int k = 0; k < 4; k++) v[k] = rows4[k][x * J->c[k].h / J->hmax];
+                        int C, M, Ye, K = v[3];
+                        if (J->adobe_transform == 2) {
+                            int Yy = v[0], cb = v[1] - 128, cr = v[2] - 128;
+                            C = 255 - CLAMP(Yy + ((91881 * cr) >> 16), 0, 255);
+                            M = 255 - CLAMP(Yy - ((22554 * cb + 46802 * cr) >> 16), 0, 255);
+                            Ye = 255 - CLAMP(Yy + ((116130 * cb) >> 16), 0, 255);
+                        } else { C = v[0]; M = v[1]; Ye = v[2]; }
+                        if (J->adobe) { C = 255 - C; M = 255 - M; Ye = 255 - Ye; K = 255 - K; }
+                        int r = (255 - C) * (255 - K) / 255, g = (255 - M) * (255 - K) / 255, b = (255 - Ye) * (255 - K) / 255;
+                        o[x] = RGB(r, g, b);
+                    }
+                    continue;
+                }
                 const u8 *rows[3];
                 int sx[3];
                 for (int k = 0; k < 3; k++) {
@@ -844,44 +1010,32 @@ static surface_t *decode_jpeg(const u8 *d, usize n) {
             }
         }
     }
+    if (s && meta) {
+        meta->interlaced = J->progressive;
+        meta->f[0].color = J->nc == 1 ? IIO_GRAY : J->nc == 4 ? IIO_CMYK : IIO_RGB;
+    }
     for (int i = 0; i < 4; i++) { kfree(J->c[i].coef); kfree(J->c[i].plane); }
     kfree(J);
     return s;
 }
 
-/* ============================================================ API usada pelo ImageIO e pelo teste do host */
-const char *mos_img_uti(const uint8_t *data, size_t n) {
-    if (!data || n < 2) return NULL;
-    if (n >= 8 && !memcmp(data, "\x89PNG\r\n\x1a\n", 8)) return "public.png";
-    if (data[0] == 0xFF && data[1] == 0xD8) return "public.jpeg";
-    return NULL;
-}
-
-void mos_img_free(mos_img_t *img) {
-    if (!img) return;
-    free(img->px);
-    img->px = NULL;
-    img->w = img->h = img->has_alpha = 0;
-}
-
-int mos_img_decode(const uint8_t *data, size_t n, mos_img_t *out) {
-    if (!out) return -1;
-    memset(out, 0, sizeof *out);
-    if (!data || !n) return -1;
-    const char *uti = mos_img_uti(data, n);
-    surface_t *s = NULL;
-    if (uti && uti[7] == 'p') s = decode_png(data, n);
-    else if (uti) s = decode_jpeg(data, n);
-    else return -1;
+static int iio_jpeg(const u8 *d, usize n, iio_image *out) {
+    out->f = kcalloc(1, sizeof(iio_frame));
+    if (!out->f) return -1;
+    surface_t *s = decode_jpeg(d, n, out);
     if (!s || !s->px) { surface_free(s); return -1; }
     out->w = s->w;
     out->h = s->h;
-    out->px = s->px;
+    out->f[0].px = s->px;
+    out->f[0].w = s->w;
+    out->f[0].h = s->h;
+    out->f[0].depth = 8;
+    out->f[0].orientation = 1;
+    out->nframes = 1;
+    out->loop_count = -1;
+    out->srgb_intent = -1;
+    out->uti = "public.jpeg";
     s->px = NULL;
     surface_free(s);
-    size_t count = (size_t)out->w * (size_t)out->h;
-    for (size_t i = 0; i < count; i++) {
-        if ((out->px[i] >> 24) != 255) { out->has_alpha = 1; break; }
-    }
     return 0;
 }

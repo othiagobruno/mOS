@@ -25,7 +25,7 @@ struct mos_ci {
     double cx, cy, cw, ch;
 };
 
-/* A definição única fica no grok_imageio.c do libSystem. Aqui só o extern. */
+/* A definição única fica no imageio.c do libSystem (iio_core.inc). Aqui só o extern. */
 typedef struct {
     int w, h;
     int has_alpha;
