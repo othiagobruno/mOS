@@ -23,12 +23,13 @@ O caminho que importa é o do **Linux** (`tools/build.sh`, o que o `build-final.
 4. **SwiftUI.framework no Linux** — `tools/build-swiftui-objc.sh`: OpenSwiftUI + Compute + OpenRenderBox + OpenAttributeGraphShims + OpenObservation fixados por commit e SHA-256, mesmas etapas do `.ps1` (Deps, Core, UI, Link), ligação em dois níveis. Depois, os 46 de `swiftui_imports.c` resolvem no framework e o arquivo sai.
 5. **SwiftUI completo** — o que o OpenSwiftUI upstream deixa vazio e os apps usam: layout (stacks, grids, `Layout`, `GeometryReader`), navegação (`NavigationStack`/`SplitView`), listas e `ScrollView`, animação e transições, estado (`@State`, `@Binding`, `@Observable`, `@Environment`), gestos e foco, `NSHostingView`/`UIHostingController`, representables. Teste por área.
 6. **UIKit Catalyst completo** — o que `docs/uikit-catalyst.md` lista como falta: desenho de `transform` e imagem na janela (com a Mariana/Beatriz no CG/AppKit), `popoverPresentationController`, `UIImage` de assets, `UITextView`, menus de contexto, drag & drop, `UIDocumentPickerViewController`.
+6b. **SwiftUI no Catalyst** — o WhatsApp liga `/System/iOSSupport/System/Library/Frameworks/SwiftUI.framework` (e `_Translation_SwiftUI`, fraco): o SwiftUI.framework precisa sair também nesse caminho, com hosting sobre UIKit (`UIHostingController`).
 7. **Apps** — WhatsApp (Catalyst + SwiftUI), Postico e Claude no harness; placar com `tools/meta/placar.py`; build final uma vez pela fila.
 
 ## Estado
 
 - [x] 1 libswiftUIKit no Linux (15 nov.): `tools/build-swift-uikit-objc.sh` no `build.sh`; ligação em dois níveis (0 `_swift_*` em busca plana); `tools/test-uikit-swift.sh` **28/28** no `build/machotest`; os 278 `$s5UIKit…` saíram de `sys_zerados.c` (o overlay exporta os 278 com o mesmo nome)
-- [ ] 2 PhotosUI
+- [x] 2 PhotosUI do Catalyst (15 nov.): framework ObjC + `libswiftPhotosUI`, `tools/test-photosui.sh` **18/18**, 27 stubs fora; detalhes em `docs/photosui.md`. Falta o PhotosUI do macOS (AppKit)
 - [ ] 3 Combine × Foundation
 - [ ] 4 SwiftUI.framework no Linux
 - [ ] 5 SwiftUI completo

@@ -137,6 +137,13 @@ typedef NS_OPTIONS(NSUInteger, UIControlEvents) {
     UIControlEventEditingDidEndOnExit = 1 << 19, UIControlEventAllTouchEvents = 0x00000FFF,
     UIControlEventAllEditingEvents = 0x000F0000, UIControlEventAllEvents = 0xFFFFFFFF,
 };
+/* ---- UIViewController: base do PHPickerViewController (PhotosUI) e dos controladores dos apps */
+@interface UIViewController : UIResponder
+@property (nonatomic, copy, nullable) NSString *title;
+- (void)dismissViewControllerAnimated:(BOOL)flag completion:(void (^ __nullable)(void))completion;
+- (void)presentViewController:(UIViewController *)vc animated:(BOOL)flag completion:(void (^ __nullable)(void))completion;
+@end
+
 @interface UIControl : UIView
 - (void)addAction:(UIAction *)action forControlEvents:(UIControlEvents)controlEvents;
 - (NSUInteger)_mosHandlerCount;

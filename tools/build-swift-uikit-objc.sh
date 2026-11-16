@@ -4,6 +4,8 @@
 # com interop ObjC e library evolution, como o módulo "UIKit" da Apple.
 # Saída: build/swift/objc/overlays/UIKit.swiftmodule (o objeto em overlays/uikit, fora do link estático dos testes) e
 # /System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib na raiz das dylibs (build/swift/objc/dylib).
+# Depois do UIKit, o overlay do PhotosUI (userland/sdk/swift-objc/PhotosUI, módulo clang sdk/PhotosUI):
+# /System/iOSSupport/usr/lib/swift/libswiftPhotosUI.dylib (docs/photosui.md).
 # Antes: tools/build-swift-foundation-objc.sh (Foundation) e tools/build-frameworks-objc.sh (UIKit ObjC).
 #   tools/build-swift-uikit-objc.sh
 set -uo pipefail
@@ -38,41 +40,51 @@ fi
 # o módulo clang UIKit vai junto dos outros cabeçalhos da variante
 mkdir -p "$inc" "$out/uikit"
 cp -f "$sdk/sdk/module.modulemap" "$inc/module.modulemap"
-cp -a "$sdk/sdk/UIKit" "$sdk/sdk/Foundation" "$inc/"
+cp -a "$sdk/sdk/UIKit" "$sdk/sdk/Foundation" "$sdk/sdk/PhotosUI" "$inc/"
 mc="$objc/modcache-uikit"
 rm -rf "$mc"
-mapfile -t files < <(find "$sdk/UIKit" -maxdepth 1 -name '*.swift' | sort)
-a=(-c -target x86_64-apple-macos26 -resource-dir "$res" -module-name UIKit -parse-as-library -swift-version 5 -O
-   -enable-library-evolution -I "$objc" -I "$out" -module-cache-path "$mc"
-   -I "$src/stdlib/public/SwiftShims/swift/shims"
-   -Xcc "-isystem$inc" -Xcc -nostdlibinc -Xcc -Wno-nullability-completeness -Xcc -DMOS_SWIFT_OBJC=1
-   -import-underlying-module -module-link-name swiftUIKit -autolink-force-load
-   -emit-module-path "$out/UIKit.swiftmodule" -o "$out/uikit/UIKit.o" "${files[@]}")
-for x in "${a[@]}"; do
-    if [[ "$x" == *[[:space:]\"]* ]]; then x=${x//\\/\\\\}; printf '"%s"\n' "${x//\"/\\\"}"; else printf '%s\n' "$x"; fi
-done > "$out/UIKit.rsp"
-"$fe" -frontend "@$out/UIKit.rsp" > "$out/UIKit.log" 2>&1
-rc=$?
-nerr=$(grep -cE ':[0-9]+:[0-9]+: error: |<unknown>:0: error: ' "$out/UIKit.log")
-if [ $rc -ne 0 ] || [ "$nerr" -gt 0 ]; then
-    grep -E ':[0-9]+:[0-9]+: error: |<unknown>:0: error: ' "$out/UIKit.log" | head -20 | sed 's/^/  /'
-    echo "UIKit (Swift): FALHOU ($nerr erros, saída $rc)"; exit 1
-fi
-echo "UIKit (Swift): ok ($(( $(stat -c %s "$out/uikit/UIKit.o") / 1024 )) KB, ${#files[@]} fontes)"
-
-# ligação em dois níveis com o runtime real (como em build-swift-foundation-objc.sh); o resto (UIKit ObjC, libobjc,
-# libSystem) fica em busca plana
 lib="$objc/dylib/usr/lib/swift"
+dir="$objc/dylib/System/iOSSupport/usr/lib/swift"
+mkdir -p "$dir"
+# ligação em dois níveis com o runtime real (como em build-swift-foundation-objc.sh); o resto (frameworks ObjC,
+# libobjc, libSystem) fica em busca plana
 base=()
 for b in libswiftCore libswift_Concurrency libswiftDarwin libswiftObjectiveC libswiftCoreFoundation libswiftCoreGraphics \
          libswiftDispatch libswiftos libswiftFoundation; do
     [ -f "$lib/$b.dylib" ] && base+=("$lib/$b.dylib")
 done
-dir="$objc/dylib/System/iOSSupport/usr/lib/swift"
-mkdir -p "$dir"
-if ! "$zig" c++ -target x86_64-macos -shared -o "$dir/libswiftUIKit.dylib" \
-        -Wl,-install_name,/System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib -Wl,-undefined,dynamic_lookup \
-        "$out/uikit/UIKit.o" "${base[@]}"; then
-    echo "libswiftUIKit: link FALHOU"; exit 1
-fi
-echo "libswiftUIKit: ok ($(( $(stat -c %s "$dir/libswiftUIKit.dylib") / 1024 )) KB) -> /System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib"
+# overlay NOME: compila userland/sdk/swift-objc/NOME/*.swift e liga /System/iOSSupport/usr/lib/swift/libswiftNOME.dylib
+overlay() {
+    local name=$1 low
+    shift
+    low=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+    mkdir -p "$out/$low"
+    local files
+    mapfile -t files < <(find "$sdk/$name" -maxdepth 1 -name '*.swift' | sort)
+    local a=(-c -target x86_64-apple-macos26 -resource-dir "$res" -module-name "$name" -parse-as-library -swift-version 5 -O
+       -enable-library-evolution -I "$objc" -I "$out" -module-cache-path "$mc"
+       -I "$src/stdlib/public/SwiftShims/swift/shims"
+       -Xcc "-isystem$inc" -Xcc -nostdlibinc -Xcc -Wno-nullability-completeness -Xcc -DMOS_SWIFT_OBJC=1
+       -import-underlying-module -module-link-name "swift$name" -autolink-force-load
+       -emit-module-path "$out/$name.swiftmodule" -o "$out/$low/$name.o" "${files[@]}")
+    local x
+    for x in "${a[@]}"; do
+        if [[ "$x" == *[[:space:]\"]* ]]; then x=${x//\\/\\\\}; printf '"%s"\n' "${x//\"/\\\"}"; else printf '%s\n' "$x"; fi
+    done > "$out/$name.rsp"
+    "$fe" -frontend "@$out/$name.rsp" > "$out/$name.log" 2>&1
+    local rc=$? nerr
+    nerr=$(grep -cE ':[0-9]+:[0-9]+: error: |<unknown>:0: error: ' "$out/$name.log")
+    if [ $rc -ne 0 ] || [ "$nerr" -gt 0 ]; then
+        grep -E ':[0-9]+:[0-9]+: error: |<unknown>:0: error: ' "$out/$name.log" | head -20 | sed 's/^/  /'
+        echo "$name (Swift): FALHOU ($nerr erros, saída $rc)"; return 1
+    fi
+    echo "$name (Swift): ok ($(( $(stat -c %s "$out/$low/$name.o") / 1024 )) KB, ${#files[@]} fontes)"
+    if ! "$zig" c++ -target x86_64-macos -shared -o "$dir/libswift$name.dylib" \
+            -Wl,-install_name,/System/iOSSupport/usr/lib/swift/libswift$name.dylib -Wl,-undefined,dynamic_lookup \
+            "$out/$low/$name.o" "$@" "${base[@]}"; then
+        echo "libswift$name: link FALHOU"; return 1
+    fi
+    echo "libswift$name: ok ($(( $(stat -c %s "$dir/libswift$name.dylib") / 1024 )) KB) -> /System/iOSSupport/usr/lib/swift/libswift$name.dylib"
+}
+overlay UIKit || exit 1
+overlay PhotosUI "$dir/libswiftUIKit.dylib" || exit 1
