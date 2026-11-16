@@ -590,6 +590,11 @@ FW_DONO = {
     "SystemExtensions": "natalia", "OpenAL": "isabela", "CoreMediaIO": "isabela", "PIP": "isabela", "AVFAudio": "isabela",
     "SafariServices": "fabio", "ForceFeedback": "larissa", "GameController": "larissa", "CoreDisplay": "thais",
     "DisplayServices": "thais", "SkyLight": "camila", "OSD": "camila", "CoreGraphicsServices": "camila",
+    # frameworks Swift da Apple que não são runtime (pedido da Fernanda): família SwiftUI com o Ricardo
+    "Charts": "ricardo", "WidgetKit": "ricardo", "_StoreKit_SwiftUI": "ricardo", "Symbols": "ricardo",
+    "DeveloperToolsSupport": "ricardo", "CoreTransferable": "ricardo", "_AppIntents_SwiftUI": "ricardo",
+    "AppIntents": "natalia", "VisionKit": "isabela", "Accessibility": "beatriz",
+    "libswift_StringProcessing.dylib": "fernanda", "libswiftSynchronization.dylib": "fernanda",
 }
 # imports flat/self: o símbolo é resolvido no processo que carrega a imagem (plugin). Só os do sistema têm dono.
 PREFIXO_FLAT = (("eduardo", ("_CF", "_NS")), ("mariana", ("_CG", "_CT")), ("leonardo", ("__ZNSt3__", "___cxa_")),
@@ -851,6 +856,8 @@ def cmd_hosttest(args: argparse.Namespace) -> None:
         ("QuartzCore.framework", "_kCIInputImageKey", "sistema", "isabela"),
         ("QuartzCore.framework", "_OBJC_CLASS_$_CALayer", "sistema", "otavio"),
         ("AppKit.framework", "_NSOpenGLGetVersion", "sistema", "otavio"),
+        ("Charts.framework", "_$s6Charts9ChartViewV", "Swift", "ricardo"),
+        ("AppIntents.framework", "_$s10AppIntents0A6IntentP", "Swift", "natalia"),
         ("IOKit.framework", "_IOServiceGetMatchingService", "sistema", "larissa"),
         ("(flat/self)", "_PyBool_FromLong", "sistema", "plugin"),
         ("(flat/self)", "_CFBundleGetBundleWithIdentifier", "sistema", "eduardo"),
