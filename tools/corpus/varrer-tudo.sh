@@ -42,6 +42,7 @@ if [ $# -eq 0 ] && [ ${#ids[@]} -gt 20 ]; then
 fi
 echo "varrer-tudo: ${#ids[@]} apps a medir neste lote"
 pre=""
+adiados=()
 for i in "${!ids[@]}"; do
     id=${ids[$i]}
     [ -n "$pre" ] && wait "$pre" 2>/dev/null
@@ -57,10 +58,23 @@ for i in "${!ids[@]}"; do
     tam=$(du -sm "build/corpus/$id" 2>/dev/null | cut -f1)
     trava=(flock /tmp/mos-pesado.lock)
     [ "${tam:-999}" -lt 200 ] && trava=()
+    if [ ${#trava[@]} -gt 0 ] && [ -z "${adiado_ok:-}" ] && ! flock -n /tmp/mos-pesado.lock true; then
+        # trava ocupada e arquivo grande: vai para o fim do lote (o download fica no disco) e os pequenos seguem
+        adiados+=("$id")
+        echo "varrer-tudo: $id ($tam MB) adiado para o fim do lote"
+        continue
+    fi
     "${trava[@]}" nice -n 10 timeout 1800 python3 "$H" scan --tolerante --limpar --fixar --continuar \
         "${LIBS[@]}" \
         --summary "build/corpus/$id.summary.json" "$id" 2>&1 | grep -v '^baixando' | tail -2
 done
 [ -n "$pre" ] && wait "$pre"
+# os grandes adiados, agora esperando a vez na trava
+adiado_ok=1
+for id in "${adiados[@]}"; do
+    while [ "$(free -m | awk '/^Mem/{print $7}')" -lt 3000 ]; do sleep 60; done
+    flock /tmp/mos-pesado.lock nice -n 10 timeout 1800 python3 "$H" scan --tolerante --limpar --fixar --continuar \
+        "${LIBS[@]}" --summary "build/corpus/$id.summary.json" "$id" 2>&1 | grep -v '^baixando' | tail -2
+done
 [ $mais = 1 ] && exit 3
 exit 0
