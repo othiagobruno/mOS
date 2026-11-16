@@ -13,7 +13,11 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 zig=${MOS_ZIG:-}
 if [ -z "$zig" ]; then for z in "$root"/.tools/zig-*/zig; do [ -x "$z" ] && { zig=$z; break; }; done; fi
 fe=${SWIFTC:-$root/.tools/swift-6.4.2/usr/bin/swift-frontend}
-objc="$root/build/swift/objc"
+case "${MOS_ARCH:-x86_64}" in
+    x86_64) zt=x86_64-macos; st=x86_64-apple-macos26; objc="$root/build/swift/objc" ;;
+    arm64) zt=aarch64-macos; st=arm64-apple-macos26; objc="$root/build/swift/objc-arm64" ;;   # docs/runtime-arm64-plano.md
+    *) echo "MOS_ARCH=$MOS_ARCH: use x86_64 ou arm64" >&2; exit 1 ;;
+esac
 ov="$objc/overlays"
 inc="$objc/sdk/include"
 res=/tmp/mos-swift-resdir
@@ -48,7 +52,7 @@ mkdir -p "$prep" "$tmp"
 # C++: CombineIdentifier e a trava; o os_unfair_lock do libSystem do mOS não é usado, vai pthread.
 sed 's|#ifdef __APPLE__|#if 0 /* mOS: os_unfair_lock é no-op no libSystem; usa pthread */|' \
     "$src/COpenCombineHelpers/COpenCombineHelpers.cpp" > "$tmp/COpenCombineHelpers.cpp"
-"$zig" c++ -target x86_64-macos -O2 -c -std=c++17 -fno-rtti -I"$src/COpenCombineHelpers/include" \
+"$zig" c++ -target "$zt" -O2 -c -std=c++17 -fno-rtti -I"$src/COpenCombineHelpers/include" \
     "$tmp/COpenCombineHelpers.cpp" -o "$ov/Combine_COpenCombineHelpers.o"
 
 # Fonte Swift preparado: OpenCombine. -> Combine., layout fixo dos tipos @inlinable como no Combine
@@ -98,7 +102,7 @@ mapfile -t files < <(find "$prep" -name '*.swift' | sort)
 # O que o OpenCombine não tem (CombineLatest, Merge...): userland/sdk/swift-objc/Combine
 for f in "$root"/userland/sdk/swift-objc/Combine/*.swift; do [ -f "$f" ] && files+=("$f"); done
 
-"$fe" -frontend -c -target x86_64-apple-macos26 -resource-dir "$res" -module-name Combine -parse-as-library \
+"$fe" -frontend -c -target "$st" -resource-dir "$res" -module-name Combine -parse-as-library \
     -swift-version 5 -O -enable-library-evolution -I "$objc" -I "$ov" -I "$hdir" \
     -I "$shims" -module-cache-path "$objc/modcache" \
     -Xcc "-isystem$inc" -Xcc -DMOS_SWIFT_OBJC=1 -Xcc -Wno-nullability-completeness -Xcc "-I$hdir" \
@@ -111,7 +115,7 @@ echo "Combine: ok ($(( $(wc -c < "$ov/Combine.o") / 1024 )) KB, ${#files[@]} fon
 
 dir="$objc/dylib/System/Library/Frameworks/Combine.framework/Versions/A"
 mkdir -p "$dir"
-"$zig" c++ -target x86_64-macos -shared -o "$dir/Combine" \
+"$zig" c++ -target "$zt" -shared -o "$dir/Combine" \
     -Wl,-install_name,/System/Library/Frameworks/Combine.framework/Versions/A/Combine -Wl,-undefined,dynamic_lookup \
     "$ov/Combine.o" "$ov/Combine_COpenCombineHelpers.o" "$objc/dylib/usr/lib/swift/libswiftCore.dylib"
 echo "Combine.framework: ok ($(( $(wc -c < "$dir/Combine") / 1024 )) KB)"
@@ -125,7 +129,7 @@ sdk="$root/userland/sdk/swift-objc"
 dest="$objc/dylib/usr/lib/swift"
 if [ -f "$dest/libswiftDispatch.dylib" ]; then
     mkdir -p "$tmp/dispatch"
-    "$fe" -frontend -c -target x86_64-apple-macos26 -resource-dir "$res" \
+    "$fe" -frontend -c -target "$st" -resource-dir "$res" \
         -module-name Dispatch -parse-as-library -swift-version 5 -O \
         -enable-library-evolution -I "$objc" -I "$ov" -module-cache-path "$objc/modcache" \
         -I "$shims" -disable-implicit-concurrency-module-import -disable-implicit-string-processing-module-import \
@@ -141,7 +145,7 @@ if [ -f "$dest/libswiftDispatch.dylib" ]; then
     ln -sfn "$dir/Combine" "$tmp/dispatch/Combine.dylib"
     # o Combine.framework entra como LC_LOAD_DYLIB: sem ele os $s7Combine... do Scheduler ficavam nulos no carregador
     # quando o app não pedia o Combine (o Foundation Swift real liga o Dispatch em todo processo)
-    "$zig" c++ -target x86_64-macos -shared -o "$tmp/dispatch/libswiftDispatch.dylib" \
+    "$zig" c++ -target "$zt" -shared -o "$tmp/dispatch/libswiftDispatch.dylib" \
         -Wl,-install_name,/usr/lib/swift/libswiftDispatch.dylib -Wl,-undefined,dynamic_lookup "$tmp/dispatch/Dispatch.o" \
         "$tmp/dispatch/Combine.dylib" "$dest/libswiftCore.dylib"
     grep -a -q '_$sSo17OS_dispatch_queueC8DispatchE17SchedulerTimeTypeVMn' "$tmp/dispatch/libswiftDispatch.dylib" || {

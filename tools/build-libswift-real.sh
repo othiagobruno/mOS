@@ -1,5 +1,8 @@
 #!/bin/bash
 # Compila o runtime Swift real (Mach-O x86_64) para build/swift/objc/dylib/usr/lib/swift.
+# MOS_ARCH=arm64: a fatia arm64 (processo arm64 do tradutor, docs/runtime-arm64-plano.md) em
+# build/swift/objc-arm64/dylib/usr/lib/swift, com módulos, modcache, overlays e sdk/include próprios (um .pcm do x86
+# no mesmo cache dá "module defined in both"). O tools/build.sh junta as duas árvores com o lipo-mos.py --arvore.
 # Não é o stub de tools/gen-libswift-stubs.c. tools/build.sh e o CI chamam este arquivo.
 #
 # Precisa de:
@@ -10,7 +13,13 @@
 # Sem toolchain: avisa e sai 0 (o stage completa com stub). Com toolchain e erro de compilação: sai 1.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-dest="$root/build/swift/objc/dylib/usr/lib/swift"
+case "${MOS_ARCH:-x86_64}" in
+    x86_64) zt=x86_64-macos; st=x86_64-apple-macos26; objc="$root/build/swift/objc" ;;
+    arm64) zt=aarch64-macos; st=arm64-apple-macos26; objc="$root/build/swift/objc-arm64" ;;
+    *) echo "MOS_ARCH=$MOS_ARCH: use x86_64 ou arm64" >&2; exit 1 ;;
+esac
+smod=${st%26}   # nome do módulo no .swiftmodule: x86_64-apple-macos / arm64-apple-macos
+dest="$objc/dylib/usr/lib/swift"
 core="$dest/libswiftCore.dylib"
 if [ -z "${MOS_SWIFT_REBUILD:-}" ] && [ -f "$core" ] && ! grep -a -q 'STUB mOS libswift' "$core"; then
     echo "libswift real já está em $dest (MOS_SWIFT_REBUILD=1 para refazer)"
@@ -39,7 +48,6 @@ if [ -z "$zig" ] || [ ! -x "$zig" ] || [ -z "$fe" ] || [ ! -x "$fe" ] || [ ! -f 
 fi
 
 tc=$(CDPATH= cd -- "$(dirname "$fe")/../lib/swift" && pwd)
-objc="$root/build/swift/objc"
 out="$objc/overlays"
 inc="$objc/sdk/include"
 sdk="$root/userland/sdk/swift-objc"
@@ -116,7 +124,7 @@ echo "==> stdlib"
 if [ -n "${MOS_SWIFT_SKIP_CORE:-}" ] && [ -f "$objc/swiftCore.o" ]; then
     echo "stdlib: reusa $objc/swiftCore.o"
 else
-"$fe" -frontend -c -target x86_64-apple-macos26 -module-name Swift -parse-stdlib -parse-as-library \
+"$fe" -frontend -c -target "$st" -module-name Swift -parse-stdlib -parse-as-library \
     -nostdimport -swift-version 5 -O -enforce-exclusivity=unchecked \
     -I "$shims" -disable-objc-attr-requires-foundation-module \
     -Xcc "-I$root/userland/sdk/objc/include" \
@@ -124,7 +132,7 @@ else
     -D SWIFT_ENABLE_REFLECTION -D SWIFT_RUNTIME_OS_VERSIONING -D SWIFT_STDLIB_ENABLE_VECTOR_TYPES \
     -D SWIFT_STDLIB_HAS_COMMANDLINE -D SWIFT_STDLIB_HAS_STDIN \
     -enable-library-evolution "${fargs[@]}" "${AVAIL[@]}" \
-    -emit-module-path "$objc/Swift.swiftmodule/x86_64-apple-macos.swiftmodule" \
+    -emit-module-path "$objc/Swift.swiftmodule/$smod.swiftmodule" \
     -o "$objc/swiftCore.o" "${FILES[@]}"
 fi
 
@@ -132,11 +140,12 @@ echo "==> runtime C++"
 if [ -n "${MOS_SWIFT_SKIP_CORE:-}" ] && ls "$objc/runtime/"*.o >/dev/null 2>&1; then
     echo "runtime: reusa objetos"
 else
-python3 - "$root" "$zig" "$src" << 'PY'
+python3 - "$root" "$zig" "$src" "$objc" "$zt" << 'PY'
 import subprocess, sys, pathlib
-root, zig, src = map(pathlib.Path, sys.argv[1:4])
+root, zig, src, objc = map(pathlib.Path, sys.argv[1:5])
+zt = sys.argv[5]
 rt = src / "stdlib/public/runtime"
-out = root / "build/swift/objc/runtime"
+out = objc / "runtime"
 skip = {"ImageInspectionELF","ImageInspectionCOFF","ImageInspectionStatic","ImageInspectionWasm","WindowsUnicode","Backtrace","BacktraceUtils","CrashHandlerMacOS","CrashHandlerLinux","CrashHandlerWindows","SwiftRT-COFF","SwiftRT-ELF-WASM","Leaks"}
 files = [p for p in sorted(rt.glob("*.cpp")) if p.stem not in skip]
 files += [p for p in sorted(rt.glob("*.mm")) if p.stem != "Leaks"]
@@ -155,7 +164,7 @@ if gen.is_file():
 files += sorted((src / "stdlib/public/stubs/Unicode").glob("*.cpp"))
 defs = ["-DswiftCore_EXPORTS","-DSWIFT_RUNTIME","-DSWIFT_OBJC_INTEROP=1","-DSWIFT_THREADING_PTHREADS","-DSWIFT_LIBRARY_EVOLUTION=1","-DSWIFT_TARGET_LIBRARY_NAME=swiftRuntimeCore","-DSWIFT_STDLIB_HAS_TYPE_PRINTING=1","-DSWIFT_ENABLE_REFLECTION=1","-DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1","-DSWIFT_RUNTIME_ENABLE_LEAK_CHECKER=0","-DSWIFT_STDLIB_HAS_DLADDR","-DSWIFT_STDLIB_OVERRIDABLE_RETAIN_RELEASE=1","-DSWIFT_STDLIB_HAS_STDIN","-DSWIFT_STDLIB_HAS_ENVIRON","-DSWIFT_STDLIB_HAS_LOCALE","-DSWIFT_STDLIB_ENABLE_UNICODE_DATA=1","-DSWIFT_INLINE_NAMESPACE=__runtime","-DSWIFT_RUNTIME_OS_VERSIONING=0","-DNDEBUG"]
 inc = ["-I"+str(src/"include"),"-I"+str(src/"stdlib/include"),"-I"+str(src/"stdlib/public/SwiftShims"),"-I"+str(src/"stdlib/public"),"-I"+str(rt),"-I"+str(root/"userland/sdk/objc/include")]
-fl = ["-target","x86_64-macos","-std=c++20","-O2","-fno-exceptions","-fno-rtti","-ffunction-sections","-fno-sanitize=all","-w","-c"]
+fl = ["-target",zt,"-std=c++20","-O2","-fno-exceptions","-fno-rtti","-ffunction-sections","-fno-sanitize=all","-w","-c"]
 bad = 0
 for f in files:
     o = out / (f.parent.name + "_" + f.stem + ".o")
@@ -177,7 +186,7 @@ link_one() {
     # runtime do caminho sem ObjC), que não sabem lidar com objetos do runtime real
     dep_core=()
     [ "$name" != libswiftCore ] && dep_core=("$dest/libswiftCore.dylib")
-    "$zig" c++ -target x86_64-macos -shared -o "$dest/$name.dylib" \
+    "$zig" c++ -target "$zt" -shared -o "$dest/$name.dylib" \
         -Wl,-install_name,/usr/lib/swift/$name.dylib -Wl,-undefined,dynamic_lookup "$@" "${dep_core[@]}"
     if grep -a -q 'STUB mOS libswift' "$dest/$name.dylib"; then
         echo "$name ainda tem a marca de stub" >&2
@@ -199,7 +208,7 @@ echo "==> cabeçalhos do overlay"
 rm -rf "$inc"
 mkdir -p "$(dirname "$inc")"
 cp -a "$root/.tools/zig-x86_64-linux-0.17.1/lib/libc/include/any-darwin-any" "$inc" 2>/dev/null || \
-    cp -a "$(dirname "$zig")/lib/libc/include/any-darwin-any" "$inc"
+    cp -a "$(dirname "$(readlink -f "$zig")")/lib/libc/include/any-darwin-any" "$inc"   # o zig do PATH pode ser um link
 python3 - "$inc" << 'PY'
 import os, sys
 root = sys.argv[1]
@@ -236,14 +245,15 @@ if i < 0 or s < 0 or e <= 0:
     sys.exit(0)
 p.write_text(t[:s] + "#if defined(__OS_WORKGROUP_OBJECT__) /* mOS: workgroup */\n" + t[s:e] + "\n#endif" + t[e:])
 PY
-python3 - "$root" << 'PY'
+python3 - "$root" "$objc" << 'PY'
 from pathlib import Path
-root = Path("/agent/repos/mOS") if False else Path(__import__("sys").argv[1])
+import sys
+root, objc = Path(sys.argv[1]), Path(sys.argv[2])
 md = (root / "userland/sdk/openswiftui/swift/MOSDarwin/MOSDarwin.swift").read_text()
-(root / "build/swift/objc/overlays-src/Darwin.swift").write_text(
+(objc / "overlays-src/Darwin.swift").write_text(
     md.replace("@_exported import MOSDarwin", "@_exported import Darwin").replace("MOSDarwin.", "Darwin."))
 cg = (root / "userland/sdk/openswiftui/swift/CoreGraphics/CGFloat.swift").read_text()
-(root / "build/swift/objc/overlays-src/CGFloat.swift").write_text(
+(objc / "overlays-src/CGFloat.swift").write_text(
     cg.replace("@_exported import MOSLibm", "@_exported import CoreGraphics\nimport Darwin"))
 PY
 
@@ -252,7 +262,7 @@ ov() {
     shift
     echo "==> overlay $name"
     # shellcheck disable=SC2068
-    "$fe" -frontend -c -target x86_64-apple-macos26 -resource-dir "$res" \
+    "$fe" -frontend -c -target "$st" -resource-dir "$res" \
         -module-name "$name" -parse-as-library -swift-version 5 -O \
         -enable-library-evolution -I "$objc" -I "$out" -module-cache-path "$objc/modcache" \
         -I "$shims" -disable-implicit-concurrency-module-import -disable-implicit-string-processing-module-import \
@@ -267,7 +277,7 @@ ov CoreFoundation -import-underlying-module "$sdk"/CoreFoundation/*.swift
 ov CoreGraphics -import-underlying-module "$objc/overlays-src/CGFloat.swift" "$sdk"/CoreGraphics/*.swift
 ov os -import-underlying-module "$sdk"/os/*.swift
 ov Dispatch -import-underlying-module "$sdk"/Dispatch/*.swift
-"$zig" cc -target x86_64-macos -O2 -c "$sdk/Metal/mos_mtl_modify.c" -o "$out/mos_mtl_modify.o"
+"$zig" cc -target "$zt" -O2 -c "$sdk/Metal/mos_mtl_modify.c" -o "$out/mos_mtl_modify.o"
 ov Metal -import-underlying-module "$sdk/Metal/MTLBuffer.swift"
 for m in _Builtin_float simd XPC QuartzCore IOKit OSLog Spatial CoreAudio CoreImage CoreMIDI QuickLookUI; do
     printf '%s\n' "// módulo vazio: só o _swift_FORCE_LOAD" > "$objc/overlays-src/$m.swift"
@@ -284,7 +294,7 @@ for f in ../CompatibilityOverride/CompatibilityOverride.cpp Actor.cpp AsyncLet.c
     base=$(basename "$f" .cpp)
     dir=$out
     if [ "$base" = ThreadingError ]; then dir=$out/dylib-only; mkdir -p "$dir"; fi
-    "$zig" c++ -target x86_64-macos -std=c++20 -O2 -fno-exceptions -fno-rtti -ffunction-sections -fno-sanitize=all \
+    "$zig" c++ -target "$zt" -std=c++20 -O2 -fno-exceptions -fno-rtti -ffunction-sections -fno-sanitize=all \
         -fswift-async-fp=always -w -c \
         -Dswift_Concurrency_EXPORTS -DSWIFT_RUNTIME -DSWIFT_OBJC_INTEROP=1 -DSWIFT_THREADING_PTHREADS \
         -DSWIFT_LIBRARY_EVOLUTION=1 -DSWIFT_TARGET_LIBRARY_NAME=swift_Concurrency -DSWIFT_STDLIB_HAS_TYPE_PRINTING=1 \
@@ -297,7 +307,7 @@ for f in ../CompatibilityOverride/CompatibilityOverride.cpp Actor.cpp AsyncLet.c
         "$ccdir/$f" -o "$dir/_Concurrency_$base.o"
     okc=$((okc + 1))
 done
-"$zig" c++ -target x86_64-macos -std=c++20 -O2 -fno-exceptions -fno-rtti -ffunction-sections -fno-sanitize=all \
+"$zig" c++ -target "$zt" -std=c++20 -O2 -fno-exceptions -fno-rtti -ffunction-sections -fno-sanitize=all \
     -fswift-async-fp=always -w -c \
     -Dswift_Concurrency_EXPORTS -DSWIFT_RUNTIME -DSWIFT_OBJC_INTEROP=1 -DSWIFT_THREADING_PTHREADS \
     -DSWIFT_LIBRARY_EVOLUTION=1 -DSWIFT_TARGET_LIBRARY_NAME=swift_Concurrency -DNDEBUG \
@@ -332,7 +342,7 @@ for x in IsolatedAny AllowUnsafeAttribute Extern Macros FreestandingMacros Bitwi
     SuppressedAssociatedTypesWithDefaults AddressableParameters AddressableTypes ValueGenerics; do
     cfargs+=(-enable-experimental-feature "$x")
 done
-"$fe" -frontend -c -target x86_64-apple-macos26 -resource-dir "$res" -module-name _Concurrency \
+"$fe" -frontend -c -target "$st" -resource-dir "$res" -module-name _Concurrency \
     -D SWIFT_CONCURRENCY_USES_DISPATCH -parse-stdlib -parse-as-library -swift-version 5 -O \
     -enable-library-evolution -strict-memory-safety -enforce-exclusivity=unchecked -swift-async-frame-pointer=always \
     -disable-implicit-concurrency-module-import -disable-implicit-string-processing-module-import \
