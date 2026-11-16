@@ -1139,8 +1139,7 @@ static id still_pixfmts(id s, SEL c) { return pho_pixfmts(s, c); }
 
 /* ================================================================ gravação em arquivo */
 extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
-static struct { void *isa; unsigned long long flags; const char *s; unsigned long long n; } recfin_s = {cx_cfconst_isa, 0x7c8, "AVErrorRecordingSuccessfullyFinishedKey", 39};
-const void *AVErrorRecordingSuccessfullyFinishedKey = &recfin_s;
+extern const void *AVErrorRecordingSuccessfullyFinishedKey;   /* definida em avmetadata.c */
 /* AVCaptureMovieFileOutput: H.264 (VTCompressionSession do avwriter.c) + LPCM 16 bits em QuickTime; AVCaptureAudioFileOutput:
  * só o áudio, no tipo de arquivo pedido (MOV, WAV). O AVAssetWriter é montado no primeiro quadro (o tamanho vem da câmera);
  * a sessão do escritor começa no pts desse quadro e a pausa desconta o tempo parado. */
