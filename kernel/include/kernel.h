@@ -119,6 +119,7 @@ void   vm_pageout_kick(void);          /* pede uma rodada à thread vm_pageout; 
 void   vm_pageout_start(void);
 void   pmm_reclaim_boot(void);
 void   vmm_map_mmio(u64 phys, u64 size);
+bool   vmm_guard(u64 va, bool guard);   /* página de guarda de 4 KiB no mapa de identidade (pilhas do kernel) */
 void   vmm_map_wc(u64 phys, u64 size);     /* VRAM (BAR de vídeo) em write-combining */
 void  *kmalloc(usize n);
 void  *kcalloc(usize n, usize sz);
