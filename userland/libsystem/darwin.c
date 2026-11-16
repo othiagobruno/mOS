@@ -188,70 +188,10 @@ static long cf_u16(const char *s, u16 *out) {
 }
 /* em unidades UTF-16, como no CoreFoundation (e como o -[NSString length]); era em bytes UTF-8 */
 long CFStringGetLength(id_ s) { const char *u = cf_utf8(s); return u ? cf_u16(u, 0) : 0; }
-const char *CFStringGetCStringPtr(id_ s, u32 enc) { return (enc == ENC_UTF8 || enc == ENC_ASCII) ? cf_utf8(s) : 0; }
-unsigned char CFStringGetCString(id_ s, char *buf, long size, u32 enc) {
-    (void)enc;
-    const char *u = cf_utf8(s);
-    if (!u || !buf || size <= 0) return 0;
-    size_t n = strlen(u);
-    if ((long)n + 1 > size) return 0;
-    memcpy(buf, u, n + 1);
-    return 1;
-}
-/* CFIndex CFStringGetBytes(str, CFRange{loc,len}, enc, lossByte, isExternal, buffer, maxBufLen, usedBufLen*) */
-/* range em unidades UTF-16; devolve quantas unidades converteu e, em *used, os bytes. O Chromium converte o texto
- * digitado com kCFStringEncodingUTF16LE: antes só a codificação 0x0100 era UTF-16 (e só ASCII), a LE caía no ramo UTF-8
- * e uma letra virava 1 byte = 0 unidades, e nenhum caractere chegava ao renderer. Sem buffer só mede. Caractere que a
- * codificação não tem vira lossByte, ou a conversão para ali (lossByte 0), como no CoreFoundation. */
-long CFStringGetBytes(id_ s, long loc, long len, u32 enc, u8 loss, u8 ext, u8 *buf, long max, long *used) {
-    (void)ext;
-    const char *u = cf_utf8(s);
-    long total = u ? cf_u16(u, 0) : 0;
-    if (loc < 0 || loc > total) loc = total;
-    if (len < 0 || loc + len > total) len = total - loc;
-    u16 *w = total ? malloc((size_t)total * 2) : 0;
-    if (total && !w) { if (used) *used = 0; return 0; }
-    if (w) cf_u16(u, w);
-    int u16le = enc == ENC_UTF16 || enc == ENC_UTF16LE, u16be = enc == ENC_UTF16BE;
-    int u32le = enc == ENC_UTF32 || enc == ENC_UTF32LE, u32be = enc == ENC_UTF32BE;
-    u32 limit = enc == ENC_ASCII || enc == ENC_MACROMAN ? 0x80 : enc == ENC_LATIN1 ? 0x100 : 0;   /* 0 = UTF-8 */
-    long out = 0, i = 0;
-    while (i < len) {
-        u32 c = w[loc + i];
-        int units = 1;
-        if (!u16le && !u16be && c >= 0xD800 && c < 0xDC00 && i + 1 < len && w[loc + i + 1] >= 0xDC00 && w[loc + i + 1] < 0xE000) {
-            c = 0x10000 + ((c - 0xD800) << 10) + (w[loc + i + 1] - 0xDC00);
-            units = 2;
-        }
-        u8 t[4];
-        int k;
-        if (u16le) { t[0] = (u8)c; t[1] = (u8)(c >> 8); k = 2; }
-        else if (u16be) { t[0] = (u8)(c >> 8); t[1] = (u8)c; k = 2; }
-        else if (u32le) { t[0] = (u8)c; t[1] = (u8)(c >> 8); t[2] = (u8)(c >> 16); t[3] = (u8)(c >> 24); k = 4; }
-        else if (u32be) { t[0] = (u8)(c >> 24); t[1] = (u8)(c >> 16); t[2] = (u8)(c >> 8); t[3] = (u8)c; k = 4; }
-        else if (limit) {
-            if (c < limit) t[0] = (u8)c;
-            else if (loss) t[0] = loss;
-            else break;
-            k = 1;
-        } else if (c < 0x80) { t[0] = (u8)c; k = 1; }
-        else if (c < 0x800) { t[0] = (u8)(0xC0 | c >> 6); t[1] = (u8)(0x80 | (c & 0x3F)); k = 2; }
-        else if (c < 0x10000) { t[0] = (u8)(0xE0 | c >> 12); t[1] = (u8)(0x80 | ((c >> 6) & 0x3F)); t[2] = (u8)(0x80 | (c & 0x3F)); k = 3; }
-        else { t[0] = (u8)(0xF0 | c >> 18); t[1] = (u8)(0x80 | ((c >> 12) & 0x3F)); t[2] = (u8)(0x80 | ((c >> 6) & 0x3F)); t[3] = (u8)(0x80 | (c & 0x3F)); k = 4; }
-        if (buf) {
-            if (out + k > max) break;
-            memcpy(buf + out, t, (size_t)k);
-        }
-        out += k;
-        i += units;
-    }
-    free(w);
-    if (used) *used = out;
-    return i;
-}
+/* CFStringGetCStringPtr, CFStringGetCString e CFStringGetBytes: fdn_string_enc.c (codificações da ICU) */
+unsigned char CFStringGetCString(id_ s, char *buf, long size, u32 enc);
 /* tamanho máximo do caminho em UTF-8 (+ NUL) */
 long CFStringGetMaximumSizeOfFileSystemRepresentation(id_ s) { return CFStringGetLength(s) * 3 + 1; }
-long CFStringGetMaximumSizeForEncoding(long len, u32 enc) { return enc == ENC_UTF16 ? len * 2 : len * 3; }
 u8 CFStringGetFileSystemRepresentation(id_ s, char *buf, long max) { return CFStringGetCString(s, buf, max, ENC_UTF8); }
 /* CFComparisonResult CFStringCompare(a, b, options): kCFCompareCaseInsensitive = 1 */
 long CFStringCompare(id_ a, id_ b, u64 opts) {
@@ -287,55 +227,7 @@ id_ CFStringCreateWithBytesNoCopy(void *alloc, const u8 *b, long n, u32 enc, u8 
     return CFStringCreateWithBytes(alloc, b, n, enc, ext);
 }
 
-id_ CFStringCreateWithCString(void *alloc, const char *s, u32 enc) { (void)enc; return CFStringCreateWithFileSystemRepresentation(alloc, s); }
-/* um ponto de código em UTF-8 */
-static long put_utf8(char *t, unsigned c) {
-    if (c < 0x80) { t[0] = (char)c; return 1; }
-    if (c < 0x800) { t[0] = (char)(0xC0 | c >> 6); t[1] = (char)(0x80 | (c & 63)); return 2; }
-    if (c < 0x10000) { t[0] = (char)(0xE0 | c >> 12); t[1] = (char)(0x80 | (c >> 6 & 63)); t[2] = (char)(0x80 | (c & 63)); return 3; }
-    t[0] = (char)(0xF0 | c >> 18); t[1] = (char)(0x80 | (c >> 12 & 63)); t[2] = (char)(0x80 | (c >> 6 & 63)); t[3] = (char)(0x80 | (c & 63));
-    return 4;
-}
-/* Codificações do CoreFoundation que chegam aqui: UTF-8 (0x08000100), ASCII (0x0600), Unicode/UTF-16 com BOM ou na ordem
- * da máquina (0x0100), UTF-16BE (0x10000100), UTF-16LE (0x14000100), UTF-32 (0x0c000100/BE 0x18000100/LE 0x1c000100),
- * ISO Latin 1 (0x0201), Windows-1252 (0x0500), MacRoman (0). Antes só 0x0100 era UTF-16 (e sem acentos): o Chrome cria os
- * textos da interface com UTF-16LE e eles viravam só a 1ª letra ("O\0K\0" lido como C string). */
-id_ CFStringCreateWithBytes(void *alloc, const u8 *b, long n, u32 enc, u8 ext) {
-    (void)ext;
-    if (!b || n < 0) return 0;
-    char *t = malloc((size_t)n * 2 + 4);                   /* UTF-16 -> no máximo 3 bytes a cada 2; Latin-1 -> 2 a cada 1 */
-    if (!t) return 0;
-    long o = 0;
-    if (enc == ENC_UTF16 || enc == 0x10000100u || enc == 0x14000100u) {
-        int be = enc == 0x10000100u;
-        long i = 0;
-        if (enc == ENC_UTF16 && n >= 2) {                   /* BOM; sem ela, a ordem da máquina (little-endian) */
-            if (b[0] == 0xFE && b[1] == 0xFF) { be = 1; i = 2; } else if (b[0] == 0xFF && b[1] == 0xFE) i = 2;
-        }
-        for (; i + 1 < n; i += 2) {
-            unsigned c = be ? (unsigned)b[i] << 8 | b[i + 1] : b[i] | (unsigned)b[i + 1] << 8;
-            if (c >= 0xD800 && c < 0xDC00 && i + 3 < n) {   /* par substituto */
-                unsigned d = be ? (unsigned)b[i + 2] << 8 | b[i + 3] : b[i + 2] | (unsigned)b[i + 3] << 8;
-                if (d >= 0xDC00 && d < 0xE000) { c = 0x10000 + ((c - 0xD800) << 10) + (d - 0xDC00); i += 2; }
-            }
-            o += put_utf8(t + o, c);
-        }
-    } else if (enc == 0x0c000100u || enc == 0x18000100u || enc == 0x1c000100u) {
-        int be = enc == 0x18000100u;
-        for (long i = 0; i + 3 < n; i += 4) {
-            unsigned c = be ? (unsigned)b[i] << 24 | (unsigned)b[i + 1] << 16 | (unsigned)b[i + 2] << 8 | b[i + 3]
-                            : b[i] | (unsigned)b[i + 1] << 8 | (unsigned)b[i + 2] << 16 | (unsigned)b[i + 3] << 24;
-            o += put_utf8(t + o, c < 0x110000 ? c : '?');
-        }
-    } else if (enc == 0x0201u || enc == 0x0500u || enc == 0) {
-        for (long i = 0; i < n; i++) o += put_utf8(t + o, b[i]);   /* Latin-1 (aproximação para 1252/MacRoman acima de 0x7F) */
-    } else { memcpy(t, b, (size_t)n); o = n; }
-    t[o] = 0;
-    id_ r = CFStringCreateWithFileSystemRepresentation(alloc, t);
-    free(t);
-    return r;
-}
-
+/* CFStringCreateWithCString e CFStringCreateWithBytes: fdn_string_enc.c */
 /* ---- sysctl: informações do sistema. O mOS se apresenta como Darwin 23 (macOS 14) para apps que
  * exigem uma versão mínima; os números de CPU vêm do kernel. */
 extern int cx_errno;

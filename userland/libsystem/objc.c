@@ -1203,6 +1203,7 @@ void cx_objc_boot(u64 sects, u64 n) {
     { extern void cx_fdn_coll_init(void); cx_fdn_coll_init(); }
     { extern void cx_fdn_charset_init(void); cx_fdn_charset_init(); } /* fdn_charset.c: NSCharacterSet/CFCharacterSet sobre a ICU */       /* fdn_coll.c: NSArray/NSDictionary completos, por cima do básico */
     { extern void cx_fdn_string_init(void); cx_fdn_string_init(); }   /* fdn_string.c: NSString/NSMutableString em UTF-16 sobre a ICU, por cima do básico */
+    { extern void cx_fdn_string_enc_init(void); cx_fdn_string_enc_init(); }   /* fdn_string_enc.c: codificações do NSString/CFString (ICU) */
     }
     if (n) cx_objc_init_image(sects, n);
 }

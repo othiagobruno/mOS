@@ -204,6 +204,16 @@ enum { UDAT_FULL = 0, UDAT_LONG = 1, UDAT_MEDIUM = 2, UDAT_SHORT = 3, UDAT_RELAT
     X(uregex_useTransparentBounds, void, (void *, UBool, UErrorCode *)) \
     X(uregex_hitEnd, UBool, (const void *, UErrorCode *)) \
     X(uregex_requireEnd, UBool, (const void *, UErrorCode *)) \
+    X(ucnv_open, void *, (const char *, UErrorCode *)) \
+    X(ucnv_close, void, (void *)) \
+    X(ucnv_toUChars, int32_t, (void *, UChar *, int32_t, const char *, int32_t, UErrorCode *)) \
+    X(ucnv_fromUChars, int32_t, (void *, char *, int32_t, const UChar *, int32_t, UErrorCode *)) \
+    X(ucnv_setToUCallBack, void, (void *, const void *, const void *, const void **, const void **, UErrorCode *)) \
+    X(ucnv_setFromUCallBack, void, (void *, const void *, const void *, const void **, const void **, UErrorCode *)) \
+    X(ucnv_setSubstChars, void, (void *, const char *, int8_t, UErrorCode *)) \
+    X(ucnv_getMaxCharSize, int8_t, (const void *)) \
+    X(UCNV_TO_U_CALLBACK_STOP, void, (const void *, void *, const char *, int32_t, int, UErrorCode *)) \
+    X(UCNV_FROM_U_CALLBACK_STOP, void, (const void *, void *, const UChar *, int32_t, UChar32, int, UErrorCode *)) \
     X(u_charType, int8_t, (UChar32)) \
     X(u_isalpha, UBool, (UChar32)) \
     X(u_isUWhiteSpace, UBool, (UChar32)) \
