@@ -600,3 +600,20 @@ size_t os_proc_available_memory(void) {
     if (SYS2(SYS_DARWIN, MOS_DW_SYSINFO, &si) == 0) return (size_t)si.mem_free;
     return (size_t)1 << 30;
 }
+
+/* pid_suspend / pid_resume (privadas do launchd e do Activity Monitor): parada do processo inteiro, que o kernel
+ * do mOS já tem (SIGSTOP/SIGCONT, proc_hold). Mesmo dono ou root, como o task_for_pid exige no XNU. */
+int pid_suspend(int pid) {
+    mos_dw_proc_t d;
+    if (dw_proc(pid, &d) < 0) return -1;
+    long eu = SYS0(SYS_GETEUID);
+    if (eu != 0 && eu != d.uid) { cx_errno = CX_EPERM; return -1; }
+    return kill(pid, 17);                       /* SIGSTOP */
+}
+int pid_resume(int pid) {
+    mos_dw_proc_t d;
+    if (dw_proc(pid, &d) < 0) return -1;
+    long eu = SYS0(SYS_GETEUID);
+    if (eu != 0 && eu != d.uid) { cx_errno = CX_EPERM; return -1; }
+    return kill(pid, 19);                       /* SIGCONT */
+}

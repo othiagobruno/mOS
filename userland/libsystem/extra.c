@@ -455,17 +455,7 @@ int pthread_setname_np(const char *n) { char *getenv(const char *); if (getenv("
 /* id da thread: o tid do kernel (o Chromium usa como PlatformThread::CurrentId; antes era sempre 1).
  * Para t != a atual ainda devolve o tid de quem chamou (pthread_t do mOS não guarda o tid). */
 int pthread_threadid_np(void *t, u64 *id) { if (id) *id = (u64)cx_pthread_tid(t); return 0; }
-/* os_unfair_lock (u32): 0 = livre, senão o tid do dono. O PartitionAlloc do Chromium protege o heap com
- * ele; como no-op (época de uma thread por processo), a freelist corrompia com várias threads
- * (CHECK "slotsize"/"entrypos"). Feito pela sessão do VS Code. */
-void os_unfair_lock_lock(void *l) {
-    u32 me = (u32)SYS0(SYS_GETTID);
-    while (!__sync_bool_compare_and_swap((volatile u32 *)l, 0u, me)) SYS0(SYS_YIELD);
-}
-void os_unfair_lock_lock_with_options(void *l, u32 opts) { (void)opts; os_unfair_lock_lock(l); }
-void os_unfair_lock_unlock(void *l) { __sync_lock_release((volatile u32 *)l); }
-int os_unfair_lock_trylock(void *l) { return __sync_bool_compare_and_swap((volatile u32 *)l, 0u, (u32)SYS0(SYS_GETTID)); }
-void os_unfair_lock_assert_owner(void *l) { (void)l; }
+/* os_unfair_lock, os_unfair_recursive_lock e os_sync_wait_on_address: oslock.c */
 
 /* ================================================================ strings e caminhos */
 void *memmem(const void *h, size_t hl, const void *n, size_t nl) {

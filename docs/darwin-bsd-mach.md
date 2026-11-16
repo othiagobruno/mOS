@@ -89,7 +89,22 @@ Nos 28 bundles do corpus local (Firefox, GIMP, Inkscape, iTerm2, Rectangle, VLC 
 |---|---|---|
 | F1 | **pronto** (15 nov.): `SYS_DARWIN` no kernel (`kernel/proc/darwin.c`), `userland/libsystem/sysctl.c` | `tools/sysctl_host.c`: 89/89 no Ryzen R2544 do Thiago (CPUID real, kernel falso). Não rodou no QEMU (build proibido até o fim) |
 | F2 | **pronto** (15 nov.): `userland/libsystem/procinfo.c`, `task_info`/`thread_info`/`host_info` em `mach.c`, `MOS_DW_FDS`/`MOS_DW_CWD` no kernel | `tools/procinfo_host.c`: 50/50 (kernel falso). Não rodou no QEMU |
-| F3..F10 | a fazer | — |
+| F7 (parte 1) | **pronto** (15 nov.): IPC System V (`sysv_ipc.c`), `oslock.c`, `pid_suspend/resume` | `tools/sysv_ipc_host.c` 35/35 entre processos reais (fork); `tools/oslock_host.c` 9/9 com 4 threads |
+| F3, F4, F5, F6, F7 (resto), F8, F9, F10 | a fazer | — |
+
+### F7 (parte 1) em detalhe
+
+- IPC System V completo: `semget/semop/semctl` (tudo ou nada, IPC_NOWAIT, SEM_UNDO desfeito no `_exit`, GETNCNT/
+  GETZCNT, GETALL/SETALL, IPC_STAT/SET/RMID), `shmget/shmat/shmdt/shmctl` (SHM_RDONLY, SHM_RND, endereço fixo,
+  `nattch`, remoção adiada até o último `shmdt`), `msgget/msgsnd/msgrcv/msgctl` (tipo 0/positivo/negativo,
+  MSG_NOERROR, E2BIG, fila cheia), `semsys/shmsys/msgsys`, `ftok`, chaves `kern.sysv.*` no sysctl. Layouts do macOS
+  (`semid_ds` 72, `shmid_ds` 76, `msqid_ds` 116, pack 4). Objetos em arquivos MAP_SHARED de `/tmp/.sysv-ipc`, espera
+  no futex compartilhado. Limite honesto: morte por sinal não desfaz o SEM_UNDO (o kernel não conhece o semáforo).
+- `os_unfair_lock` agora dorme no futex quando há disputa (antes girava com `SYS_YIELD`), guarda o dono e aborta
+  com "BUG IN CLIENT OF LIBPLATFORM" em trava recursiva, unlock de outra thread e `assert_owner/not_owner`, como o
+  macOS. `os_unfair_recursive_lock_*` e `os_sync_wait_on_address(_with_timeout/_with_deadline)`/`os_sync_wake_*`.
+- O que falta da F7: `memorystatus_control` (sobre o `SYS_VMCTL` do Gustavo), `getattrlistbulk`/`setattrlist`
+  (combinado com o Vinicius e o Bruno), `__pthread_kill/__pthread_sigmask` e os `*_nocancel`, `audit*`.
 
 ### F2 em detalhe
 

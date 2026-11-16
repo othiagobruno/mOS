@@ -52,7 +52,9 @@ int __cxa_atexit(void (*fn)(void *), void *arg, void *dso) {
     return 0;
 }
 
+void cx_sysv_exit(void) __attribute__((weak));   /* sysv_ipc.c: SEM_UNDO vale em qualquer saída, como no XNU */
 __attribute__((noreturn)) void _exit(int code) {
+    if (cx_sysv_exit) cx_sysv_exit();
     SYS1(SYS_EXIT, code);
     for (;;) {}
 }

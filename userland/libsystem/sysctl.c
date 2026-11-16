@@ -247,6 +247,17 @@ static const sc_ent_t tab[] = {
     {"kern.tcsm_enable", T_INT, 0, V_FIX, 0, 0, 0, 0},
     {"kern.secure_kernel", T_INT, 0, V_FIX, 0, 0, 0, 0},
     {"kern.osvariant_status", T_QUAD, 0, V_FIX, 0, 0, 0, 0},
+    /* IPC System V (sysv_ipc.c): os limites padrão do macOS */
+    {"kern.sysv.shmmax", T_INT, 0, V_FIX, 0, 0, 4194304, 0},
+    {"kern.sysv.shmmin", T_INT, 0, V_FIX, 0, 0, 1, 0},
+    {"kern.sysv.shmmni", T_INT, 0, V_FIX, 0, 0, 32, 0},
+    {"kern.sysv.shmseg", T_INT, 0, V_FIX, 0, 0, 8, 0},
+    {"kern.sysv.shmall", T_INT, 0, V_FIX, 0, 0, 1024, 0},
+    {"kern.sysv.semmni", T_INT, 0, V_FIX, 0, 0, 87, 0},
+    {"kern.sysv.semmns", T_INT, 0, V_FIX, 0, 0, 87, 0},
+    {"kern.sysv.semmnu", T_INT, 0, V_FIX, 0, 0, 87, 0},
+    {"kern.sysv.semmsl", T_INT, 0, V_FIX, 0, 0, 87, 0},
+    {"kern.sysv.semume", T_INT, 0, V_FIX, 0, 0, 10, 0},
     /* CTL_VM = 2 */
     {"vm.loadavg", T_STRUCT, 0, V_LOADAVG, 0, 2, 0, 0},
     {"vm.swapusage", T_STRUCT, 0, V_SWAP, 0, 5, 0, 0},
