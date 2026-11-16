@@ -146,15 +146,22 @@ static void consider(uptr w) {
     if (w >= (uptr)h && w < (uptr)h + h->bsize) gc_mark_ptr(h);
 }
 
-static void scan_range(uptr lo, uptr hi) {
+/* ganchos dos objetos hospedeiros fora do DOM (JavaScriptCore.framework); NULL/0 no kernel */
+void (*js_host_finalize_hook)(jsobj *o);
+int  (*js_host_delete_hook)(jsobj *o, jsstr *k);      /* 1 apagou, 0 não é dele, -1 exceção */
+void (*js_host_keys_hook)(jsobj *o, jsobj *out);
+u64 js_ref_xor;                                        /* referências que o hospedeiro guarda codificadas */
+
+__attribute__((no_sanitize("address"))) static void scan_range(uptr lo, uptr hi) {
     for (uptr p = lo & ~(uptr)7; p < hi; p += 8) {
         uptr w = *(volatile uptr *)p;
         consider(w);
+        if (js_ref_xor) { uptr x = w ^ js_ref_xor; consider(x & JS_PTRMASK); }
         if ((w & JS_TAG_MASK) == JS_TAG_STR || (w & JS_TAG_MASK) == JS_TAG_OBJ || (w & JS_TAG_MASK) == JS_TAG_BIG) consider(w & JS_PTRMASK);
     }
 }
 
-static void __attribute__((noinline)) scan_stack(void) {
+static void __attribute__((noinline, no_sanitize("address"))) scan_stack(void) {
     u64 regs[20];
     __asm__ volatile(
         "movq %%rbx, 0(%0)\n\tmovq %%rbp, 8(%0)\n\tmovq %%rdi, 16(%0)\n\tmovq %%rsi, 24(%0)\n\t"
@@ -194,6 +201,7 @@ static void free_obj(gch_t *h) {
         if (o->cls == CL_REGEXP && o->u.re.prog) rx_unref(o->u.re.prog);
         if (o->cls == CL_GEN) js_coro_free(o->u.gen.co);
         if (o->cls == CL_MODULE) js_module_free(o);
+        if ((o->cls == CL_HOST || o->cls == CL_NATIVE) && js_host_finalize_hook) js_host_finalize_hook(o);
         if (o->cls == CL_ARRAYBUFFER && o->u.buf.data) {
             if (o->u.buf.dealloc) o->u.buf.dealloc(o->u.buf.data, o->u.buf.dctx);
             else if (!o->u.buf.detached) kfree(o->u.buf.data);
@@ -994,6 +1002,11 @@ int js_delete(jsv o, jsv key) {
     if (!k) return -1;
     if (ob->frozen) return 0;
     u32 idx;
+    if (ob->cls == CL_HOST && js_host_delete_hook) {
+        int r = js_host_delete_hook(ob, k);
+        if (r < 0) return -1;
+        if (r > 0) return 1;
+    }
     if ((ob->cls == CL_ARRAY || ob->cls == CL_ARGUMENTS) && js_str_isindex(k, &idx)) {
         if (idx < ob->alen) ob->arr[idx] = JS_HOLE;
         return 1;
@@ -1015,6 +1028,8 @@ jsobj *js_keylist(jsobj *o, bool only_enum, bool include_proto) {
             for (u32 i = 0; i < ob->alen; i++) if (ob->arr[i] != JS_HOLE) js_arr_push(out, jv_str(idx_str(i)));
         } else if (ob->cls == CL_TYPED) {
             for (u32 i = 0, n = js_typed_length(ob); i < n; i++) js_arr_push(out, jv_str(idx_str(i)));
+        } else if (ob->cls == CL_HOST && js_host_keys_hook) {
+            js_host_keys_hook(ob, out);
         } else if (ob->cls == CL_STRING) {
             jsstr *s = jv_s(ob->u.prim);
             for (u32 i = 0; i < s->ulen; i++) js_arr_push(out, jv_str(idx_str(i)));

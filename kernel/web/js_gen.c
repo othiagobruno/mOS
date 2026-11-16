@@ -49,10 +49,16 @@ __attribute__((sysv_abi)) void js_coro_switch(void **save_sp, void *to_sp);
 __attribute__((sysv_abi)) void js_coro_tramp(void);
 __attribute__((sysv_abi)) void js_coro_entry(jscoro *co);
 
+/* Mach-O (JavaScriptCore.framework no userland) põe "_" na frente dos nomes C */
+#ifdef __APPLE__
+#define CO_SYM(x) "_" #x
+#else
+#define CO_SYM(x) #x
+#endif
 __asm__(
     ".text\n"
-    ".globl js_coro_switch\n"
-    "js_coro_switch:\n"
+    ".globl " CO_SYM(js_coro_switch) "\n"
+    CO_SYM(js_coro_switch) ":\n"
     "    pushq %rbp\n    pushq %rbx\n    pushq %rdi\n    pushq %rsi\n"
     "    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n"
     "    subq $168, %rsp\n"
@@ -68,11 +74,11 @@ __asm__(
     "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n"
     "    popq %rsi\n    popq %rdi\n    popq %rbx\n    popq %rbp\n"
     "    ret\n"
-    ".globl js_coro_tramp\n"
-    "js_coro_tramp:\n"
+    ".globl " CO_SYM(js_coro_tramp) "\n"
+    CO_SYM(js_coro_tramp) ":\n"
     "    movq %rbx, %rdi\n"
     "    andq $-16, %rsp\n"
-    "    call js_coro_entry\n"
+    "    call " CO_SYM(js_coro_entry) "\n"
     "    ud2\n");
 
 static jscoro *coro_new(jsobj *owner, jsv fn, jsv thisv, int argc, jsv *argv) {

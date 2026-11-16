@@ -672,6 +672,21 @@ mkdir -p "$WKDIR"
     -Wl,-undefined,dynamic_lookup
 echo "WebKit.framework ok"
 
+# JavaScriptCore.framework do mOS (userland/frameworks/JavaScriptCore): o motor JS do sistema (kernel/web/js_*.c, sem o
+# DOM) no processo do app, com a API C do JavaScriptCore por cima (jsc_api.c)
+echo "==> JavaScriptCore.framework"
+JSCDIR="$ESP/mOS/System/Library/Frameworks/JavaScriptCore.framework/Versions/A"
+JSCOBJ="$OUT/jsc-obj"
+mkdir -p "$JSCDIR" "$JSCOBJ"
+for f in $(ls "$ROOT"/kernel/web/js_*.c | grep -v /js_dom.c) "$ROOT/kernel/web/util.c" "$ROOT/userland/frameworks/JavaScriptCore/jsc_api.c"; do
+    "$ZIG" cc -target x86_64-macos -O2 -std=gnu11 -w -fno-builtin -fno-stack-protector -fvisibility=hidden \
+        -I"$ROOT/kernel/include" -I"$ROOT" -c "$f" -o "$JSCOBJ/$(basename "$f" .c).o"
+done
+"$ZIG" cc -target x86_64-macos -shared "$JSCOBJ"/*.o -o "$JSCDIR/JavaScriptCore" \
+    -Wl,-install_name,/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore \
+    -Wl,-undefined,dynamic_lookup
+echo "JavaScriptCore.framework ok"
+
 # CryptoKit.framework: o Swift de userland/frameworks/CryptoKit compilado com evolução de biblioteca
 # (tools/build-cryptokit-macho.sh), como o build.ps1 faz. Precisa do swift-frontend 6.4.2 oficial
 # (SWIFT_FRONTEND, SWIFTC ou .tools/swift-6.4.2); sem ele o framework fica de fora desta imagem.

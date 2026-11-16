@@ -22,20 +22,25 @@ static costack_t *g_cs_cur;
 __attribute__((sysv_abi)) void cs_switch(void **save_sp, void *to_sp);
 __attribute__((sysv_abi)) void cs_tramp(void);
 
+#ifdef __APPLE__
+#define CS_SYM(x) "_" #x
+#else
+#define CS_SYM(x) #x
+#endif
 __asm__(
     ".text\n"
-    ".globl cs_switch\n"
-    "cs_switch:\n"
+    ".globl " CS_SYM(cs_switch) "\n"
+    CS_SYM(cs_switch) ":\n"
     "    pushq %rbp\n    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n"
     "    movq %rsp, (%rdi)\n"
     "    movq %rsi, %rsp\n"
     "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n"
     "    ret\n"
-    ".globl cs_tramp\n"
-    "cs_tramp:\n"
+    ".globl " CS_SYM(cs_tramp) "\n"
+    CS_SYM(cs_tramp) ":\n"
     "    movq %r12, %rdi\n"
     "    andq $-16, %rsp\n"
-    "    call cs_entry\n"
+    "    call " CS_SYM(cs_entry) "\n"
     "    ud2\n");
 
 __attribute__((sysv_abi, used)) void cs_entry(costack_t *c) {
