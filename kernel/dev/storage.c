@@ -73,6 +73,14 @@ bool storage_write_ok(blkdev_t *root, u64 off, u64 len) {
     return false;
 }
 
+bool blk_discard(blkdev_t *d, u64 off, u64 len) {
+    if (!d || !len || off > d->size || len > d->size - off) return false;
+    blkdev_t *r = d;
+    while (r->parent) { off += r->base; r = r->parent; }
+    if (!r->discard) return false;
+    return r->discard(r, off, len);
+}
+
 /* um dispositivo (disco ou fatia) "aceita escrita" se alguma faixa liberada se sobrepõe a ele */
 bool blk_policy_allows(blkdev_t *d) {
     u64 base = 0;

@@ -34,6 +34,11 @@ bool snd_late_pending(void);
 void snd_render_late(i16 *dst, u32 frames);
 void snd_late_done(void);
 void snd_capture(const i16 *stereo, u32 frames); /* sound.c: anel da entrada */
+/* dev/hda_hdmi.c: áudio HDMI/DP da GPU AMD, controlador próprio */
+bool hdmi_audio_probe(bool primary);
+void hdmi_audio_mirror(const i16 *ring, u32 ring_frames, u32 final);
+void hdmi_audio_service(void);
+void hdmi_audio_set_mute(bool mute);
 
 /* ---------------------------------------------------------------- registradores */
 #define GCAP      0x00
@@ -885,7 +890,9 @@ static void ring_zero(u32 at, u32 n) {
     }
 }
 
+static bool g_hdmi_primary;
 void hda_service(void) {
+    if (g_hdmi_primary) { hdmi_audio_service(); return; }
     if (!H.running) return;
     capture_service();
     u32 sd = H.sd;
@@ -937,9 +944,14 @@ void hda_service(void) {
         todo -= n;
     }
     __asm__ volatile("sfence" ::: "memory");
+    /* HDMI: só os quadros que o mixer não toca mais (antes de play + LATE_GAP) */
+    u32 fin = (play + LATE_GAP) & RING_MASK;
+    if (((fin - play) & RING_MASK) > ((H.wpos - play) & RING_MASK)) fin = H.wpos;
+    hdmi_audio_mirror(H.ring, RING_FRAMES, fin);
 }
 
 void hda_set_mute(bool mute) {
+    hdmi_audio_set_mute(mute);
     if (!H.running) return;
     H.dead = false;
     for (int i = 0; i < H.noutpins; i++) {
@@ -978,6 +990,10 @@ static bool probe_controller(pci_dev_t *d) {
     vmm_map_mmio(bar, 0x4000);
     H.mm = (volatile u8 *)(uptr)bar;
     pci_enable_bus_master(d);
+    if (d->vendor == 0x1022) {                            /* FCH AMD (15e3 e antecessores): snoop do cache no reg. 0x42 */
+        u32 v = pci_read(d, 0x40);
+        pci_write(d, 0x40, (v & ~(7u << 16)) | (2u << 16));
+    }
     if (d->vendor == 0x8086) {                            /* TCSEL = TC0 (como o Linux faz) */
         u32 v = pci_read(d, 0x44);
         pci_write(d, 0x44, v & ~7u);
@@ -1014,7 +1030,9 @@ bool hda_probe(char *name, usize n) {
     for (int i = 0;; i++) {
         pci_dev_t *d = pci_find_class(0x04, 0x03, i);
         if (!d) break;
+        if (d->vendor == 0x1002) continue;               /* HDMI/DP da GPU AMD: dev/hda_hdmi.c */
         if (probe_controller(d)) {
+            hdmi_audio_probe(false);
             const char *v = ctrl_vendor(d->vendor);
             snprintf(name, n, "Áudio HD%s%s (codec %04x:%04x)", *v ? " " : "", v, H.codec_id >> 16, H.codec_id & 0xFFFF);
             return true;
@@ -1022,6 +1040,12 @@ bool hda_probe(char *name, usize n) {
         /* deixa o controlador quieto se não serviu */
         if (H.mm) { corb_stop(); w32(DPLBASE, 0); }
         memset(&H, 0, sizeof H);
+    }
+    if (hdmi_audio_probe(true)) {                         /* só HDMI/DP: ele é a saída */
+        extern const char *hdmi_audio_name(void);
+        g_hdmi_primary = true;
+        snprintf(name, n, "HDMI/DisplayPort AMD (%s)", hdmi_audio_name());
+        return true;
     }
     return false;
 }

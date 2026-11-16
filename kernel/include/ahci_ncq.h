@@ -11,6 +11,9 @@ typedef uint64_t u64;
 #endif
 
 #define AHCI_NCQ_TAGS 32
+/* faixas do TRIM (ATA DATA SET MANAGEMENT): LBA de 48 bits | setores (até 65535) << 48.
+ * Enche até `max` entradas a partir de *first, avança *first e devolve quantas escreveu. */
+u32 ahci_dsm_pack(u64 *e, u32 max, u64 *first, u64 end);
 #define ATA_READ_FPDMA  0x60
 #define ATA_WRITE_FPDMA 0x61
 

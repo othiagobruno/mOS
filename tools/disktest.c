@@ -279,9 +279,27 @@ static void test_ncq(void) {
     expect(ahci_batch_post(&b, 4) == 0, "tag 4 de novo em voo");
 }
 
+static void test_dsm(void) {
+    u64 e[64], first = 100;
+    u32 k = ahci_dsm_pack(e, 64, &first, 100 + 0xFFFF * 2 + 7);
+    expect(k == 3, "trim: tres faixas");
+    expect((e[0] & 0xFFFFFFFFFFFFull) == 100 && (e[0] >> 48) == 0xFFFF, "trim: primeira faixa cheia");
+    expect((e[1] & 0xFFFFFFFFFFFFull) == 100 + 0xFFFF, "trim: segunda continua");
+    expect((e[2] >> 48) == 7 && first == 100 + 0xFFFF * 2 + 7, "trim: resto de 7");
+    first = 0;
+    k = ahci_dsm_pack(e, 64, &first, 0xFFFFull * 100);
+    expect(k == 64 && first == 0xFFFFull * 64, "trim: limite de 64 entradas por bloco");
+    first = 0x0000FFFFFFFFFFF0ull;
+    k = ahci_dsm_pack(e, 64, &first, first + 4);
+    expect(k == 1 && (e[0] & 0xFFFFFFFFFFFFull) == 0x0000FFFFFFFFFFF0ull && (e[0] >> 48) == 4, "trim: LBA de 48 bits");
+    first = 5;
+    expect(ahci_dsm_pack(e, 64, &first, 5) == 0, "trim: faixa vazia");
+}
+
 int main(void) {
     test_prp_sgl_queue();
     test_ncq();
+    test_dsm();
     if (fails) {
         fprintf(stderr, "%d falha(s)\n", fails);
         return 1;

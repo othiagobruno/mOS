@@ -66,6 +66,7 @@
 #define ATA_READ_DMA_EXT  0x25
 #define ATA_WRITE_DMA_EXT 0x35
 #define ATA_FLUSH_EXT     0xEA
+#define ATA_DSM           0x06   /* DATA SET MANAGEMENT; feature 1 = TRIM */
 
 #define CMD_TIMEOUT_MS 5000
 #define BOUNCE_BYTES   (128u << 10)
@@ -97,6 +98,10 @@ typedef struct {
     u32  ss;                     /* bytes por setor lógico */
     bool lba48;
     bool ncq;
+    bool trim, trim_zero;        /* IDENTIFY 169 bit 0; 69 bit 5 = lê zero depois do TRIM */
+    u16 dsm_blocks;              /* IDENTIFY 105: blocos de 512 bytes de faixas por comando */
+    u8  feat;                    /* campo FEATURES do próximo comando não-NCQ */
+    u64 trimmed;                 /* setores descartados desde o boot */
     int intr;                    /* 1 = conclusão pelo MSI; 0 = lê CI */
     volatile u32 irq;
     volatile u32 tfes;
@@ -194,6 +199,7 @@ static bool issue_at(ahci_disk_t *d, u8 cmd, u64 lba, u16 count, u64 phys, u32 b
         f[4] = (u8)lba;        f[5] = (u8)(lba >> 8);  f[6] = (u8)(lba >> 16);
         f[8] = (u8)(lba >> 24); f[9] = (u8)(lba >> 32); f[10] = (u8)(lba >> 40);
         f[12] = (u8)count;     f[13] = (u8)(count >> 8);
+        f[3] = d->feat;        f[11] = 0;
     }
 
     pw(p, P_IS, 0xFFFFFFFFu);
@@ -500,6 +506,28 @@ static bool disk_write(blkdev_t *bd, u64 off, const void *src, u64 len) {
     return true;
 }
 
+/* TRIM: só setores inteiros dentro da faixa; até 64 faixas de 65535 setores por bloco de 512 bytes */
+static bool disk_discard(blkdev_t *bd, u64 off, u64 len) {
+    ahci_disk_t *d = bd->ctx;
+    if (!d->trim) return false;
+    u64 first = (off + d->ss - 1) / d->ss, end = (off + len) / d->ss;
+    if (end > d->sectors) end = d->sectors;
+    if (first >= end) return true;
+    if (!storage_write_ok(&d->dev, first * d->ss, (end - first) * d->ss)) return false;
+    u32 blocks = d->dsm_blocks > 8 ? 8 : d->dsm_blocks;   /* bounce de 128 KiB comporta bem mais; 8 blocos = 512 faixas */
+    while (first < end) {
+        u64 *e = (u64 *)d->buf;
+        memset(d->buf, 0, blocks * 512);
+        u32 k = ahci_dsm_pack(e, blocks * 64, &first, end);
+        d->feat = 0x01;
+        bool ok = issue_at(d, ATA_DSM, 0, (u16)blocks, d->buf_phys, blocks * 512, true, 0, false);
+        d->feat = 0;
+        if (!ok) { kprintf("ahci: TRIM falhou na porta %d\n", d->port); return false; }
+        for (u32 i = 0; i < k; i++) d->trimmed += e[i] >> 48;
+    }
+    return true;
+}
+
 static bool disk_flush(blkdev_t *bd) {
     ahci_disk_t *d = bd->ctx;
     return issue(d, ATA_FLUSH_EXT, 0, 0, 0, false);
@@ -527,6 +555,9 @@ static bool identify(ahci_disk_t *d) {
                           : (u64)id[60] | (u64)id[61] << 16;
     d->ss = 512;
     d->ncq = (id[76] & (1u << 8)) != 0;
+    d->trim = (id[169] & 1) != 0;
+    d->trim_zero = d->trim && (id[69] & (1u << 14)) && (id[69] & (1u << 5));
+    d->dsm_blocks = id[105] ? id[105] : 1;
     int depth = d->ncq ? ((id[75] & 0x1F) + 1) : 1;
     if (depth > AHCI_NCQ_TAGS) depth = AHCI_NCQ_TAGS;
     ahci_tags_init(&d->tags, depth);
@@ -593,10 +624,12 @@ static bool setup_port(int p, bool need_sig) {
     d->dev.read = disk_read;
     d->dev.write = disk_write;
     d->dev.flush = disk_flush;
+    if (d->trim) d->dev.discard = disk_discard;
     d->dev.ctx = d;
     disks[ndisks++] = d;
     kprintf("ahci: porta %d: %s, série %s, fw %s, %llu setores de %u bytes%s\n",
             p, d->model, d->serial, d->fw, d->sectors, d->ss, d->ncq ? ", NCQ" : "");
+    if (d->trim) kprintf("ahci: porta %d: TRIM (até %u blocos de faixas%s)\n", p, d->dsm_blocks, d->trim_zero ? ", lê zero depois" : "");
     char name[16];
     snprintf(name, sizeof name, "sata%d", p);
     d->dev.lbs = d->ss;
