@@ -353,7 +353,7 @@ static u8 *data_url(const char *url, usize *len, char *mime, int mcap) {
 
 static bool is_image_name(const char *n) {
     const char *e = vfs_ext(n);
-    return !strcasecmp(e, "png") || !strcasecmp(e, "jpg") || !strcasecmp(e, "jpeg") || !strcasecmp(e, "gif") || !strcasecmp(e, "bmp") || !strcasecmp(e, "ppm");
+    return !strcasecmp(e, "png") || !strcasecmp(e, "jpg") || !strcasecmp(e, "jpeg") || !strcasecmp(e, "gif") || !strcasecmp(e, "bmp") || !strcasecmp(e, "ppm") || !strcasecmp(e, "webp");
 }
 
 static void tab_set_doc(tab_t *t, doc_t *d) {
@@ -792,7 +792,7 @@ static bool pump_images(tab_t *t) {
             changed = true;
         } else if (!strncmp(im->url, "http", 4)) {
             const char *e = vfs_ext(im->url);
-            if (!strncasecmp(e, "svg", 3) || !strncasecmp(e, "webp", 4) || !strncasecmp(e, "avif", 4)) { im->state = IMG_ERROR; changed = true; continue; }
+            if (!strncasecmp(e, "svg", 3) || !strncasecmp(e, "avif", 4)) { im->state = IMG_ERROR; changed = true; continue; }
             im->req = http_get(im->url);
             if (im->req) { im->state = IMG_LOADING; active++; }
             else { im->state = IMG_ERROR; changed = true; }

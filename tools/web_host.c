@@ -4,15 +4,15 @@
 #include "gfx.h"
 #include "web.h"
 #include "js.h"
+#include "tools/web_host.h"
 
 int  host_printf(const char *fmt, ...);
-u8  *host_read_file(const char *path, usize *n);
 int  host_write_ppm(const char *path, const u32 *px, int w, int h, int stride);
-void exit(int);
-char *getenv(const char *);
 
-static int ok, fail;
-#define CHECK(c, ...) do { if (c) ok++; else { fail++; host_printf("FALHOU %s:%d: ", __FILE__, __LINE__); host_printf(__VA_ARGS__); host_printf("\n"); } } while (0)
+int web_host_ok, web_host_fail;
+static struct { const char *name; void (*fn)(void); } casos[64];
+static int ncasos;
+void web_host_register(const char *name, void (*fn)(void)) { if (ncasos < 64) { casos[ncasos].name = name; casos[ncasos++].fn = fn; } }
 
 /* documento pintado num surface w×h */
 typedef struct { doc_t *d; js_page_t *js; surface_t *s; } page_t;
@@ -88,14 +88,15 @@ static void t_js(void) {
     page_free(&p);
 }
 
-extern void web_host_extra_tests(int *ok, int *fail);   /* testes das partes novas (web_host_novos.c) */
-__attribute__((weak)) void web_host_extra_tests(int *o, int *f) { (void)o; (void)f; }
-
 int main(void) {
     font_init();
     t_basico();
     t_js();
-    web_host_extra_tests(&ok, &fail);
-    host_printf("web_host: %d/%d ok\n", ok, ok + fail);
-    return fail ? 1 : 0;
+    for (int i = 0; i < ncasos; i++) {
+        int f0 = web_host_fail;
+        casos[i].fn();
+        host_printf("  %-24s %s\n", casos[i].name, web_host_fail == f0 ? "ok" : "FALHOU");
+    }
+    host_printf("web_host: %d/%d ok\n", web_host_ok, web_host_ok + web_host_fail);
+    return web_host_fail ? 1 : 0;
 }

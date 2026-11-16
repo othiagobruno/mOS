@@ -118,6 +118,9 @@ void     css_free(sheet_t *s);
 void     css_style_tree(node_t *root, sheet_t *ua, sheet_t *author, arena_t *a, float zoom, int vw, int vh);
 sheet_t *css_ua_sheet(void);
 bool     css_color(const char *s, u32 *out);
+bool     css_media_ok(const char *query, int viewport_w);          /* NULL ou vazio = vale */
+/* imagem a carregar para um <img>: <picture><source type/media/srcset>, srcset (x e w) e src; NULL se nenhuma */
+const char *img_pick_src(node_t *img, int viewport_w, float dpr, char *buf, int cap);
 
 /* ============================================================ imagens */
 enum { IMG_PENDING, IMG_LOADING, IMG_OK, IMG_ERROR };
@@ -132,6 +135,9 @@ struct img {
 surface_t *image_decode(const u8 *d, usize n);
 bool raw_inflate(const u8 *d, usize n, u8 *out, usize cap, usize *olen);   /* deflate cru (zip) */
 surface_t *image_scale(const surface_t *src, int w, int h); /* filtro de área / bilinear */
+/* WebP (kernel/web/webp.c): VP8, VP8L, ALPH, VP8X; animação devolve o 1º quadro */
+surface_t *webp_decode(const u8 *d, usize n);
+u32 *webp_decode_argb(const u8 *d, usize n, int *w, int *h);   /* ARGB não pré-multiplicado, kfree no resultado */
 
 /* ============================================================ controles de formulário */
 enum { C_TEXT, C_PASSWORD, C_SUBMIT, C_RESET, C_BUTTON, C_CHECK, C_RADIO, C_SELECT, C_TEXTAREA, C_IMAGE, C_HIDDEN };

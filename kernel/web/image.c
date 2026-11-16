@@ -964,6 +964,7 @@ surface_t *image_decode(const u8 *d, usize n) {
     if (d[0] == 'G' && d[1] == 'I' && d[2] == 'F') return decode_gif(d, n);
     if (d[0] == 'B' && d[1] == 'M') return decode_bmp(d, n);
     if (d[0] == 'P' && d[1] == '6') return decode_ppm(d, n);
+    if (n >= 12 && !memcmp(d, "RIFF", 4) && !memcmp(d + 8, "WEBP", 4)) return webp_decode(d, n);
     return NULL;
 }
 
