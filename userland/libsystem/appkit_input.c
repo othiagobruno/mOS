@@ -611,6 +611,8 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_document_init(void); cx_appkit_document_init(); } /* appkit_document.c: NSDocument, NSDocumentController */
     { extern void cx_appkit_toolbar_init(void); cx_appkit_toolbar_init(); }   /* appkit_toolbar.c: NSToolbar completa, grupos, personalização */
     { extern void cx_appkit_filepromise_init(void); cx_appkit_filepromise_init(); } /* appkit_filepromise.c: promessas de arquivo no arrasto */
+    { extern void cx_appkit_offscreen_init(void); cx_appkit_offscreen_init(); }   /* appkit_offscreen.c: desenho em PDF/bitmap, lockFocus */
+    { extern void cx_appkit_print_init(void); cx_appkit_print_init(); }       /* appkit_print.c: impressão (PDF), NSPrintOperation, PM* */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");
