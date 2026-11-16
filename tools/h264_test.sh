@@ -81,6 +81,19 @@ v vt_high "$A" "" -profile:v high -x264-params bframes=3:b-pyramid=normal
 v vt_720 "$H" "" -profile:v main
 v vt_full709 "$A" full -profile:v high -x264-params fullrange=on:colormatrix=bt709:colorprim=bt709:transfer=bt709:bframes=2
 v vt_baseline "$A" "" -profile:v baseline
+# núcleo de vídeo do AVFoundation (avvideo.c): quadro no tempo t de MP4/MOV, BGRA, rotação e redução
+gcc -O1 -w -I"$R/userland/libsystem" -c "$R/userland/libsystem/avvideo.c" -o "$T/avv.o" && gcc -O1 -w -I"$R/userland/libsystem" \
+    -c "$R/tools/avvideo_test.c" -o "$T/avt.o" && g++ "$T/avt.o" "$T/avv.o" "$T/mp4d.o" "$T/glue.o" "$T"/o/*.o -lpthread -o "$T/avt" || exit 1
+av() { # nome extensão entrada parâmetros...
+    local nm=$1 ext=$2 src=$3; shift 3
+    n=$((n+1))
+    ffmpeg $F $src "$@" "$T/$nm.$ext" && ffmpeg $F -i "$T/$nm.$ext" -map 0:v -fps_mode passthrough -f rawvideo -pix_fmt yuv420p "$T/$nm.aref"
+    local r; r=$("$T/avt" "$T/$nm.$ext" "$T/$nm.aref" 2>/dev/null); echo "avvideo $nm: $r"
+    case "$r" in "avvideo ok"*) ok=$((ok+1));; esac
+}
+av av_gop12 mp4 "$A" -c:v libx264 -profile:v high -pix_fmt yuv420p -g 12 -x264-params bframes=3:b-pyramid=normal
+av av_mov_audio mov "-f lavfi -i testsrc=size=320x240:rate=30:duration=3 -f lavfi -i sine=d=3" -c:v libx264 -profile:v main -g 30 -c:a aac -pix_fmt yuv420p
+av av_720 mp4 "$H" -c:v libx264 -profile:v high -pix_fmt yuv420p -g 15
 # codificador I_PCM (h264sw.c) com ida e volta pelo mesmo decodificador e pelo ffmpeg
 gcc -std=c11 -O2 -w -c "$R/tools/vtcodec_test.c" -o "$T/vct.o" && gcc -std=gnu11 -O2 -w -I"$R/userland/libsystem" \
     -c "$R/userland/libsystem/h264sw.c" -o "$T/hsw.o" && g++ "$T/vct.o" "$T/hsw.o" "$T/glue.o" "$T"/o/*.o -lm -lpthread -o "$T/vct" || exit 1

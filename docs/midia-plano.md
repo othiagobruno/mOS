@@ -68,5 +68,15 @@ pool de quadros pelo DPB do nível e saída em ordem de decodificação (para o 
 | Fora do repo (harness em Agents/isabela/h264-harness): os mesmos + 1080p e conteúdo `life`/`mandelbrot` | 24/24 bit-exatos |
 | Entrelaçado (PAFF/MBAFF) | o OpenH264 não decodifica: falha limpa (0 quadros); item separado |
 
-Próximo: compilar freestanding no `tools/build-midia.sh` (x86_64 e arm64), casca C `cx_h264_*` e trocar o h264bsd do
-`VTDecompressionSession` por ela, com pts, ordem de decodificação/exibição e os formatos de pixel pedidos.
+Integrado: `tools/build-midia.sh` compila o OpenH264 nos dois alvos (#494), o `VTDecompressionSession` usa a casca
+`cx_h264_*` (#499) e o h264bsd saiu.
+
+## Vídeo no AVFoundation: `avvideo.c`
+
+Núcleo em C (testável no host): abre MP4/MOV (mp4demux), faixa H.264, e entrega o quadro exibido em qualquer tempo t
+(o último com pts <= t), decodificando adiante ou recomeçando no quadro-chave quando o tempo volta ou salta; converte
+para BGRA com a matriz e a faixa do VUI, gira pelo tkhd (preferredTransform) e reduz por média de área.
+`tools/h264_test.sh` (avvideo_*): todos os quadros em sequência, entre quadros, 200 acessos aleatórios e bordas
+iguais ao ffmpeg, em MP4 com B e GOP curto, MOV com áudio e 720p; BGRA contra a fórmula, rotação e redução exatas.
+Usado por: `AVAssetImageGenerator` (quadro real, actualTime, appliesPreferredTrackTransform, maximumSize).
+Próximo: AVAssetTrack de vídeo, AVPlayerItemVideoOutput, AVPlayerLayer e o relógio do AVPlayer sem áudio.
