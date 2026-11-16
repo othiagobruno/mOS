@@ -31,6 +31,7 @@ typedef struct {
 } gpu_info_t;
 
 void              gpu_init(void);
+void              gpu_late_init(void);   /* depois do vfs_init: motores que precisam de firmware (AMD) */
 int               gpu_count(void);
 const gpu_info_t *gpu_get(int i);
 const char       *gpu_summary(void);   /* para "Sobre este mOS" */

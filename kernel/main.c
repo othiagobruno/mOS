@@ -38,6 +38,7 @@ void kmain(void) {
     net_init();
     wifi_init();          /* placas Wi-Fi (ou o rádio simulado das imagens de teste) */
     bt_init();
+    gpu_late_init();      /* GPU AMD: SMU, GART e SDMA (firmware no VFS); a tela já está de pé desde o gpu_init */
     {
 #ifdef MOS_UNIT_TESTS
         extern void unit_tests_run(void);

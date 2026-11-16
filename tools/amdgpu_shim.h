@@ -18,3 +18,6 @@ void vmm_map_wc(u64 phys, u64 size);
 #define MOS_ENOENT 2
 #define MOS_EINVAL 22
 #define MOS_ETIMEDOUT 60
+#define MOS_EIO 5
+const u8 *amd_host_fw(const char *name, u64 *len);
+u64  amd_host_ram_page(void);
