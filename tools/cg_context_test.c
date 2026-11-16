@@ -3,7 +3,8 @@
  *   zig cc -g -O1 -fno-sanitize=all -ffreestanding -fno-builtin -w -Iuserland/libsystem/kshim -Iuserland/libsystem/fsinc \
  *     -Ikernel/include -Iuserland/libsystem -c userland/libsystem/coregraphics.c -o /tmp/cg-lib.o
  *   zig cc -std=gnu11 -O1 -w -D_DEFAULT_SOURCE -Iuserland/libsystem tools/cg_context_test.c /tmp/cg-lib.o \
- *     userland/libsystem/cg_raster.c userland/libsystem/cgimage_crop.c -DCS_HOST userland/libsystem/colorsync.c -lm \
+ *     (e cgpdf.c, pdf_core.c compilados igual ao coregraphics.c)
+ *     userland/libsystem/cg_raster.c userland/libsystem/cgimage_crop.c -DCS_HOST userland/libsystem/colorsync.c -lm -lz \
  *     -o /tmp/cg_context_test && /tmp/cg_context_test
  */
 #include <math.h>
@@ -183,6 +184,31 @@ void *CTFontCreatePathForGlyph(void *f, uint16_t g, const CGAffineTransform *m) 
     return p;
 }
 
+
+/* ---- CF do que o cgpdf.c chama (strings de texto, datas, outline) */
+static mcls str_cls = {"CFStringTest", 0, 40, {{0, 0}}, 0}, date_cls = {"CFDateTest", 0, 16, {{0, 0}}, 0}, dict_cls = {"CFDictTest", 0, 16, {{0, 0}}, 0};
+void *CFStringCreateWithCharacters(void *al, const uint16_t *c, long n) {
+    (void)al;
+    void **o = alloc_of(&str_cls);
+    char *s = malloc((size_t)n * 3 + 1);
+    long k = 0;
+    for (long i = 0; i < n; i++) {                      /* UTF-8 */
+        uint16_t u = c[i];
+        if (u < 0x80) s[k++] = (char)u;
+        else if (u < 0x800) { s[k++] = (char)(0xC0 | u >> 6); s[k++] = (char)(0x80 | (u & 63)); }
+        else { s[k++] = (char)(0xE0 | u >> 12); s[k++] = (char)(0x80 | ((u >> 6) & 63)); s[k++] = (char)(0x80 | (u & 63)); }
+    }
+    s[k] = 0;
+    o[2] = s;
+    return o;
+}
+void *CFStringCreateWithCString(void *al, const char *s, uint32_t e) { (void)al; (void)e; void **o = alloc_of(&str_cls); o[2] = strdup(s); return o; }
+void *CFDateCreate(void *al, double t) { (void)al; double *o = alloc_of(&date_cls); o[1] = t; return o; }
+void *CFArrayCreate(void *al, const void **v, long n, const void *cb) { (void)al; (void)cb; return array((int)n, (void **)v); }
+void *CFDictionaryCreateMutable(void *al, long c, const void *k, const void *v) { (void)al; (void)c; (void)k; (void)v; void **o = alloc_of(&dict_cls); return o; }
+void CFDictionarySetValue(void *d, const void *k, const void *v) { (void)d; (void)k; (void)v; }
+void *CFNumberCreate(void *al, long t, const void *p) { (void)al; (void)t; (void)p; return alloc_of(&date_cls); }
+
 /* ---------------------------------------------------------------- API sob teste */
 void *CGBitmapContextCreate(void *data, size_t w, size_t h, size_t bpc, size_t bpr, void *space, uint32_t info);
 void CGContextRelease(void *c);
@@ -230,6 +256,15 @@ int CGPointEqualToPoint(CGPoint a, CGPoint b);
 extern const void *kCGColorSpaceDCIP3;
 
 static int fails;
+int scan_hits[4]; double scan_rect[4];
+int CGPDFScannerPopNumber(void *, double *);
+int CGPDFScannerPopStream(void *, void **);
+int CGPDFScannerPopString(void *, void **);
+size_t CGPDFStringGetLength(void *);
+void cb_re(void *s, void *i) { (void)i; for (int k = 3; k >= 0; k--) CGPDFScannerPopNumber(s, &scan_rect[k]); scan_hits[0]++; }
+void cb_rg(void *s, void *i) { (void)i; double v; if (CGPDFScannerPopNumber(s, &v) && v == 0) scan_hits[1]++; }
+void cb_ei(void *s, void *i) { (void)i; void *st; if (CGPDFScannerPopStream(s, &st)) scan_hits[2]++; }
+void cb_tj(void *s, void *i) { (void)i; void *st; if (CGPDFScannerPopString(s, &st) && CGPDFStringGetLength(st) == 3) scan_hits[3]++; }
 void ramp(void *info, const double *in, double *out) { (void)info; out[0] = in[0]; out[1] = 0; out[2] = 0; out[3] = 1; }
 #define CHECK(c, m) do { if (!(c)) { fprintf(stderr, "FAIL %s\n", m); fails++; } else printf("ok %s\n", m); } while (0)
 
@@ -381,6 +416,11 @@ int main(void) {
         CGRect dst = {{0, 0}, {297.5, 421}};
         CGAffineTransform t = CGPDFPageGetDrawingTransform(pg, 0, dst, 0, 1);
         CHECK(fabs(t.a - 0.5) < 1e-9 && fabs(t.d - 0.5) < 1e-9 && fabs(t.tx) < 1e-6 && fabs(t.ty) < 1e-6, "PDF: transform encolhe à metade no lugar");
+        int CGPDFPageGetRotationAngle(void *);
+        void *CGPDFPageGetDocument(void *);
+        size_t CGPDFPageGetPageNumber(void *);
+        CHECK(pg && CGPDFPageGetDocument(pg) == d && CGPDFPageGetPageNumber(pg) == 1 && CGPDFPageGetRotationAngle(pg) == 0, "PDF: página 1 do documento, sem rotação");
+        CHECK(CGPDFDocumentGetPage(d, 1) == pg && CGPDFDocumentGetPage(d, 3) == 0, "PDF: GetPage devolve a mesma página; fora do intervalo NULL");
         CGPDFDocumentRelease(d);
         remove(url_path);
         url_path = "/tmp/nao-existe.pdf";
@@ -658,6 +698,89 @@ int main(void) {
         void *CGImageGetDataProvider(void *);
         CHECK(CGImageGetDataProvider(pimg) == pp, "CGImageGetDataProvider devolve o provedor original");
         CHECK(mg && CGColorGetNumberOfComponents(mg) == 2 && CGColorGetComponents(mg)[0] > 0.3 && CGColorGetComponents(mg)[0] < 0.6, "CopyByMatching sRGB → cinza");
+    }
+
+    /* ===== API CGPDF sobre o núcleo novo (16 nov. 2026) ===== */
+    {
+        /* PDF com título UTF-16, data, outline de 2 itens e conteúdo com 5 operadores + imagem inline */
+        const char *body[] = {
+            "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 100] >>",
+            "<< /Type /Page /Parent 2 0 R /Contents 8 0 R /Rotate 270 /CropBox [10 10 300 90] >>",
+            "<< /Type /Page /Parent 2 0 R >>",
+            "<< /Type /Outlines /First 6 0 R /Last 7 0 R /Count 2 >>",
+            "<< /Title (Capitulo 1) /Parent 5 0 R /Next 7 0 R /Dest [3 0 R /Fit] >>",
+            "<< /Title <FEFF00430061007000ED00740075006C006F0020003200 32> /Parent 5 0 R /Prev 6 0 R /Dest [4 0 R /XYZ 0 0 0] >>",
+            0,
+            "<< /Title <FEFF004F006C00E1> /CreationDate (D:20261116103000-03'00') /Nums [1 2.5 /N] >>",
+        };
+        const char *content = "1 0 0 rg 0 0 10 10 re f q BI /W 2 /H 1 /BPC 8 /CS /G ID \x01\x02 EI Q (txt) Tj";
+        static char buf[4096];
+        int off[10], n = 0;
+        n += sprintf(buf + n, "%%PDF-1.6\n");
+        for (int i = 0; i < 9; i++) {
+            off[i] = n;
+            if (i == 7) n += sprintf(buf + n, "8 0 obj << /Length %d >>\nstream\n%s\nendstream endobj\n", (int)strlen(content), content);
+            else n += sprintf(buf + n, "%d 0 obj %s endobj\n", i + 1, body[i]);
+        }
+        int xr = n;
+        n += sprintf(buf + n, "xref\n0 10\n0000000000 65535 f \n");
+        for (int i = 0; i < 9; i++) n += sprintf(buf + n, "%010d 00000 n \n", off[i]);
+        n += sprintf(buf + n, "trailer << /Size 10 /Root 1 0 R /Info 9 0 R /ID [<00> <00>] >>\nstartxref\n%d\n%%%%EOF\n", xr);
+        url_path = "/tmp/mariana-cgpdf.pdf";
+        FILE *f = fopen(url_path, "wb"); fwrite(buf, 1, (size_t)n, f); fclose(f);
+        void *d = CGPDFDocumentCreateWithURL((void *)1);
+        CHECK(d && CGPDFDocumentGetNumberOfPages(d) == 2, "CGPDF: 2 páginas pela árvore");
+        void *pg = CGPDFDocumentGetPage(d, 1);
+        int CGPDFPageGetRotationAngle(void *);
+        CHECK(CGPDFPageGetRotationAngle(pg) == 270, "CGPDF: Rotate 270");
+        CGRect crop = CGPDFPageGetBoxRect(pg, 1), art = CGPDFPageGetBoxRect(pg, 4);
+        CHECK(crop.origin.x == 10 && crop.size.width == 190 && crop.size.height == 80 && art.size.width == 190, "CGPDF: CropBox recortada pela MediaBox; ArtBox cai na Crop");
+        void *CGPDFDocumentGetInfo(void *);
+        int CGPDFDictionaryGetString(void *, const char *, void **);
+        int CGPDFDictionaryGetArray(void *, const char *, void **);
+        size_t CGPDFArrayGetCount(void *);
+        int CGPDFArrayGetInteger(void *, size_t, long *);
+        int CGPDFArrayGetNumber(void *, size_t, double *);
+        int CGPDFArrayGetName(void *, size_t, const char **);
+        void *CGPDFStringCopyTextString(void *);
+        void *CGPDFStringCopyDate(void *);
+        void *info = CGPDFDocumentGetInfo(d), *title = 0, *date = 0, *nums = 0;
+        CHECK(info && CGPDFDictionaryGetString(info, "Title", &title), "CGPDF: /Info /Title");
+        void *ts = title ? CGPDFStringCopyTextString(title) : 0;
+        CHECK(ts && !strcmp(((char **)ts)[2], "Ol\xc3\xa1"), "CGPDF: título UTF-16BE → \"Olá\"");
+        CGPDFDictionaryGetString(info, "CreationDate", &date);
+        double *dt = date ? CGPDFStringCopyDate(date) : 0;
+        /* 2026-11-16 13:30:00 UTC = 1794835800 unix */
+        CHECK(dt && fabs(dt[1] - (1794835800.0 - 978307200.0)) < 1, "CGPDF: data com fuso −03'00'");
+        long iv = 0; double dv = 0; const char *nm = 0;
+        CHECK(CGPDFDictionaryGetArray(info, "Nums", &nums) && CGPDFArrayGetCount(nums) == 3 && CGPDFArrayGetInteger(nums, 0, &iv) && iv == 1 &&
+              CGPDFArrayGetNumber(nums, 1, &dv) && dv == 2.5 && CGPDFArrayGetNumber(nums, 0, &dv) && dv == 1 && CGPDFArrayGetName(nums, 2, &nm) && !strcmp(nm, "N") &&
+              !CGPDFArrayGetInteger(nums, 1, &iv), "CGPDF: array com inteiro, real (inteiro vale como real) e nome");
+        /* scanner */
+        void *CGPDFContentStreamCreateWithPage(void *);
+        void *CGPDFOperatorTableCreate(void);
+        void CGPDFOperatorTableSetCallback(void *, const char *, void (*)(void *, void *));
+        void *CGPDFScannerCreate(void *, void *, void *);
+        int CGPDFScannerScan(void *);
+        void CGPDFScannerRelease(void *);
+        void cb_re(void *, void *); void cb_rg(void *, void *); void cb_ei(void *, void *); void cb_tj(void *, void *);
+        extern int scan_hits[4]; extern double scan_rect[4];
+        void *tbl = CGPDFOperatorTableCreate();
+        CGPDFOperatorTableSetCallback(tbl, "re", cb_re);
+        CGPDFOperatorTableSetCallback(tbl, "rg", cb_rg);
+        CGPDFOperatorTableSetCallback(tbl, "EI", cb_ei);
+        CGPDFOperatorTableSetCallback(tbl, "Tj", cb_tj);
+        void *sc = CGPDFScannerCreate(CGPDFContentStreamCreateWithPage(pg), tbl, 0);
+        CHECK(CGPDFScannerScan(sc), "CGPDFScannerScan");
+        CHECK(scan_hits[0] == 1 && scan_rect[2] == 10 && scan_rect[0] == 0, "scanner: re com 4 números na ordem");
+        CHECK(scan_hits[1] == 1 && scan_hits[2] == 1 && scan_hits[3] == 1, "scanner: rg, imagem inline (EI com stream) e Tj (string)");
+        CGPDFScannerRelease(sc);
+        void *CGPDFDocumentGetOutline(void *);
+        CHECK(CGPDFDocumentGetOutline(d) != 0, "CGPDF: outline com filhos");
+        int cx_pdf_dest_page(void *, void *);
+        CGPDFDocumentRelease(d);
+        remove(url_path);
     }
     if (fails) { fprintf(stderr, "cg_context: %d falhas\n", fails); return 1; }
     printf("cg_context: ok (0 falhas)\n");

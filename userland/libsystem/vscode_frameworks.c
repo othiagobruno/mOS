@@ -427,7 +427,6 @@ void *CGDataProviderCreateWithCFData(id data) {
     objc_retain(data);
     return CGDataProviderCreateWithData(data, MSG0(const void *, data, "bytes"), (size_t)MSG0(u64, data, "length"), prov_release);
 }
-int CGPDFPageGetRotationAngle(void *p) { (void)p; return 0; }
 
 /* ================================================================ IOKit */
 #define kIOReturnSuccess 0
