@@ -49,6 +49,27 @@ CSK(kColorSyncCameraDeviceClass, "scnr")
 CSK(kColorSyncScannerDeviceClass, "scnr")
 CSK(kColorSyncPrinterDeviceClass, "prtr")
 CSK(kColorSyncDeviceDefaultProfileID, "DefaultProfileID")
+CSK(kColorSyncCustomProfiles, "CustomProfiles")
+CSK(kColorSyncFactoryProfiles, "FactoryProfiles")
+CSK(kColorSyncDeviceProfileURL, "DeviceProfileURL")
+CSK(kColorSyncDeviceProfileID, "DeviceProfileID")
+CSK(kColorSyncDeviceProfileIsFactory, "DeviceProfileIsFactory")
+CSK(kColorSyncDeviceProfileIsDefault, "DeviceProfileIsDefault")
+CSK(kColorSyncDeviceProfileIsCurrent, "DeviceProfileIsCurrent")
+CSK(kColorSyncDeviceClass, "DeviceClass")
+CSK(kColorSyncDeviceID, "DeviceID")
+CSK(kColorSyncDeviceDescription, "DeviceDescription")
+CSK(kColorSyncDeviceDescriptions, "DeviceDescriptions")
+CSK(kColorSyncDeviceHostScope, "DeviceHostScope")
+CSK(kColorSyncDeviceUserScope, "DeviceUserScope")
+CSK(kColorSyncProfileHostScope, "ProfileHostScope")
+CSK(kColorSyncProfileUserScope, "ProfileUserScope")
+CSK(kColorSyncDeviceModeDescription, "DeviceModeDescription")
+CSK(kColorSyncDeviceModeDescriptions, "DeviceModeDescriptions")
+CSK(kColorSyncDeviceProfilesNotification, "com.apple.ColorSync.DeviceProfilesNotification")
+CSK(kColorSyncDisplayDeviceProfilesNotification, "com.apple.ColorSync.DisplayProfileNotification")
+CSK(kColorSyncDeviceRegisteredNotification, "com.apple.ColorSync.DeviceRegisteredNotification")
+CSK(kColorSyncDeviceUnregisteredNotification, "com.apple.ColorSync.DeviceUnregisteredNotification")
 CSK(kColorSyncTransformCodeFragmentType, "com.apple.ColorSync.CodeFragmentType")
 CSK(kColorSyncTransformCodeFragmentMD5, "com.apple.ColorSync.CodeFragmentMD5")
 CSK(kColorSyncSigDescription, "desc")
@@ -493,4 +514,75 @@ const u8 *cx_colorsync_profile_bytes(const void *prof, size_t *n) {
     if (p->mutable_ && !p->data) cs_rebuild(p);
     *n = p->n;
     return p->data;
+}
+
+/* ---- dispositivos: o monitor do mOS, com o perfil sRGB (o compositor mostra sRGB) gravado uma vez em
+ * ~/Library/ColorSync/Profiles para quem lê o perfil pelo arquivo (Blender, Krita) */
+void *CFDictionaryCreateMutable(void *alloc, long cap, const void *kcb, const void *vcb);
+void CFDictionarySetValue(void *d, const void *k, const void *v);
+void *CFURLCreateFromFileSystemRepresentation(void *alloc, const u8 *buf, long len, u8 isdir);
+extern const void *kCFBooleanTrue, *kCFBooleanFalse;
+char *getenv(const char *name);
+int snprintf(char *b, size_t n, const char *f, ...);
+int mkdir(const char *p, int m);
+ssize_t write(int fd, const void *b, size_t n);
+static void *cs_display_url(void) {
+    static char path[512];
+    if (!path[0]) {
+        const char *home = getenv("HOME");
+        if (!home || !home[0]) home = "/tmp";
+        char dir[400];
+        snprintf(dir, sizeof dir, "%s/Library", home); mkdir(dir, 0755);
+        snprintf(dir, sizeof dir, "%s/Library/ColorSync", home); mkdir(dir, 0755);
+        snprintf(dir, sizeof dir, "%s/Library/ColorSync/Profiles", home); mkdir(dir, 0755);
+        snprintf(path, sizeof path, "%s/mOS Display sRGB.icc", dir);
+        int fd = open(path, 0);
+        if (fd >= 0) close(fd);
+        else {
+            cs_prof b;
+            u8 *icc = 0;
+            size_t len = 0;
+            if (!cs_builtin("sRGB", &b) && cs_write_icc(&b, &icc, &len) == 0) {
+                int w = open(path, 577, 0644);          /* O_WRONLY | O_CREAT | O_TRUNC */
+                if (w >= 0) { (void)write(w, icc, len); close(w); }
+                free(icc);
+                cs_free(&b);
+            }
+        }
+    }
+    return CFURLCreateFromFileSystemRepresentation(0, (const u8 *)path, (long)strlen(path), 0);
+}
+static void *cs_display_id(void) { return CFStringCreateWithCString(0, "6D4F5300-0000-4000-8000-000000000001", 0x08000100); }
+void *ColorSyncDeviceCopyDeviceInfo(const void *deviceClass, const void *deviceID) {
+    (void)deviceID;
+    const char *c = deviceClass && cx_is_str((id)deviceClass) ? cx_cstr((id)deviceClass) : "";
+    if (strcmp(c, "mntr")) return 0;                     /* só há o monitor */
+    void *url = cs_display_url(), *pid = CFStringCreateWithCString(0, "1", 0x08000100), *dev = cs_display_id();
+    void *prof = CFDictionaryCreateMutable(0, 0, 0, 0), *fact = CFDictionaryCreateMutable(0, 0, 0, 0), *info = CFDictionaryCreateMutable(0, 0, 0, 0);
+    CFDictionarySetValue(prof, kColorSyncDeviceProfileURL, url);
+    CFDictionarySetValue(prof, kColorSyncDeviceModeDescription, CFStringCreateWithCString(0, "mOS Display", 0x08000100));
+    CFDictionarySetValue(fact, pid, prof);
+    CFDictionarySetValue(fact, kColorSyncDeviceDefaultProfileID, pid);
+    CFDictionarySetValue(info, kColorSyncDeviceClass, deviceClass);
+    CFDictionarySetValue(info, kColorSyncDeviceID, dev);
+    CFDictionarySetValue(info, kColorSyncDeviceDescription, CFStringCreateWithCString(0, "mOS Display", 0x08000100));
+    CFDictionarySetValue(info, kColorSyncFactoryProfiles, fact);
+    CFDictionarySetValue(info, kColorSyncCustomProfiles, CFDictionaryCreateMutable(0, 0, 0, 0));
+    CFDictionarySetValue(info, kColorSyncDeviceUserScope, CFStringCreateWithCString(0, "kCFPreferencesAnyUser", 0x08000100));
+    CFDictionarySetValue(info, kColorSyncDeviceHostScope, CFStringCreateWithCString(0, "kCFPreferencesCurrentHost", 0x08000100));
+    return info;
+}
+typedef u8 (*cs_iter_fn)(void *profileInfo, void *userInfo);
+void ColorSyncIterateDeviceProfiles(cs_iter_fn fn, void *userInfo) {
+    if (!fn) return;
+    void *d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    CFDictionarySetValue(d, kColorSyncDeviceClass, kColorSyncDisplayDeviceClass);
+    CFDictionarySetValue(d, kColorSyncDeviceID, cs_display_id());
+    CFDictionarySetValue(d, kColorSyncDeviceDescription, CFStringCreateWithCString(0, "mOS Display", 0x08000100));
+    CFDictionarySetValue(d, kColorSyncDeviceProfileID, CFStringCreateWithCString(0, "1", 0x08000100));
+    CFDictionarySetValue(d, kColorSyncDeviceProfileURL, cs_display_url());
+    CFDictionarySetValue(d, kColorSyncDeviceProfileIsFactory, kCFBooleanTrue);
+    CFDictionarySetValue(d, kColorSyncDeviceProfileIsDefault, kCFBooleanTrue);
+    CFDictionarySetValue(d, kColorSyncDeviceProfileIsCurrent, kCFBooleanTrue);
+    (void)fn(d, userInfo);
 }

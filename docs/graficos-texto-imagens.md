@@ -279,3 +279,89 @@ dá o texto da página com a caixa de cada caractere (espaços e quebras inferid
 Testes: `tools/pdf_write_host.py` 12/12 (cada página regravada = a de origem no poppler; texto CFF e Type3 preservados;
 PDF cifrado destravado sai sem cifra) e o texto de 4 PDFs igual ao do `pdftotext` (no `cgpdf_draw_host.py`).
 
+### Passo 6 — PDFKit (PR de 16 nov. 2026)
+
+`PDFKit.framework` sem dylib cai no libSystem (`kernel/compat/macho.c`); as classes ficam em `pdfkit.c` (modelo) e
+`pdfkit_view.c` (views), registradas por `cx_pdfkit_init` (userspace_services.c).
+- **PDFDocument**: `initWithURL:`/`initWithData:`/`init`, páginas (inserir, remover, trocar, `indexForPage:`), versão,
+  cifra (`isEncrypted`, `isLocked`, `unlockWithPassword:`, as 8 permissões, `permissionsStatus`), `documentAttributes`
+  (Info em UTF-16, Keywords como array, datas como NSDate), `outlineRoot` (do PDF ou novo), `string`, busca
+  (`findString:withOptions:` com caixa, acentos e para trás; `fromSelection:`, `beginFindString(s):` e as notificações),
+  seleções por caractere e por ponto, `dataRepresentation`/`writeTo…` (sem mudança devolve os bytes originais; com
+  mudança, regrava por `pdf_write.c`: ordem, rotação, caixas, anotações, Info e outline).
+- **PDFPage**: `initWithImage:` (PDF de uma página pelo CGPDFContext), caixas, rotação, `label` (/PageLabels: decimal,
+  romano, letras, prefixo), anotações (as do PDF lidas na primeira vez), `drawWithBox:toContext:` (conteúdo + anotações),
+  `transformContext:forBox:`, `thumbnailOfSize:forBox:`, texto (`string`, `numberOfCharacters`,
+  `characterBoundsAtIndex:`, `characterIndexAtPoint:`) e seleção (intervalo, retângulo, dois pontos, palavra, linha).
+- **PDFSelection** (várias páginas e intervalos, `boundsForPage:`, `selectionsByLine`, estender, cor, desenho),
+  **PDFAnnotation** (tipo, caixa, conteúdo, cores, borda, URL/ação/destino, QuadPoints, Ink, chaves `/…`, aparência das
+  novas: Highlight, Underline, StrikeOut, Square, Circle, Line, Ink, Text, FreeText/Widget/Stamp; as de origem sem
+  mudança usam o /AP do PDF), **PDFOutline**, **PDFDestination**, **PDFAction** URL/GoTo/Named/ResetForm/RemoteGoTo,
+  **PDFBorder** e as constantes (atributos, opções, notificações, subtipos e chaves de anotação).
+- **PDFView**: as páginas renderizadas pelo Core Graphics na escala da view (cache de 8), os 4 modos de exibição (livro,
+  RTL), escala/zoom/ajuste automático, navegação com histórico, destinos e seleção, seleção com o mouse (arrastar,
+  duplo e triplo clique), links (delegate `PDFViewWillClickOnLink:withURL:` ou NSWorkspace), rolagem, teclado,
+  copiar (respeitando a permissão), conversões de ponto/retângulo e as notificações. **PDFThumbnailView**.
+- Renderizador: `cx_pdf_draw_page_content` (página sem anotações) e `cx_pdf_draw_annotation` (uma aparência);
+  `cx_pdf_dest_array` resolve destino nomeado com coordenadas.
+
+Testes: `tools/pdfkit_host.py` 43 + 4 — `tools/pdfkit_host.c` traz um runtime ObjC mínimo (objc_msgSend em assembly,
+classes com superclasse, retain/release com dealloc) e a Foundation que o PDFKit usa, sobre o Core Graphics real:
+leitura, atributos, texto, busca (e notificações), palavra/linha/índice, anotações e outline do arquivo, edição
+completa e regravação relida pelo PDFKit e pelo poppler, cifra, página de imagem e miniatura.
+Limite honesto: PDFView e PDFThumbnailView só foram compilados (x86_64 e arm64); não há AppKit no host para rodá-los.
+
+**Lacunas do corpus** (docs/lacunas/mariana.md, mesmo PR): `CTFontCopyNameForGlyph` (tabela post, senão AGL),
+`CTFontManagerRegisterFontURLs`/`RegisterFontDescriptors`/`UnregisterFontsForURL`/`UnregisterFontURLs`,
+`CTRunGetImageBounds`/`CTRunGetTypeID`, oito constantes kCT*, `kCGColorWhite`, `CGContextSetCTM`/`SetBaseCTM`/
+`Set|GetFontSmoothingStyle`, `ColorSyncDeviceCopyDeviceInfo`/`ColorSyncIterateDeviceProfiles` (o monitor com o perfil
+sRGB gravado em ~/Library/ColorSync/Profiles) e 21 constantes kColorSync* de dispositivo. Os de display/eventos/CGS
+da lista são da Camila (avisado ao Igor).
+
+### Passo 7 — Core Text: quebra, bidi, parágrafo, frame e fontes (PR de 16 nov. 2026)
+
+- `ct_layout.c` (C puro): oportunidades de quebra UAX #14 (obrigatórias e permitidas), grafemas UAX #29 e bidi UAX #9
+  completo (embeddings, isolates, números) com a reordenação L1/L2 da linha, pela ICU da libicucore do mOS (carregador
+  próprio de `ubidi`/`ubrk`, sem mexer na tabela da Foundation); sem ICU, regras simplificadas.
+- Typesetter: o texto e as análises guardados; `CTTypesetterSuggestLineBreak/ClusterBreak` pelas oportunidades UAX #14
+  e pelos grafemas (espaço do fim "pendura"); a ordem visual da linha pelos níveis da UAX #9; opções
+  `ForcedEmbeddingLevel` e `DisableBidiProcessing`.
+- `coretext_frame.inc`: `CTParagraphStyle` (18 especificadores; o `NSParagraphStyle` do AppKit também vale),
+  `CTTextTab`, `CTRunDelegate` (largura e métricas do anexo), `CTGlyphInfo` (glifo no lugar do da cmap),
+  `CTRubyAnnotation` (dados), 40 constantes de atributo/frame/typesetter, e o framesetter de verdade no lugar do falso
+  do `vscode_frameworks.c`: recuos, alinhamento (natural pela direção, justificado menos a última linha), tabulações
+  (esquerda, direita, centro; padrão 28 pt), múltiplo/mínimo/máximo de altura, espaçamento, espaço antes/depois,
+  modos de quebra e truncagem, origens relativas à caixa do caminho, faixa visível, `SuggestFrameSizeWithConstraints`,
+  `CreateWithTypesetter`, `GetTypesetter`, `GetFrameAttributes`. Linha: `GetStringIndexForPosition`,
+  `GetPenOffsetForFlush`, `EnumerateCaretOffsets`; typesetter com offset.
+- `coretext_fonts.inc`: `CTFontCopyName` pela chave (tabela `name`, 18 chaves), `CopyDisplayName`, idiomas pela OS/2,
+  `HasTable`, carets de ligadura pelo GDEF, limites ópticos, cópias por família/plataforma/opções, descritores
+  derivados (família, recurso, traços, variação), casamento com progresso, coleções (atributos, cópia, ordenação),
+  gerenciador (URLs e nomes disponíveis, registro/remoção em lote, escopo, suporte, ativação automática, pedidos),
+  `CTRunGetAdvancesPtr` e `GetBaseAdvancesAndOrigins`.
+
+Testes: `tools/ct_layout_host.c` (com e sem ICU), `tools/coretext_host.c` 32/32 (framesetter com contas exatas,
+estilo, tabulação, truncagem, run delegate, nomes/idiomas de uma fonte real registrada), e os antigos
+`ctrun_host`/`ctapps_host` seguem verdes.
+
+
+### Passo 8 — CGPath booleanas e CGImageMetadata/XMP (PR de 16 nov. 2026)
+
+- `cg_pathbool.c`: `CGPathCreateCopyByUnioningPath`, `…IntersectingPath`, `…SubtractingPath`,
+  `…SymmetricDifferenceOfPath`, `…NormalizingPath`, `CGPathIntersectsPath`, `…ByFlattening`, `CGPathCreateCopyOf
+  LineBy…` e `CGPathCopySeparateComponents`, com as regras par/ímpar e não-zero. Curvas achatadas, arestas
+  classificadas por região (dentro/fora de cada caminho) e o contorno remontado. Teste:
+  `tools/cg_pathbool_host.c` 17/17 (rasterização contra a operação feita pixel a pixel, 0,000% de diferença).
+- `iio_xmp.c` (C puro): pacote XMP (RDF/XML) lido para uma árvore (simples, arrays, texto alternativo com `xml:lang`,
+  estrutura, qualificadores), gravado de volta, achado no arquivo e embutido no contêiner certo (JPEG APP1, PNG iTXt,
+  TIFF tag 700, GIF "XMP DataXMP"). `imageio_meta.inc`: `CGImageMetadata`/`CGImageMetadataTag` completos (criar,
+  copiar, caminhos `dc:subject[0]`/`exif:Flash.Fired`, valores, remoção, namespaces próprios, enumeração recursiva,
+  ponte com as propriedades EXIF/TIFF/GPS/IPTC), `CGImageSourceCopyMetadataAtIndex` (XMP do arquivo e EXIF/TIFF/GPS/
+  IPTC como no macOS), `CGImageDestinationAddImageAndMetadata` e `CGImageDestinationCopyImageSource` (mesmo formato,
+  sem recomprimir, troca ou mescla, data e orientação). Testes: `tools/iio_xmp_host.py` (pacotes no estilo exiftool,
+  relidos pelo PIL) e as seções 7–8 do `tools/imageio_cf_host.c` (ida e volta em JPEG/PNG/TIFF/GIF).
+- Core Text, depois: métricas do `CTFont` pelas tabelas da face (`cx_font_metrics` em `ct_outline.c`: ascendente,
+  descendente e leading do hhea, altura de maiúscula e de x da OS/2 v2 ou do contorno de H/x, ângulo itálico e
+  sublinhado do post, caixa do head), conferidas com o FreeType em 5 fontes (`tools/ct_outline_host.py`). Ruby
+  desenhado: acima, abaixo e inline, os 7 alinhamentos, `ScaleToFit`, overhang (None/Start/End abrem espaço em volta da
+  base), a linha mais alta pelo ruby e as posições do `CTRun` com o espaço do overhang (`tools/coretext_host.c`, 10 casos).

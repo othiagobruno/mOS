@@ -9,7 +9,9 @@
  *    RemoteIO do iOS/Catalyst, com render callback, formato do cliente (qualquer LPCM), parâmetro de volume;
  *    AudioOutputUnitStart/Stop; o barramento de entrada (elemento != 0) lê o microfone se o TCC conceder;
  *  - AudioQueue de saída (LPCM) e de entrada (microfone, mesma condição de TCC);
- *  - AudioConverter LPCM -> LPCM (formato, canais e taxa);
+ *  - AUMultiChannelMixer (volume/pan/enable por barramento, reamostragem por barramento), kAudioUnitProperty_MakeConnection
+ *    e AUGraph (nós, conexões, callbacks de entrada, AUGraphUpdate, a saída como cabeça);
+ *  - AudioConverter LPCM -> LPCM (formato, canais e taxa) e AAC/MP3/Opus/ALAC -> LPCM (cx_pdec, audiodec.c);
  *  - AudioFile/ExtAudioFile: WAV, AIFF/AIFC, CAF em LPCM, e MP3, ALAC de 16 bits, AAC e Opus (audiodec.c);
  *  - AudioServices: sons de sistema a partir de arquivos (WAV/AIFF/CAF), o alerta e a conclusão.
  * AAC e Opus viram LPCM ao abrir (o arquivo inteiro é decodificado). Sem concessão de
@@ -820,6 +822,7 @@ static acomp_t g_comps[] = {
     {{FCC('a', 'u', 'o', 'u'), FCC('a', 'h', 'a', 'l'), FCC('a', 'p', 'p', 'l'), 0, 0}, "Apple: AUHAL"},
     {{FCC('a', 'u', 'o', 'u'), FCC('v', 'p', 'i', 'o'), FCC('a', 'p', 'p', 'l'), 0, 0}, "Apple: AUVoiceProcessor"},
     {{FCC('a', 'u', 'o', 'u'), FCC('r', 'i', 'o', 'c'), FCC('a', 'p', 'p', 'l'), 0, 0}, "Apple: AURemoteIO"},
+    {{FCC('a', 'u', 'm', 'x'), FCC('m', 'c', 'm', 'x'), FCC('a', 'p', 'p', 'l'), 0, 0}, "Apple: AUMultiChannelMixer"},
 };
 #define NCOMPS (sizeof g_comps / sizeof g_comps[0])
 
@@ -841,6 +844,20 @@ OSStatus AudioComponentCopyName(void *c, id *out) { if (!c || !out) return kAudi
 OSStatus AudioComponentGetVersion(void *c, u32 *v) { if (!c || !v) return kAudio_ParamError; *v = 0x10000; return 0; }
 
 typedef OSStatus (*aurender_fn)(void *refcon, u32 *flags, const ats_t *ts, u32 bus, u32 frames, ablist_t *data);
+/* barramento de entrada do mixer: o callback do app ou a saída de outra unidade, com o formato próprio e a
+ * reamostragem para a taxa de saída do mixer (a saída que sobra de um pull fica em pend) */
+typedef struct aubus {
+    aurender_fn fn;
+    void *ref;
+    void *src;
+    u32 src_bus;
+    asbd_t fmt;
+    float vol, pan;
+    int enable;
+    rs_t rs;
+    float *pend;
+    u32 pend_n, pend_cap;
+} aubus_t;
 typedef struct au {
     u32 magic;
     acomp_t *comp;
@@ -860,6 +877,17 @@ typedef struct au {
     int nnotify;
     void *buf;                   /* memória do AudioBufferList do render */
     u32 bufcap;
+    int kind;                    /* 0 unidade de saída, 1 AUMultiChannelMixer */
+    void *csrc;                  /* saída: a unidade ligada ao elemento 0 (kAudioUnitProperty_MakeConnection) */
+    u32 cbus;
+    aubus_t *bus;                /* mixer: barramentos de entrada */
+    u32 nbus;
+    asbd_t out_fmt;              /* mixer: formato de saída */
+    float mvol;
+    void *pbuf, *obuf;
+    u32 pcap, ocap;
+    float *acc, *mixb, *tmpb;
+    u32 acc_cap, mixb_cap, tmpb_cap;
 } au_t;
 #define AU_MAGIC 0x4155554Eu
 
@@ -878,6 +906,15 @@ OSStatus AudioComponentInstanceNew(void *c, void **out) {
     a->max_frames = 4096;
     a->enable_out = 1;
     a->volume = 1;
+    if (((acomp_t *)c)->d.componentType == FCC('a', 'u', 'm', 'x')) {
+        a->kind = 1;
+        a->out_fmt = a->client;
+        a->mvol = 1;
+        a->nbus = 8;   /* o padrão do AUMultiChannelMixer */
+        a->bus = calloc(a->nbus, sizeof *a->bus);
+        if (!a->bus) { free(a); return -108; }
+        for (u32 i = 0; i < a->nbus; i++) { a->bus[i].fmt = a->client; a->bus[i].vol = 1; a->bus[i].enable = 1; }
+    }
     *out = a;
     return 0;
 }
@@ -886,6 +923,8 @@ OSStatus AudioComponentInstanceDispose(void *u) {
     if (!a) return kAudio_ParamError;
     cae_free(a->eng);
     free(a->buf);
+    for (u32 i = 0; i < a->nbus; i++) free(a->bus[i].pend);
+    free(a->bus); free(a->pbuf); free(a->obuf); free(a->acc); free(a->mixb); free(a->tmpb);
     a->magic = 0;
     free(a);
     return 0;
@@ -930,10 +969,227 @@ static void au_render(cae_t *e, float *stereo, u32 frames, const ats_t *ts) {
 OSStatus AudioUnitInitialize(void *u) { au_t *a = au_of(u); if (!a) return kAudio_ParamError; a->initialized = 1; return 0; }
 OSStatus AudioUnitUninitialize(void *u) { au_t *a = au_of(u); if (!a) return kAudio_ParamError; cae_free(a->eng); a->eng = 0; a->initialized = 0; return 0; }
 
+/* ---- conexões entre unidades e o AUMultiChannelMixer */
+OSStatus AudioUnitRender(void *u, u32 *flags, const ats_t *ts, u32 bus, u32 n, ablist_t *list);
+OSStatus AudioUnitGetProperty(void *u, u32 id_, u32 sc, u32 el, void *d, u32 *sz);
+#define kAudioUnitErr_Initialized (-10849)
+static bool fbuf(float **p, u32 *cap, u32 frames) {
+    if (frames <= *cap && *p) return true;
+    float *n = realloc(*p, (size_t)(frames ? frames : 1) * 8);
+    if (!n) return false;
+    *p = n;
+    *cap = frames;
+    return true;
+}
+/* AudioBufferList de n quadros no formato f, zerado, na memória *mem */
+static ablist_t *ab_make(const asbd_t *f, u32 n, void **mem, u32 *cap) {
+    bool ni = f->mFormatFlags & kFmtNonInterleaved;
+    u32 nb = ni ? f->mChannelsPerFrame : 1, bpb = n * f->mBytesPerFrame, need = 8 + 16 * nb + bpb * nb;
+    if (need > *cap || !*mem) { void *m = realloc(*mem, need); if (!m) return 0; *mem = m; *cap = need; }
+    ablist_t *l = *mem;
+    l->mNumberBuffers = nb;
+    u8 *data = (u8 *)*mem + 8 + 16 * nb;
+    for (u32 i = 0; i < nb; i++) {
+        l->mBuffers[i].mNumberChannels = ni ? 1 : f->mChannelsPerFrame;
+        l->mBuffers[i].mDataByteSize = bpb;
+        l->mBuffers[i].mData = data + (u64)i * bpb;
+    }
+    memset(data, 0, (size_t)bpb * nb);
+    return l;
+}
+/* render de uma unidade de saída ligada a outra unidade: puxa a saída da fonte */
+static OSStatus au_pull_conn(void *ref, u32 *flags, const ats_t *ts, u32 bus, u32 n, ablist_t *l) {
+    (void)bus;
+    au_t *a = ref;
+    return AudioUnitRender(a->csrc, flags, ts, a->cbus, n, l);
+}
+/* formato de saída do elemento el de uma unidade qualquer (o que a conexão vai entregar) */
+static bool au_src_fmt(void *src, u32 el, asbd_t *f) {
+    u32 sz = 40;
+    return AudioUnitGetProperty(src, 8, 2, el, f, &sz) == 0;
+}
+/* um barramento do mixer: n quadros estéreo na taxa de saída em dst */
+static OSStatus mix_pull(au_t *a, u32 b, const ats_t *ts, u32 n, float *dst) {
+    aubus_t *B = &a->bus[b];
+    double step = B->fmt.mSampleRate > 0 && a->out_fmt.mSampleRate > 0 ? B->fmt.mSampleRate / a->out_fmt.mSampleRate : 1.0;
+    if (B->rs.step != step) { rs_init(&B->rs, step, 1.0); B->pend_n = 0; }
+    if (B->pend_n < n) {
+        u32 m = step == 1.0 ? n - B->pend_n : (u32)((double)(n - B->pend_n) * step) + 2;
+        ablist_t *l = ab_make(&B->fmt, m, &a->pbuf, &a->pcap);
+        if (!l || !fbuf(&a->tmpb, &a->tmpb_cap, m)) return -108;
+        u32 f = 0;
+        OSStatus r = B->src ? AudioUnitRender(B->src, &f, ts, B->src_bus, m, l) : B->fn(B->ref, &f, ts, b, m, l);
+        if (r) return r;
+        if (f & 16) memset(a->tmpb, 0, (size_t)m * 8);
+        else to_stereo(&B->fmt, l, m, a->tmpb);
+        u32 room = (u32)((double)m / step) + 4;
+        if (B->pend_n + room > B->pend_cap) {
+            float *np = realloc(B->pend, (size_t)(B->pend_n + room) * 8);
+            if (!np) return -108;
+            B->pend = np;
+            B->pend_cap = B->pend_n + room;
+        }
+        B->pend_n += rs_run(&B->rs, a->tmpb, m, B->pend + (size_t)B->pend_n * 2, room);
+    }
+    u32 w = B->pend_n < n ? B->pend_n : n;
+    memcpy(dst, B->pend, (size_t)w * 8);
+    if (w < n) memset(dst + (size_t)w * 2, 0, (size_t)(n - w) * 8);
+    memmove(B->pend, B->pend + (size_t)w * 2, (size_t)(B->pend_n - w) * 8);
+    B->pend_n -= w;
+    return 0;
+}
+/* a saída do mixer: soma dos barramentos ligados e ativos com volume e pan (balanço), vezes o volume geral */
+static OSStatus mix_render(au_t *a, u32 *flags, const ats_t *ts, u32 bus, u32 n, ablist_t *list) {
+    if (bus != 0) return kAudioUnitErr_InvalidElement;
+    if (!a->initialized) return kAudioUnitErr_Uninitialized;
+    if (!fbuf(&a->acc, &a->acc_cap, n) || !fbuf(&a->mixb, &a->mixb_cap, n)) return -108;
+    memset(a->acc, 0, (size_t)n * 8);
+    int any = 0;
+    for (u32 b = 0; b < a->nbus; b++) {
+        aubus_t *B = &a->bus[b];
+        if (!B->enable || (!B->fn && !B->src)) continue;
+        OSStatus r = mix_pull(a, b, ts, n, a->mixb);
+        if (r) return r;
+        float gl = B->vol * (B->pan > 0 ? 1 - B->pan : 1), gr = B->vol * (B->pan < 0 ? 1 + B->pan : 1);
+        for (u32 i = 0; i < n; i++) { a->acc[i * 2] += a->mixb[i * 2] * gl; a->acc[i * 2 + 1] += a->mixb[i * 2 + 1] * gr; }
+        any = 1;
+    }
+    for (u32 i = 0; i < n * 2; i++) a->acc[i] *= a->mvol;
+    /* mData nulo: a unidade fornece a memória (como o AudioUnitRender do macOS) */
+    bool ni = a->out_fmt.mFormatFlags & kFmtNonInterleaved;
+    u32 bpb = n * a->out_fmt.mBytesPerFrame, nb = ni ? a->out_fmt.mChannelsPerFrame : 1;
+    if (list->mNumberBuffers < nb) return kAudio_ParamError;
+    for (u32 i = 0; i < nb; i++) {
+        if (!list->mBuffers[i].mData) {
+            if (a->ocap < bpb * nb || !a->obuf) { void *m = realloc(a->obuf, (size_t)bpb * nb); if (!m) return -108; a->obuf = m; a->ocap = bpb * nb; }
+            list->mBuffers[i].mData = (u8 *)a->obuf + (u64)i * bpb;
+        } else if (list->mBuffers[i].mDataByteSize < bpb) return kAudio_ParamError;
+        list->mBuffers[i].mDataByteSize = bpb;
+    }
+    from_stereo(&a->out_fmt, list, n, a->acc);
+    if (flags) { if (any) *flags &= ~16u; else *flags |= 16; }
+    return 0;
+}
+static OSStatus mix_set_property(au_t *a, u32 id_, u32 sc, u32 el, const void *d, u32 sz) {
+    aubus_t *B = sc == 1 && el < a->nbus ? &a->bus[el] : 0;
+    switch (id_) {
+    case 8: {
+        if (!d || sz < 40) return kAudio_ParamError;
+        asbd_t f = *(const asbd_t *)d;
+        lpcm_fix(&f);
+        if (!lpcm_ok(&f)) return kAudioUnitErr_FormatNotSupported;
+        if (sc == 1) { if (!B) return kAudioUnitErr_InvalidElement; B->fmt = f; B->rs.step = 0; }
+        else if ((sc == 2 && el == 0) || sc == 0) a->out_fmt = f;
+        else return kAudioUnitErr_InvalidElement;
+        au_notify(a, id_, sc, el);
+        return 0;
+    }
+    case 2:
+        if (!d || sz < 8) return kAudio_ParamError;
+        if (sc == 1) { if (!B) return kAudioUnitErr_InvalidElement; B->fmt.mSampleRate = *(const double *)d; B->rs.step = 0; }
+        else a->out_fmt.mSampleRate = *(const double *)d;
+        return 0;
+    case 23:
+        if (!d || sz < 16) return kAudio_ParamError;
+        if (!B) return sc == 1 ? kAudioUnitErr_InvalidElement : kAudioUnitErr_InvalidScope;
+        B->fn = ((void *const *)d)[0];
+        B->ref = ((void *const *)d)[1];
+        if (B->fn) B->src = 0;
+        B->pend_n = 0;
+        return 0;
+    case 1: {   /* kAudioUnitProperty_MakeConnection: AudioUnitConnection {fonte, saída da fonte, entrada} */
+        if (!d || sz < 16) return kAudio_ParamError;
+        void *src = ((void *const *)d)[0];
+        u32 so = ((const u32 *)d)[2], di = ((const u32 *)d)[3];
+        if (sc != 1 || di >= a->nbus) return kAudioUnitErr_InvalidElement;
+        B = &a->bus[di];
+        if (src && !au_of(src)) return kAudio_ParamError;
+        if (src && !au_src_fmt(src, so, &B->fmt)) return kAudioUnitErr_FormatNotSupported;
+        B->src = src;
+        B->src_bus = so;
+        if (src) B->fn = 0;
+        B->rs.step = 0;
+        B->pend_n = 0;
+        return 0;
+    }
+    case 11: {  /* kAudioUnitProperty_ElementCount */
+        if (!d || sz < 4) return kAudio_ParamError;
+        u32 n = *(const u32 *)d;
+        if (sc == 2) return n == 1 ? 0 : kAudio_ParamError;
+        if (sc != 1) return kAudioUnitErr_InvalidScope;
+        if (a->initialized) return kAudioUnitErr_Initialized;
+        if (n < 1 || n > 1024) return kAudio_ParamError;
+        for (u32 i = n; i < a->nbus; i++) free(a->bus[i].pend);
+        aubus_t *nbs = realloc(a->bus, (size_t)n * sizeof *nbs);
+        if (!nbs) return -108;
+        for (u32 i = a->nbus; i < n; i++) { memset(&nbs[i], 0, sizeof nbs[i]); nbs[i].fmt = a->client; nbs[i].vol = 1; nbs[i].enable = 1; }
+        a->bus = nbs;
+        a->nbus = n;
+        return 0;
+    }
+    case 14:
+        if (!d || sz < 4) return kAudio_ParamError;
+        a->max_frames = *(const u32 *)d;
+        return 0;
+    case 51: case 3007:   /* ShouldAllocateBuffer; MeteringMode: aceita (a medição não é exposta) */
+        return 0;
+    }
+    return kAudioUnitErr_InvalidProperty;
+}
+static OSStatus mix_get_property(au_t *a, u32 id_, u32 sc, u32 el, void *d, u32 *sz) {
+#define AUPUT(T, v) do { if (*sz < sizeof(T)) return kAudio_ParamError; *(T *)d = (T)(v); *sz = sizeof(T); return 0; } while (0)
+    aubus_t *B = sc == 1 && el < a->nbus ? &a->bus[el] : 0;
+    switch (id_) {
+    case 8:
+        if (*sz < 40) return kAudio_ParamError;
+        if (sc == 1) { if (!B) return kAudioUnitErr_InvalidElement; *(asbd_t *)d = B->fmt; }
+        else if ((sc == 2 && el == 0) || sc == 0) *(asbd_t *)d = a->out_fmt;
+        else return kAudioUnitErr_InvalidElement;
+        *sz = 40;
+        return 0;
+    case 2:
+        if (sc == 1) { if (!B) return kAudioUnitErr_InvalidElement; AUPUT(double, B->fmt.mSampleRate); }
+        AUPUT(double, a->out_fmt.mSampleRate);
+    case 11: AUPUT(u32, sc == 1 ? a->nbus : sc == 2 ? 1 : 0);
+    case 14: AUPUT(u32, a->max_frames);
+    case 12: AUPUT(double, 0.0);   /* Latency: o mixer não atrasa */
+    case 22: AUPUT(i32, 0);
+    case 23:
+        if (!B) return kAudioUnitErr_InvalidElement;
+        if (*sz < 16) return kAudio_ParamError;
+        ((void **)d)[0] = (void *)B->fn; ((void **)d)[1] = B->ref; *sz = 16;
+        return 0;
+    }
+#undef AUPUT
+    return kAudioUnitErr_InvalidProperty;
+}
+
 OSStatus AudioUnitSetProperty(void *u, u32 id_, u32 sc, u32 el, const void *d, u32 sz) {
     au_t *a = au_of(u);
     if (!a) return kAudio_ParamError;
+    if (a->kind == 1) return mix_set_property(a, id_, sc, el, d, sz);
     switch (id_) {
+    case 1: {   /* kAudioUnitProperty_MakeConnection no elemento 0: a saída puxa da fonte */
+        if (!d || sz < 16) return kAudio_ParamError;
+        void *src = ((void *const *)d)[0];
+        u32 so = ((const u32 *)d)[2], di = ((const u32 *)d)[3];
+        if (sc != 1 || di != 0) return kAudioUnitErr_InvalidElement;
+        if (!src) {
+            if (a->render == au_pull_conn) { a->render = 0; a->refcon = 0; }
+            a->csrc = 0;
+            return 0;
+        }
+        asbd_t f;
+        if (!au_of(src) || src == a) return kAudio_ParamError;
+        if (!au_src_fmt(src, so, &f)) return kAudioUnitErr_FormatNotSupported;
+        OSStatus r = AudioUnitSetProperty(a, 8, 1, 0, &f, 40);
+        if (r) return r;
+        a->csrc = src;
+        a->cbus = so;
+        a->render = au_pull_conn;
+        a->refcon = a;
+        return 0;
+    }
     case 8: {   /* kAudioUnitProperty_StreamFormat */
         if (!d || sz < 40) return kAudio_ParamError;
         asbd_t f = *(const asbd_t *)d;
@@ -992,7 +1248,22 @@ OSStatus AudioUnitGetPropertyInfo(void *u, u32 id_, u32 sc, u32 el, u32 *sz, u8 
     if (!a) return kAudio_ParamError;
     u32 n = 0;
     u8 wr = 1;
+    if (a->kind == 1) {
+        switch (id_) {
+        case 8: n = 40; break;
+        case 1: case 23: n = 16; break;
+        case 11: case 14: n = 4; break;
+        case 22: n = 4; wr = 0; break;
+        case 2: n = 8; break;
+        case 12: n = 8; wr = 0; break;
+        default: return kAudioUnitErr_InvalidProperty;
+        }
+        if (sz) *sz = n;
+        if (w) *w = wr;
+        return 0;
+    }
     switch (id_) {
+    case 1: n = 16; break;
     case 8: n = 40; break;
     case 23: case 2005: n = 16; break;
     case 2003: case 2000: case 14: case 2001: case 2006: case 11: n = 4; wr = id_ != 2001 && id_ != 2006 && id_ != 11; break;
@@ -1009,6 +1280,7 @@ OSStatus AudioUnitGetPropertyInfo(void *u, u32 id_, u32 sc, u32 el, u32 *sz, u8 
 OSStatus AudioUnitGetProperty(void *u, u32 id_, u32 sc, u32 el, void *d, u32 *sz) {
     au_t *a = au_of(u);
     if (!a || !d || !sz) return kAudio_ParamError;
+    if (a->kind == 1) return mix_get_property(a, id_, sc, el, d, sz);
 #define AUPUT(T, v) do { if (*sz < sizeof(T)) return kAudio_ParamError; *(T *)d = (T)(v); *sz = sizeof(T); return 0; } while (0)
     switch (id_) {
     case 8:
@@ -1074,21 +1346,53 @@ OSStatus AudioUnitRemoveRenderNotify(void *u, void *fn, void *ud) {
     return 0;
 }
 /* kHALOutputParam_Volume (14) no escopo global: o ganho da unidade */
+/* AUMultiChannelMixer: Volume (0) por barramento de entrada e geral (escopo de saída), Enable (1), Pan (2) */
+static float *mix_param(au_t *a, u32 id_, u32 sc, u32 el, OSStatus *err) {
+    *err = 0;
+    if (sc == 2 && id_ == 0) { if (el) { *err = kAudioUnitErr_InvalidElement; return 0; } return &a->mvol; }
+    if (sc != 1) { *err = kAudioUnitErr_InvalidScope; return 0; }
+    if (el >= a->nbus) { *err = kAudioUnitErr_InvalidElement; return 0; }
+    if (id_ == 0) return &a->bus[el].vol;
+    if (id_ == 2) return &a->bus[el].pan;
+    *err = kAudioUnitErr_InvalidParameter;
+    return 0;
+}
 OSStatus AudioUnitSetParameter(void *u, u32 id_, u32 sc, u32 el, float v, u32 off) {
-    (void)sc; (void)el; (void)off;
+    (void)off;
     au_t *a = au_of(u);
     if (!a) return kAudio_ParamError;
+    if (a->kind == 1) {
+        if (id_ == 1 && sc == 1) { if (el >= a->nbus) return kAudioUnitErr_InvalidElement; a->bus[el].enable = v != 0; return 0; }
+        OSStatus e;
+        float *p = mix_param(a, id_, sc, el, &e);
+        if (!p) return e;
+        *p = id_ == 2 ? (v < -1 ? -1 : v > 1 ? 1 : v) : (v < 0 ? 0 : v);
+        return 0;
+    }
     if (id_ == 14) { a->volume = v < 0 ? 0 : v; if (a->eng) a->eng->gain = a->volume; return 0; }
     return 0;
 }
 OSStatus AudioUnitGetParameter(void *u, u32 id_, u32 sc, u32 el, float *v) {
-    (void)sc; (void)el;
     au_t *a = au_of(u);
     if (!a || !v) return kAudio_ParamError;
+    if (a->kind == 1) {
+        if (id_ == 1 && sc == 1) { if (el >= a->nbus) return kAudioUnitErr_InvalidElement; *v = (float)a->bus[el].enable; return 0; }
+        OSStatus e;
+        float *p = mix_param(a, id_, sc, el, &e);
+        if (!p) return e;
+        *v = *p;
+        return 0;
+    }
     *v = id_ == 14 ? a->volume : 0;
     return 0;
 }
-OSStatus AudioUnitReset(void *u, u32 sc, u32 el) { (void)sc; (void)el; return au_of(u) ? 0 : kAudio_ParamError; }
+OSStatus AudioUnitReset(void *u, u32 sc, u32 el) {
+    (void)sc; (void)el;
+    au_t *a = au_of(u);
+    if (!a) return kAudio_ParamError;
+    for (u32 i = 0; i < a->nbus; i++) { a->bus[i].pend_n = 0; a->bus[i].rs.step = 0; }
+    return 0;
+}
 
 /* Para o AVAudioEngine e o AVCaptureSession: o anel de captura, sem inventar amostra. */
 u32 cx_capture_i16(short *dst, u32 frames) {
@@ -1142,6 +1446,7 @@ OSStatus AudioUnitRender(void *u, u32 *flags, const ats_t *ts, u32 bus, u32 n, a
     au_t *a = au_of(u);
     if (!a || !list) return kAudio_ParamError;
     if (n > a->max_frames) return -10874;   /* kAudioUnitErr_TooManyFramesToProcess */
+    if (a->kind == 1) return mix_render(a, flags, ts, bus, n, list);
     if (bus == 0) {
         for (u32 i = 0; i < list->mNumberBuffers; i++)
             if (list->mBuffers[i].mData) memset(list->mBuffers[i].mData, 0, list->mBuffers[i].mDataByteSize);
@@ -1175,6 +1480,280 @@ OSStatus AudioOutputUnitStop(void *u) {
     if (a->eng) cae_stop(a->eng, false);
     au_notify(a, 2001, 0, 0);
     return 0;
+}
+
+/* ================================================================ AUGraph
+ * Nós são descrições de componente; AUGraphOpen cria as unidades, AUGraphInitialize faz as ligações
+ * (kAudioUnitProperty_MakeConnection ou o callback de entrada) e inicializa cada unidade, AUGraphStart liga a unidade
+ * de saída (a cabeça do grafo). Com o grafo inicializado, ligações novas esperam o AUGraphUpdate, como no macOS. */
+#define kAUGraphErr_NodeNotFound (-10860)
+#define kAUGraphErr_InvalidConnection (-10861)
+#define kAUGraphErr_OutputNodeErr (-10862)
+#define kAUGraphErr_CannotDoInCurrentContext (-10863)
+#define badComponentType (-2005)
+typedef struct { i32 id; acdesc_t d; void *unit; } agnode_t;
+typedef struct { i32 dst; u32 dbus; i32 src; u32 sbus; aurender_fn fn; void *ref; } agconn_t;   /* src 0: callback */
+typedef struct { i32 dst; u32 dbus; } agdirty_t;
+typedef struct {
+    u32 magic;
+    agnode_t *n; u32 nn, ncap; i32 next_id;
+    agconn_t *c; u32 nc, ccap;
+    agdirty_t *dirty; u32 nd, dcap;
+    int open, inited, running;
+} augraph_t;
+#define AG_MAGIC 0x41554752u
+static augraph_t *ag_of(void *g) { augraph_t *a = g; return a && a->magic == AG_MAGIC ? a : 0; }
+static agnode_t *ag_node(augraph_t *g, i32 id) { for (u32 i = 0; i < g->nn; i++) if (g->n[i].id == id) return &g->n[i]; return 0; }
+static bool ag_grow(void **p, u32 *cap, u32 need, size_t el) {
+    if (need <= *cap) return true;
+    u32 nc = *cap ? *cap * 2 : 8;
+    while (nc < need) nc *= 2;
+    void *n = realloc(*p, nc * el);
+    if (!n) return false;
+    *p = n;
+    *cap = nc;
+    return true;
+}
+/* aplica a entrada (dst, dbus): desfaz o que havia e liga a conexão ou o callback registrado */
+static OSStatus ag_apply(augraph_t *g, i32 dst, u32 dbus) {
+    agnode_t *d = ag_node(g, dst);
+    if (!d || !d->unit) return 0;
+    struct { void *src; u32 so, di; } none = {0, 0, dbus};
+    void *cb0[2] = {0, 0};
+    AudioUnitSetProperty(d->unit, 1, 1, dbus, &none, 16);
+    AudioUnitSetProperty(d->unit, 23, 1, dbus, cb0, 16);
+    for (u32 i = 0; i < g->nc; i++) {
+        agconn_t *c = &g->c[i];
+        if (c->dst != dst || c->dbus != dbus) continue;
+        if (!c->src) { void *cb[2] = {(void *)c->fn, c->ref}; return AudioUnitSetProperty(d->unit, 23, 1, dbus, cb, 16); }
+        agnode_t *sn = ag_node(g, c->src);
+        if (!sn || !sn->unit) return kAUGraphErr_InvalidConnection;
+        struct { void *src; u32 so, di; } mc = {sn->unit, c->sbus, dbus};
+        return AudioUnitSetProperty(d->unit, 1, 1, dbus, &mc, 16);
+    }
+    return 0;
+}
+static OSStatus ag_touch(augraph_t *g, i32 dst, u32 dbus) {
+    if (!g->inited) return 0;   /* sem inicializar: as ligações entram no AUGraphInitialize */
+    for (u32 i = 0; i < g->nd; i++) if (g->dirty[i].dst == dst && g->dirty[i].dbus == dbus) return 0;
+    if (!ag_grow((void **)&g->dirty, &g->dcap, g->nd + 1, sizeof *g->dirty)) return -108;
+    g->dirty[g->nd].dst = dst;
+    g->dirty[g->nd].dbus = dbus;
+    g->nd++;
+    return 0;
+}
+static void ag_unlink(augraph_t *g, i32 dst, u32 dbus) {
+    for (u32 i = 0; i < g->nc; i++) if (g->c[i].dst == dst && g->c[i].dbus == dbus) { g->c[i] = g->c[--g->nc]; i--; }
+}
+static OSStatus ag_open_node(agnode_t *n) {
+    if (n->unit) return 0;
+    void *comp = AudioComponentFindNext(0, &n->d);
+    if (!comp) return badComponentType;
+    return AudioComponentInstanceNew(comp, &n->unit);
+}
+
+OSStatus NewAUGraph(void **out) {
+    if (!out) return kAudio_ParamError;
+    augraph_t *g = calloc(1, sizeof *g);
+    if (!g) return -108;
+    g->magic = AG_MAGIC;
+    g->next_id = 1;
+    *out = g;
+    return 0;
+}
+OSStatus AUGraphStop(void *gp);
+OSStatus AUGraphUninitialize(void *gp);
+OSStatus AUGraphClose(void *gp);
+OSStatus DisposeAUGraph(void *gp) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    AUGraphStop(g);
+    AUGraphUninitialize(g);
+    AUGraphClose(g);
+    free(g->n); free(g->c); free(g->dirty);
+    g->magic = 0;
+    free(g);
+    return 0;
+}
+OSStatus AUGraphAddNode(void *gp, const acdesc_t *d, i32 *out) {
+    augraph_t *g = ag_of(gp);
+    if (!g || !d || !out) return kAudio_ParamError;
+    if (!ag_grow((void **)&g->n, &g->ncap, g->nn + 1, sizeof *g->n)) return -108;
+    agnode_t *n = &g->n[g->nn];
+    memset(n, 0, sizeof *n);
+    n->d = *d;
+    n->id = g->next_id;
+    if (g->open) {
+        OSStatus r = ag_open_node(n);
+        if (r) return r;
+        if (g->inited) AudioUnitInitialize(n->unit);
+    }
+    g->nn++;
+    g->next_id++;
+    *out = n->id;
+    return 0;
+}
+OSStatus AUGraphRemoveNode(void *gp, i32 node) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    agnode_t *n = ag_node(g, node);
+    if (!n) return kAUGraphErr_NodeNotFound;
+    for (u32 i = 0; i < g->nc; i++) {
+        agconn_t *c = &g->c[i];
+        if (c->dst == node) { g->c[i] = g->c[--g->nc]; i--; }
+        else if (c->src == node) { i32 dd = c->dst; u32 db = c->dbus; g->c[i] = g->c[--g->nc]; i--; ag_apply(g, dd, db); }
+    }
+    if (n->unit) { AudioOutputUnitStop(n->unit); AudioComponentInstanceDispose(n->unit); }
+    *n = g->n[--g->nn];
+    return 0;
+}
+OSStatus AUGraphGetNodeCount(void *gp, u32 *n) {
+    augraph_t *g = ag_of(gp);
+    if (!g || !n) return kAudio_ParamError;
+    *n = g->nn;
+    return 0;
+}
+OSStatus AUGraphGetIndNode(void *gp, u32 idx, i32 *out) {
+    augraph_t *g = ag_of(gp);
+    if (!g || !out) return kAudio_ParamError;
+    if (idx >= g->nn) return kAUGraphErr_NodeNotFound;
+    *out = g->n[idx].id;
+    return 0;
+}
+OSStatus AUGraphNodeInfo(void *gp, i32 node, acdesc_t *d, void **unit) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    agnode_t *n = ag_node(g, node);
+    if (!n) return kAUGraphErr_NodeNotFound;
+    if (d) *d = n->d;
+    if (unit) *unit = n->unit;
+    return 0;
+}
+OSStatus AUGraphConnectNodeInput(void *gp, i32 src, u32 sbus, i32 dst, u32 dbus) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    if (!ag_node(g, src) || !ag_node(g, dst)) return kAUGraphErr_NodeNotFound;
+    if (src == dst) return kAUGraphErr_InvalidConnection;
+    ag_unlink(g, dst, dbus);
+    if (!ag_grow((void **)&g->c, &g->ccap, g->nc + 1, sizeof *g->c)) return -108;
+    g->c[g->nc++] = (agconn_t){dst, dbus, src, sbus, 0, 0};
+    return ag_touch(g, dst, dbus);
+}
+OSStatus AUGraphSetNodeInputCallback(void *gp, i32 dst, u32 dbus, const void *cb) {
+    augraph_t *g = ag_of(gp);
+    if (!g || !cb) return kAudio_ParamError;
+    if (!ag_node(g, dst)) return kAUGraphErr_NodeNotFound;
+    ag_unlink(g, dst, dbus);
+    if (!ag_grow((void **)&g->c, &g->ccap, g->nc + 1, sizeof *g->c)) return -108;
+    g->c[g->nc++] = (agconn_t){dst, dbus, 0, 0, ((aurender_fn const *)cb)[0], ((void *const *)cb)[1]};
+    return ag_touch(g, dst, dbus);
+}
+OSStatus AUGraphDisconnectNodeInput(void *gp, i32 dst, u32 dbus) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    if (!ag_node(g, dst)) return kAUGraphErr_NodeNotFound;
+    ag_unlink(g, dst, dbus);
+    return ag_touch(g, dst, dbus);
+}
+OSStatus AUGraphClearConnections(void *gp) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    while (g->nc) {
+        i32 d = g->c[0].dst;
+        u32 b = g->c[0].dbus;
+        ag_unlink(g, d, b);
+        ag_touch(g, d, b);
+    }
+    return 0;
+}
+OSStatus AUGraphUpdate(void *gp, u8 *updated) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    OSStatus r = 0;
+    for (u32 i = 0; i < g->nd && !r; i++) r = ag_apply(g, g->dirty[i].dst, g->dirty[i].dbus);
+    g->nd = 0;
+    if (updated) *updated = 1;
+    return r;
+}
+OSStatus AUGraphOpen(void *gp) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    if (g->open) return 0;
+    for (u32 i = 0; i < g->nn; i++) {
+        OSStatus r = ag_open_node(&g->n[i]);
+        if (r) {
+            for (u32 j = 0; j < i; j++) { AudioComponentInstanceDispose(g->n[j].unit); g->n[j].unit = 0; }
+            return r;
+        }
+    }
+    g->open = 1;
+    return 0;
+}
+OSStatus AUGraphClose(void *gp) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    if (g->inited) AUGraphUninitialize(g);
+    for (u32 i = 0; i < g->nn; i++) if (g->n[i].unit) { AudioComponentInstanceDispose(g->n[i].unit); g->n[i].unit = 0; }
+    g->open = 0;
+    return 0;
+}
+OSStatus AUGraphInitialize(void *gp) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    if (!g->open) return kAUGraphErr_CannotDoInCurrentContext;
+    if (g->inited) return 0;
+    for (u32 i = 0; i < g->nc; i++) {
+        OSStatus r = ag_apply(g, g->c[i].dst, g->c[i].dbus);
+        if (r) return r;
+    }
+    for (u32 i = 0; i < g->nn; i++) {
+        OSStatus r = AudioUnitInitialize(g->n[i].unit);
+        if (r) return r;
+    }
+    g->nd = 0;
+    g->inited = 1;
+    return 0;
+}
+OSStatus AUGraphUninitialize(void *gp) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    if (g->running) AUGraphStop(g);
+    for (u32 i = 0; i < g->nn; i++) if (g->n[i].unit) AudioUnitUninitialize(g->n[i].unit);
+    g->inited = 0;
+    g->nd = 0;
+    return 0;
+}
+static agnode_t *ag_head(augraph_t *g) {
+    for (u32 i = 0; i < g->nn; i++) if (g->n[i].d.componentType == FCC('a', 'u', 'o', 'u')) return &g->n[i];
+    return 0;
+}
+OSStatus AUGraphStart(void *gp) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    if (!g->inited) return kAudioUnitErr_Uninitialized;
+    agnode_t *h = ag_head(g);
+    if (!h || !h->unit) return kAUGraphErr_OutputNodeErr;
+    OSStatus r = AudioOutputUnitStart(h->unit);
+    if (!r) g->running = 1;
+    return r;
+}
+OSStatus AUGraphStop(void *gp) {
+    augraph_t *g = ag_of(gp);
+    if (!g) return kAudio_ParamError;
+    agnode_t *h = ag_head(g);
+    if (g->running && h && h->unit) AudioOutputUnitStop(h->unit);
+    g->running = 0;
+    return 0;
+}
+OSStatus AUGraphIsRunning(void *gp, u8 *v) { augraph_t *g = ag_of(gp); if (!g || !v) return kAudio_ParamError; *v = (u8)g->running; return 0; }
+OSStatus AUGraphIsOpen(void *gp, u8 *v) { augraph_t *g = ag_of(gp); if (!g || !v) return kAudio_ParamError; *v = (u8)g->open; return 0; }
+OSStatus AUGraphIsInitialized(void *gp, u8 *v) { augraph_t *g = ag_of(gp); if (!g || !v) return kAudio_ParamError; *v = (u8)g->inited; return 0; }
+
+/* Nenhuma unidade do mOS é instrumento (o DLSMusicDevice depende do banco de sons da Apple): o seletor de MIDI
+ * não existe em nenhuma instância, como num AudioUnit que não é MusicDevice no macOS. */
+OSStatus MusicDeviceMIDIEvent(void *u, u32 status, u32 d1, u32 d2, u32 off) {
+    (void)status; (void)d1; (void)d2; (void)off;
+    return au_of(u) ? (OSStatus)0x80000002 /* badComponentSelector */ : kAudio_ParamError;
 }
 
 /* ================================================================ AudioQueue de saída */
@@ -1660,16 +2239,47 @@ OSStatus AudioQueueNewInput(const asbd_t *f, void *cb, void *ud, void *rl, id mo
     return r;
 }
 
-/* ================================================================ AudioConverter (LPCM -> LPCM) */
+/* ================================================================ AudioConverter (LPCM -> LPCM e decodificação) */
 typedef OSStatus (*acinput_fn)(void *conv, u32 *npackets, ablist_t *data, aspd_t **pd, void *ud);
-typedef struct { u32 magic; asbd_t src, dst; rs_t rs; float *tmp, *tmp2; u32 tcap; } aconv_t;
+/* Decodificação (AAC, MP3, Opus, ALAC -> LPCM): cx_pdec_* em host-audio/audiodec.c. */
+typedef struct cx_pdec cx_pdec;
+cx_pdec *cx_pdec_open(u32 fmt, const u8 *cookie, int cookie_n, double rate, int ch);
+int cx_pdec_decode(cx_pdec *d, const u8 *pkt, int n, i16 *pcm, int max_frames, int *ch, int *rate);
+void cx_pdec_close(cx_pdec *d);
+typedef struct aconv aconv_t;
+struct aconv {
+    u32 magic; asbd_t src, dst; rs_t rs; float *tmp, *tmp2; u32 tcap;
+    float *pend; u32 pend_n, pend_cap;   /* saída já reamostrada que não coube no último pedido */
+    /* modo de decodificação */
+    int decode, dec_failed;
+    cx_pdec *dec;
+    u8 *cookie; u32 cookie_n;
+    i16 *fifo; u32 fifo_n, fifo_cap, fifo_ch, fifo_rate;
+    aconv_t *inner;           /* PCM s16 do decodificador -> dst */
+};
 #define AC_MAGIC 0x4143564Eu
 static aconv_t *ac_of(void *c) { aconv_t *a = c; return a && a->magic == AC_MAGIC ? a : 0; }
+static int ac_decodable(u32 f) {
+    return f == FCC('a', 'a', 'c', ' ') || f == FCC('a', 'a', 'c', 'h') || f == FCC('a', 'a', 'c', 'p') || f == FCC('a', 'a', 'c', 'l') ||
+           f == FCC('a', 'a', 'c', 'e') || f == FCC('a', 'a', 'c', 'f') || f == FCC('u', 's', 'a', 'c') || f == FCC('.', 'm', 'p', '3') ||
+           f == FCC('.', 'm', 'p', '2') || f == FCC('.', 'm', 'p', '1') || f == FCC('o', 'p', 'u', 's') || f == FCC('a', 'l', 'a', 'c');
+}
+OSStatus AudioConverterDispose(void *c);
 OSStatus AudioConverterNew(const asbd_t *src, const asbd_t *dst, void **out) {
     if (!src || !dst || !out) return kAudio_ParamError;
     asbd_t s = *src, d = *dst;
-    lpcm_fix(&s);
     lpcm_fix(&d);
+    if (s.mFormatID != kAudioFormatLinearPCM && ac_decodable(s.mFormatID) && lpcm_ok(&d)) {
+        aconv_t *c = calloc(1, sizeof *c);
+        if (!c) return -108;
+        c->magic = AC_MAGIC;
+        c->src = s;
+        c->dst = d;
+        c->decode = 1;
+        *out = c;
+        return 0;
+    }
+    lpcm_fix(&s);
     if (!lpcm_ok(&s) || !lpcm_ok(&d)) { *out = 0; return kAudioConverterErr_FormatNotSupported; }
     aconv_t *c = calloc(1, sizeof *c);
     if (!c) return -108;
@@ -1681,8 +2291,29 @@ OSStatus AudioConverterNew(const asbd_t *src, const asbd_t *dst, void **out) {
     return 0;
 }
 OSStatus AudioConverterNewSpecific(const asbd_t *src, const asbd_t *dst, u32 n, const void *descs, void **out) { (void)n; (void)descs; return AudioConverterNew(src, dst, out); }
-OSStatus AudioConverterDispose(void *c) { aconv_t *a = ac_of(c); if (!a) return kAudio_ParamError; a->magic = 0; free(a->tmp); free(a->tmp2); free(a); return 0; }
-OSStatus AudioConverterReset(void *c) { aconv_t *a = ac_of(c); if (!a) return kAudio_ParamError; rs_init(&a->rs, a->src.mSampleRate, a->dst.mSampleRate); return 0; }
+static void ac_dec_reset(aconv_t *a) {
+    if (a->dec) cx_pdec_close(a->dec);
+    a->dec = 0;
+    a->dec_failed = 0;
+    a->fifo_n = 0;
+    if (a->inner) AudioConverterDispose(a->inner);
+    a->inner = 0;
+}
+OSStatus AudioConverterDispose(void *c) {
+    aconv_t *a = ac_of(c);
+    if (!a) return kAudio_ParamError;
+    if (a->decode) { ac_dec_reset(a); free(a->fifo); free(a->cookie); }
+    a->magic = 0; free(a->tmp); free(a->tmp2); free(a->pend); free(a);
+    return 0;
+}
+OSStatus AudioConverterReset(void *c) {
+    aconv_t *a = ac_of(c);
+    if (!a) return kAudio_ParamError;
+    if (a->decode) { ac_dec_reset(a); return 0; }
+    rs_init(&a->rs, a->src.mSampleRate, a->dst.mSampleRate);
+    a->pend_n = 0;
+    return 0;
+}
 static bool ac_room(aconv_t *a, u32 frames) {
     if (frames <= a->tcap) return true;
     float *t = realloc(a->tmp, (size_t)frames * 8), *t2 = realloc(a->tmp2, ((size_t)frames * 8 + 64) * 8);
@@ -1692,19 +2323,34 @@ static bool ac_room(aconv_t *a, u32 frames) {
     a->tcap = frames;
     return true;
 }
-/* converte nf quadros do lado de origem e devolve quantos quadros de destino saíram em out */
+/* Converte os nf quadros de origem (todos são consumidos) e devolve quantos quadros de destino saíram em out. A
+ * saída que passar de outcap fica guardada em pend e sai primeiro na chamada seguinte (nf = 0 só esvazia pend). */
 static u32 ac_convert(aconv_t *a, const ablist_t *in, u32 nf, ablist_t *out, u32 outcap) {
-    if (!ac_room(a, nf)) return 0;
-    to_stereo(&a->src, in, nf, a->tmp);
-    u32 k = rs_run(&a->rs, a->tmp, nf, a->tmp2, outcap);
     /* mais de dois canais na origem e no destino: copia canal a canal na mesma taxa (sem passar pelo estéreo) */
     if (a->src.mChannelsPerFrame > 2 && a->dst.mChannelsPerFrame == a->src.mChannelsPerFrame && a->src.mSampleRate == a->dst.mSampleRate) {
         for (u32 f = 0; f < nf && f < outcap; f++)
             for (u32 ch = 0; ch < a->src.mChannelsPerFrame; ch++) wr_sample(&a->dst, out, f, ch, rd_sample(&a->src, in, f, ch));
         return nf < outcap ? nf : outcap;
     }
-    from_stereo(&a->dst, out, k, a->tmp2);
-    return k;
+    u32 room = (u32)((double)nf / a->rs.step) + 2 + a->pend_n;
+    if (!ac_room(a, nf > room ? nf : room)) return 0;
+    memcpy(a->tmp2, a->pend, (size_t)a->pend_n * 8);
+    if (nf) to_stereo(&a->src, in, nf, a->tmp);
+    u32 k = a->pend_n + rs_run(&a->rs, a->tmp, nf, a->tmp2 + (size_t)a->pend_n * 2, room - a->pend_n);
+    u32 w = k < outcap ? k : outcap;
+    from_stereo(&a->dst, out, w, a->tmp2);
+    a->pend_n = 0;
+    if (k > w) {
+        if (k - w > a->pend_cap) {
+            float *p = realloc(a->pend, (size_t)(k - w) * 8);
+            if (!p) return w;
+            a->pend = p;
+            a->pend_cap = k - w;
+        }
+        memcpy(a->pend, a->tmp2 + (size_t)w * 2, (size_t)(k - w) * 8);
+        a->pend_n = k - w;
+    }
+    return w;
 }
 OSStatus AudioConverterConvertBuffer(void *c, u32 insz, const void *in, u32 *outsz, void *out) {
     aconv_t *a = ac_of(c);
@@ -1724,17 +2370,109 @@ OSStatus AudioConverterConvertComplexBuffer(void *c, u32 nf, const ablist_t *in,
     ac_convert(a, in, nf, out, nf);
     return 0;
 }
+/* Pacotes comprimidos do proc -> decodificador -> FIFO de PCM s16 -> conversor LPCM -> out. O erro do proc volta
+ * como no macOS (com *npackets = quadros produzidos): apps usam um código próprio para "sem mais dados agora". */
+static OSStatus ac_fill_decode(aconv_t *a, acinput_fn proc, void *ud, u32 *npackets, ablist_t *out) {
+    u32 want = *npackets, got = 0, nb = out->mNumberBuffers;
+    ablist_t *view = calloc(1, 8 + 16 * (nb ? nb : 1));
+    i16 *tmp = malloc(8192 * 8 * sizeof(i16));
+    if (!view || !tmp) { free(view); free(tmp); return -108; }
+    OSStatus r = 0;
+    while (got < want) {
+        if (a->inner && (a->fifo_n || a->inner->pend_n)) {
+            double ratio = a->dst.mSampleRate > 0 && a->fifo_rate ? (double)a->fifo_rate / a->dst.mSampleRate : 1;
+            u32 nf = (u32)((double)(want - got) * ratio);
+            if (nf < 1) nf = 1;
+            if (nf > a->fifo_n) nf = a->fifo_n;
+            if (a->inner->pend_n >= want - got) nf = 0;
+            view->mNumberBuffers = nb;
+            for (u32 i = 0; i < nb; i++) {
+                view->mBuffers[i] = out->mBuffers[i];
+                view->mBuffers[i].mData = (u8 *)out->mBuffers[i].mData + (u64)got * a->dst.mBytesPerFrame;
+                view->mBuffers[i].mDataByteSize = (want - got) * a->dst.mBytesPerFrame;
+            }
+            ablist_t li = {1, 0, {{a->fifo_ch, nf * a->fifo_ch * 2, a->fifo}}};
+            got += ac_convert(a->inner, &li, nf, view, want - got);
+            if (nf) memmove(a->fifo, a->fifo + (u64)nf * a->fifo_ch, (u64)(a->fifo_n - nf) * a->fifo_ch * 2);
+            a->fifo_n -= nf;
+            continue;
+        }
+        if (a->dec_failed) { r = kAudioConverterErr_FormatNotSupported; break; }
+        if (!a->dec) {
+            a->dec = cx_pdec_open(a->src.mFormatID, a->cookie, (int)a->cookie_n, a->src.mSampleRate, (int)a->src.mChannelsPerFrame);
+            if (!a->dec) { a->dec_failed = 1; r = kAudioConverterErr_FormatNotSupported; break; }
+        }
+        u8 mem[8 + 16 * 8];
+        memset(mem, 0, sizeof mem);
+        ablist_t *in = (ablist_t *)mem;
+        in->mNumberBuffers = 1;
+        u32 n = 1;
+        aspd_t *ipd = 0;
+        r = proc(a, &n, in, &ipd, ud);
+        if (r != 0 || n == 0 || !in->mBuffers[0].mData) break;
+        const u8 *base = in->mBuffers[0].mData;
+        u32 total = in->mBuffers[0].mDataByteSize;
+        for (u32 p = 0; p < n; p++) {
+            u64 off = ipd ? (u64)ipd[p].mStartOffset : (u64)p * a->src.mBytesPerPacket;
+            u32 sz = ipd ? ipd[p].mDataByteSize : (a->src.mBytesPerPacket ? a->src.mBytesPerPacket : total);
+            if (off > total || sz > total - off) break;
+            int ch = 0, rate = 0;
+            int k = cx_pdec_decode(a->dec, base + off, (int)sz, tmp, 8192, &ch, &rate);
+            if (k <= 0 || ch < 1 || rate < 1) continue;
+            if (!a->inner || (u32)ch != a->fifo_ch || (u32)rate != a->fifo_rate) {
+                if (a->inner) { AudioConverterDispose(a->inner); a->inner = 0; }
+                a->fifo_n = 0;
+                asbd_t mid = {0};
+                mid.mSampleRate = rate;
+                mid.mFormatID = kAudioFormatLinearPCM;
+                mid.mFormatFlags = kFmtSignedInt | kFmtPacked;
+                mid.mChannelsPerFrame = (u32)ch;
+                mid.mBitsPerChannel = 16;
+                mid.mFramesPerPacket = 1;
+                mid.mBytesPerFrame = mid.mBytesPerPacket = 2u * (u32)ch;
+                void *ic = 0;
+                if (AudioConverterNew(&mid, &a->dst, &ic)) { r = kAudioConverterErr_FormatNotSupported; break; }
+                a->inner = ic;
+                a->fifo_ch = (u32)ch;
+                a->fifo_rate = (u32)rate;
+            }
+            if (a->fifo_n + (u32)k > a->fifo_cap) {
+                u32 nc = (a->fifo_n + (u32)k) * 2;
+                i16 *nf2 = realloc(a->fifo, (u64)nc * a->fifo_ch * 2);
+                if (!nf2) { r = -108; break; }
+                a->fifo = nf2;
+                a->fifo_cap = nc;
+            }
+            memcpy(a->fifo + (u64)a->fifo_n * a->fifo_ch, tmp, (u64)k * a->fifo_ch * 2);
+            a->fifo_n += (u32)k;
+        }
+        if (r) break;
+    }
+    for (u32 i = 0; i < nb; i++) out->mBuffers[i].mDataByteSize = got * a->dst.mBytesPerFrame;
+    free(view);
+    free(tmp);
+    *npackets = got;
+    return r;
+}
+
 /* o conversor pede entrada ao app pelo proc até encher a saída (ou o proc devolver 0 pacotes / erro) */
 OSStatus AudioConverterFillComplexBuffer(void *c, acinput_fn proc, void *ud, u32 *npackets, ablist_t *out, aspd_t *pd) {
     (void)pd;
     aconv_t *a = ac_of(c);
     if (!a || !proc || !npackets || !out) return kAudio_ParamError;
+    if (a->decode) return ac_fill_decode(a, proc, ud, npackets, out);
     u32 want = *npackets, got = 0;
     /* o destino é escrito em pedaços: um ablist com os ponteiros deslocados */
     u32 nb = out->mNumberBuffers;
     ablist_t *view = calloc(1, 8 + 16 * (nb ? nb : 1));
     if (!view) return -108;
     OSStatus r = 0;
+    if (a->pend_n) {
+        ablist_t none = {0};
+        view->mNumberBuffers = nb;
+        for (u32 i = 0; i < nb; i++) view->mBuffers[i] = out->mBuffers[i];
+        got = ac_convert(a, &none, 0, view, want);
+    }
     while (got < want) {
         u32 req = (u32)((double)(want - got) * a->src.mSampleRate / a->dst.mSampleRate) + 1;
         if (req > 4096) req = 4096;
@@ -1761,10 +2499,27 @@ OSStatus AudioConverterFillComplexBuffer(void *c, acinput_fn proc, void *ud, u32
     *npackets = got;
     return got || r == 0 ? 0 : r;
 }
-OSStatus AudioConverterSetProperty(void *c, u32 id_, u32 sz, const void *d) { (void)id_; (void)sz; (void)d; return ac_of(c) ? 0 : kAudio_ParamError; }
+OSStatus AudioConverterSetProperty(void *c, u32 id_, u32 sz, const void *d) {
+    aconv_t *a = ac_of(c);
+    if (!a) return kAudio_ParamError;
+    if (id_ == FCC('d', 'm', 'g', 'c')) {   /* kAudioConverterDecompressionMagicCookie */
+        if (!a->decode) return kAudioConverterErr_PropertyNotSupported;
+        u8 *ck = sz ? malloc(sz) : 0;
+        if (sz && (!ck || !d)) { free(ck); return kAudio_ParamError; }
+        if (sz) memcpy(ck, d, sz);
+        free(a->cookie);
+        a->cookie = ck;
+        a->cookie_n = sz;
+        ac_dec_reset(a);   /* o decodificador reabre com o cookie novo */
+        return 0;
+    }
+    return 0;
+}
 OSStatus AudioConverterGetPropertyInfo(void *c, u32 id_, u32 *sz, u8 *w) {
     if (!ac_of(c)) return kAudio_ParamError;
-    u32 n = id_ == FCC('a', 'c', 'i', 'd') || id_ == FCC('a', 'c', 'o', 'd') ? 40 : 4;
+    aconv_t *a = ac_of(c);
+    u32 n = id_ == FCC('a', 'c', 'i', 'd') || id_ == FCC('a', 'c', 'o', 'd') ? 40 : id_ == FCC('d', 'm', 'g', 'c') ? a->cookie_n : 4;
+    if (w && id_ == FCC('d', 'm', 'g', 'c')) { if (sz) *sz = n; *w = 1; return 0; }
     if (sz) *sz = n;
     if (w) *w = 0;
     return 0;
@@ -1774,6 +2529,13 @@ OSStatus AudioConverterGetProperty(void *c, u32 id_, u32 *sz, void *d) {
     if (!a || !sz || !d) return kAudio_ParamError;
     if (id_ == FCC('a', 'c', 'i', 'd') && *sz >= 40) { *(asbd_t *)d = a->src; *sz = 40; return 0; }   /* CurrentInputStreamDescription */
     if (id_ == FCC('a', 'c', 'o', 'd') && *sz >= 40) { *(asbd_t *)d = a->dst; *sz = 40; return 0; }
+    if (id_ == FCC('d', 'm', 'g', 'c')) {
+        if (!a->decode || !a->cookie) return kAudioConverterErr_PropertyNotSupported;
+        if (*sz < a->cookie_n) return kAudio_ParamError;
+        memcpy(d, a->cookie, a->cookie_n);
+        *sz = a->cookie_n;
+        return 0;
+    }
     if (*sz >= 4) { *(u32 *)d = 0; *sz = 4; return 0; }
     return kAudioConverterErr_PropertyNotSupported;
 }

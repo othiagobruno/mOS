@@ -4,7 +4,7 @@
  *
  *  - libSystem: setiopolicy_np, atexit_b, __c_locale, dispatch_data_create (dispatch_data = NSData, como no ObjC);
  *  - CFPreferences por domínio (CopyValue/SetValue/Synchronize), gravadas em ~/Library/Preferences/<app>.plist;
- *  - NSInputStream (dados, arquivo ou URL de arquivo), CFFileSecurity e NSURLFileSecurityKey;
+ *  - CFFileSecurity e NSURLFileSecurityKey (NSInputStream foi para cfnetstream.c);
  *  - UTTypeConformsTo e kUTType* de CoreServices; SMAppService (itens de login, guardados em memória);
  *  - CoreSpotlight (índice local em memória com busca por texto), AVCaptureAudioDataOutput e as chaves do AVFAudio;
  *  - NSPreviewRepresentingActivityItem, NSHapticFeedbackManager (o mOS não tem trackpad com atuador: nada vibra);
@@ -41,7 +41,6 @@ const char *sel_getName(SEL s);
 int snprintf(char *b, size_t n, const char *f, ...);
 
 static id cls(const char *n) { return (id)cx_class_named(n); }
-static BOOL resp(id o, const char *s) { return o && cx_responds(object_getClass(o), sel_registerName(s)); }
 static id ret(id o) { return o ? objc_retain(o) : 0; }
 static void setobj(id *slot, id v) { if (*slot == v) return; if (v) objc_retain(v); if (*slot) objc_release(*slot); *slot = v; }
 static id mdict(void) { return MSG0(id, cls("NSMutableDictionary"), "dictionary"); }
@@ -66,51 +65,7 @@ u8 _c_locale[512];                     /* no Mach-O: __c_locale */
 
 /* CFPreferences por domínio: prefs.c */
 
-/* ================================================================ NSInputStream */
-cx_class_t NSInputStream_c __asm__("OBJC_CLASS_$_NSInputStream"), NSInputStream_m __asm__("OBJC_METACLASS_$_NSInputStream");
-typedef struct { void *isa; u8 *buf; u64 len, pos; int status; id delegate, error; } nsin_t;
-#define IS(o) ((nsin_t *)(o))
-static id is_init_data(id s, SEL c, id data) {
-    (void)c;
-    u64 n = data ? MSG0(u64, data, "length") : 0;
-    IS(s)->buf = malloc(n ? n : 1);
-    if (n) memcpy(IS(s)->buf, MSG0(const void *, data, "bytes"), n);
-    IS(s)->len = n;
-    return s;
-}
-static id is_init_file(id s, SEL c, id path) {
-    (void)c;
-    u64 n = 0;
-    u8 *b = path ? cx_read_file(cx_cstr(path), &n) : 0;
-    if (!b) { objc_release(s); return 0; }
-    IS(s)->buf = b; IS(s)->len = n;
-    return s;
-}
-static id is_init_url(id s, SEL c, id url) { return is_init_file(s, c, url && resp(url, "path") ? MSG0(id, url, "path") : 0); }
-static id is_with_data(id k, SEL c, id d) { return objc_autorelease(is_init_data(cx_alloc_instance((cx_class_t *)k), c, d)); }
-static id is_with_file(id k, SEL c, id p) { id s = is_init_file(cx_alloc_instance((cx_class_t *)k), c, p); return s ? objc_autorelease(s) : 0; }
-static id is_with_url(id k, SEL c, id u) { id s = is_init_url(cx_alloc_instance((cx_class_t *)k), c, u); return s ? objc_autorelease(s) : 0; }
-static void is_open(id s, SEL c) { (void)c; IS(s)->status = 2; }      /* NSStreamStatusOpen */
-static void is_close(id s, SEL c) { (void)c; IS(s)->status = 6; }     /* NSStreamStatusClosed */
-static i64 is_read(id s, SEL c, u8 *buf, u64 max) {
-    (void)c;
-    nsin_t *x = IS(s);
-    if (x->status != 2 && x->status != 3) return -1;
-    u64 n = x->len - x->pos < max ? x->len - x->pos : max;
-    memcpy(buf, x->buf + x->pos, n);
-    x->pos += n;
-    if (x->pos >= x->len) x->status = 5;                               /* NSStreamStatusAtEnd */
-    return (i64)n;
-}
-static BOOL is_has_bytes(id s, SEL c) { (void)c; return IS(s)->pos < IS(s)->len; }
-static u64 is_status(id s, SEL c) { (void)c; return (u64)IS(s)->status; }
-static id is_error(id s, SEL c) { (void)c; return IS(s)->error; }
-static id is_delegate(id s, SEL c) { (void)c; return IS(s)->delegate; }
-static void is_set_delegate(id s, SEL c, id d) { (void)c; IS(s)->delegate = d; }
-static BOOL is_get_buffer(id s, SEL c, u8 **b, u64 *n) { (void)c; if (b) *b = IS(s)->buf + IS(s)->pos; if (n) *n = IS(s)->len - IS(s)->pos; return YES; }
-static void is_schedule(id s, SEL c, id rl, id mode) { (void)s; (void)c; (void)rl; (void)mode; }
-static id is_prop(id s, SEL c, id key) { (void)s; (void)c; (void)key; return 0; }
-static BOOL is_set_prop(id s, SEL c, id v, id key) { (void)s; (void)c; (void)v; (void)key; return NO; }
+/* NSInputStream/NSOutputStream/NSStream: cfnetstream.c */
 
 /* ================================================================ CFFileSecurity e NSURLFileSecurityKey */
 id NSURLFileSecurityKey;
@@ -420,16 +375,6 @@ void cx_slack_frameworks_init(void) {
     AVFormatIDKey = S("AVFormatIDKey"); AVLinearPCMBitDepthKey = S("AVLinearPCMBitDepthKey");
     AVLinearPCMIsBigEndianKey = S("AVLinearPCMIsBigEndianKey"); AVLinearPCMIsFloatKey = S("AVLinearPCMIsFloatKey");
     AVLinearPCMIsNonInterleaved = S("AVLinearPCMIsNonInterleaved"); AVSampleRateKey = S("AVSampleRateKey");
-
-    cx_class_t *stream = cx_class_named("NSStream");
-    K(&NSInputStream_c, &NSInputStream_m, "NSInputStream", stream ? stream : obj, (u32)(sizeof(nsin_t) - 8));
-    cx_class_t *is = &NSInputStream_c;
-    AC(is, "inputStreamWithData:", is_with_data); AC(is, "inputStreamWithFileAtPath:", is_with_file); AC(is, "inputStreamWithURL:", is_with_url);
-    A(is, "initWithData:", is_init_data); A(is, "initWithFileAtPath:", is_init_file); A(is, "initWithURL:", is_init_url);
-    A(is, "open", is_open); A(is, "close", is_close); A(is, "read:maxLength:", is_read); A(is, "hasBytesAvailable", is_has_bytes);
-    A(is, "streamStatus", is_status); A(is, "streamError", is_error); A(is, "delegate", is_delegate); A(is, "setDelegate:", is_set_delegate);
-    A(is, "getBuffer:length:", is_get_buffer); A(is, "scheduleInRunLoop:forMode:", is_schedule); A(is, "removeFromRunLoop:forMode:", is_schedule);
-    A(is, "propertyForKey:", is_prop); A(is, "setProperty:forKey:", is_set_prop);
 
     K(&SMAppService_c, &SMAppService_m, "SMAppService", obj, (u32)(sizeof(smapp_t) - 8));
     AC(&SMAppService_c, "mainAppService", sm_main); AC(&SMAppService_c, "loginItemServiceWithIdentifier:", sm_login);

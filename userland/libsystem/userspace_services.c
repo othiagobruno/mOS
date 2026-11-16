@@ -10,6 +10,7 @@
 
 void cx_storekit_init(void);
 void cx_quicklook_init(void);
+void cx_pdfkit_init(void);
 void cx_coredata_init(void);
 void cx_photos_init(void);
 void cx_virtualization_init(void);
@@ -21,6 +22,7 @@ void cx_mapkit_init(void);
 void cx_userspace_services_init(void) {
     cx_storekit_init();
     cx_quicklook_init();
+    cx_pdfkit_init();                 /* pdfkit.c: PDFKit.framework sem dylib */
     cx_coredata_init();
     cx_photos_init();
     cx_virtualization_init();

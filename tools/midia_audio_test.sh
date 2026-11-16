@@ -40,5 +40,31 @@ ffmpeg $F $S -c:a aac -b:a 128k "$T/a.mov" && run "mov aac" "$T/a.mov" 48000 2 1
 # AAC em CAF: o ffmpeg não grava (só o afconvert do macOS); fica fora deste teste.
 ffmpeg $F $S -c:a libopus -b:a 96k -f caf "$T/o.caf" 2>/dev/null && run "caf opus" "$T/o.caf" 48000 2 1152
 ffmpeg $F $S -c:a libmp3lame -b:a 192k "$T/mp3.mp4" && run "mp4 mp3" "$T/mp3.mp4" 48000 2 1152
+# decodificação por pacote (AudioConverter) contra o arquivo inteiro
+gcc -O1 -w -I"$R/userland/libsystem" -c "$R/tools/midia_pdec_test.c" -o "$T/pdec.o" && g++ "$T/pdec.o" "$T"/o/*.o -lm -o "$T/pdec" || exit 1
+ffmpeg $F $S -c:a alac "$T/alac.m4a" && run "m4a alac 24 bits" "$T/alac.m4a" 48000 2 0   # a fonte é double: s32p/24
+ffmpeg $F $S -c:a alac -sample_fmt s16p "$T/alac16.m4a" && run "m4a alac 16 bits" "$T/alac16.m4a" 48000 2 0
+for f in "$T/a.m4a" "$T/m.m4a" "$T/a.mov" "$T/a_opus.mp4" "$T/mp3.mp4" "$T/alac.m4a" "$T/alac16.m4a"; do
+    [ -s "$f" ] || continue
+    n=$((n+1)); r=$("$T/pdec" "$f"); echo "pdec $(basename "$f"): $r"
+    case "$r" in "pdec ok"*) ok=$((ok+1));; esac
+done
+# AudioConverter decodificando (coreaudio.c de verdade; stubs só para o que o conversor não chama)
+gcc -std=gnu11 -O1 -w -fno-builtin -I"$R/userland/libsystem/kshim" -I"$R/userland/libsystem" -I"$R/kernel/include" \
+    -c "$R/userland/libsystem/coreaudio.c" -o "$T/ca.o" || exit 1
+gcc -O1 -w -c "$R/tools/audioconverter_host_stubs.c" -o "$T/stubs.o" && gcc -O1 -w -I"$R/userland/libsystem" \
+    -c "$R/tools/audioconverter_test.c" -o "$T/act.o" && g++ "$T/act.o" "$T/ca.o" "$T/stubs.o" "$T"/o/*.o -lm -lpthread -o "$T/act" || exit 1
+for c in "a.m4a" "a.m4a 0 esds" "m.m4a" "a_opus.mp4" "mp3.mp4" "alac.m4a" "a.m4a 44100" "m.m4a 48000"; do
+    set -- $c; f=$1; shift
+    [ -s "$T/$f" ] || continue
+    n=$((n+1)); r=$("$T/act" "$T/$f" "$@"); echo "audioconverter $c: $r"
+    case "$r" in "ac ok"*) ok=$((ok+1));; esac
+done
+# AUGraph e AUMultiChannelMixer (o mesmo coreaudio.c)
+gcc -O1 -w -c "$R/tools/augraph_test.c" -o "$T/agt.o" && g++ "$T/agt.o" "$T/ca.o" "$T/stubs.o" "$T"/o/*.o -lm -lpthread -o "$T/agt" || exit 1
+n=$((n+1)); "$T/agt" && ok=$((ok+1))
+# CoreMIDI (fontes/destinos virtuais, UMP 1.0/2.0)
+gcc -O1 -w -I"$R/userland/libsystem" "$R/tools/coremidi_test.c" "$R/userland/libsystem/coremidi.c" -lpthread -o "$T/cmt" || exit 1
+n=$((n+1)); "$T/cmt" && ok=$((ok+1))
 echo "midia-audio: $ok/$n ok"
 [ "$ok" = "$n" ]

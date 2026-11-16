@@ -288,3 +288,197 @@
 #define IH_SRC_SDMA_TRAP  224u
 #define IH_SRC_DC_HPD     9u          /* contexto (dw4) 0..5 = HPD1..6 */
 #define AMD_IH_RING_BYTES (64u * 1024u)
+
+/* ------------------------------------------------------------ GFX 9.1 (gfx.c) */
+/* Offsets do gc_9_0_offset.h (o mesmo conjunto que o amdgpu usa para a família Raven). Segmento 0 = 0x2000,
+ * segmento 1 = 0xA000; os valores abaixo já são o endereço absoluto em dwords. */
+#define GC_REG(dw)       ((u32)(dw) * 4u)
+/* GFXHUB 1.0: mesmos registradores da MMHUB, em outro lugar (bloco VM +0x1C0, bloco MC +0x154 sobre a base do GC) */
+#define GFXHUB_VM(r)     ((u32)(r) - (AMD_MMHUB_BASE0 - AMD_GC_BASE0 - 0x1C0u) * 4u)
+#define GFXHUB_MC(r)     ((u32)(r) - (AMD_MMHUB_BASE0 - AMD_GC_BASE0 - 0x154u) * 4u)
+#define R_CB_HW_CONTROL                      GC_REG(0x02680)
+#define R_CPC_UTCL1_CNTL                     GC_REG(0x0303D)
+#define R_CPF_UTCL1_CNTL                     GC_REG(0x0303E)
+#define R_CPG_UTCL1_CNTL                     GC_REG(0x0303C)
+#define R_DB_DEBUG2                          GC_REG(0x0260D)
+#define R_GB_GPU_ID                          GC_REG(0x02640)
+#define R_IA_UTCL1_CNTL                      GC_REG(0x02246)
+#define R_PA_SC_BINNER_EVENT_CNTL_3          GC_REG(0x022CF)
+#define R_PA_SC_ENHANCE                      GC_REG(0x022FC)
+#define R_PA_SC_LINE_STIPPLE_STATE           GC_REG(0x0C281)
+#define R_RLC_GPM_UTCL1_CNTL_0               GC_REG(0x0ECB2)
+#define R_RLC_GPM_UTCL1_CNTL_1               GC_REG(0x0ECB3)
+#define R_RLC_GPM_UTCL1_CNTL_2               GC_REG(0x0ECB4)
+#define R_RLC_PREWALKER_UTCL1_CNTL           GC_REG(0x0ECCD)
+#define R_RLC_SPM_UTCL1_CNTL                 GC_REG(0x0ECB5)
+#define R_TA_CNTL_AUX                        GC_REG(0x02542)
+#define R_TCP_CHAN_STEER_HI                  GC_REG(0x02B04)
+#define R_TCP_CHAN_STEER_LO                  GC_REG(0x02B03)
+#define R_VGT_CACHE_INVALIDATION             GC_REG(0x02231)
+#define R_VGT_GS_MAX_WAVE_ID                 GC_REG(0x02269)
+#define R_WD_UTCL1_CNTL                      GC_REG(0x02243)
+#define R_CP_MEC1_F32_INT_DIS                GC_REG(0x030BD)
+#define R_CP_MEC2_F32_INT_DIS                GC_REG(0x030BE)
+#define R_CP_DEBUG                           GC_REG(0x0307F)
+#define R_CB_HW_CONTROL_3                    GC_REG(0x02683)
+#define R_GB_ADDR_CONFIG                     GC_REG(0x0263E)
+#define R_GB_ADDR_CONFIG_READ                GC_REG(0x02642)
+#define R_PA_SC_ENHANCE_1                    GC_REG(0x022FD)
+#define R_PA_SC_MODE_CNTL_1                  GC_REG(0x0A293)
+#define R_RMI_UTCL1_CNTL2                    GC_REG(0x0278C)
+#define R_TD_CNTL                            GC_REG(0x02525)
+#define R_CB_DCC_CONFIG                      GC_REG(0x02688)
+#define R_CB_HW_CONTROL_2                    GC_REG(0x02682)
+#define R_CP_SD_CNTL                         GC_REG(0x031B7)
+#define R_GRBM_CAM_INDEX                     GC_REG(0x0FA04)
+#define R_GRBM_CAM_DATA                      GC_REG(0x0FA05)
+#define R_GRBM_CNTL                          GC_REG(0x02000)
+#define R_GRBM_GFX_CNTL                      GC_REG(0x02022)
+#define R_GRBM_GFX_INDEX                     GC_REG(0x0C200)
+#define R_GRBM_STATUS                        GC_REG(0x02004)
+#define R_GRBM_SOFT_RESET                    GC_REG(0x02008)
+#define R_SH_MEM_CONFIG                      GC_REG(0x0230D)
+#define R_SH_MEM_BASES                       GC_REG(0x0230A)
+#define R_GDS_VMID0_BASE                     GC_REG(0x03300)
+#define R_GDS_VMID0_SIZE                     GC_REG(0x03301)
+#define R_GDS_GWS_VMID0                      GC_REG(0x03320)
+#define R_GDS_OA_VMID0                       GC_REG(0x03330)
+#define R_CC_GC_SHADER_ARRAY_CONFIG          GC_REG(0x0226F)
+#define R_GC_USER_SHADER_ARRAY_CONFIG        GC_REG(0x02270)
+#define R_RLC_CNTL                           GC_REG(0x0EC00)
+#define R_CP_INT_CNTL_RING0                  GC_REG(0x0306A)
+#define R_RLC_SERDES_CU_MASTER_BUSY          GC_REG(0x0EC61)
+#define R_RLC_SERDES_NONCU_MASTER_BUSY       GC_REG(0x0EC62)
+#define R_RLC_CGCG_CGLS_CTRL                 GC_REG(0x0EC49)
+#define R_RLC_CSIB_ADDR_HI                   GC_REG(0x0ECA3)
+#define R_RLC_CSIB_ADDR_LO                   GC_REG(0x0ECA2)
+#define R_RLC_CSIB_LENGTH                    GC_REG(0x0ECA4)
+#define R_RLC_SRM_CNTL                       GC_REG(0x0EC80)
+#define R_RLC_SRM_ARAM_ADDR                  GC_REG(0x0EC83)
+#define R_RLC_SRM_ARAM_DATA                  GC_REG(0x0EC84)
+#define R_RLC_GPM_SCRATCH_ADDR               GC_REG(0x0EC6C)
+#define R_RLC_GPM_SCRATCH_DATA               GC_REG(0x0EC6D)
+#define R_RLC_SRM_INDEX_CNTL_ADDR_0          GC_REG(0x0EC8B)
+#define R_RLC_SRM_INDEX_CNTL_DATA_0          GC_REG(0x0EC93)
+#define R_RLC_GPM_UCODE_ADDR                 GC_REG(0x0F83C)
+#define R_RLC_GPM_UCODE_DATA                 GC_REG(0x0F83D)
+#define R_RLC_LB_THR_CONFIG_1                GC_REG(0x0ECBF)
+#define R_RLC_LB_THR_CONFIG_2                GC_REG(0x0ECB8)
+#define R_RLC_LB_THR_CONFIG_3                GC_REG(0x0ECB9)
+#define R_RLC_LB_THR_CONFIG_4                GC_REG(0x0ECBA)
+#define R_RLC_LB_CNTR_INIT                   GC_REG(0x0EC1B)
+#define R_RLC_LB_CNTR_MAX                    GC_REG(0x0EC12)
+#define R_RLC_LB_INIT_CU_MASK                GC_REG(0x0EC4F)
+#define R_RLC_LB_PARAMS                      GC_REG(0x0EC51)
+#define R_RLC_GPM_GENERAL_7                  GC_REG(0x0EC6A)
+#define R_RLC_LB_CNTL                        GC_REG(0x0EC19)
+#define R_RLC_LB_ALWAYS_ACTIVE_CU_MASK       GC_REG(0x0EC50)
+#define R_RLC_PG_ALWAYS_ON_CU_MASK           GC_REG(0x0EC53)
+#define R_RLC_SPM_MC_CNTL                    GC_REG(0x0EC71)
+#define R_CP_ME_CNTL                         GC_REG(0x021B6)
+#define R_CP_PFP_UCODE_ADDR                  GC_REG(0x0F814)
+#define R_CP_PFP_UCODE_DATA                  GC_REG(0x0F815)
+#define R_CP_CE_UCODE_ADDR                   GC_REG(0x0F818)
+#define R_CP_CE_UCODE_DATA                   GC_REG(0x0F819)
+#define R_CP_ME_RAM_WADDR                    GC_REG(0x0F816)
+#define R_CP_ME_RAM_DATA                     GC_REG(0x0F817)
+#define R_CP_MAX_CONTEXT                     GC_REG(0x030AE)
+#define R_CP_DEVICE_ID                       GC_REG(0x0304B)
+#define R_CP_RB_WPTR_DELAY                   GC_REG(0x021C1)
+#define R_CP_RB_VMID                         GC_REG(0x03051)
+#define R_CP_RB0_CNTL                        GC_REG(0x03041)
+#define R_CP_RB0_WPTR                        GC_REG(0x03054)
+#define R_CP_RB0_WPTR_HI                     GC_REG(0x03055)
+#define R_CP_RB0_RPTR                        GC_REG(0x021C0)
+#define R_CP_RB0_RPTR_ADDR                   GC_REG(0x03043)
+#define R_CP_RB0_RPTR_ADDR_HI                GC_REG(0x03044)
+#define R_CP_RB_WPTR_POLL_ADDR_LO            GC_REG(0x03046)
+#define R_CP_RB_WPTR_POLL_ADDR_HI            GC_REG(0x03047)
+#define R_CP_RB0_BASE                        GC_REG(0x03040)
+#define R_CP_RB0_BASE_HI                     GC_REG(0x030B1)
+#define R_CP_RB_DOORBELL_CONTROL             GC_REG(0x03059)
+#define R_CP_RB_DOORBELL_RANGE_LOWER         GC_REG(0x0305A)
+#define R_CP_RB_DOORBELL_RANGE_UPPER         GC_REG(0x0305B)
+#define R_VGT_INDEX_TYPE                     GC_REG(0x0C243)
+#define R_SCRATCH_REG0                       GC_REG(0x0C040)
+#define R_CP_MEC_CNTL                        GC_REG(0x0208D)
+#define   GRBM_READ_TIMEOUT_MASK      0xFFu
+#define   GRBM_GUI_ACTIVE             0x80000000u
+#define   GRBM_SOFT_RESET_RLC         0x4u
+#define   GRBM_GFX_CNTL_VMID_SHIFT    4
+#define   GRBM_IDX_SH_SHIFT           8
+#define   GRBM_IDX_SE_SHIFT           16
+#define   GRBM_IDX_BROADCAST_ALL      0xE0000000u   /* SE, SH e instância em broadcast */
+#define   GRBM_IDX_INSTANCE_BCAST     0x40000000u
+#define   SH_MEM_ALIGN_UNALIGNED      (3u << 3)
+#define   SH_MEM_RETRY_DISABLE        (1u << 12)
+#define   SH_MEM_PRIVATE_BASE         0x1000u       /* abertura privada em 0x1000'0000'0000'0000 (>> 48) */
+#define   SH_MEM_SHARED_BASE          0x2000u       /* abertura compartilhada (LDS) em 0x2000'... */
+#define   INACTIVE_CUS_SHIFT          16
+#define   RLC_ENABLE_F32              0x1u
+#define   CP_INT_CMP_BUSY             0x00040000u
+#define   CP_INT_CNTX_BUSY            0x00080000u
+#define   CP_INT_CNTX_EMPTY           0x00100000u
+#define   CP_INT_GFX_IDLE             0x00200000u
+#define   CP_INT_PRIV_INSTR           0x00400000u
+#define   CP_INT_PRIV_REG             0x00800000u
+#define   CP_INT_TIME_STAMP           0x04000000u
+#define   CP_INT_GUI_IDLE_ALL         (CP_INT_CMP_BUSY | CP_INT_CNTX_BUSY | CP_INT_CNTX_EMPTY | CP_INT_GFX_IDLE)
+#define   SERDES_NONCU_BUSY           0x000DFFFFu    /* SE, GC, TC0 e TC1 */
+#define   SRM_ENABLE                  0x1u
+#define   SRM_AUTO_INCR               0x2u
+#define   RLC_UCODE_START             0x2000u
+#define   RLC_LB_ENABLE               0x1u
+#define   RLC_SPM_VMID_MASK           0xFu
+#define   CP_ME_HALT_ALL              0x15000000u    /* CE, PFP e ME parados */
+#define   CP_ME_RESET_ALL             0x003F0000u    /* pipes 0 e 1 de CE, PFP e ME */
+#define   CP_ME_ICACHE_INV            0x00000150u
+#define   CP_MEC_HALT_BOTH            0x50000000u
+#define   CP_RB_BUFSZ_SHIFT           0
+#define   CP_RB_BLKSZ_SHIFT           8
+#define   CP_RB_DOORBELL_EN           0x40000000u
+#define   CP_RB_DOORBELL_UPPER_MASK   0x0FFFFFFCu
+#define AMD_GFX_RING_BYTES  (64u * 1024u)
+#define AMD_GFX_MAX_HW_CTX  8u
+/* PM4 tipo 3 (soc15d.h) */
+#define PM4_TYPE3(op, n)    (0xC0000000u | ((u32)(op) & 0xFFu) << 8 | ((u32)(n) & 0x3FFFu) << 16)
+#define PM4_NOP_1DW         PM4_TYPE3(PM4_NOP, 0x3FFF)    /* NOP de um dword só (preenchimento do anel) */
+#define PM4_NOP                 0x10u
+#define PM4_SET_BASE            0x11u
+#define PM4_CLEAR_STATE         0x12u
+#define PM4_CONTEXT_CONTROL     0x28u
+#define PM4_WRITE_DATA          0x37u
+#define PM4_WAIT_REG_MEM        0x3Cu
+#define PM4_INDIRECT_BUFFER     0x3Fu
+#define PM4_EVENT_WRITE         0x46u
+#define PM4_RELEASE_MEM         0x49u
+#define PM4_PREAMBLE_CNTL       0x4Au
+#define PM4_SET_CONTEXT_REG     0x69u
+#define PM4_SET_UCONFIG_REG     0x79u
+#define   PM4_CONTEXT_REG_START       0xA000u
+#define   PM4_UCONFIG_REG_START       0xC000u
+#define   PM4_UCONFIG_INDEX_TYPE      (2u << 28)
+#define   PM4_PREAMBLE_BEGIN_CLEAR    (2u << 28)
+#define   PM4_PREAMBLE_END_CLEAR      (3u << 28)
+#define   PM4_CE_PARTITION_BASE       3u
+#define   PM4_WD_DST_MEM              (5u << 8)       /* WRITE_DATA: memória (pela VM) */
+#define   PM4_WR_CONFIRM              (1u << 20)
+#define   PM4_IB_VALID                (1u << 23)
+#define   PM4_EOP_TC_WB               (1u << 15)
+#define   PM4_EOP_TCL1                (1u << 16)
+#define   PM4_EOP_TC                  (1u << 17)
+#define   PM4_EOP_TC_MD               (1u << 21)
+#define   PM4_EV_CACHE_FLUSH_INV_TS   0x14u
+#define   PM4_EVENT_INDEX(x)          ((u32)(x) << 8)
+#define   PM4_DATA_SEL_32             (1u << 29)
+#define   PM4_INT_SEL_WAIT            (2u << 24)      /* interrompe depois que o dado foi escrito */
+/* IH: fim de pipe (fence) e faltas do CP */
+#define IH_CLIENT_GRBM_CP        0x14u
+#define IH_SRC_CP_EOP            181u
+#define IH_SRC_CP_PRIV_REG       184u
+#define IH_SRC_CP_PRIV_INSTR     185u
+#define IH_SRC_CP_BAD_OPCODE     183u
+#define IH_SRC_CP_CTX_EMPTY      187u
+#define IH_SRC_CP_CTX_BUSY       188u
+#define IH_SRC_GRBM_GUI_IDLE     233u
+#define   CP_INT_OPCODE_ERROR         0x01000000u

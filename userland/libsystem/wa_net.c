@@ -1,6 +1,5 @@
 /*
- * mOS libSystem: SCNetworkReachability com estado, CNCopyCurrentNetworkInfo, CFHostGetNames,
- * CFStreamCreatePairWithSocketToCFHost.
+ * mOS libSystem: SCNetworkReachability com estado e CNCopyCurrentNetworkInfo.
  * O WhatsApp cria a reachability por nome e põe numa fila (SetDispatchQueue); antes o mOS
  * devolvia um NSObject qualquer e nunca chamava a callback. Agora o objeto guarda alvo,
  * callback, contexto e fila; ao ganhar fila ou run loop, a callback recebe as flags atuais
@@ -13,7 +12,6 @@ id objc_retain(id o);
 void objc_release(id o);
 void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
 void *dispatch_get_main_queue(void);
-void CFStreamCreatePairWithSocketToHost(void *alloc, id host, int port, id *rd, id *wr);
 
 enum { RF_REACHABLE = 1u << 1, RF_LOCAL = 1u << 16, RF_DIRECT = 1u << 17 };
 typedef struct { long version; void *info; const void *(*retain)(const void *); void (*release)(const void *); void *desc; } sc_ctx_t;
@@ -120,13 +118,6 @@ u8 SCNetworkReachabilityUnscheduleFromRunLoop(id t, void *rl, id mode) {
 id CNCopyCurrentNetworkInfo(id ifname) { (void)ifname; return 0; }
 id CNCopySupportedInterfaces(void) { return 0; }
 
-/* CFHostGetNames fica em cfhost.c, onde o host guarda o array. */
-id CFHostCopyNameString(id host);
-void CFStreamCreatePairWithSocketToCFHost(void *alloc, id host, int port, id *rd, id *wr) {
-    id name = host ? CFHostCopyNameString(host) : 0;
-    if (!name) { if (rd) *rd = 0; if (wr) *wr = 0; return; }
-    CFStreamCreatePairWithSocketToHost(alloc, name, port, rd, wr);
-    objc_release(name);
-}
+/* CFHostGetNames fica em cfhost.c; CFStreamCreatePairWithSocketToCFHost em cfnetstream.c. */
 
 /* nw_tls_copy_sec_protocol_options: nwnet.c (Network.framework) */

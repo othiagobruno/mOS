@@ -300,7 +300,11 @@ typedef struct {
     int nfr, cap;
     iio_enc_opts opts;
     int finalized;
+    void *meta;           /* xmp_doc do AddImageAndMetadata (imageio_meta.inc) */
 } idst_t;
+static void dst_meta_free(idst_t *d);
+static void dst_embed(idst_t *d, u8 **out, usize *on);
+static int dst_write(idst_t *d, const u8 *out, usize on);
 #define SRC_MAGIC 0x49534F31u
 #define DST_MAGIC 0x49445331u
 
@@ -320,6 +324,7 @@ static void dst_dealloc(id self, SEL c) {
     for (int i = 0; i < d->nfr; i++) free(d->fr[i].px);
     free(d->fr);
     free(d->path);
+    dst_meta_free(d);
     if (d->data) CFRelease(d->data);
     if (d->consumer) CFRelease(d->consumer);
     d->magic = 0;
@@ -877,19 +882,10 @@ bool CGImageDestinationFinalize(void *dst) {
     int rc = iio_encode(d->uti, fr, n, &o, &out, &on);
     free(fr);
     if (rc) return 0;
-    int ok = 1;
-    if (d->data) CFDataAppendBytes(d->data, out, (long)on);
-    else if (d->consumer) ok = cx_consumer_put(d->consumer, out, on) == (long)on;
-    else if (d->path) {
-        int fd = open(d->path, 577, 0644);          /* O_WRONLY | O_CREAT | O_TRUNC, como o resto do libSystem */
-        ok = fd >= 0;
-        for (usize k = 0; ok && k < on;) {
-            long w = write(fd, out + k, on - k);
-            if (w <= 0) ok = 0;
-            else k += (usize)w;
-        }
-        if (fd >= 0) close(fd);
-    }
+    dst_embed(d, &out, &on);
+    int ok = dst_write(d, out, on);
     free(out);
     return ok;
 }
+
+#include "imageio_meta.inc"

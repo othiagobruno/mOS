@@ -246,6 +246,8 @@ typedef struct mnet_io {
     void (*lock)(void *env);                        /* protege o pool (NULL = um só fio) */
     void (*unlock)(void *env);
     void *(*copy_trust)(void *env, void *conn);     /* SecTrustRef da cadeia do servidor (+1) ou NULL */
+    /* opcional: espera a conexão ficar legível (ev 1) ou gravável (ev 4); 1 pronto (ou dados já no TLS), 0 tempo, -1 erro */
+    int (*wait)(void *env, void *conn, int ev, int timeout_ms);
 } mnet_io_t;
 typedef struct mnet_pool_ent mnet_pool_ent_t;
 typedef struct {
@@ -300,6 +302,10 @@ void mnet_resp_free(mnet_resp_t *r);
 
 /* libSystem (urlsession_io.c): transporte do mOS e o cliente/jar compartilhados do processo */
 const mnet_io_t *cx_mnet_io(void);
+void *cx_mnet_conn_from_fd(int fd, int close_fd);   /* socket nativo do app -> conexão do transporte */
+int cx_mnet_conn_fd(void *conn);
+void cx_mnet_conn_set_close(void *conn, int close_fd);
+void *cx_mnet_conn_ssl(void *conn);                 /* SSLContextRef da conexão (kCFStreamPropertySSLContext) */
 mnet_client_t *cx_mnet_client(void);
 mnet_jar_t *cx_mnet_jar(void);
 
@@ -387,9 +393,87 @@ int mnet_proxy_parse_pac_result(const char *s, mnet_proxy_t *out, int max);
 
 /* ---- autenticação HTTP (RFC 7617 Basic, RFC 7616 Digest MD5/SHA-256/-sess, qop=auth) */
 /* escolhe o melhor desafio dos cabeçalhos (www-authenticate ou proxy-authenticate): 1 Basic, 2 Digest MD5, 3 Digest SHA-256 */
+/* parâmetro de um desafio ("Digest realm=\"x\", nonce=..."): 1 achou */
+int mnet_auth_param(const char *challenge, const char *name, char *out, size_t n);
 const char *mnet_auth_pick(const mnet_hdrs_t *h, const char *field, int *score);
 /* valor de Authorization para o desafio; cnonce de 16 bytes aleatórios (NULL = gerado com rnd) */
 char *mnet_auth_value(const char *challenge, const char *user, const char *pass, const char *method, const char *uri,
                       int nc, const uint8_t cnonce_raw[16]);
 void mnet_md5(const void *d, size_t n, uint8_t out[16]);
 void mnet_sha256(const void *d, size_t n, uint8_t out[32]);
+
+/* ---- streams do CFStream/NSStream (mnet_stream.c): memória, arquivo, par ligado e socket TCP com SOCKS/TLS */
+enum { MNET_SS_NOT_OPEN, MNET_SS_OPENING, MNET_SS_OPEN, MNET_SS_READING, MNET_SS_WRITING, MNET_SS_AT_END,
+       MNET_SS_CLOSED, MNET_SS_ERROR };                                      /* = CFStreamStatus */
+enum { MNET_SE_OPEN = 1, MNET_SE_BYTES = 2, MNET_SE_SPACE = 4, MNET_SE_ERROR = 8, MNET_SE_END = 16 };   /* = CFStreamEventType */
+enum { MNET_SD_POSIX = 1, MNET_SD_OSSTATUS = 2, MNET_SD_SSL = 3, MNET_SD_HTTP = 4, MNET_SD_SOCKS = 5,
+       MNET_SD_NETDB = 12 };                                                 /* = kCFStreamErrorDomain* */
+typedef struct mnet_stream mnet_stream_t;
+typedef struct {
+    int tls;                                     /* kCFStreamPropertySSLSettings / SocketSecurityLevel */
+    char peer_name[256];                         /* kCFStreamSSLPeerName (SNI e verificação) */
+    char socks_host[256]; int socks_port, socks_version;   /* kCFStreamPropertySOCKSProxy: 4 ou 5 */
+    char socks_user[128], socks_pass[128];
+    int timeout_ms;
+} mnet_sockopts_t;
+mnet_stream_t *mnet_stream_mem_in(const void *d, size_t n);                  /* copia os bytes */
+mnet_stream_t *mnet_stream_file_in(const char *path);
+mnet_stream_t *mnet_stream_mem_out(void);
+mnet_stream_t *mnet_stream_buf_out(void *buf, size_t cap);
+mnet_stream_t *mnet_stream_file_out(const char *path, int append);
+int mnet_stream_pair(size_t cap, mnet_stream_t **rd, mnet_stream_t **wr);
+int mnet_stream_socket(const mnet_io_t *io, const char *host, int port, mnet_stream_t **rd, mnet_stream_t **wr);
+int mnet_stream_socket_conn(const mnet_io_t *io, void *conn, int own, mnet_stream_t **rd, mnet_stream_t **wr);
+int mnet_stream_open(mnet_stream_t *s);                                      /* socket: conecta em segundo plano */
+void mnet_stream_close(mnet_stream_t *s);
+void mnet_stream_free(mnet_stream_t *s);
+long mnet_stream_read(mnet_stream_t *s, uint8_t *b, size_t n);               /* bloqueia como o CFReadStreamRead */
+long mnet_stream_write(mnet_stream_t *s, const uint8_t *b, size_t n);
+long mnet_stream_read_wait(mnet_stream_t *s, uint8_t *b, size_t n, int timeout_ms);   /* -2: prazo */
+int mnet_stream_status(mnet_stream_t *s);
+int mnet_stream_has_bytes(mnet_stream_t *s);
+int mnet_stream_has_space(mnet_stream_t *s);
+int mnet_stream_error(mnet_stream_t *s, long *code, const char **msg);       /* domínio (0 = sem erro) */
+unsigned mnet_stream_events(mnet_stream_t *s);                               /* eventos a entregar agora */
+/* notify: o estado mudou (qualquer fio, com travas internas presas: só sinalize, não chame o stream) */
+void mnet_stream_set_notify(mnet_stream_t *s, void (*fn)(void *), void *ctx);
+void mnet_stream_set_on_open(mnet_stream_t *s, void (*fn)(void *, mnet_stream_t *), void *ctx);
+int mnet_stream_get_buffer(mnet_stream_t *s, uint8_t **p, size_t *n);
+const uint8_t *mnet_stream_mem_data(mnet_stream_t *s, size_t *n);            /* DataWrittenToMemoryStream */
+long long mnet_stream_offset(mnet_stream_t *s);                              /* FileCurrentOffset */
+int mnet_stream_seek(mnet_stream_t *s, long long off);
+int mnet_stream_set_append(mnet_stream_t *s, int append);                   /* saída em arquivo, antes do open */
+int mnet_stream_is_socket(const mnet_stream_t *s);
+int mnet_stream_is_input(const mnet_stream_t *s);
+mnet_sockopts_t *mnet_stream_sockopts(mnet_stream_t *s);                     /* mudar antes do open */
+void *mnet_stream_conn(mnet_stream_t *s);
+int mnet_stream_tls_active(mnet_stream_t *s);
+int mnet_stream_starttls(mnet_stream_t *s);                                  /* TLS depois do open */
+void mnet_stream_fail(mnet_stream_t *s, int domain, long code, const char *msg);
+void mnet_stream_fail_peer(mnet_stream_t *w, int domain, long code, const char *msg);   /* erro no leitor do par */
+int mnet_stream_peer_gone(mnet_stream_t *w);                                 /* leitor do par fechou ou saiu */
+
+/* ---- mensagem HTTP solta (CFHTTPMessage), mnet_msg.c */
+typedef struct {
+    int is_request, ver_major, ver_minor, status;
+    char *method, *target, *reason;          /* target: URL do pedido montado ou o alvo lido da linha */
+    mnet_hdrs_t hdrs;
+    mnet_buf_t body;
+    mnet_buf_t in;                           /* cabeça parcial (AppendBytes) */
+    int head_done, bad;
+} mnet_msg_t;
+int mnet_msg_parse_version(const char *v, int *maj, int *min);
+int mnet_msg_init_request(mnet_msg_t *m, const char *method, const char *url, const char *version);
+int mnet_msg_init_response(mnet_msg_t *m, int status, const char *reason, const char *version);
+void mnet_msg_init_empty(mnet_msg_t *m, int is_request);
+int mnet_msg_copy(mnet_msg_t *dst, const mnet_msg_t *src);
+void mnet_msg_free(mnet_msg_t *m);
+int mnet_msg_append(mnet_msg_t *m, const uint8_t *d, size_t n);             /* -1: mensagem inválida */
+int mnet_msg_version(const mnet_msg_t *m, char out[12]);                     /* "HTTP/1.1" */
+char *mnet_msg_request_target(const mnet_msg_t *m);                          /* malloc */
+int mnet_msg_serialize(const mnet_msg_t *m, mnet_buf_t *out);
+const char *mnet_status_text(int status);
+
+/* ---- DNS reverso (mnet_util.c): nome PTR de um sockaddr do macOS e o primeiro PTR de uma resposta */
+int mnet_dns_ptr_name(const uint8_t *sa, size_t n, char *q, size_t qn);
+int mnet_dns_first_ptr(const uint8_t *msg, size_t len, char *out, size_t on);

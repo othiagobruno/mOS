@@ -527,13 +527,6 @@ void SecTaskCreateWithAuditToken(void) {}
 void __invert_f3(void) {}
 void endfsent(void) {}
 void getfsent(void) {}
-void *kCFStreamPropertySOCKSProxy;
-void *kCFStreamPropertySOCKSProxyHost;
-void *kCFStreamPropertySOCKSProxyPort;
-void *kCFStreamPropertySOCKSVersion;
-void *kCFStreamPropertyShouldCloseNativeSocket;
-void *kCFStreamPropertySocketNativeHandle;
-void *kCFStreamSocketSOCKSVersion5;
 void mach_port_guard(void) {}
 void mach_port_set_mscount(void) {}
 void mach_port_unguard(void) {}

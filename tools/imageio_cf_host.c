@@ -65,7 +65,12 @@ u8 CFBooleanGetValue(void *b) { return b && ((num_t *)b)->d != 0; }
 u64 CFDictionaryGetTypeID(void) { return 18; }
 u64 CFGetTypeID(void *o) {
     cx_class_t *c = *(cx_class_t **)o;
+    if (is_str(o)) return 7;
     if (c == &dict_c) return 18;
+    if (c == &arr_c) return 19;
+    if (c == &data_c) return 20;
+    if (c == &bool_c) return 21;
+    if (c == &num_c) return 22;
     if (c->tid) return ((u64 (*)(void *, void *))c->tid)(o, 0);
     return 1;
 }
@@ -77,6 +82,15 @@ const u8 *CFDataGetBytePtr(void *d) { return ((data_t *)d)->b; }
 long CFDataGetLength(void *d) { return ((data_t *)d)->n; }
 void CFDataAppendBytes(void *dd, const u8 *b, long n) { data_t *d = dd; d->b = realloc(d->b, (size_t)(d->n + n)); memcpy(d->b + d->n, b, (size_t)n); d->n += n; }
 void *CFArrayCreate(void *a, const void **v, long n, const void *cb) { (void)a; (void)cb; arr_t *r = calloc(1, sizeof *r); r->isa = &arr_c; r->n = n; r->v = calloc((size_t)n + 1, sizeof(void *)); memcpy(r->v, v, (size_t)n * sizeof(void *)); return r; }
+/* WebP vem do motor web (iio_webp.c), fora deste teste */
+int iio_webp(const u8 *d, size_t n, void *out) { (void)d; (void)n; (void)out; return -1; }
+u64 CFArrayGetTypeID(void) { return 19; }
+void *CFArrayCreateMutable(void *a, long c, const void *cb) { return CFArrayCreate(a, 0, 0, cb); }
+void CFArrayAppendValue(void *aa, const void *v) { arr_t *a = aa; a->v = realloc(a->v, (size_t)(a->n + 1) * sizeof(void *)); a->v[a->n++] = (void *)v; }
+long CFArrayGetCount(void *a) { return a ? ((arr_t *)a)->n : 0; }
+void *CFArrayGetValueAtIndex(void *a, long i) { return ((arr_t *)a)->v[i]; }
+long CFDictionaryGetCount(void *d) { return d ? ((dict_t *)d)->n : 0; }
+void CFDictionaryGetKeysAndValues(void *dd, const void **k, const void **v) { dict_t *d = dd; for (int i = 0; i < d->n; i++) { if (k) k[i] = d->k[i]; if (v) v[i] = d->v[i]; } }
 static int released_srcdst;
 void CFRelease(void *o) {
     if (!o) return;
@@ -147,9 +161,39 @@ extern const void *kCGImagePropertyPixelWidth, *kCGImagePropertyPixelHeight, *kC
 
 static int fails;
 #define CHECK(c, m) do { if (!(c)) { printf("FALHA %s\n", m); fails++; } else printf("ok   %s\n", m); } while (0)
+void *CGImageMetadataCreateMutable(void);
+void *CGImageMetadataCreateMutableCopy(void *);
+void *CGImageMetadataCreateFromXMPData(void *);
+void *CGImageMetadataCreateXMPData(void *, void *);
+void *CGImageMetadataTagCreate(void *, void *, void *, int, void *);
+void *CGImageMetadataTagCopyValue(void *);
+void *CGImageMetadataTagCopyName(void *);
+void *CGImageMetadataTagCopyPrefix(void *);
+void *CGImageMetadataTagCopyQualifiers(void *);
+int CGImageMetadataTagGetType(void *);
+void *CGImageMetadataCopyTags(void *);
+void *CGImageMetadataCopyTagWithPath(void *, void *, void *);
+void *CGImageMetadataCopyStringValueWithPath(void *, void *, void *);
+u8 CGImageMetadataSetTagWithPath(void *, void *, void *, void *);
+u8 CGImageMetadataSetValueWithPath(void *, void *, void *, void *);
+u8 CGImageMetadataRemoveTagWithPath(void *, void *, void *);
+u8 CGImageMetadataRegisterNamespaceForPrefix(void *, void *, void *, void **);
+void CGImageMetadataEnumerateTagsUsingBlock(void *, void *, void *, void *);
+void *CGImageMetadataCopyTagMatchingImageProperty(void *, void *, void *);
+u8 CGImageMetadataSetValueMatchingImageProperty(void *, void *, void *, void *);
+void *CGImageSourceCopyMetadataAtIndex(void *, size_t, void *);
+void CGImageDestinationAddImageAndMetadata(void *, void *, void *, void *);
+u8 CGImageDestinationCopyImageSource(void *, void *, void *, void **);
+extern const void *kCGImageMetadataNamespaceDublinCore, *kCGImageMetadataPrefixDublinCore, *kCGImageMetadataEnumerateRecursively,
+    *kCGImageDestinationMergeMetadata, *kCGImageDestinationMetadata, *kCGImagePropertyIPTCDictionary, *kCGImageDestinationDateTime, *kCGImageMetadataShouldExcludeGPS;
+typedef struct { void *isa; int flags, res; void *invoke; void *desc; } blk_t;
+static int enum_n, enum_hit;
+static u8 enum_cb(void *b, void *path, void *tag) { (void)b; (void)tag; enum_n++; if (!strcmp(cx_cstr(path), "dc:subject[1]")) enum_hit = 1; return 1; }
+static int contains(void *d, const char *needle) { data_t *x = d; size_t l = strlen(needle); for (long i = 0; i + (long)l <= x->n; i++) if (!memcmp(x->b + i, needle, l)) return 1; return 0; }
 static double numv(void *d, const void *k) { double v = -1; void *n = CFDictionaryGetValue(d, k); if (n) CFNumberGetValue(n, 13, &v); return v; }
 static void *mkdict(void) { return CFDictionaryCreateMutable(0, 0, 0, 0); }
 static void *S(const char *s) { return CFStringCreateWithCString(0, s, 0); }
+static const char *sval(void *meta, const char *p) { void *v = CGImageMetadataCopyStringValueWithPath(meta, 0, S(p)); return v ? cx_cstr(v) : ""; }
 static void *N(double v) { return CFNumberCreate(0, 13, &v); }
 static void *mkimg(int w, int h, u32 seed) {
     u32 *px = malloc((size_t)w * h * 4);
@@ -278,6 +322,72 @@ int main(void) {
     CHECK(r && (r->px[0] >> 16 & 255) > 200 && (r->px[0] >> 8 & 255) < 60, "alfa achatado sobre o fundo vermelho");
     arr_t *types = CGImageSourceCopyTypeIdentifiers();
     CHECK(types && types->n == 8, "8 tipos de leitura");
+
+    /* 7. CGImageMetadata: criar, caminhos, XMP, enumerar, propriedades */
+    void *md = CGImageMetadataCreateMutable();
+    CHECK(CGImageMetadataSetValueWithPath(md, 0, S("dc:creator"), S("Mariana")), "SetValue dc:creator");
+    const void *kw[2] = {S("praia"), S("sol")};
+    void *ta = CGImageMetadataTagCreate((void *)kCGImageMetadataNamespaceDublinCore, (void *)kCGImageMetadataPrefixDublinCore, S("subject"), 2, CFArrayCreate(0, kw, 2, 0));
+    CHECK(ta && CGImageMetadataTagGetType(ta) == 2, "TagCreate bag");
+    CHECK(CGImageMetadataSetTagWithPath(md, 0, S("dc:subject"), ta), "SetTag dc:subject");
+    CHECK(!strcmp(sval(md, "dc:subject[1]"), "sol"), "caminho com índice");
+    CHECK(CGImageMetadataSetValueWithPath(md, 0, S("exif:Flash.Fired"), kCFBooleanTrue), "estrutura criada no caminho");
+    CHECK(!strcmp(sval(md, "exif:Flash.Fired"), "True"), "campo de estrutura");
+    CHECK(CGImageMetadataSetValueMatchingImageProperty(md, (void *)kCGImagePropertyTIFFDictionary, S("Orientation"), N(6)), "propriedade TIFF → tiff:Orientation");
+    CHECK(!strcmp(sval(md, "tiff:Orientation"), "6"), "tiff:Orientation = 6");
+    void *tm = CGImageMetadataCopyTagMatchingImageProperty(md, (void *)kCGImagePropertyIPTCDictionary, S("Keywords"));
+    CHECK(tm && CFArrayGetCount(CGImageMetadataTagCopyValue(tm)) == 2, "IPTC Keywords → dc:subject");
+    CHECK(CGImageMetadataRegisterNamespaceForPrefix(md, S("http://example.com/mos/1.0/"), S("mos"), 0), "namespace próprio");
+    CHECK(CGImageMetadataSetValueWithPath(md, 0, S("mos:Teste"), S("ok")), "valor no namespace próprio");
+    blk_t blk = {0, 0, 0, (void *)enum_cb, 0};
+    void *eo = mkdict();
+    CFDictionarySetValue(eo, kCGImageMetadataEnumerateRecursively, kCFBooleanTrue);
+    CGImageMetadataEnumerateTagsUsingBlock(md, 0, eo, &blk);
+    CHECK(enum_hit && enum_n >= 8, "enumeração recursiva");
+    void *xd = CGImageMetadataCreateXMPData(md, 0);
+    CHECK(xd && contains(xd, "x:xmpmeta") && contains(xd, "mos:Teste"), "CreateXMPData");
+    void *md2 = CGImageMetadataCreateFromXMPData(xd);
+    CHECK(md2 && !strcmp(sval(md2, "dc:subject[0]"), "praia") && !strcmp(sval(md2, "mos:Teste"), "ok") && !strcmp(sval(md2, "exif:Flash.Fired"), "True"), "XMP ida e volta");
+    CHECK(CFArrayGetCount(CGImageMetadataCopyTags(md2)) == 5, "CopyTags: 5 propriedades");
+    void *mc = CGImageMetadataCreateMutableCopy(md2);
+    CHECK(CGImageMetadataRemoveTagWithPath(mc, 0, S("dc:subject[0]")) && !strcmp(sval(mc, "dc:subject[0]"), "sol"), "remove item do array");
+    CHECK(CGImageMetadataRemoveTagWithPath(mc, 0, S("mos:Teste")) && !CGImageMetadataCopyTagWithPath(mc, 0, S("mos:Teste")), "remove propriedade");
+    CHECK(!strcmp(sval(md2, "mos:Teste"), "ok"), "cópia independente");
+    void *tq = CGImageMetadataTagCreate((void *)kCGImageMetadataNamespaceDublinCore, 0, S("title"), 5, mkdict());
+    CHECK(tq && CGImageMetadataTagGetType(tq) == 5 && !strcmp(cx_cstr(CGImageMetadataTagCopyPrefix(tq)), "dc"), "prefixo deduzido do namespace");
+
+    /* 8. destino com metadados e leitura de volta (JPEG, PNG, TIFF, GIF) */
+    const char *fmts[4] = {"public.jpeg", "public.png", "public.tiff", "com.compuserve.gif"};
+    for (int f = 0; f < 4; f++) {
+        void *od = CFDataCreate(0, (const u8 *)"", 0);
+        void *dd = CGImageDestinationCreateWithData(od, S(fmts[f]), 1, 0);
+        CGImageDestinationAddImageAndMetadata(dd, mkimg(16, 8, 3), md, 0);
+        CHECK(CGImageDestinationFinalize(dd), fmts[f]);
+        void *rs = CGImageSourceCreateWithData(od, 0);
+        CHECK(CGImageSourceGetCount(rs) == 1 && CGImageSourceCreateImageAtIndex(rs, 0, 0), "a imagem continua legível");
+        void *rm = CGImageSourceCopyMetadataAtIndex(rs, 0, 0);
+        CHECK(rm && !strcmp(sval(rm, "dc:creator"), "Mariana") && !strcmp(sval(rm, "dc:subject[1]"), "sol"), "XMP relido do arquivo");
+        if (f == 0) {
+            /* CopyImageSource: troca (mescla) sem recomprimir */
+            void *nm = CGImageMetadataCreateMutable();
+            CGImageMetadataSetValueWithPath(nm, 0, S("dc:creator"), S("Thiago"));
+            void *co = mkdict();
+            CFDictionarySetValue(co, kCGImageDestinationMetadata, nm);
+            CFDictionarySetValue(co, kCGImageDestinationMergeMetadata, kCFBooleanTrue);
+            CFDictionarySetValue(co, kCGImageDestinationDateTime, S("2026-11-16T10:00:00"));
+            void *cd = CFDataCreate(0, (const u8 *)"", 0);
+            void *cdst = CGImageDestinationCreateWithData(cd, S("public.jpeg"), 1, 0);
+            CHECK(CGImageDestinationCopyImageSource(cdst, rs, co, 0), "CopyImageSource JPEG");
+            void *cm = CGImageSourceCopyMetadataAtIndex(CGImageSourceCreateWithData(cd, 0), 0, 0);
+            CHECK(cm && !strcmp(sval(cm, "dc:creator"), "Thiago") && !strcmp(sval(cm, "dc:subject[0]"), "praia") && !strcmp(sval(cm, "xmp:ModifyDate"), "2026-11-16T10:00:00"), "mescla: troca, mantém e data");
+            void *png = CGImageDestinationCreateWithData(CFDataCreate(0, (const u8 *)"", 0), S("public.png"), 1, 0);
+            CHECK(!CGImageDestinationCopyImageSource(png, rs, co, 0), "CopyImageSource recusa outro formato");
+            FILE *fo = fopen("/tmp/mariana-meta.jpg", "wb"); fwrite(((data_t *)cd)->b, 1, (size_t)((data_t *)cd)->n, fo); fclose(fo);
+        }
+        char fn[64];
+        snprintf(fn, sizeof fn, "/tmp/mariana-meta%d.bin", f);
+        FILE *fo = fopen(fn, "wb"); fwrite(((data_t *)od)->b, 1, (size_t)((data_t *)od)->n, fo); fclose(fo);
+    }
     printf("imageio_cf_host: %s (%d falhas)\n", fails ? "FALHOU" : "ok", fails);
     return fails != 0;
 }

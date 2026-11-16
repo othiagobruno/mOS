@@ -93,6 +93,15 @@ typedef struct {
     u32           ih_dw, ih_rptr;          /* rptr em bytes */
     u64           irqs, ih_entries, ih_overflows, sdma_traps, hpd_events, ih_unknown;
     volatile u32  hpd_changed;             /* bit i = HPD i mudou desde a última leitura (amdgpu_hpd_take) */
+    /* motor 3D (gfx.c): GFXHUB, RLC, CP (PFP/CE/ME) e o anel GFX 0 */
+    bool          gfxhub_ok, gfx_ok;
+    u32           pfp_fw_version, ce_fw_version, me_fw_version, rlc_fw_version;
+    u32           gb_addr_config, cu_mask, cu_count;   /* CUs ativos do SE0/SH0 (a família Raven tem 1 SE e 1 SH) */
+    u64           csb_phys, csb_mc; u32 csb_dw;        /* preâmbulo de clear state para o RLC */
+    u64           gring_phys, gring_mc, gwb_phys, gwb_mc;
+    volatile u32 *gring_cpu, *gwb_cpu;   /* gwb[0] = rptr (dwords), gwb[4] = última fence, gwb[8] = teste */
+    u32           gring_dw, gring_wptr, gfx_seq;
+    u64           gfx_timeouts, gfx_eops, gfx_faults, gfx_ibs, gfx_idle_irqs;
     /* VRAM livre: blocos de 64 KiB a partir do começo do BAR0 */
     u32           vram_lo, vram_hi;      /* faixa alocável, em blocos */
     u8            vram_used[AMD_VRAM_CHUNKS / 8];
@@ -148,6 +157,22 @@ u32        amdgpu_sdma_copy_rect(amdgpu_t *a, u64 dst_mc, u32 dst_pitch, u64 src
 u32        amdgpu_sdma_fill(amdgpu_t *a, u64 dst_mc, u32 value, u64 bytes);
 bool       amdgpu_sdma_wait(amdgpu_t *a, u32 seq);
 u32        amdgpu_sdma_done(amdgpu_t *a);
+
+void      *amdgpu_vram_cpu(const amdgpu_t *a, u64 bar_phys);
+/* programa reg = (reg & ~and_mask) | (or_mask & and_mask); and_mask 0xFFFFFFFF escreve or_mask direto */
+void       amdgpu_golden(amdgpu_t *a, u32 reg, u32 and_mask, u32 or_mask);
+
+/* ------------------------------------------------------------ motor 3D (gfx.c) */
+/* GFX 9.1: golden registers, RLC, CP (PFP, CE, ME) e o anel GFX 0 com o preâmbulo de clear state.
+ * Chamado por amdgpu_engines_init depois da GART. true = o anel passou no teste (registrador e IB). */
+bool       amdgpu_gfx_init(amdgpu_t *a);
+/* Executa um IB (PM4) de ndw dwords no endereço MC ib_mc (VMID 0: VRAM ou GART do kernel). Devolve o número
+ * da fence (0 = não enviou). As VMs por processo entram com a F9 (docs/gpu-amd.md). */
+u32        amdgpu_gfx_submit(amdgpu_t *a, u64 ib_mc, u32 ndw);
+bool       amdgpu_gfx_wait(amdgpu_t *a, u32 seq);
+u32        amdgpu_gfx_done(amdgpu_t *a);
+/* Monta o preâmbulo de clear state (CSB) em buf (NULL = só conta). Devolve o tamanho em dwords. Lógica pura. */
+u32        amdgpu_gfx_csb(u32 *buf);
 
 /* ------------------------------------------------------------ interrupções (irq.c) */
 /* Anel do IH na RAM (endereço de barramento, com snoop), MSI no vetor compartilhado, trap do SDMA e hot-plug.

@@ -37,6 +37,7 @@ OSStatus SSLWrite(void *, const void *, unsigned long, unsigned long *);
 OSStatus SSLRead(void *, void *, unsigned long, unsigned long *);
 OSStatus SSLClose(void *);
 OSStatus SSLCopyPeerTrust(void *, void **);
+OSStatus SSLGetBufferedReadSize(void *, size_t *);
 void CFRelease(void *);
 void *CFArrayCreateMutable(void *, long, const void *);
 void CFArrayAppendValue(void *, const void *);
@@ -53,7 +54,7 @@ unsigned char CFStringGetCString(void *, char *, long, unsigned);
 #define errSSLXCertChainInvalid (-9807)
 #define UTF8 0x08000100u
 
-typedef struct { int fd; void *ssl; } conn_t;
+typedef struct { int fd; void *ssl; int keep_fd; } conn_t;   /* keep_fd: socket nativo do app (não fecha) */
 
 static long long mono_ms(void *e) { (void)e; ts_t t; clock_gettime(6, &t); return t.sec * 1000 + t.nsec / 1000000; }
 static long long unix_s(void *e) { (void)e; return (long long)time(0); }
@@ -213,7 +214,7 @@ static void c_close(void *e, void *cv) {
     (void)e;
     conn_t *c = cv;
     if (c->ssl) { SSLClose(c->ssl); CFRelease(c->ssl); }
-    close(c->fd);
+    if (!c->keep_fd) close(c->fd);
     free(c);
 }
 
@@ -224,7 +225,29 @@ static void *c_trust(void *e, void *cv) {
     if (c->ssl && SSLCopyPeerTrust(c->ssl, &t)) t = 0;
     return t;
 }
-static const mnet_io_t g_io = {0, c_connect, c_starttls, c_read, c_write, c_close, mono_ms, unix_s, lk, ulk, c_trust};
+/* legível: bytes já decifrados no TLS ou dados no socket */
+static int c_wait(void *e, void *cv, int ev, int tmo) {
+    (void)e;
+    conn_t *c = cv;
+    size_t buffered = 0;
+    if (ev == 1 && c->ssl && !SSLGetBufferedReadSize(c->ssl, &buffered) && buffered) return 1;
+    int r = wait_fd(c->fd, ev == 4 ? 4 : 1, tmo);
+    return r < 0 ? -1 : r > 0;
+}
+static const mnet_io_t g_io = {0, c_connect, c_starttls, c_read, c_write, c_close, mono_ms, unix_s, lk, ulk, c_trust, c_wait};
+
+/* socket nativo do app (CFStreamCreatePairWithSocket): conexão do transporte sobre o fd, que fica não bloqueante */
+void *cx_mnet_conn_from_fd(int fd, int close_fd) {
+    if (fd < 0) return 0;
+    conn_t *c = calloc(1, sizeof *c);
+    if (!c) return 0;
+    c->fd = fd; c->keep_fd = !close_fd;
+    fcntl(fd, 4, fcntl(fd, 3) | 4);                                /* F_SETFL O_NONBLOCK */
+    return c;
+}
+int cx_mnet_conn_fd(void *cv) { return cv ? ((conn_t *)cv)->fd : -1; }
+void cx_mnet_conn_set_close(void *cv, int close_fd) { if (cv) ((conn_t *)cv)->keep_fd = !close_fd; }
+void *cx_mnet_conn_ssl(void *cv) { return cv ? ((conn_t *)cv)->ssl : 0; }
 static mnet_client_t g_client;
 static mnet_jar_t g_jar;
 static int g_ready;

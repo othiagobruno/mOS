@@ -9,7 +9,7 @@ Licenças de terceiros em [midia-licencas.md](midia-licencas.md). Build completo
 
 | Área | Já existia | Falta |
 |---|---|---|
-| Áudio PCM / MP3 / ALAC | CoreAudio, AudioQueue/Unit, AVAudioPlayer/Engine, minimp3, ALAC 16 bits | ALAC 20/24/32 bits |
+| Áudio PCM / MP3 / ALAC | CoreAudio, AudioQueue/Unit, AVAudioPlayer/Engine, minimp3, ALAC 16/20/24/32 bits | — |
 | AAC | só reconhecido (ADTS, `mp4a`) | decodificar AAC-LC, HE-AAC v1/v2 (SBR/PS), xHE; codificar (AudioConverter, AVAssetWriter) |
 | Opus | só reconhecido (Ogg, CAF) | decodificar e codificar (libopus) |
 | Contêiner | `walk_mp4` mínimo (só stsz/ALAC) | demuxer ISO BMFF completo (MP4/MOV/M4A/fMP4), Matroska/WebM, Ogg, ADTS |
@@ -45,6 +45,8 @@ Atualizado a cada PR. "Host" = teste de host em Linux; VM/hardware só depois do
 | Opus (libopus 1.5.2, ponto fixo) em Ogg, MP4 e CAF | ✅ host | `tools/midia_audio_test.sh`: Ogg estéreo/mono, MP4 e CAF com atraso 0 e SNR 68–72 dB contra o ffmpeg |
 | AAC (FDK AAC 2.0.3, C++ freestanding) em ADTS, M4A, MOV | ✅ host | mesmo teste: atraso 0, SNR 56–69 dB; alinhado com o sinal original (o limitador e a ocultação 2 do FDK atrasavam 15 ms e 1 quadro: desligados) |
 | MP3 dentro de MP4 | ✅ host | mesmo teste: SNR 101 dB |
+| ALAC 16/20/24/32 bits (reconstrução int32 com bytes deslocados) | ✅ host | mesmo teste: ALAC de 16 e de 24 bits **idênticos** ao ffmpeg (SNR 200 dB) |
+| AudioConverter decodificando AAC/HE-AAC/MP3/Opus/ALAC → LPCM (`cx_pdec_*`, cookie `dmgc` em esds, ASC, OpusHead ou `alac`), com reamostragem | ✅ host | mesmo teste: decodificação por pacote igual à do arquivo inteiro (7/7); `AudioConverterFillComplexBuffer` com callback pacote a pacote, float32, ±0 LSB (6/6), reamostrado 48→44,1 e 44,1→48 kHz com correlação 1,00000; o erro do callback volta ao app como no macOS |
 | Codecs no libSystem x86_64 (`tools/build-midia.sh`, chamado pelo `tools/build.sh`) | ✅ objetos | 234 objetos freestanding; só dependem de libc que o libSystem já define; nenhum `.init_array`; exportações só `cx_opus_*`/`cx_aac_*`. O link completo fica para o build final |
 
 **Pendências desta parte, registradas:** AAC em CAF não tem teste (o ffmpeg não grava; só o `afconvert`). HE-AAC

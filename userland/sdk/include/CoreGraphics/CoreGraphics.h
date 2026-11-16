@@ -235,6 +235,19 @@ CG_EXTERN CGPoint CGPathGetCurrentPoint(CGPathRef _Nullable path);
 CG_EXTERN CGRect CGPathGetBoundingBox(CGPathRef _Nullable path);
 CG_EXTERN CGRect CGPathGetPathBoundingBox(CGPathRef _Nullable path);
 CG_EXTERN bool CGPathContainsPoint(CGPathRef _Nullable path, const CGAffineTransform *_Nullable m, CGPoint point, bool eoFill);
+CG_EXTERN CGPathRef _Nullable CGPathCreateCopyByStrokingPath(CGPathRef _Nullable path, const CGAffineTransform *_Nullable transform, CGFloat lineWidth, CGLineCap lineCap, CGLineJoin lineJoin, CGFloat miterLimit);
+CG_EXTERN CGPathRef _Nullable CGPathCreateCopyByDashingPath(CGPathRef _Nullable path, const CGAffineTransform *_Nullable transform, CGFloat phase, const CGFloat *_Nullable lengths, size_t count);
+/* operações booleanas (macOS 13+): resultado retido; evenOddFillRule vale para os dois caminhos */
+CG_EXTERN CGPathRef _Nullable CGPathCreateCopyByNormalizing(CGPathRef _Nullable path, bool evenOddFillRule);
+CG_EXTERN CGPathRef _Nullable CGPathCreateCopyByUnioningPath(CGPathRef _Nullable path, CGPathRef _Nullable maskPath, bool evenOddFillRule);
+CG_EXTERN CGPathRef _Nullable CGPathCreateCopyByIntersectingPath(CGPathRef _Nullable path, CGPathRef _Nullable maskPath, bool evenOddFillRule);
+CG_EXTERN CGPathRef _Nullable CGPathCreateCopyBySubtractingPath(CGPathRef _Nullable path, CGPathRef _Nullable maskPath, bool evenOddFillRule);
+CG_EXTERN CGPathRef _Nullable CGPathCreateCopyBySymmetricDifferenceOfPath(CGPathRef _Nullable path, CGPathRef _Nullable maskPath, bool evenOddFillRule);
+CG_EXTERN CGPathRef _Nullable CGPathCreateCopyOfLineByIntersectingPath(CGPathRef _Nullable path, CGPathRef _Nullable maskPath, bool evenOddFillRule);
+CG_EXTERN CGPathRef _Nullable CGPathCreateCopyOfLineBySubtractingPath(CGPathRef _Nullable path, CGPathRef _Nullable maskPath, bool evenOddFillRule);
+CG_EXTERN CGPathRef _Nullable CGPathCreateCopyByFlattening(CGPathRef _Nullable path, CGFloat flatteningThreshold);
+CG_EXTERN bool CGPathIntersectsPath(CGPathRef _Nullable path1, CGPathRef _Nullable path2, bool evenOddFillRule);
+CG_EXTERN CFArrayRef _Nullable CGPathCreateSeparateComponents(CGPathRef _Nullable path, bool evenOddFillRule);
 CG_EXTERN void CGPathApply(CGPathRef _Nullable path, void *_Nullable info, CGPathApplierFunction _Nullable function);
 #if __BLOCKS__
 CG_EXTERN void CGPathApplyWithBlock(CGPathRef path, CGPathApplyBlock CF_NOESCAPE block);

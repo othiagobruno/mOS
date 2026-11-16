@@ -367,8 +367,8 @@ O que a partida mostrou, na ordem:
 5. **SQLite:** o amálgama oficial 3.54.1 (domínio público, em `.tools\sqlite-dl`, SHA3-256 conferido) vira
    `build\sqlite\libsqlite3.dylib` (`tools\build-sqlite.ps1`, chamado pelo `build.ps1`, que a põe em `/usr/lib` da
    imagem). As 84 importações dela existem no libSystem, e a partida já cria bancos com ela. Também existem
-   `dispatch_io_*`, `dispatch_read/write` (`dispatch_io.c`) e `CFReadStream*`/`CFWriteStream*` sobre o
-   `NSInputStream` (`cfstream.c`).
+   `dispatch_io_*`, `dispatch_read/write` (`dispatch_io.c`) e `CFReadStream*`/`CFWriteStream*`/`NSStream`
+   completos (`cfnetstream.c` sobre `mnet_stream.c`).
 6. **Só no harness:** as syscalls 12, 31, 33, 39, 48, 81 (Mach) e 83 não são emuladas pelo `machotest`. No QEMU elas
    existem.
 

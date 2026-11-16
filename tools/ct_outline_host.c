@@ -14,6 +14,7 @@ static uint8_t *font; static size_t nfont;
 static uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
 long ct_host_sys5(long n, long op, long face, long tag, void *buf, long cap) {
     (void)n; (void)face;
+    if (op == 1) return ct_host_cmap(font, nfont, (uint32_t)tag);   /* GF_CMAP */
     if (op != 0) return -1;
     unsigned nt = (unsigned)font[4] << 8 | font[5];
     for (unsigned i = 0; i < nt; i++) {
@@ -25,7 +26,18 @@ long ct_host_sys5(long n, long op, long face, long tag, void *buf, long cap) {
     }
     return 0;
 }
+int cx_font_metrics(int face, double *m);
 int main(int argc, char **argv) {
+    if (argc == 3 && !strcmp(argv[2], "metricas")) {      /* métricas da face: tools/ct_outline_host.py */
+        FILE *f = fopen(argv[1], "rb");
+        fseek(f, 0, SEEK_END); nfont = (size_t)ftell(f); fseek(f, 0, SEEK_SET);
+        font = malloc(nfont); fread(font, 1, nfont, f); fclose(f);
+        double m[13];
+        if (!cx_font_metrics(0, m)) return 1;
+        for (int i = 0; i < 13; i++) printf("%.6f ", m[i]);
+        printf("\n");
+        return 0;
+    }
     if (argc < 5) { fprintf(stderr, "uso: fonte.ttf codepoint tamanho saida.pgm\n"); return 2; }
     FILE *f = fopen(argv[1], "rb");
     fseek(f, 0, SEEK_END); nfont = (size_t)ftell(f); fseek(f, 0, SEEK_SET);

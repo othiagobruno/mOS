@@ -91,6 +91,7 @@ K(kVTProfileLevel_HEVC_Main42210_AutoLevel, "HEVC_Main42210_AutoLevel")
 K(kVTScalingMode_CropSourceToCleanAperture, "CropSourceToCleanAperture")
 /* CFNetwork / CoreGraphics / outros */
 K(kCGColorClear, "kCGColorClear")
+K(kCGColorWhite, "kCGColorWhite")
 K(UNErrorDomain, "UNErrorDomain") K(ASWebAuthenticationSessionErrorDomain, "com.apple.AuthenticationServices.WebAuthenticationSession")
 /* Foundation / AppKit (NSString constantes) */
 K(NSDebugDescriptionErrorKey, "NSDebugDescription") K(NSFilePosixPermissions, "NSFilePosixPermissions")
@@ -390,12 +391,7 @@ double MACaptionAppearanceGetWindowRoundedCornerRadius(int domain, int *behavior
 double MACaptionAppearanceGetRelativeCharacterSize(int domain, int *behavior) { (void)domain; if (behavior) *behavior = 0; return 1.0; }
 int MACaptionAppearanceGetTextEdgeStyle(int domain, int *behavior) { (void)domain; if (behavior) *behavior = 0; return 1; }   /* None */
 
-/* ---- CoreMIDI (MIDI 2.0) e AudioToolbox (arquivos de áudio): sem dispositivos */
-#define kMIDINotPermitted (-10844)
-OSStatus MIDIInputPortCreateWithProtocol(unsigned client, id_ name, int proto, unsigned *port, void *block) { (void)client; (void)name; (void)proto; (void)block; if (port) *port = 0; return kMIDINotPermitted; }
-void *MIDIEventListInit(void *list, int proto) { (void)list; (void)proto; return 0; }
-void *MIDIEventListAdd(void *list, size_t size, void *cur, u64 time, size_t words, const unsigned *data) { (void)list; (void)size; (void)cur; (void)time; (void)words; (void)data; return 0; }
-OSStatus MIDISendEventList(unsigned port, unsigned dest, const void *list) { (void)port; (void)dest; (void)list; return kMIDINotPermitted; }
+/* ---- AudioToolbox (arquivos de áudio). CoreMIDI (inclusive MIDI 2.0): coremidi.c */
 #define kAudioFileUnspecifiedError 0x7768743F   /* 'wht?' */
 /* AudioFileSetProperty/WritePackets/Close e o resto do AudioFile: coreaudio.c */
 OSStatus AudioFileInitializeWithCallbacks(void *ctx, void *rd, void *wr, void *gs, void *ss, unsigned type, const void *fmt, unsigned flags, void **id) {
