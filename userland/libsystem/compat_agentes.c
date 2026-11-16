@@ -143,10 +143,7 @@ const void *kDADiskDescriptionWatchVolumePath = 0;
 void IOHIDManagerSetDeviceMatching(void *m, id_ dict) { (void)m; (void)dict; }
 void IOHIDManagerRegisterInputReportCallback(void *m, void *cb, void *ctx) { (void)m; (void)cb; (void)ctx; }
 
-/* ---- Security: confiança gravada pelo usuário */
-#define errSecUnimplemented (-4)
-int SecTrustSettingsSetTrustSettings(id_ cert, int domain, id_ settings) { (void)cert; (void)domain; (void)settings; return errSecUnimplemented; }
-int SecTrustSettingsRemoveTrustSettings(id_ cert, int domain) { (void)cert; (void)domain; return errSecUnimplemented; }
+/* Security: confiança gravada pelo usuário (SecTrustSettingsSet/RemoveTrustSettings) está em seccert.c */
 
 /* ---- Codex desktop (os .node de native e o binário codex): o resto do que é C */
 const double kCFCoreFoundationVersionNumber = 2048.0;   /* da ordem do macOS 14, a versão que o mOS informa */

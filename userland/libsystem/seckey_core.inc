@@ -613,7 +613,7 @@ static int sk_export(const sk_key *k, u8 **out, usize *outlen) {
     return 0;
 }
 /* SubjectPublicKeyInfo (para certificados, PEM e SecKeyCopyExternalRepresentation de quem quer X.509) */
-__attribute__((unused)) static int sk_export_spki(const sk_key *k, u8 **out, usize *outlen) {
+static int sk_export_spki(const sk_key *k, u8 **out, usize *outlen) {
     sk_buf alg = {0}, bits = {0}, all = {0};
     u8 *raw;
     usize rn;
@@ -636,6 +636,43 @@ __attribute__((unused)) static int sk_export_spki(const sk_key *k, u8 **out, usi
     der_wrap(&in, 0x30, &alg);
     der_wrap(&in, 0x03, &bits);
     der_wrap(&all, 0x30, &in);
+    if (all.err) { free(all.b); return -1; }
+    *out = all.b;
+    *outlen = all.n;
+    return 0;
+}
+
+
+/* PrivateKeyInfo (PKCS#8): RSA = PKCS#1 dentro; EC = ECPrivateKey (SEC1) com a pública */
+static int sk_export_pkcs8(const sk_key *k, u8 **out, usize *outlen) {
+    if (!k->priv) return -1;
+    sk_buf alg = {0}, inner = {0}, all = {0}, body = {0};
+    static const u8 zero = 0, one = 1;
+    if (k->type == SK_RSA) {
+        u8 *raw; usize rn;
+        if (sk_export(k, &raw, &rn)) return -1;
+        sb_put(&inner, raw, rn);
+        memset(raw, 0, rn); free(raw);
+        der_tlv(&alg, 0x06, OID_RSA, sizeof OID_RSA);
+        sb_byte(&alg, 0x05); sb_byte(&alg, 0x00);
+    } else {
+        sk_buf ec = {0}, bits = {0}, c1 = {0};
+        der_uint(&ec, &one, 1);
+        der_tlv(&ec, 0x04, k->k, k->B);
+        sb_byte(&bits, 0);
+        sb_put(&bits, k->pub, k->publen);
+        der_wrap(&c1, 0x03, &bits);
+        der_wrap(&ec, 0xa1, &c1);
+        der_wrap(&inner, 0x30, &ec);
+        der_tlv(&alg, 0x06, OID_ECPUB, sizeof OID_ECPUB);
+        if (k->curve == EC_P256) der_tlv(&alg, 0x06, OID_P256, sizeof OID_P256);
+        else if (k->curve == EC_P384) der_tlv(&alg, 0x06, OID_P384, sizeof OID_P384);
+        else der_tlv(&alg, 0x06, OID_P521, sizeof OID_P521);
+    }
+    der_uint(&body, &zero, 1);
+    der_wrap(&body, 0x30, &alg);
+    der_wrap(&body, 0x04, &inner);
+    der_wrap(&all, 0x30, &body);
     if (all.err) { free(all.b); return -1; }
     *out = all.b;
     *outlen = all.n;

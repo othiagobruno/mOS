@@ -62,6 +62,8 @@ for bits in (1024, 2048, 3072):
         serialization.Encoding.DER, serialization.PublicFormat.PKCS1), f"pub pkcs1 {bits}")
     check(run("spki", "m.der", "m.spki") == 0 and get("m.spki") == mkey.public_key().public_bytes(
         serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo), f"spki {bits}")
+    check(run("pkcs8", "m.der", "m.p8") == 0 and
+          serialization.load_der_private_key(get("m.p8"), None).private_numbers() == mkey.private_numbers(), f"pkcs8 rsa {bits}")
     # PKCS#8 e SPKI na importação
     put("o.p8", okey.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
     check(run("import", "o.p8", "o.back") == 0 and get("o.back") == get("o.der"), f"import pkcs8 {bits}")
@@ -126,6 +128,8 @@ for bits, curve in CURVES.items():
     put("o.ec", opub + opriv.private_numbers().private_value.to_bytes(B, "big"))
     put("o.sec1", opriv.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.TraditionalOpenSSL,
                                       serialization.NoEncryption()))
+    check(run("pkcs8", "m.ec", "m.p8") == 0 and
+          serialization.load_der_private_key(get("m.p8"), None).private_numbers() == mpriv.private_numbers(), f"pkcs8 ec {bits}")
     check(run("import", "o.sec1", "o.back") == 0 and get("o.back") == get("o.ec"), f"import sec1 {bits}")
     put("o.spki", opriv.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo))
     check(run("import", "o.spki", "o.back") == 0 and get("o.back") == opub, f"import spki ec {bits}")

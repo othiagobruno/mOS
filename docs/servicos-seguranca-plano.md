@@ -53,9 +53,10 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 
 | Fase | Estado | Teste |
 |---|---|---|
-| 1 SecKey | ✅ núcleo e API (15 nov.); falta ECIES e OAEP+AESGCM | `gcc -O2 -DMOS_HOST_TEST -Itools -Ikernel/include tools/seckeytest.c kernel/net/crypto.c kernel/net/pk.c -o /tmp/seckeytest`, `/tmp/seckeytest self` → ok; `python3 -I tools/seckeytest.py /tmp/seckeytest` → **225/225** contra o OpenSSL 3.5.5 (RSA 1024/2048/3072, EC P-256/384/521) |
+| 1 SecKey | ✅ (15 nov.); falta ECIES e OAEP+AESGCM | `gcc -O2 -DMOS_HOST_TEST -Itools -Ikernel/include tools/seckeytest.c kernel/net/crypto.c kernel/net/pk.c -o /tmp/seckeytest`, `/tmp/seckeytest self` → ok; `python3 -I tools/seckeytest.py /tmp/seckeytest` → **225/225** contra o OpenSSL 3.5.5 (RSA 1024/2048/3072, EC P-256/384/521) |
 | 3 CommonCrypto | ✅ (15 nov.) | `python3 -I tools/cctest.py` → **512/512** contra OpenSSL/hashlib (AES ECB/CBC/CFB/CFB8/CTR/OFB/XTS/GCM, DES, 3DES, RC2, RC4, Blowfish, MD2/MD4/MD5/SHA-1/2, HMAC, PBKDF2) |
-| 2, 4–12 | a fazer | — |
+| 2 Certificados, confiança, PKCS#12, Keychain de chaves | ✅ (15 nov.) | `python3 -I tools/seccerttest.py` → **59/59** (PKCS#12 de 6 variantes do cryptography e do `openssl pkcs12`, PEM, nomes, cadeia); SecKey agora **231/231** |
+| 4–12 | a fazer | — |
 
 ## Fase 1 — o que entrou (15 nov.)
 
@@ -81,3 +82,23 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 - HMAC e PBKDF2 com SHA-224 de verdade (antes caíam no SHA-256 sem avisar). Novos: `CC_SHA224*`, `CC_MD2*`,
   `CC_MD4*`, `CCCalibratePBKDF`; os stubs desses nomes saíram de `sys_zerados.c`.
 - Fora: CAST5 (`kCCUnimplemented`, as S-boxes não são deriváveis e nenhum app medido pede), modos F8/LRW/CCM.
+
+## Fase 2 — certificados, confiança, PKCS#12 e Keychain (15 nov.)
+
+- `seccert.c` + `seccert_core.inc`: `SecCertificateCopySubjectSummary`, `CopyCommonName`, `CopyEmailAddresses`,
+  `CopySerialNumber(Data)`, `CopyNormalizedIssuer/SubjectSequence`, `CopyNotValidBefore/AfterDate`, `CopyValues`
+  (assunto, emissor, série, validade no formato `{label, type, value}`), `SecItemImport`/`SecItemExport` (PEM, DER,
+  PKCS#1, PKCS#8, SEC1, SPKI; com Keychain, os itens também vão para ele), `SecPKCS12Import` (PBES2 AES/3DES com
+  PBKDF2-SHA1/224/256/384/512, PBE-SHA1-3DES, RC2-40/128, RC4, MAC, BER indefinido; a identidade vai para o Keychain
+  como no macOS), `SecTrustSettingsSet/RemoveTrustSettings` e os domínios usuário/admin de `SecTrustSettingsCopy*`
+  (arquivos `mos-trust-user.txt`/`mos-trust-admin.txt`), `SecCertificateAddToKeychain` (antes fingia sucesso).
+- `security.c`: `SecPolicyCreateSSL` guarda o nome; `SecPolicyCreateWithProperties`, `SecPolicyCopyProperties`;
+  `SecTrust` com âncoras do app, "só âncoras", data, política básica/SSL servidor/cliente, ajustes do usuário
+  (âncora e "Nunca confiar"), `CopyResult`, `CopyProperties`, `CopyPolicies`, `GetTrustResult`, `EvaluateAsync*`
+  na fila pedida, CFError com o OSStatus do macOS (expirado -67818, nome -67602...). O avaliador é
+  `cx_sectrust_eval` (`sectrust.c`, o mesmo `x509.c` do kernel).
+- Keychain: classes `kSecClassKey` e `kSecClassCertificate` (atributos `atag`, `kcls`, `type`, `klbl`, `subj`,
+  `issr`, `slnr` preenchidos sozinhos), busca por `kSecValueRef`, `kSecReturnRef` devolve SecKey/SecCertificate.
+  Arquivos antigos continuam legíveis (campos novos opcionais). `kSecAttrIsPermanent` grava as duas metades.
+- Limites: sem busca de intermediários/OCSP pela rede (AIA); `CopyNormalized*` não normaliza maiúsculas; sem
+  exportar PKCS#12/PKCS#7.

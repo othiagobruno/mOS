@@ -63,3 +63,62 @@ int cx_sectrust_verify(const u8 *const *ders, const u32 *lens, unsigned n, const
     char err[160];
     return x509_verify_chain(ders, lens, n, host, &now, err, sizeof err, 0, 0) == X509_OK;
 }
+
+/* ---- avaliação geral do SecTrust (security.c): âncoras do app, só âncoras, data, política básica ou SSL.
+ * policy: 0 = X.509 básica (sem nome nem EKU), 1 = servidor SSL (host pode ser NULL: sem conferir o nome),
+ * 2 = cliente SSL. at_unix < 0 = agora. Devolve um X509_E_* (0 = confiável) e a mensagem em err. */
+int cx_sectrust_eval(const u8 *const *ders, const u32 *lens, unsigned n, const u8 *const *anc, const u32 *alens,
+                     unsigned na, int use_system, int policy, const char *host, long long at_unix, char *err,
+                     unsigned errlen) {
+    if (err && errlen) err[0] = 0;
+    if (!n || !ders) return X509_E_PARSE;
+    if (n > MAX_CHAIN) n = MAX_CHAIN;
+    const trust_t *sys = 0;
+    if (use_system && ensure_roots()) sys = trust_get();
+    u32 total = na + (sys ? sys->n : 0);
+    trust_t t;
+    t.n = 0;
+    t.der = 0;
+    t.a = malloc((total ? total : 1) * sizeof(anchor_t));
+    vctx_t v;
+    memset(&v, 0, sizeof v);
+    v.c = malloc(n * sizeof(x509_cert_t));
+    int e;
+    if (!t.a || !v.c) { e = X509_E_NO_MEM; goto out; }
+    for (unsigned i = 0; i < na; i++) {
+        anchor_t *a = &t.a[t.n];
+        if (x509_parse(&a->c, anc[i], alens[i]) != X509_OK) continue;
+        a->h = fnv(a->c.subject, a->c.subject_len);
+        t.n++;
+    }
+    for (u32 i = 0; sys && i < sys->n; i++) t.a[t.n++] = sys->a[i];
+    v.n = n;
+    e = x509_parse(&v.c[0], ders[0], lens[0]);
+    if (e) { if (err) snprintf(err, errlen, "certificado malformado (DER/X.509 inválido)"); goto out; }
+    v.used[0] = true;
+    for (u32 i = 1; i < n; i++)
+        if (x509_parse(&v.c[i], ders[i], lens[i]) != X509_OK) v.used[i] = true;
+    datetime_t now;
+    unix_to_dt(at_unix >= 0 ? (long)at_unix : time(0), &now);
+    v.check_time = true;
+    v.now = (u64)now.year * 10000000000ull + (u64)now.month * 100000000ull + (u64)now.day * 1000000ull +
+            (u64)now.hour * 10000ull + (u64)now.minute * 100ull + (u64)now.second;
+    v.t = &t;
+    const x509_cert_t *leaf = &v.c[0];
+    v.err_cert = leaf;
+    if (!t.n) { e = X509_E_UNKNOWN_ISSUER; goto fmt; }
+    if ((e = key_ok(leaf)) || (leaf->unknown_critical && (e = X509_E_CRITICAL_EXT))) goto fmt;
+    if ((e = check_dates(&v, leaf))) goto fmt;
+    if (!anchor_same(&t, leaf) && (e = build(&v, leaf, 0))) goto fmt;
+    v.err_cert = leaf;
+    if (policy == 1 && ((leaf->has_eku && !leaf->eku_server) || (leaf->has_ku && !(leaf->ku & 1)))) { e = X509_E_KEY_USAGE; goto fmt; }
+    if (policy == 1 && host && host[0] && !x509_match_host(leaf, host)) { e = X509_E_NAME; goto fmt; }
+    e = X509_OK;
+    goto out;
+fmt:
+    if (err) format_err(e, &v, host, err, errlen);
+out:
+    free(v.c);
+    free(t.a);
+    return e;
+}
