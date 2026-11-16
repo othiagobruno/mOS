@@ -102,7 +102,51 @@ enum {
     SYS_GETEGID = 102, /* () -> gid efetivo */
     SYS_SETEUID = 103, /* (uid) -> 0 | -MOS_EPERM. Só real, efetivo ou saved. */
     SYS_SETEGID = 104, /* (gid) -> 0 | -MOS_EPERM. */
+    SYS_FSMETA = 106,  /* (op, mos_fsmeta_t*) -> resultado | -errno   metadados de arquivo (MOS_FSM_*, kernel/lib/vfsmeta.c) */
 };
+
+/* SYS_FSMETA: inode, dono, flags BSD, datas em ns e atributos estendidos de um arquivo ou pasta.
+ * O alvo é fd (>= 0) ou path (fd = -1). O kernel nunca segue um link no ÚLTIMO componente: o libSystem resolve
+ * antes quando a chamada segue links (stat, getxattr sem XATTR_NOFOLLOW). Erros com os valores do macOS. */
+enum {
+    MOS_FSM_STATX = 1,     /* buf = mos_statx_t*, size = sizeof -> 0 */
+    MOS_FSM_GETXATTR,      /* name, buf (0 = só o tamanho), size, pos -> bytes | -ENOATTR | -ERANGE */
+    MOS_FSM_SETXATTR,      /* name, buf, size, pos, opts (XATTR_CREATE 2 / XATTR_REPLACE 4) -> 0 */
+    MOS_FSM_LISTXATTR,     /* buf (0 = só o tamanho), size -> bytes ("nome\0nome\0") | -ERANGE */
+    MOS_FSM_REMOVEXATTR,   /* name -> 0 | -ENOATTR */
+    MOS_FSM_CHFLAGS,       /* a = st_flags novos -> 0 | -EPERM (SF_* sem root, ou alvo imutável de sistema) */
+    MOS_FSM_CHOWN,         /* a = uid, b = gid (0xffffffff = não muda) -> 0 | -EPERM */
+    MOS_FSM_SETTIMES,      /* t[0..3] = acesso, modificação, mudança, criação (ns); a = máscara VT_* a gravar,
+                            * b = máscara das que valem "agora" -> 0 */
+    MOS_FSM_READDIR,       /* path = pasta, pos = índice, buf = mos_fsm_dirent_t*, size -> 1 copiado | 0 fim */
+};
+#define MOS_FSM_ATIME 1   /* máscaras do MOS_FSM_SETTIMES (= VT_* do vfs.h) */
+#define MOS_FSM_MTIME 2
+#define MOS_FSM_CTIME 4
+#define MOS_FSM_BTIME 8
+#define MOS_ENOATTR 93
+#define MOS_ERANGE  34
+#define MOS_EROFS   30
+#define MOS_ENOTSUP 45
+typedef struct {
+    int fd;                 /* -1 = usar path */
+    unsigned opts;
+    unsigned long long path, name, buf, size, pos, a, b;
+    long long t[4];
+} mos_fsmeta_t;
+typedef struct {
+    unsigned long long ino, dev, size, blocks;
+    unsigned kind;          /* como mos_stat_t.is_dir: 0 arquivo, 1 pasta */
+    unsigned mode;          /* 12 bits de permissão; 0x10000 = gravado por chmod/creat (senão é o padrão) */
+    unsigned uid, gid, flags, nlink, gen, nxattr;
+    long long atime_ns, mtime_ns, ctime_ns, btime_ns;
+} mos_statx_t;
+typedef struct {
+    unsigned long long ino;
+    unsigned type;          /* DT_* do BSD: 4 pasta, 8 arquivo, 10 link */
+    unsigned namelen;
+    char name[256];
+} mos_fsm_dirent_t;
 
 #define MOS_DESK_BANNER 1
 #define MOS_DESK_TAKE   2

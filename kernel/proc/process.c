@@ -2410,12 +2410,13 @@ static i64 file_truncate(const char *path, u64 nsz) {
     if (nsz == v->size) return 0;
     if (nsz > (256ull << 20)) return -MOS_ENOSPC;
     if (vfs_is_read_only(v)) return -MOS_ENOENT;
+    if (vfs_immutable(v) || vfs_append_only(v)) return -MOS_EPERM;
     u64 old = v->size;
     if (!file_room(v, nsz)) return -MOS_ENOMEM;
     if (nsz > old) memset(v->data + old, 0, nsz - old);
     v->size = nsz;
     v->data[nsz] = 0;
-    v->mtime = timer_ticks();
+    vfs_touch(v, VT_MOD);
     persist_mark(v);
     return 0;
 }
@@ -2426,6 +2427,8 @@ static i64 file_write_at(process_t *p, const char *path, u64 off, u64 ubuf, u64 
     if (v && v->dir) return -MOS_EISDIR;
     if (!v && !(v = vfs_create(path))) return -MOS_ENOENT;     /* arquivo novo: cria as pastas que faltam, como antes */
     if (vfs_is_read_only(v)) return -MOS_ENOENT;
+    if (vfs_immutable(v)) return -MOS_EPERM;
+    if (vfs_append_only(v) && off < v->size) return -MOS_EPERM;   /* uappnd: só no fim */
     u64 old = v->size, end = off + len;
     if (end < off) return -MOS_EINVAL;
     u64 nsz = MAX(old, end);
@@ -2435,7 +2438,7 @@ static i64 file_write_at(process_t *p, const char *path, u64 off, u64 ubuf, u64 
     if (len && !uvm_copy_in(p, v->data + off, ubuf, len)) { v->data[v->size] = 0; return -MOS_EFAULT; }
     v->size = nsz;
     v->data[nsz] = 0;
-    v->mtime = timer_ticks();
+    vfs_touch(v, VT_MOD);
     persist_mark(v);
     return (i64)len;
 }
@@ -2446,6 +2449,7 @@ i64 file_store_at(const char *path, u64 off, const void *src, u64 len) {
     vnode_t *v = vfs_lookup(path);
     if (!v || v->dir) return -MOS_ENOENT;
     if (vfs_is_read_only(v)) return -MOS_ENOENT;
+    if (vfs_immutable(v)) return -MOS_EPERM;
     u64 end = off + len;
     if (end < off) return -MOS_EINVAL;
     u64 old = v->size, nsz = MAX(old, end);
@@ -2455,9 +2459,79 @@ i64 file_store_at(const char *path, u64 off, const void *src, u64 len) {
     if (len) memcpy(v->data + off, src, len);
     v->size = nsz;
     v->data[nsz] = 0;
-    v->mtime = timer_ticks();
+    vfs_touch(v, VT_MOD);
     persist_mark(v);
     return (i64)len;
+}
+
+/* SYS_FSMETA: copia o pedido e os buffers; a regra fica em vfs_fsmeta (kernel/lib/vfsmeta.c, testada no host) */
+static i64 fsmeta_syscall(process_t *p, int op, u64 ureq) {
+    mos_fsmeta_t rq;
+    char path[256], name[VFS_XATTR_NAME_MAX + 2];
+    vnode_t *v;
+    if (!uvm_copy_in(p, &rq, ureq, sizeof rq)) return -MOS_EFAULT;
+    if (rq.fd >= 0) {
+        if (fd_get(p, (u64)rq.fd) < 0) return -MOS_EBADF;
+        if (p->fds[rq.fd].kind != FD_FILE || !p->fds[rq.fd].path[0] || p->fds[rq.fd].pty) return -MOS_EBADF;
+        v = vfs_lookup(p->fds[rq.fd].path);
+    } else {
+        if (!copy_path(p, path, rq.path)) return -MOS_EFAULT;
+        v = vfs_lookup(path);
+    }
+    if (!v) return -MOS_ENOENT;
+    const char *nm = NULL;
+    if (op == MOS_FSM_GETXATTR || op == MOS_FSM_SETXATTR || op == MOS_FSM_REMOVEXATTR) {
+        if (!copy_str_in(p, name, rq.name, sizeof name)) return -MOS_EFAULT;
+        if (strlen(name) > VFS_XATTR_NAME_MAX) return -MOS_ENAMETOOLONG;
+        nm = name;
+    }
+    i64 r;
+    switch (op) {
+    case MOS_FSM_STATX: {
+        mos_statx_t st;
+        rq.size = sizeof st;
+        r = vfs_fsmeta(v, op, &rq, NULL, &st, p->euid, p->egid);
+        if (r == 0 && !uvm_copy_out(p, rq.buf, &st, sizeof st)) r = -MOS_EFAULT;
+        return r;
+    }
+    case MOS_FSM_READDIR: {
+        mos_fsm_dirent_t *d = kmalloc(sizeof *d);
+        if (!d) return -MOS_ENOMEM;
+        u64 cap = rq.size;
+        rq.size = sizeof *d;
+        r = vfs_fsmeta(v, op, &rq, NULL, d, p->euid, p->egid);
+        if (r == 1 && !uvm_copy_out(p, rq.buf, d, MIN(cap, sizeof *d))) r = -MOS_EFAULT;
+        kfree(d);
+        return r;
+    }
+    case MOS_FSM_GETXATTR:
+    case MOS_FSM_LISTXATTR: {
+        mos_fsmeta_t q = rq;
+        q.size = 0;
+        i64 need = vfs_fsmeta(v, op, &q, nm, NULL, p->euid, p->egid);   /* tamanho */
+        if (need < 0 || !rq.buf) return need;
+        u64 cap = MIN(rq.size, (u64)need);
+        if (rq.size < (u64)need && op == MOS_FSM_LISTXATTR) return -MOS_ERANGE;
+        u8 *k = kmalloc(cap ? cap : 1);
+        if (!k) return -MOS_ENOMEM;
+        q.size = op == MOS_FSM_LISTXATTR ? (u64)need : rq.size;
+        r = vfs_fsmeta(v, op, &q, nm, k, p->euid, p->egid);
+        if (r > 0 && !uvm_copy_out(p, rq.buf, k, (usize)r)) r = -MOS_EFAULT;
+        kfree(k);
+        return r;
+    }
+    case MOS_FSM_SETXATTR: {
+        if (rq.size > VFS_XATTR_VAL_MAX) return -7 /* E2BIG */;
+        u8 *k = kmalloc(rq.size ? rq.size : 1);
+        if (!k) return -MOS_ENOMEM;
+        if (rq.size && !uvm_copy_in(p, k, rq.buf, rq.size)) { kfree(k); return -MOS_EFAULT; }
+        r = vfs_fsmeta(v, op, &rq, nm, k, p->euid, p->egid);
+        kfree(k);
+        return r;
+    }
+    default:
+        return vfs_fsmeta(v, op, &rq, nm, NULL, p->euid, p->egid);
+    }
 }
 
 static void spawn_finish_cred(process_t *child, thread_t *cur) {
@@ -2485,8 +2559,8 @@ static void fill_stat(vnode_t *v, mos_stat_t *st) {
     st->mode = mode_stat(v->mode, v->dir);
     /* vnode->mtime: ms desde o boot (0 = veio no disco de boot); sem data real, vale a hora do boot.
      * Com 0 (1970) o gzip e o tar reclamam de "timestamp out of range". */
-    i64 boot = unix_now() - (i64)(timer_ticks() / 1000);
-    st->mtime = boot + (i64)(v->mtime / 1000);
+    st->mtime = vfs_time_ns(v, VT_MTIME) / 1000000000ll;
+    (void)unix_now;
 }
 
 /* /dev/null: não existe no VFS; open aceita, write descarta, read dá fim de arquivo (o git exige) */
@@ -3090,6 +3164,8 @@ static u64 proc_syscall_(int_frame_t *f) {
             }
             criado = 1;
         } else if (v->dir && wr) { if (cdiag) kprintf("open[diag]: %s (pid %d): EISDIR %s\n", p->name, p->pid, path); r = -MOS_EISDIR; break; }
+        else if (wr && vfs_immutable(v)) { r = -MOS_EPERM; break; }                     /* uchg/schg */
+        else if (wr && vfs_append_only(v) && (!(b & MOS_O_APPEND) || (b & MOS_O_TRUNC))) { r = -MOS_EPERM; break; }   /* uappnd */
         else if (wr && (b & MOS_O_TRUNC)) vfs_write_file(path, "", 0);
         if (cdiag) kprintf("open[diag]: %s (pid %d): ok %s flags %llx%s\n", p->name, p->pid, path, b, v && v->dir ? " (pasta)" : v ? "" : " (criado)");
         else if (diag && strstr(p->name, "Renderer")) kprintf("open[diag]: %s (pid %d): ok %s%s\n", p->name, p->pid, path, v && v->dir ? " (pasta)" : "");
@@ -3103,7 +3179,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         p->fds[fd].flags = (int)b;
         if (criado) {
             v = vfs_lookup(path);
-            if (v && !v->dir) v->mode = mode_for_creat((unsigned)c);
+            if (v && !v->dir) { v->mode = mode_for_creat((unsigned)c); v->uid = (u32)p->euid; v->gid = v->parent ? v->parent->gid : (u32)p->egid; vfs_meta_changed(v); }
         }
         p->fds[fd].mode = v ? mode_stat(v->mode, v->dir) : 0;
         p->fds[fd].off = 0;
@@ -3355,8 +3431,10 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         vnode_t *cv = vfs_lookup(path);
         if (!cv) { r = -MOS_ENOENT; break; }
+        if (vfs_immutable(cv)) { r = -MOS_EPERM; break; }
+        if (p->euid != 0 && (u32)p->euid != cv->uid) { r = -MOS_EPERM; break; }   /* só o dono ou root */
         mode_apply(&cv->mode, (unsigned)b);
-        persist_mark(cv);
+        vfs_meta_changed(cv);
         r = 0;
         break;
     }
@@ -3365,11 +3443,14 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!p->fds[a].path[0]) { r = -MOS_EINVAL; break; }
         vnode_t *fv = vfs_lookup(p->fds[a].path);
         if (!fv) { r = -MOS_ENOENT; break; }
+        if (vfs_immutable(fv)) { r = -MOS_EPERM; break; }
+        if (p->euid != 0 && (u32)p->euid != fv->uid) { r = -MOS_EPERM; break; }
         fchmod_apply(&fv->mode, &p->fds[a].mode, (unsigned)b);
-        persist_mark(fv);
+        vfs_meta_changed(fv);
         r = 0;
         break;
     }
+    case SYS_FSMETA: r = fsmeta_syscall(p, (int)a, b); break;   /* metadados e xattr (kernel/lib/vfsmeta.c) */
     case SYS_GETUID: r = p->uid; break;
     case SYS_GETEUID: r = p->euid; break;
     case SYS_GETGID: r = p->gid; break;
@@ -3396,13 +3477,19 @@ static u64 proc_syscall_(int_frame_t *f) {
     }
     case SYS_MKDIR:
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
-        r = vfs_mkdir(path) ? 0 : -MOS_ENOENT;
+        {
+            bool existia = vfs_lookup(path) != NULL;
+            vnode_t *nd = vfs_mkdir(path);
+            r = nd ? 0 : -MOS_ENOENT;
+            if (nd && !existia) { nd->uid = (u32)p->euid; nd->gid = nd->parent ? nd->parent->gid : (u32)p->egid; vfs_meta_changed(nd); }
+        }
         if (r && vfs_lookup("/Sistema/Biblioteca/despejar-threads") && (strstr(path, "Cache") || strstr(path, "cache")))
             kprintf("mkdir[diag]: %s (pid %d): falhou %s%s\n", p->name, p->pid, path, vfs_lookup(path) ? " (já existe)" : "");
         break;
     case SYS_UNLINK: {
         if (!copy_path(p, path, a)) { r = -MOS_EFAULT; break; }
         vnode_t *v = vfs_lookup(path);
+        if (v && (vfs_no_unlink(v) || (v->parent && (vfs_immutable(v->parent) || vfs_append_only(v->parent))))) { r = -MOS_EPERM; break; }
         r = !v ? -MOS_ENOENT : (orphan_if_open(v, path) || vfs_delete(v)) ? 0 : -MOS_EINVAL;
         if (r == 0) unix_unbind(path);
         break;
@@ -3415,6 +3502,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         char *slash = strrchr(to, '/');
         if (!v) { r = -MOS_ENOENT; break; }
         if (!slash || !slash[1]) { r = -MOS_EINVAL; break; }
+        if (vfs_no_unlink(v) || (v->parent && vfs_immutable(v->parent))) { r = -MOS_EPERM; break; }
         *slash = 0;
         vnode_t *np = vfs_lookup_dir(to[0] ? to : "/");   /* a pasta de destino pode ser um link (opt/<f> -> Cellar) */
         if (!np || !np->dir) { r = -MOS_ENOENT; break; }
@@ -3424,6 +3512,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             if (old->dir && !v->dir) { r = -MOS_EISDIR; break; }
             if (!old->dir && v->dir) { r = -MOS_ENOTDIR; break; }
             if (old->dir && old->child) { r = -MOS_ENOTEMPTY; break; }
+            if (vfs_no_unlink(old)) { r = -MOS_EPERM; break; }
             if (!orphan_if_open(old, to_full) && !vfs_delete(old)) { r = -MOS_EINVAL; break; }
             unix_unbind(to_full);
         }

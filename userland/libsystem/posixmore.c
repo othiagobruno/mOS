@@ -869,7 +869,6 @@ const char *cx_at_path(int dirfd, const char *p, char *buf, size_t cap) {   /* t
     strlcpy(buf + n + 1, p, cap - n - 1);
     return buf;
 }
-int fchownat(int fd, const char *p, unsigned u, unsigned g, int fl) { (void)fd; (void)p; (void)u; (void)g; (void)fl; return 0; }
 int mkfifoat(int fd, const char *p, unsigned short m) { (void)fd; (void)p; (void)m; cx_errno = 45; return -1; }
 int mknodat(int fd, const char *p, unsigned short m, int dev) { (void)fd; (void)p; (void)m; (void)dev; cx_errno = 1; return -1; }
 long readlinkat(int fd, const char *p, char *b, size_t n) { char t[1024]; const char *q = cx_at_path(fd, p, t, sizeof t); return q ? readlink(q, b, n) : -1; }

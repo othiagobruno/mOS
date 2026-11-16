@@ -103,6 +103,10 @@ typedef struct { char vpath[1024]; char fpath[1040]; int depth; } walk_t;
 static void load_tree(const char *vpath, int depth);
 
 static bool authorize(void);
+#define META_FILE "/.vfsmeta"                 /* fs/persist.c: modo, dono, flags, datas e xattrs (fora do VFS) */
+#define META_NEW  "/.vfsmeta.new"
+static void meta_preload(void);
+static void meta_apply(void);
 #define UPDATE_DIR "/Sistema/Atualizacao"      /* área do atualizador (fs/update.c): fica fora do VFS */
 static bool is_update_dir(const char *vp) {
     usize n = strlen(UPDATE_DIR);
@@ -115,6 +119,7 @@ static void load_entry(void *ctx, const char *name, bool is_dir, u64 size) {
     snprintf(vp, sizeof vp, "%s/%s", w->vpath, name);
     snprintf(fp, sizeof fp, SYS_DIR "%s", vp);
     if (is_update_dir(vp)) return;
+    if (!strcmp(vp, META_FILE) || !strcmp(vp, META_NEW)) return;   /* metadados do VFS: não são arquivos do VFS */
     if (is_dir) {
         vfs_mkdir(vp);
         ndirs++;
@@ -175,7 +180,9 @@ bool persist_load(void) {
     }
     quiet++;
     u64 t0 = timer_ticks();
+    meta_preload();                      /* antes da árvore: os inodes novos começam depois dos gravados */
     load_tree("", 0);
+    meta_apply();
     quiet--;
     kprintf("persist: %d arquivos e %d pastas carregados do disco em %llu ms\n", nfiles, ndirs, timer_ticks() - t0);
     return true;
@@ -262,6 +269,7 @@ static bool tracked_path(const char *p) {
     if (!strncmp(p, "/Volumes", 8) && (p[8] == 0 || p[8] == '/')) return false;
     if (!strncmp(p, "/tmp", 4) && (p[4] == 0 || p[4] == '/')) return false;
     if (is_update_dir(p)) return false;
+    if (!strcmp(p, META_FILE) || !strcmp(p, META_NEW)) return false;
     return p[1] != 0;
 }
 
@@ -377,12 +385,22 @@ static int write_dirty(vnode_t *n, int depth) {
     return k;
 }
 
+static bool meta_pending;
+static bool meta_save(void);
+void persist_meta_mark(void) {
+    if (!enabled || quiet) return;
+    meta_pending = true;
+    pending = true;
+    last_change = timer_ticks();
+}
+
 void persist_sync(void) {
     vol_sync_all();                      /* volumes graváveis de /Volumes (antes de desligar, etc.) */
     if (!enabled || !pending) return;
     pending = false;
     u64 t0 = timer_ticks();
     int k = write_dirty(vfs_root(), 0);
+    if (meta_pending) { meta_pending = false; if (!meta_save()) { meta_pending = true; pending = true; } }
     fat_sync(sys);
     if (k) kprintf("persist: %d arquivo(s) gravado(s) em %llu ms\n", k, timer_ticks() - t0);
 }
@@ -407,4 +425,59 @@ void persist_tick(void) {
     save_klog();
     vol_tick();
     if (pending && timer_ticks() - last_change >= SYNC_DELAY_MS) persist_sync();
+}
+
+/* ------------------------------------------------------------ metadados (\mOS\.vfsmeta)
+ * O FAT não guarda dono, modo, flags BSD, datas em ns nem xattrs. Tudo isso vai para um arquivo só, regravado por
+ * inteiro no persist_sync quando algo muda (vfs_meta_changed/vfs_touch -> persist_meta_mark) e trocado de forma
+ * atômica (fat_replace: uma queda deixa o antigo ou o novo). Só entram os nós com metadados próprios (v->meta:
+ * criados ou mudados depois do boot); o resto continua com o padrão (501:20, 0644/0755, hora do boot).
+ *
+ *   "MOSVMETA" u32 versão(1) u32 registros u64 próximo-inode
+ *   registro: u16 tam, caminho (sem o \mOS), u8 pasta, u32 modo, uid, gid, flags, u64 inode,
+ *             i64 acesso, modificação, mudança, criação (ns), u16 nº de xattrs, { u8 tam, nome, u32 tam, valor }
+ *   u32 CRC-32 de tudo antes dele
+ */
+
+
+static u8 *meta_raw;           /* lido no meta_preload, aplicado no meta_apply */
+static u64 meta_rawlen;
+
+static void meta_preload(void) {
+    u64 n = 0;
+    u8 *d = fat_read_file(sys, SYS_DIR META_FILE, &n);
+    if (!d) d = fat_read_file(sys, SYS_DIR META_NEW, &n);        /* queda antes da troca: o novo já está inteiro */
+    if (!d) return;
+    u64 next = 0;
+    if (!vmeta_check(d, n, &next)) { kprintf("persist: .vfsmeta corrompido (ignorado)\n"); kfree(d); return; }
+    vfs_ino_reserve(next ? next - 1 : 0);
+    meta_raw = d;
+    meta_rawlen = n;
+}
+
+static vnode_t *meta_lookup(void *ctx, const char *path) { (void)ctx; return vfs_lookup(path); }
+
+static void meta_apply(void) {
+    if (!meta_raw) return;
+    int n = vmeta_apply(meta_raw, meta_rawlen, meta_lookup, NULL);
+    kprintf("persist: metadados de %d nó(s) restaurados\n", n);
+    kfree(meta_raw);
+    meta_raw = NULL;
+}
+
+static bool meta_track(void *ctx, vnode_t *v, char *vp, usize cap) {
+    (void)ctx;
+    for (vnode_t *p = v; p; p = p->parent) if (p->ext) return false;
+    vfs_path(v, vp, cap);
+    return tracked_path(vp);
+}
+
+static bool meta_save(void) {
+    u64 len = 0;
+    u8 *buf = vmeta_build(vfs_root(), meta_track, NULL, &len);
+    if (!buf) { kprintf("persist: sem memória para o .vfsmeta\n"); return false; }
+    bool ok = fat_write_file(sys, SYS_DIR META_NEW, buf, len) && fat_replace(sys, SYS_DIR META_NEW, SYS_DIR META_FILE);
+    if (!ok) kprintf("persist: falha ao gravar o .vfsmeta (%llu bytes)\n", (unsigned long long)len);
+    kfree(buf);
+    return ok;
 }
