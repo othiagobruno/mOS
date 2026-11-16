@@ -22,4 +22,22 @@ jobs:
           tools/build.sh --out /tmp/mos-linux-build
           python3 tools/corpus/harness.py hosttest --lib /tmp/mos-linux-build/libSystem.mos --disco /tmp/mos-linux-build/libunwind-x86
       - name: subconjunto fixo não pode piorar
-        run: python3 tools/corpus/harness.py gate
+        run: python3 tools/corpus/harness.py gate --lib /tmp/mos-linux-build/libSystem.mos --disco /tmp/mos-linux-build/libunwind-x86 --disco /tmp/mos-linux-build/esp/mOS/usr/lib
+      # O libSystem da main, para medir o corpus fora do CI sem rodar o build no PC (tools/corpus/harness.py libsystem-ci)
+      - name: publicar o libSystem da main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/libsystem-main/disco-x86 /tmp/libsystem-main/disco-arm64
+          cp /tmp/mos-linux-build/libSystem.mos /tmp/libsystem-main/
+          cp build/libSystem-arm64.mos /tmp/libsystem-main/ 2>/dev/null || true
+          cp -r /tmp/mos-linux-build/libunwind-x86 /tmp/libsystem-main/disco-x86/
+          cp -r /tmp/mos-linux-build/esp/mOS/usr/lib /tmp/libsystem-main/disco-x86/usr-lib
+          cp -r /tmp/mos-linux-build/esp/mOS/Sistema/Biblioteca/a64 /tmp/libsystem-main/disco-arm64/a64 2>/dev/null || true
+          echo "${GITHUB_SHA}" > /tmp/libsystem-main/commit.txt
+      - name: artefato libsystem-main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: libsystem-main
+          path: /tmp/libsystem-main
+          retention-days: 14
