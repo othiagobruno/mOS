@@ -70,15 +70,17 @@ __attribute__((noreturn)) void exit(int code) {
     _exit(code);
 }
 
+__attribute__((noreturn)) void cx_die_sigabrt(void);   /* abaixo, junto do sigaction */
+
 __attribute__((noreturn)) void abort(void) {
     cx_fdprintf(2, "Abort trap: 6 (chamado de %p)\n", __builtin_return_address(0));
     cx_stdio_flush_all();
-    _exit(134);
+    cx_die_sigabrt();
 }
 
 __attribute__((noreturn)) void __stack_chk_fail(void) {
     cx_puts_fd(2, "*** stack smashing detected ***: terminated\n");
-    _exit(134);
+    cx_die_sigabrt();
 }
 
 __attribute__((noreturn)) void __assert_rtn(const char *func, const char *file, int line, const char *expr) {
@@ -1408,6 +1410,19 @@ int sigpending(void *set) {
     if (r < 0) { cx_errno = (int)-r; return -1; }
     *(u32 *)set = cx_sigmask_from_mos(k);
     return 0;
+}
+
+/* abort()/__stack_chk_fail morrem pelo SIGABRT (como no macOS), não por _exit(134): o kernel marca WIFSIGNALED e
+ * manda EXC_CRASH. Desbloqueia o SIGABRT e o levanta; se um tratador voltar, repõe SIG_DFL e levanta de novo; o
+ * _exit(134) final só vale se, por algum motivo, o sinal não matar o processo. */
+__attribute__((noreturn)) void cx_die_sigabrt(void) {
+    u32 mask = 1u << (6 - 1);                       /* SIGABRT = 6 */
+    sigprocmask(2 /* SIG_UNBLOCK */, &mask, 0);
+    raise(6);
+    mac_sigaction_t dfl = {0, 0, 0};               /* SIG_DFL */
+    sigaction(6, &dfl, 0);
+    raise(6);
+    _exit(134);
 }
 /* sigsuspend: troca a máscara e dorme até um tratador rodar; sempre -1/EINTR */
 int sigsuspend(const unsigned *m) {
