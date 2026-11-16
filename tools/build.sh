@@ -707,7 +707,13 @@ fi
 # x86_64, compilada com MOS_ARCH=arm64, entra arquivo por arquivo nos Mach-O que já estão na ESP.
 echo "==> frameworks universais (x86_64 + arm64)"
 A64FW="$ROOT/build/swift/objc-arm64/dylib"
+# runtime Swift, overlays, Foundation Swift e Combine arm64 (as mesmas etapas do x86_64 acima, MOS_ARCH=arm64)
+MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-libswift-real.sh" || echo "aviso: runtime Swift arm64 falhou" >&2
 rm -rf "$A64FW/System"
+if [ -f "$A64FW/usr/lib/swift/libswiftCore.dylib" ]; then
+    MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-swift-combine.sh" || echo "aviso: Combine arm64 não compilou" >&2
+    MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-swift-foundation-objc.sh" || echo "aviso: Foundation Swift arm64 não compilou" >&2
+fi
 MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-frameworks-objc.sh" "$A64FW" || echo "aviso: algum framework arm64 não compilou" >&2
 bash "$ROOT/tools/build-coreimage.sh" "$ZIG" "$A64FW" arm64
 "${LIPO[@]}" --arvore "$ESP/mOS" "$A64FW" || echo "aviso: fatia arm64 sem par x86_64 na ESP (verificar-imagem-arm64.py lista)" >&2

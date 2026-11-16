@@ -60,7 +60,11 @@ if [ ! -x "${zig:-/}" ] || [ ! -x "${fe:-/}" ] || [ ! -d "$sfroot/Sources" ] || 
     echo "  zig=${zig:-ausente} swift-frontend=${fe:-ausente} deps=$deps" >&2
     exit 1
 fi
-objc="$root/build/swift/objc"
+case "${MOS_ARCH:-x86_64}" in
+    x86_64) zt=x86_64-macos; st=x86_64-apple-macos26; objc="$root/build/swift/objc" ;;
+    arm64) zt=aarch64-macos; st=arm64-apple-macos26; objc="$root/build/swift/objc-arm64" ;;   # docs/runtime-arm64-plano.md
+    *) echo "MOS_ARCH=$MOS_ARCH: use x86_64 ou arm64" >&2; exit 1 ;;
+esac
 out="$objc/overlays"
 inc="$objc/sdk/include"
 shims="$src/stdlib/public/SwiftShims/swift/shims"
@@ -92,7 +96,7 @@ build_mod() {
     while [ $# -gt 0 ] && [ "$1" != -- ]; do extra+=("$1"); shift; done
     [ "${1:-}" = -- ] && shift
     files=("$@")
-    local a=(-c -target x86_64-apple-macos26 -resource-dir "$res" -module-name "$name" -parse-as-library
+    local a=(-c -target "$st" -resource-dir "$res" -module-name "$name" -parse-as-library
              -swift-version "$lang" -O -I "$objc" -I "$out" -I "$shims" -module-cache-path "$objc/modcache-foundation"
              -Xcc "-isystem$inc" -Xcc -nostdlibinc -Xcc -DMOS_SWIFT_OBJC=1 -Xcc -Wno-nullability-completeness
              -module-link-name "swift$name" -emit-module-path "$out/$name.swiftmodule" -o "$out/$name.o")
@@ -151,7 +155,7 @@ if [ -n "$spr" ]; then
     if want _StringProcessing; then
         rm -f "$out"/_CUnicode_*.o
         for c in "$spr"/_CUnicode/*.c; do
-            "$zig" cc -target x86_64-macos -O2 -c "-I$spr/_CUnicode/include" -std=gnu11 "$c" -o "$out/_CUnicode_$(basename "$c" .c).o" || fails=$((fails + 1))
+            "$zig" cc -target "$zt" -O2 -c "-I$spr/_CUnicode/include" -std=gnu11 "$c" -o "$out/_CUnicode_$(basename "$c" .c).o" || fails=$((fails + 1))
         done
     fi
     mapfile -t f < <(find "$spr/_StringProcessing" -name '*.swift' | sort)
@@ -190,7 +194,7 @@ if want _FoundationCShims; then
     okc=${#cf[@]}
     rm -f "$out"/_FoundationCShims_*.o
     for c in "${cf[@]}"; do
-        "$zig" cc -target x86_64-macos -O2 -c "-I$csh/include" -std=gnu11 "$c" -o "$out/_FoundationCShims_$(basename "$c" .c).o" || okc=0
+        "$zig" cc -target "$zt" -O2 -c "-I$csh/include" -std=gnu11 "$c" -o "$out/_FoundationCShims_$(basename "$c" .c).o" || okc=0
     done
     if [ "$okc" -gt 0 ]; then
         echo '_FoundationCShims (C): ok'
@@ -335,7 +339,7 @@ done
 link_dylib() {
     local name=$1
     shift
-    if "$zig" c++ -target x86_64-macos -shared -o "$dest/$name.dylib" \
+    if "$zig" c++ -target "$zt" -shared -o "$dest/$name.dylib" \
         -Wl,-install_name,/usr/lib/swift/$name.dylib -Wl,-undefined,dynamic_lookup "$@" "${base_dylibs[@]}"; then
         echo "$name: $(wc -c < "$dest/$name.dylib") bytes"
     else
@@ -352,7 +356,7 @@ fi
 if [ $fails -eq 0 ] && [ -f "$out/System.o" ]; then
     sysfw="$objc/dylib/System/Library/Frameworks/System.framework/Versions/A"
     mkdir -p "$sysfw"
-    if "$zig" c++ -target x86_64-macos -shared -o "$sysfw/System" \
+    if "$zig" c++ -target "$zt" -shared -o "$sysfw/System" \
         -Wl,-install_name,/System/Library/Frameworks/System.framework/Versions/A/System -Wl,-undefined,dynamic_lookup \
         "$out/System.o" "${base_dylibs[@]}"; then
         ln -sfn A "$objc/dylib/System/Library/Frameworks/System.framework/Versions/Current"
