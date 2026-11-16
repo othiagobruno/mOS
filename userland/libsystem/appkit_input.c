@@ -621,6 +621,7 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_textkit_init(void); cx_appkit_textkit_init(); }   /* appkit_textkit.c: NSTextStorage, NSTextContainer, NSLayoutManager */
     { extern void cx_appkit_textview_init(void); cx_appkit_textview_init(); } /* appkit_textview.c: NSTextView sobre o TextKit */
     { extern void cx_appkit_textkit2_init(void); cx_appkit_textkit2_init(); } /* appkit_textkit2.c: TextKit 2 sobre o motor do TextKit 1 */
+    { extern void cx_appkit_controls3_init(void); cx_appkit_controls3_init(); } /* appkit_controls3.c: NSTokenField, NSPathControl, NSBrowser, NSRuleEditor, NSPredicateEditor */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");
