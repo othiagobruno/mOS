@@ -40,7 +40,8 @@ Dono: Igor (`igor`, `TIME.md`). Este arquivo é o plano e o estado honesto da fr
 | Lacunas por dono | `harness.py donos` → `docs/lacunas-por-dono.md`, `docs/lacunas/<dono>.md` | `hosttest donos` (mapa de frentes) | ok; números saem da varredura |
 | Caminho do carregador EFI | `kernel/fs/loaderpath.c`, `origin_loader_path()`, `boot_info_t.loader_fp` | `tools/loaderpath_host.c` 13/13 | ok no host; boot não rodou (build proibido até o fim) |
 | Atualização troca o carregador certo | `kernel/fs/update.c` | `clang -fsyntax-only` | sintaxe ok; sem VM |
-| Instalador dual boot (Ubuntu) | `tools/instalar-dual-boot.py`, doc `docs/dual-boot.md` | `tools/instalar-dual-boot-teste.sh` 19/19 (ESP simulada, stubs de efibootmgr/GRUB) | ok no host; **nada gravado no disco do Thiago** |
+| Instalador dual boot (Ubuntu) | `tools/instalar-dual-boot.py`, doc `docs/dual-boot.md` | `tools/instalar-dual-boot-teste.sh` 23/23 (ESP simulada, stubs de efibootmgr/GRUB, imagem real do mkimg lida pelo mtools sem root) | ok no host; **nada gravado no disco do Thiago** |
+| Nomes longos da imagem em UTF-16 | `tools/mkimg.c` (`name_utf16`) | `tools/mkimg-nomes-teste.sh` 13/13 (antes 4/13) | ok |
 
 ## Falta
 

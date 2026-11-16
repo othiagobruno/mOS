@@ -245,33 +245,54 @@ def grava_grub(raiz: Path, esp: Esp) -> None:
 
 
 # ------------------------------------------------------------------ origem
+def particao_esp_da_imagem(imagem: str) -> int:
+    """Deslocamento em bytes da 1ª partição EFI da GPT da imagem (o mkimg grava GPT + ESP FAT32)."""
+    with open(imagem, "rb") as f:
+        f.seek(512)
+        cab = f.read(92)
+        if cab[:8] != b"EFI PART":
+            raise Recusa(f"{imagem} não tem GPT: não é uma imagem do mOS")
+        lba_ent = int.from_bytes(cab[72:80], "little")
+        n_ent = int.from_bytes(cab[80:84], "little")
+        tam = int.from_bytes(cab[84:88], "little")
+        f.seek(lba_ent * 512)
+        tabela = f.read(n_ent * tam)
+    esp = bytes.fromhex("28732ac11ff8d211ba4b00a0c93ec93b")      # C12A7328-F81F-11D2-BA4B-00A0C93EC93B em disco
+    for i in range(n_ent):
+        e = tabela[i * tam:(i + 1) * tam]
+        if e[:16] == esp:
+            return int.from_bytes(e[32:40], "little") * 512
+    raise Recusa(f"{imagem}: GPT sem partição EFI")
+
+
 class Origem:
-    """--imagem: monta a 1ª partição de build/mOS.img só leitura (losetup -r). --origem: uma árvore já montada."""
+    """--imagem: extrai a ESP de build/mOS.img com o mtools (mcopy), só leitura e sem root; nada é montado.
+    --origem: uma árvore já extraída ou montada."""
 
     def __init__(self, imagem: str | None, pasta: str | None):
-        self.loop = None
-        self.mnt = None
+        self.tmp = None
         if pasta:
             self.raiz = Path(pasta)
             return
         if not imagem:
             raise Recusa("diga a origem: --imagem build/mOS.img (ou --origem PASTA)")
-        self.loop = roda(["losetup", "--read-only", "--partscan", "--find", "--show", imagem]).strip()
-        self.mnt = tempfile.mkdtemp(prefix="mos-origem-")
-        part = self.loop + "p1"
-        for _ in range(20):
-            if os.path.exists(part):
-                break
-            time.sleep(0.1)
-        roda(["mount", "-o", "ro", part, self.mnt])
-        self.raiz = Path(self.mnt)
+        if not shutil.which("mcopy"):
+            raise Recusa("falta o mtools (sudo apt install mtools) para ler a imagem sem montá-la")
+        off = particao_esp_da_imagem(imagem)
+        self.tmp = tempfile.mkdtemp(prefix="mos-origem-", dir=os.environ.get("MOS_TMP") or None)
+        env = dict(os.environ, MTOOLS_SKIP_CHECK="1", LC_ALL="C.UTF-8")
+        for pasta_img in ("::/mOS", "::/EFI"):
+            p = subprocess.run(["mcopy", "-s", "-n", "-m", "-i", f"{imagem}@@{off}", pasta_img, self.tmp],
+                               text=True, capture_output=True, env=env)
+            if p.returncode != 0:
+                self.fecha()
+                raise Recusa(f"mcopy {pasta_img} saiu {p.returncode}: {p.stderr.strip()[:300]}")
+        self.raiz = Path(self.tmp)
 
     def fecha(self) -> None:
-        if self.mnt:
-            roda(["umount", self.mnt], checar=False)
-            os.rmdir(self.mnt)
-        if self.loop:
-            roda(["losetup", "-d", self.loop], checar=False)
+        if self.tmp:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            self.tmp = None
 
 
 # ------------------------------------------------------------------ instalar / desinstalar

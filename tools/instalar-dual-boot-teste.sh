@@ -2,7 +2,7 @@
 # Teste de host do instalador dual boot (tools/instalar-dual-boot.py), sem root e sem tocar em disco nenhum:
 # a ESP é uma pasta em /tmp com o conteúdo do Ubuntu, findmnt/lsblk/efibootmgr/update-grub são stubs no PATH
 # (o efibootmgr guarda a NVRAM num arquivo), e a origem é uma árvore com manifesto no formato do mkimg.
-set -euo pipefail
+set -uo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d /tmp/mos-dualboot-XXXX); trap 'rm -rf "$T"' EXIT
 ESP=$T/esp; ORIG=$T/orig; SYS=$T/sys; BIN=$T/bin; NV=$T/nvram
@@ -102,5 +102,18 @@ passo "desinstalar" "$I --desinstalar --gravar --confirmo sda1 >/dev/null && [ !
 passo "ESP volta a ter só o Ubuntu" "[ \"\$(cd $ESP && find . -type f | sort | tr '\n' ' ')\" = './EFI/BOOT/BOOTX64.EFI ./EFI/ubuntu/grub.cfg ./EFI/ubuntu/shimx64.efi ' ] && [ \"\$(ubuntu)\" = \"\$U0\" ]"
 mkdir -p "$ESP/mOS"; echo alheio > "$ESP/mOS/x"
 passo "não apaga \\mOS que não é do mOS" "! $I --desinstalar --gravar --confirmo sda1 2>/dev/null && [ -f $ESP/mOS/x ]"
+rm -rf "$ESP/mOS"
+# imagem de verdade do mkimg (GPT + FAT32 + manifesto assinado), lida pelo mtools sem montar e sem root
+cc -O2 -o "$T/mkimg" "$R/tools/mkimg.c" 2>/dev/null
+mkdir -p "$T/stg/EFI/BOOT" "$T/stg/mOS/Aplicativos/Calculadora Científica.app/Contents" "$T/stg/mOS/Sistema/Biblioteca"
+head -c 200000 /dev/urandom > "$T/stg/EFI/BOOT/BOOTX64.EFI"
+echo '<plist/>' > "$T/stg/mOS/Aplicativos/Calculadora Científica.app/Contents/Info.plist"
+head -c 70000 /dev/urandom > "$T/stg/mOS/Sistema/Biblioteca/libSystem.mos"
+"$T/mkimg" "$T/mOS.img" "$T/stg" 64 >/dev/null
+J="python3 $R/tools/instalar-dual-boot.py --esp $ESP --imagem $T/mOS.img --raiz-sistema $SYS"
+passo "imagem do mkimg: simulação confere a origem" "MOS_TMP=$T $J | grep -q 'origem conferida' && [ ! -e $ESP/mOS ]"
+passo "imagem do mkimg: instala com acento no nome" "MOS_TMP=$T $J --gravar --confirmo sda1 --sem-nvram --sem-grub >/dev/null && cmp -s $ESP/EFI/mOS/BOOTX64.EFI $T/stg/EFI/BOOT/BOOTX64.EFI && [ -f '$ESP/mOS/Aplicativos/Calculadora Científica.app/Contents/Info.plist' ] && [ \"\$(ubuntu)\" = \"\$U0\" ]"
+passo "imagem do mkimg: nada sobra no temporário" "[ -z \"\$(ls -d $T/mos-origem-* 2>/dev/null)\" ]"
+passo "arquivo que não é imagem recusa" "head -c 4096 /dev/zero > $T/lixo.img && ! $J --imagem $T/lixo.img 2>/dev/null"
 echo "instalar-dual-boot: $ok/$n ok"
 [ $ok = $n ]
