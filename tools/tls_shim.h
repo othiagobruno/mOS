@@ -56,5 +56,8 @@ int  tls_handshake(tls_conn_t *c);
 int  tls_send(tls_conn_t *c, const void *data, int len);
 int  tls_recv(tls_conn_t *c, void *buf, int max);
 int  tls_pending(const tls_conn_t *c);   /* 1: tls_recv entrega sem ler mais do TCP */
+/* certificado de cliente: cadeia como em tls_copy_peer_chain (folha primeiro) e chave privada DER (PKCS#1, SEC1 ou
+ * PKCS#8, RSA ou EC P-256/P-384, que tem de ser a da folha); antes do handshake. 0 ok */
+int  tls_set_client_identity(tls_conn_t *c, const u8 *chain, u32 chain_len, const u8 *key, u32 key_len);
 void tls_free(tls_conn_t *c);
 const char *tls_error(tls_conn_t *c);

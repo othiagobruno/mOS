@@ -40,7 +40,7 @@ enum {
     errSecItemNotFound = -25300, errSecBadReq = -909, errSecNoTrustSettings = -25263,
     errSSLProtocol = -9800, errSSLNegotiation = -9801, errSSLFatalAlert = -9802, errSSLWouldBlock = -9803,
     errSSLClosedGraceful = -9805, errSSLClosedAbort = -9806, errSSLXCertChainInvalid = -9807, errSSLInternal = -9810,
-    errSSLClosedNoNotify = -9816, errSSLPeerAuthCompleted = -9841, errSSLBadConfiguration = -9848,
+    errSSLClosedNoNotify = -9816, errSSLPeerAuthCompleted = -9841, errSSLBadConfiguration = -9848, errSSLBadCert = -9808,
 };
 enum { kSSLIdle, kSSLHandshake, kSSLConnected, kSSLClosed, kSSLAborted };
 enum { kSSLSessionOptionBreakOnServerAuth = 0 };
@@ -52,6 +52,8 @@ long CFArrayGetCount(id a);
 id CFArrayGetValueAtIndex(id a, long i);
 id CFRetain(id o);
 void CFRelease(id o);
+long CFDataGetLength(id d);
+const u8 *CFDataGetBytePtr(id d);
 id CFDataCreate(void *alloc, const u8 *bytes, long n);
 id SecCertificateCreateWithData(void *alloc, id der);
 id objc_retain(id o);
@@ -87,6 +89,7 @@ typedef struct {
     u8 *rec, *out, *plain;
     u32 rec_have, out_off, out_len, p_off, p_len;
     u8 alpn[128]; u32 alpn_len;          /* lista pedida pelo app, formato do fio */
+    u8 *ident; u32 ident_len;            /* SSLSetCertificate: cadeia + chave para MOS_NET_TLS_IDENTITY */
     mos_net_tls_info_t info;             /* preenchido no fim do handshake */
 } ssl_t;
 
@@ -108,6 +111,7 @@ static void ssl_dealloc(id self, SEL c) {
     ssl_t *s = (ssl_t *)self;
     ssl_teardown(s, 0);
     free(s->rec); free(s->out); free(s->plain);
+    if (s->ident) { memset(s->ident, 0, s->ident_len); free(s->ident); }
     s->rec = s->out = s->plain = 0;
     s->magic = 0;
     if (nsobject_dealloc) ((void (*)(id, SEL))nsobject_dealloc)(self, c);
@@ -203,9 +207,54 @@ OSStatus SSLGetPeerDomainName(void *ctx, char *buf, size_t *len) {
     return errSecSuccess;
 }
 OSStatus SSLSetPeerID(void *ctx, const void *id_, size_t len) { (void)id_; (void)len; return S(ctx) ? errSecSuccess : errSecParam; }
+/* certificado de cliente: certs[0] = SecIdentityRef, depois os intermediários (SecCertificateRef). A cadeia vai no
+ * formato de MOS_NET_TLS_CERTS e a chave como SecKeyCopyExternalRepresentation (PKCS#1 no RSA, X9.63 no EC). */
+OSStatus SecIdentityCopyCertificate(id ident, id *cert);
+OSStatus SecIdentityCopyPrivateKey(id ident, id *key);
+id SecCertificateCopyData(id cert);
+id SecKeyCopyExternalRepresentation(id key, id *err);
 OSStatus SSLSetCertificate(void *ctx, id certs) {
-    if (!S(ctx)) return errSecParam;
-    return certs ? errSecUnimplemented : errSecSuccess;   /* certificado de cliente: não suportado */
+    ssl_t *s = S(ctx);
+    if (!s) return errSecParam;
+    if (s->h >= 0) return errSecBadReq;                         /* depois do início do handshake não muda */
+    if (s->ident) { memset(s->ident, 0, s->ident_len); free(s->ident); s->ident = 0; s->ident_len = 0; }
+    long n = certs ? CFArrayGetCount(certs) : 0;
+    if (!n) return errSecSuccess;
+    if (n > 10) return errSecParam;
+    id ident = (id)CFArrayGetValueAtIndex(certs, 0), leaf = 0, key = 0;
+    if (SecIdentityCopyCertificate(ident, &leaf) || SecIdentityCopyPrivateKey(ident, &key) || !leaf || !key) {
+        if (leaf) CFRelease(leaf);
+        if (key) CFRelease(key);
+        return errSecParam;
+    }
+    id ders[10] = {0};
+    ders[0] = SecCertificateCopyData(leaf);
+    for (long i = 1; i < n; i++) ders[i] = SecCertificateCopyData((id)CFArrayGetValueAtIndex(certs, i));
+    id kd = SecKeyCopyExternalRepresentation(key, 0);
+    CFRelease(leaf); CFRelease(key);
+    u32 chain = 4;
+    OSStatus st = kd ? errSecSuccess : errSecParam;
+    for (long i = 0; i < n; i++) { if (!ders[i]) st = errSecParam; else chain += 4 + (u32)CFDataGetLength(ders[i]); }
+    if (!st) {
+        u32 kl = (u32)CFDataGetLength(kd), total = 4 + chain + kl;
+        u8 *b = malloc(total);
+        if (!b) st = errSecAllocate;
+        else {
+            u32 o = 0;
+            b[o++] = (u8)(chain >> 24); b[o++] = (u8)(chain >> 16); b[o++] = (u8)(chain >> 8); b[o++] = (u8)chain;
+            b[o++] = 0; b[o++] = 0; b[o++] = 0; b[o++] = (u8)n;
+            for (long i = 0; i < n; i++) {
+                u32 l = (u32)CFDataGetLength(ders[i]);
+                b[o++] = (u8)(l >> 24); b[o++] = (u8)(l >> 16); b[o++] = (u8)(l >> 8); b[o++] = (u8)l;
+                memcpy(b + o, CFDataGetBytePtr(ders[i]), l); o += l;
+            }
+            memcpy(b + o, CFDataGetBytePtr(kd), kl);
+            s->ident = b; s->ident_len = total;
+        }
+    }
+    for (long i = 0; i < n; i++) if (ders[i]) CFRelease(ders[i]);
+    if (kd) CFRelease(kd);
+    return st;
 }
 OSStatus SSLSetProtocolVersionMin(void *ctx, int v) {
     ssl_t *s = S(ctx);
@@ -442,6 +491,7 @@ OSStatus SSLHandshake(void *ctx) {
         if (h < 0) { s->err = errSSLInternal; return s->err; }
         s->h = h;
         if (s->alpn_len && net(MOS_NET_TLS_ALPN, h, (long)s->alpn, s->alpn_len) < 0) { s->err = errSSLBadConfiguration; return s->err; }
+        if (s->ident && net(MOS_NET_TLS_IDENTITY, h, (long)s->ident, s->ident_len) < 0) { s->err = errSSLBadCert; return s->err; }
         s->state = kSSLHandshake;
     }
     for (;;) {

@@ -337,6 +337,21 @@ i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
         }
         return (i64)k;
     }
+    if (op == MOS_NET_TLS_IDENTITY) {
+        if (c < 12 || c > 64 * 1024) return -MOS_EINVAL;
+        u8 *id = kmalloc((usize)c);
+        if (!id) return -MOS_ENOMEM;
+        if (!uvm_copy_in(p, id, b, (usize)c)) { kfree(id); return -MOS_EFAULT; }
+        u32 cl = (u32)id[0] << 24 | (u32)id[1] << 16 | (u32)id[2] << 8 | id[3];
+        if (cl > (u32)c - 4) { kfree(id); return -MOS_EINVAL; }
+        fl = spin_lock_irqsave(&g_tls_lock);
+        utls_t *u = ut_of(p, a);
+        r = u && u->tls ? (tls_set_client_identity(u->tls, id + 4, cl, id + 4 + cl, (u32)c - 4 - cl) ? -MOS_EINVAL : 0) : -MOS_EINVAL;
+        spin_unlock_irqrestore(&g_tls_lock, fl);
+        memset(id, 0, (usize)c);
+        kfree(id);
+        return r;
+    }
     if (op == MOS_NET_TLS_ALPN) {
         u8 list[128];
         if (c > sizeof list) return -MOS_EINVAL;

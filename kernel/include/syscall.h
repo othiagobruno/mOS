@@ -637,6 +637,9 @@ enum {
     MOS_NET_TLS_ALPN,      /* (sessão, lista, n) -> 0 | -errno   lista ALPN no formato do fio, antes do 1º HANDSHAKE */
     MOS_NET_TLS_INFO,      /* (sessão, mos_net_tls_info_t *) -> 0 | -errno   versão, cifra e ALPN escolhidos */
     MOS_NET_IFLIST,        /* (mos_net_if_t *buf, max) -> quantidade de placas (buf 0: só conta). Ordem de registro. */
+    MOS_NET_TLS_IDENTITY,  /* (sessão, buf, n) -> 0 | -errno   certificado de cliente, antes do 1º HANDSHAKE.
+                            * buf = u32 tamanho da cadeia (BE) + cadeia (formato de MOS_NET_TLS_CERTS) + chave privada
+                            * (DER PKCS#1/SEC1/PKCS#8 ou X9.63 04||X||Y||K) */
 };
 #define MOS_NET_IF_LINK   1  /* mos_net_if_t.flags: cabo/associação de pé */
 #define MOS_NET_IF_ACTIVE 2  /* é a interface por onde a pilha fala (ip/máscara/gateway/dns valem) */

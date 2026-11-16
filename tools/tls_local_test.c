@@ -117,12 +117,15 @@ static pid_t serve(const char *cert, const char *key, int port) {
 static void stop(pid_t p) { if (p > 0) { kill(p, SIGTERM); waitpid(p, NULL, 0); } }
 
 static const u8 *cli_alpn; static u32 cli_alpn_len;   /* lista ALPN do cliente (0 = padrão) */
+static u8 *cli_chain, *cli_key; static u32 cli_chain_len, cli_key_len;   /* certificado de cliente (0 = nenhum) */
+static int cli_id_ret;
 static char got_alpn[33]; static int got_ver;
 static int handshake(int port, const char *sni, char *err, size_t errlen, int *http_ok) {
     int s = tcp_connect(port);
     if (s < 0) { snprintf(err, errlen, "tcp"); return -1; }
     tls_conn_t *c = tls_new(s, sni);
     if (cli_alpn) tls_set_alpn(c, cli_alpn, cli_alpn_len);
+    cli_id_ret = cli_chain ? tls_set_client_identity(c, cli_chain, cli_chain_len, cli_key, cli_key_len) : 0;
     u64 t0 = timer_ticks();
     int r;
     while ((r = tls_handshake(c)) == 0) {
@@ -244,6 +247,56 @@ int main(void) {
     check("servidor sem ALPN: handshake segue, nenhum protocolo", hr == 0 && got_alpn[0] == 0);
     stop(p);
     cli_alpn = 0;
+
+    /* certificado de cliente: o s_server exige (-Verify) e confere a cadeia e a assinatura */
+    check("certificados de cliente gerados", run(
+        "cd /tmp/mos-tls-test && printf 'extendedKeyUsage=clientAuth\\n' > cli.ext && "
+        "openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out ec256.key 2>/dev/null && "
+        "openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -out ec384.key 2>/dev/null && "
+        "openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out rsa.key 2>/dev/null && "
+        "for k in ec256 ec384 rsa; do openssl req -new -key $k.key -subj /CN=cliente-$k -out $k.csr 2>/dev/null && "
+        "openssl x509 -req -in $k.csr -CA ca.pem -CAkey ca.key -set_serial 7$RANDOM -days 30 -extfile cli.ext -out $k.pem 2>/dev/null && "
+        "openssl x509 -in $k.pem -outform DER -out $k.crt.der && openssl pkey -in $k.key -outform DER -out $k.p8.der || exit 1; done && "
+        "openssl ec -in ec256.key -outform DER -out ec256.sec1.der 2>/dev/null && "
+        "openssl rsa -in rsa.key -traditional -outform DER -out rsa.p1.der 2>/dev/null && cd - >/dev/null && "
+        "python3 -I tools/tls_x963.py /tmp/mos-tls-test/ec384.key /tmp/mos-tls-test/ec384.x963"));
+    static const char *ids[][3] = {{"ec256", "ec256.p8.der", "EC P-256 (PKCS#8)"}, {"ec256", "ec256.sec1.der", "EC P-256 (SEC1)"},
+                                   {"ec384", "ec384.p8.der", "EC P-384"}, {"rsa", "rsa.p8.der", "RSA 2048 (PKCS#8)"},
+                                   {"rsa", "rsa.p1.der", "RSA 2048 (PKCS#1)"}, {"ec384", "ec384.x963", "EC P-384 (X9.63 do SecKey)"}};
+    for (int v = 0; v < 2; v++) {
+        const char *ex[6] = {"-Verify", "1", "-CAfile", "/tmp/mos-tls-test/ca.pem", v ? "-tls1_2" : "-tls1_3", 0};
+        for (int i = 0; i < 6; i++) srv_extra[i] = ex[i];
+        p = serve("/tmp/mos-tls-test/srv.pem", "/tmp/mos-tls-test/srv.key", 18450 + v);
+        for (int k = 0; k < 6; k++) {
+            char path[128]; FILE *ff;
+            u8 der[4096]; size_t dl;
+            snprintf(path, sizeof path, "/tmp/mos-tls-test/%s.crt.der", ids[k][0]);
+            ff = fopen(path, "rb"); dl = ff ? fread(der, 1, sizeof der, ff) : 0; if (ff) fclose(ff);
+            static u8 chainbuf[4200], keybuf[4096];
+            chainbuf[0] = 0; chainbuf[1] = 0; chainbuf[2] = 0; chainbuf[3] = 1;
+            chainbuf[4] = (u8)(dl >> 24); chainbuf[5] = (u8)(dl >> 16); chainbuf[6] = (u8)(dl >> 8); chainbuf[7] = (u8)dl;
+            memcpy(chainbuf + 8, der, dl);
+            snprintf(path, sizeof path, "/tmp/mos-tls-test/%s", ids[k][1]);
+            ff = fopen(path, "rb"); size_t kl = ff ? fread(keybuf, 1, sizeof keybuf, ff) : 0; if (ff) fclose(ff);
+            cli_chain = chainbuf; cli_chain_len = (u32)(8 + dl); cli_key = keybuf; cli_key_len = (u32)kl;
+            hr = handshake(18450 + v, "localhost", err, sizeof err, &http);
+            char name[96];
+            snprintf(name, sizeof name, "certificado de cliente %s, TLS 1.%d", ids[k][2], v ? 2 : 3);
+            check(name, dl && kl && cli_id_ret == 0 && hr == 0 && http == 1 && got_ver == (v ? 0x0303 : 0x0304));
+            if (hr) printf("        (%s)\n", err);
+        }
+        /* chave de outro certificado: recusada já no tls_set_client_identity */
+        FILE *ff = fopen("/tmp/mos-tls-test/rsa.p8.der", "rb");   /* a cadeia em uso é a do último caso (EC P-384) */
+        static u8 other[2048]; size_t ol = ff ? fread(other, 1, sizeof other, ff) : 0; if (ff) fclose(ff);
+        cli_key = other; cli_key_len = (u32)ol;
+        hr = handshake(18450 + v, "localhost", err, sizeof err, &http);
+        check(v ? "chave que não é do certificado é recusada (1.2)" : "chave que não é do certificado é recusada (1.3)", cli_id_ret != 0 && (hr != 0 || http == 0));
+        cli_chain = 0;
+        hr = handshake(18450 + v, "localhost", err, sizeof err, &http);
+        check(v ? "sem certificado o servidor recusa (1.2)" : "sem certificado o servidor recusa (1.3)", hr != 0 || http == 0);
+        stop(p);
+    }
+    for (int i = 0; i < 6; i++) srv_extra[i] = 0;
 
     printf("tls_local: %d/%d\n", passes, passes + fails);
     return fails ? 1 : 0;

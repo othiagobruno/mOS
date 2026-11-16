@@ -37,6 +37,9 @@ int ecdh_p256(u8 shared[32], const u8 priv[32], const u8 *peer, u32 peerlen);
 /* chave pública 04 || X || Y de uma privada; assinatura ECDSA com nonce aleatório (r e s com B bytes) */
 int ec_public_key(int curve, const u8 *priv, u8 *pub);
 int ecdsa_sign(int curve, const u8 *priv, const u8 *digest, u32 dlen, u8 *r, u8 *s);
+/* assinatura RSA com o expoente privado d (big-endian); sig recebe k bytes (k = tamanho do módulo) */
+int rsa_sign_pkcs1(const u8 *n, u32 nlen, const u8 *d, u32 dlen, int halg, const u8 *digest, u8 *sig, u32 *siglen);
+int rsa_sign_pss(const u8 *n, u32 nlen, const u8 *d, u32 dlen, int halg, const u8 *digest, u8 *sig, u32 *siglen);
 
 /* ---------------------------------------------------------------- x509.c */
 enum { X509_KEY_NONE = 0, X509_KEY_RSA, X509_KEY_EC };
