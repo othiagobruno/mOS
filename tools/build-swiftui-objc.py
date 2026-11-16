@@ -205,7 +205,21 @@ def stage_native():
             '-DOPENSWIFTUI_OPENCOMBINE', '-DOPENSWIFTUI_RELEASE_2024']
     cinc = ['-I' + spi_inc, '-I' + s + '/OpenRenderBoxCxx/include', '-I' + SHIM, '-include', os.path.join(SHIM, 'mos_openswiftui_prelude.h'),
             '-isystem' + oag + '/SwiftCorelibs/include', '-isystem' + os.path.join(ROOT, 'userland', 'sdk', 'include')] + defs
-    build_files('OpenSwiftUI_SPI', walk([spi + '/Overlay', spi + '/Util'], ('.c',)), cinc + ['-std=gnu11'], cinc + CXX)
+    # o C do SPI escreve à mão nomes Swift com o módulo OpenSwiftUI/OpenSwiftUICore; o framework usa -module-abi-name SwiftUI
+    spi_src = os.path.join(NAT, 'OpenSwiftUI_SPI', 'src')
+    if os.path.exists(spi_src):
+        shutil.rmtree(spi_src)
+    os.makedirs(spi_src)
+    files = []
+    for f in walk([spi + '/Overlay', spi + '/Util'], ('.c',)):
+        x = open(f, encoding='utf-8').read()
+        n = re.sub(r'\$s15OpenSwiftUICore', '$s7SwiftUI', re.sub(r'\$s11OpenSwiftUI(?=\d)', '$s7SwiftUI', x))
+        if n != x:
+            f = os.path.join(spi_src, os.path.basename(f))
+            open(f, 'w').write(n)
+        files.append(f)
+    cinc += ['-iquote', spi + '/Util', '-iquote', spi + '/Overlay']
+    build_files('OpenSwiftUI_SPI', files, cinc + ['-std=gnu11'], cinc + CXX)
     # CoreText do mOS (ctfont.c: tipos CF CTFont/CTFontDescriptor)
     ct = ['-I' + IMPORTER, '-I' + os.path.join(SDKSWIFT, 'CoreText', 'include')]
     build_files('CoreText', [os.path.join(SDKSWIFT, 'CoreText', 'ctfont.c')], ct + ['-std=gnu11'], ct + CXX)
@@ -238,16 +252,6 @@ def prepare_sdk():
               'NSNotification=Foundation.Notification', 'NSURLRequest=Foundation.URLRequest', 'NSIndexPath=Foundation.IndexPath']:
         k, v = b.split('=')
         t = re.sub(r'(?m)^@interface %s([ <])' % k, lambda m: '__attribute__((swift_bridge("%s"))) @interface %s%s' % (v, k, m.group(1)), t)
-    # nomes Swift da Apple para os modos do RunLoop (RunLoop.Mode.default/.common), que este Foundation.h ainda não dá
-    for c, n in (('NSDefaultRunLoopMode', 'default'), ('NSRunLoopCommonModes', 'common')):
-        t = t.replace('FOUNDATION_EXPORT NSRunLoopMode const %s;' % c, 'FOUNDATION_EXPORT NSRunLoopMode const %s NS_SWIFT_NAME(RunLoop.Mode.%s);' % (c, n))
-    t = t.replace('- (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)limitDate;',
-                  '- (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)limitDate NS_SWIFT_NAME(run(mode:before:));')
-    # NSCalendar.Unit: o import-as-member só vale no módulo da classe, então o NS_OPTIONS entra no Foundation.h
-    if 'NSCalendarUnit)' not in t:
-        # o texto entra inline: não se pode dar #include dentro do assume_nonnull do Foundation.h
-        cu = open(os.path.join(MINE, 'sdk', 'Foundation', 'NSCalendarUnit.h')).read().split('#pragma once\n', 1)[1]
-        t = re.sub(r'(?m)^(@interface NSCalendar\b)', lambda m: cu + m.group(1), t, count=1)
     open(fh, 'w').write(t)
     shutil.copy(os.path.join(MINE, 'sdk', 'Foundation', 'NSFoundationSwiftUI.h'), os.path.join(SINC, 'Foundation'))
     mm = open(mmf).read()
@@ -345,9 +349,9 @@ def convert_swift(txt, mode='up'):
                        lambda m: m.group(1) + '@_spi(OpenSwiftUI) ' + (m.group(3) or '') + 'import Observation', l)
             l = re.sub(r'\bOpenObservation\.', 'Observation.', l)
             l = re.sub(r'\bimport class Foundation\.NSAttributedString\b', 'import class MOSFoundationExtras.NSAttributedString', l)
-            l = re.sub(r'\bimport class Foundation\.(Thread|RunLoop|Bundle|Timer|UserDefaults|NSLock|Formatter|NumberFormatter|DateFormatter)\b',
+            l = re.sub(r'\bimport class Foundation\.(Thread|Bundle|UserDefaults|NSLock|Formatter|NumberFormatter|DateFormatter)\b',
                        r'import class _MOSFoundationSwiftUI.\1', l)
-            l = re.sub(r'\bFoundation\.(Progress|Thread|RunLoop|Bundle|Timer|UserDefaults)\b', r'\1', l)
+            l = re.sub(r'\bFoundation\.(Progress|Thread|Bundle|UserDefaults)\b', r'\1', l)
             l = re.sub(r'\bMOSCGMutablePathRef\b', 'CGMutablePath', l)
             l = re.sub(r'\bMOSCGPathRef\b', 'CGPath', l)
             l = re.sub(r'\bMOSCGPathElement\b', 'CGPathElement', l)

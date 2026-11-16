@@ -96,11 +96,6 @@ NS_SWIFT_NAME(ISO8601DateFormatter) @interface NSISO8601DateFormatter : NSFormat
 @property (null_resettable, copy) NSTimeZone *timeZone;
 @end
 
-/* NSCalendar, NSRunLoop e NSTimer vêm do Foundation.h desta variante (PR #368); aqui só o que ele não declara */
-@interface NSCalendar (MOSSwiftUI)
-@property (class, readonly, copy) NSCalendar *currentCalendar;
-@end
-
 NS_SWIFT_NAME(UserDefaults) @interface NSUserDefaults : NSObject
 @property (class, readonly, strong) NSUserDefaults *standardUserDefaults;
 - (nullable instancetype)initWithSuiteName:(nullable NSString *)suitename;
