@@ -255,10 +255,22 @@ void   ps2_init(void);
 void   acpi_init(void);
 void   acpi_poweroff(void);
 void   acpi_reboot(void);
+void   acpi_poll(void);                 /* laço principal: GPEs, EC, botão de energia, térmica */
+bool   acpi_ready(void);
+const char *acpi_status(void);
+const void *acpi_find_table(const char *sig, int nth);
+bool   acpi_sleep_type(int state, u8 *a, u8 *b);
+u8     acpi_rtc_century(void);          /* índice CMOS do século (0 = não há) */
+u32   *acpi_facs(void);
+u32    acpi_pm_timer(void);
+int    acpi_cpu_temp_dC(void);          /* décimos de °C (Tctl do Zen ou _TMP), -1 = desconhecida */
+int    acpi_thermal_zones(int *temp_dC, int *crit_dC, int max);
 
 typedef struct { int year, month, day, hour, minute, second, weekday; } datetime_t;
 void   rtc_now(datetime_t *dt);
 void   rtc_now_utc(datetime_t *dt);   /* UTC (certificados, OCSP) */
+void   rtc_set_utc(const datetime_t *dt);                       /* grava no CMOS (NTP, Ajustes) */
+bool   rtc_alarm_set_utc(int hour, int minute, int second, bool on);   /* despertador do S3/S5 */
 
 /* fila de eventos de entrada global */
 enum { EV_NONE, EV_KEY_DOWN, EV_KEY_UP, EV_MOUSE, EV_MOUSE_ABS }; /* EV_MOUSE_ABS: posição absoluta de tela em dx/dy */
