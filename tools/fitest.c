@@ -147,7 +147,7 @@ static void extra(void) {
     unsigned long long bits = dbits(731289600.0);
     fi_obj *st, *iso, *num;
     char txt[80];
-    CHECK(fi_catalog_n == 187);
+    CHECK(fi_catalog_n == 118);   /* 187 menos os 69 do libswiftFoundation real (tools/fi_swift_real.txt) */
     for (i = 0; i < fi_catalog_n; i++) {
         void *p = dlsym(RTLD_DEFAULT, fi_catalog[i].name);
         checks++;
@@ -175,8 +175,8 @@ static void extra(void) {
             (void)call_rax(p);
         }
     }
-    CHECK(real == 163);
-    CHECK(stub == 24);
+    CHECK(real == 104);
+    CHECK(stub == 14);
 
     st = fi_style_date_default();
     CHECK(small_eq(fi_date_format_obj(bits, st), "3/5/2024, 12:00 AM"));
@@ -362,18 +362,7 @@ static void extra(void) {
         CHECK(call_rax(fn) == 2);
         fn = dlsym(RTLD_DEFAULT, "$s10Foundation4DateV11FormatStyleV04TimeD0V9shortenedAGvgZ");
         CHECK(call_rax(fn) == 1);
-        {
-            fi_obj *style = fi_style_date_default();
-            fi_swstr r;
-            register unsigned long long datebits __asm__("r13") = bits;
-            register void *stp __asm__("rdi") = style;
-            __asm__ volatile("call \"$s10Foundation4DateV9formattedy12FormatOutputQzxAA0D5StyleRzAC0D5InputRtzlF\"\n\t"
-                             : "=a"(r.w0), "=d"(r.w1)
-                             : "r"(datebits), "r"(stp)
-                             : "rcx", "rsi", "r8", "r9", "r10", "r11", "memory", "cc");
-            CHECK(small_eq(r, "3/5/2024, 12:00 AM"));
-            fi_release(style);
-        }
+        /* Date.formatted(_:) é do libswiftFoundation real (tools/fi_swift_real.txt) */
         fn = dlsym(RTLD_DEFAULT, "$s10Foundation11JSONEncoderC20DateEncodingStrategyO9formattedyAESo15NSDateFormatterCcAEmFWC");
         {
             unsigned long long rax = 0x1111, rdx = 0;

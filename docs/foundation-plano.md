@@ -44,6 +44,18 @@ só sai de `sys_zerados.c` quando o dylib exporta o nome. A medida por app é a 
 `tools/meta/placar.py`. O lado ObjC (`NS*` em C no libSystem) continua sendo o que esse Swift chama por baixo.
 Compilar o dylib é trabalho pesado: só dentro de `flock /tmp/mos-pesado.lock` (`mos-regras-de-ram.md`).
 
+## Sem sombra sobre o Foundation real (PR desta leva)
+
+Na busca plana do carregador (`resolve()` em `kernel/compat/macho.c`) o libSystem vem antes das dylibs, então tudo o
+que o libSystem define com nome `$s10Foundation…` escondia o `libswiftFoundation` real e duplicava a metadata dos tipos.
+Saíram: os 798 stubs de Foundation/UTType de `sys_zerados.c` que o dylib exporta; o overlay escrito à mão
+(`fdn_tipos.c`, `fdn_meta.S`, `fdn_url.c`, `fdn_urlcomp.c`, `fdn_cset.c`, `fdn_local.c`, `fdn_valores.c`,
+`fdn_codigos.inc`, `fdn_tipos_ns.c`, `foundation_swift_data.c`, `string_fdn.c`) com os testes de host dele; e dos
+thunks do WhatsApp (`fi_*`, `tools/gen_fi_thunks.py`) os 69 nomes de `tools/fi_swift_real.txt`, mais 2 em `fi_swift.c`
+e 71 do bloco arm64 de `fi_exports.c`. O CryptoKit lê e cria `Data` por `fdn_data_bridge.c`, que chama
+`Data(bytes:count:)` e `_bridgeToObjectiveC()` do dylib real (convenção conferida com o `swiftc -emit-ir`).
+Restam **155** stubs da frente em `sys_zerados.c` ([foundation-stubs.md](foundation-stubs.md)).
+
 ## Fora da frente (combinado com o dono)
 
 - `kCFNetwork*`, `kCFStream*` (proxy, SOCKS, socket nativo), `NSURLSession`/`URLSession` async, WebSocket: Patricia.

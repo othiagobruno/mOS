@@ -14,6 +14,10 @@ DOC = ROOT / "docs/foundation-swift-187.md"
 
 syms = [ln.strip() for ln in LIST.read_text().splitlines() if ln.strip()]
 assert len(syms) == 187 and len(set(syms)) == 187, len(syms)
+# Os nomes que o libswiftFoundation real (tools/build-swift-foundation-objc.sh) exporta ficam só com ele: um thunk
+# aqui, no libSystem, escondia o real na busca plana e duplicava a metadata do tipo.
+REAL = set(ln.strip() for ln in (ROOT / "tools/fi_swift_real.txt").read_text().splitlines() if ln.strip())
+syms = [s for s in syms if s not in REAL]
 
 def call0(fn):
     return f"  pushq %rbp\n  movq %rsp, %rbp\n  call {fn}\n  popq %rbp\n  ret"
