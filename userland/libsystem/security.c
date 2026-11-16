@@ -1587,12 +1587,7 @@ id_ SecTransformExecute(id_ t, id_ *err) {
 
 /* ================================================================ sec_protocol (Network.framework)
  * O SecureTransport (SSL*) e as raízes do sistema (SecTrustSettingsCopy*) estão em securetransport.c. */
-void *sec_trust_copy_ref(void *t) { (void)t; return 0; }
-/* o Network do mOS não expõe metadados de TLS (nw_*): sem objeto, sem protocolo ALPN negociado */
-const char *sec_protocol_metadata_get_negotiated_protocol(void *m) { (void)m; return 0; }
-void sec_protocol_options_set_verify_block(void *o, void *b, void *q) { (void)o; (void)b; (void)q; }
-void sec_protocol_options_append_tls_ciphersuite(void *o, int s) { (void)o; (void)s; }
-void sec_protocol_options_add_pre_shared_key(void *o, void *psk, void *id) { (void)o; (void)psk; (void)id; }
+/* sec_trust_copy_ref, sec_protocol_options_* e sec_protocol_metadata_*: nwnet.c, com o Network.framework (Patricia) */
 
 /* ================================================================ Authorization (sem elevação de privilégio) */
 OSStatus AuthorizationCreate(const void *rights, const void *env, u32 flags, void **auth) {
