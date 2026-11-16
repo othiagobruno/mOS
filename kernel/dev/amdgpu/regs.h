@@ -368,6 +368,11 @@
 #define   SDMA_RPTR_WB_ENABLE         0x1000u
 #define   SDMA_IB_ENABLE              0x1u
 #define   SDMA_CNTL_UTC_L1            0x2u
+#define   SDMA_CNTL_CTXEMPTY_INT      0x10000000u    /* ocioso: o SMU desliga o SDMA (power gating) */
+#define   SDMA_PG_CNTL_ENABLE         0x1u
+#define   SDMA_PG_HOLD_MASK           0x000000F8u
+#define   SDMA_PG_DURATION_MASK       0xFC000000u
+#define   SDMA_POWER_CNTL_DEFAULT     0x4003C050u
 #define   SDMA_STATUS_IDLE            0x1u
 #define   SDMA_DOORBELL_ENABLE        0x10000000u
 #define   SDMA_WPTR_POLL_F32          0x4u

@@ -435,6 +435,12 @@ static bool sdma_init(amdgpu_t *a) {
     WR(a, R_SDMA_GFX_RB_CNTL, rb | SDMA_RB_ENABLE);
     WR(a, R_SDMA_GFX_IB_CNTL, RR(a, R_SDMA_GFX_IB_CNTL) | SDMA_IB_ENABLE);
     WR(a, R_SDMA_CNTL, RR(a, R_SDMA_CNTL) | SDMA_CNTL_UTC_L1);
+    /* power gating do SDMA pelo hardware (sdma_v4_1_init_power_gating): liga o PG, tempos padrão de histerese e o
+     * aviso de ocioso, que o SMU usa para desligar o motor entre os envios */
+    u32 pc = RR(a, R_SDMA_POWER_CNTL) | SDMA_PG_CNTL_ENABLE;
+    pc = (pc & ~(SDMA_PG_HOLD_MASK | SDMA_PG_DURATION_MASK)) | (SDMA_POWER_CNTL_DEFAULT & (SDMA_PG_HOLD_MASK | SDMA_PG_DURATION_MASK));
+    WR(a, R_SDMA_POWER_CNTL, pc);
+    WR(a, R_SDMA_CNTL, RR(a, R_SDMA_CNTL) | SDMA_CNTL_CTXEMPTY_INT);
     WR(a, R_SDMA_F32_CNTL, RR(a, R_SDMA_F32_CNTL) & ~SDMA_F32_HALT);
     a->sdma_ok = true;
     a->sdma_fw_version = uc.ucode_version;

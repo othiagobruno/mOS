@@ -917,6 +917,8 @@ static void test_engines(void) {
     CHECK((regs[R_SDMA_GFX_RB_CNTL / 4] & (SDMA_RB_ENABLE | SDMA_RPTR_WB_ENABLE)) == (SDMA_RB_ENABLE | SDMA_RPTR_WB_ENABLE) &&
           ((regs[R_SDMA_GFX_RB_CNTL / 4] & SDMA_RB_SIZE_MASK) >> SDMA_RB_SIZE_SHIFT) == 14, "anel de 16 Ki dwords");
     CHECK((regs[R_SDMA_GB_ADDR_CONFIG / 4] & 0x0018773F) == 2 && (regs[R_SDMA_POWER_CNTL / 4] & 0xFC3FFFFF) == 0x40000051, "golden");
+    CHECK((regs[R_SDMA_POWER_CNTL / 4] & (SDMA_PG_CNTL_ENABLE | SDMA_PG_HOLD_MASK | SDMA_PG_DURATION_MASK)) == (SDMA_PG_CNTL_ENABLE | (SDMA_POWER_CNTL_DEFAULT & (SDMA_PG_HOLD_MASK | SDMA_PG_DURATION_MASK))) &&
+          (regs[R_SDMA_CNTL / 4] & SDMA_CNTL_CTXEMPTY_INT), "power gating do SDMA");
     CHECK(a->wb_cpu[8] == 0xDEADBEEF && sdma_faults == 0, "teste do anel");
 
     /* preenchimento e cópia na VRAM (9 MiB: passa do limite de 4 MiB por pacote) */
