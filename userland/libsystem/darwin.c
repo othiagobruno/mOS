@@ -196,8 +196,6 @@ u8 CFStringGetFileSystemRepresentation(id_ s, char *buf, long max) { return CFSt
 /* CFStringCompare e as outras funções de texto: fdn_cfstring.c */
 /* CFDictionary/CFArray/CFNumber em ponte com NSDictionary/NSArray/NSNumber */
 id_ CFDictionaryGetValue(id_ d, id_ key) { return d && key ? MSG1_(id_, d, "objectForKey:", key) : 0; }
-u8 CFDictionaryGetValueIfPresent(id_ d, id_ key, id_ *out) { id_ v = CFDictionaryGetValue(d, key); if (out) *out = v; return v != 0; }
-u8 CFDictionaryContainsKey(id_ d, id_ key) { return CFDictionaryGetValue(d, key) != 0; }
 long CFDictionaryGetCount(id_ d) { return d ? MSG0_(long, d, "count") : 0; }
 long CFArrayGetCount(id_ a) { return a ? MSG0_(long, a, "count") : 0; }
 id_ CFArrayGetValueAtIndex(id_ a, long i) { return a ? MSG1_(id_, a, "objectAtIndex:", (u64)i) : 0; }

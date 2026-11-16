@@ -18,6 +18,7 @@
 #include "axremote.h"
 #include "sys.h"
 #include "../../kernel/include/compat_gui.h"
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 int cx_tcc_preflight(const char *service);
 int getpid(void);
@@ -246,7 +247,7 @@ static id kids_of_view(id view) {
         if (!s || MSG0(BOOL, s, "isHidden")) continue;
         tmp[got++] = wrap_obj(s);
     }
-    id arr = CFArrayCreate(0, tmp, got, 0);
+    id arr = CFArrayCreate(0, tmp, got, &kCFTypeArrayCallBacks);
     for (long i = 0; i < got; i++) objc_release(tmp[i]);
     return arr;
 }
@@ -254,7 +255,7 @@ static id kids_of_view(id view) {
 static id children_of(axel_t *e) {
     if (e->kind == AXK_SYS) {
         id one = cx_ax_application(getpid());
-        id arr = CFArrayCreate(0, &one, one ? 1 : 0, 0);
+        id arr = CFArrayCreate(0, &one, one ? 1 : 0, &kCFTypeArrayCallBacks);
         if (one) objc_release(one);
         return arr;
     }
@@ -269,15 +270,15 @@ static id children_of(axel_t *e) {
             id w = MSG(id, wins, "objectAtIndex:", i);
             if (w) tmp[got++] = wrap_obj(w);
         }
-        id arr = CFArrayCreate(0, tmp, got, 0);
+        id arr = CFArrayCreate(0, tmp, got, &kCFTypeArrayCallBacks);
         for (long i = 0; i < got; i++) objc_release(tmp[i]);
         return arr;
     }
     if (e->kind == AXK_WIN) {
         id content = e->obj ? MSG0(id, e->obj, "contentView") : 0;
-        if (!content) return CFArrayCreate(0, 0, 0, 0);
+        if (!content) return CFArrayCreate(0, 0, 0, &kCFTypeArrayCallBacks);
         id one = wrap_obj(content);
-        id arr = CFArrayCreate(0, &one, 1, 0);
+        id arr = CFArrayCreate(0, &one, 1, &kCFTypeArrayCallBacks);
         objc_release(one);
         return arr;
     }
@@ -361,7 +362,7 @@ static id msg_value(axel_t *e, const ax_msg *m, const char *attr) {
         if (n < 0) n = 0;
         if (n > AX_KIDS_MAX) n = AX_KIDS_MAX;
         for (int i = 0; i < n; i++) tmp[i] = ax_handle(m->kid_kind[i], e->pid, m->kid_id[i]);
-        id arr = CFArrayCreate(0, tmp, n, 0);
+        id arr = CFArrayCreate(0, tmp, n, &kCFTypeArrayCallBacks);
         for (int i = 0; i < n; i++) if (tmp[i]) objc_release(tmp[i]);
         return arr;
     }
@@ -372,7 +373,7 @@ static id kids_array(axel_t *e, const int *kinds, const int *ids, int n) {
     id *tmp = n ? (id *)malloc((size_t)n * sizeof(id)) : 0;
     int got = 0;
     for (int i = 0; tmp && i < n; i++) if ((tmp[got] = ax_handle(kinds[i], e->pid, ids[i]))) got++;
-    id arr = CFArrayCreate(0, tmp, got, 0);
+    id arr = CFArrayCreate(0, tmp, got, &kCFTypeArrayCallBacks);
     for (int i = 0; i < got; i++) objc_release(tmp[i]);
     free(tmp);
     return arr;
@@ -533,8 +534,8 @@ int cx_ax_copy_values(id elem, id attr, long index, long maxValues, id *values) 
     if (!all) return AX_NOVAL;
     int is_arr = is_a(all, "NSArray");
     if (!is_arr) {
-        if (index == 0 && maxValues > 0 && values) *values = CFArrayCreate(0, &all, 1, 0);
-        else if (values) *values = CFArrayCreate(0, 0, 0, 0);
+        if (index == 0 && maxValues > 0 && values) *values = CFArrayCreate(0, &all, 1, &kCFTypeArrayCallBacks);
+        else if (values) *values = CFArrayCreate(0, 0, 0, &kCFTypeArrayCallBacks);
         objc_release(all);
         return AX_OK;
     }
@@ -546,7 +547,7 @@ int cx_ax_copy_values(id elem, id attr, long index, long maxValues, id *values) 
         id o = MSG(id, all, "objectAtIndex:", (u64)(index + i));
         if (o) tmp[got++] = o;
     }
-    if (values) *values = CFArrayCreate(0, tmp, got, 0);
+    if (values) *values = CFArrayCreate(0, tmp, got, &kCFTypeArrayCallBacks);
     objc_release(all);
     return AX_OK;
 }
@@ -566,7 +567,7 @@ int cx_ax_names(id elem, id *names) {
     int n = e->kind == AXK_APP ? 8 : e->kind == AXK_SYS ? 5 : 11;
     id tmp[11];
     for (int i = 0; i < n; i++) tmp[i] = cx_str(list[i]);
-    if (names) *names = CFArrayCreate(0, tmp, n, 0);
+    if (names) *names = CFArrayCreate(0, tmp, n, &kCFTypeArrayCallBacks);
     for (int i = 0; i < n; i++) objc_release(tmp[i]);
     return AX_OK;
 }
@@ -620,7 +621,7 @@ static id actions_from_str(const char *s) {
             if (i) tmp[n++] = cx_str(buf);
         }
     }
-    id arr = CFArrayCreate(0, tmp, n, 0);
+    id arr = CFArrayCreate(0, tmp, n, &kCFTypeArrayCallBacks);
     for (int i = 0; i < n; i++) objc_release(tmp[i]);
     return arr;
 }
@@ -640,11 +641,11 @@ int cx_ax_actions(id elem, id *names) {
     }
     if (e->kind == AXK_VIEW && is_a(e->obj, "NSButton")) {
         id press = cx_str("AXPress");
-        if (names) *names = CFArrayCreate(0, &press, 1, 0);
+        if (names) *names = CFArrayCreate(0, &press, 1, &kCFTypeArrayCallBacks);
         objc_release(press);
         return AX_OK;
     }
-    if (names) *names = CFArrayCreate(0, 0, 0, 0);
+    if (names) *names = CFArrayCreate(0, 0, 0, &kCFTypeArrayCallBacks);
     return AX_OK;
 }
 
@@ -977,20 +978,20 @@ int cx_ax_param_names(id elem, id *names) {
         const char *list[] = {"AXBoundsForRange", "AXStringForRange", "AXRangeForPosition"};
         id tmp[3];
         for (int i = 0; i < 3; i++) tmp[i] = cx_str(list[i]);
-        if (names) *names = CFArrayCreate(0, tmp, 3, 0);
+        if (names) *names = CFArrayCreate(0, tmp, 3, &kCFTypeArrayCallBacks);
         for (int i = 0; i < 3; i++) objc_release(tmp[i]);
         return AX_OK;
     }
     text = (e->kind == AXK_VIEW) ? text_cstr(e->obj, &held) : 0;
     if (!text) {
-        if (names) *names = CFArrayCreate(0, 0, 0, 0);
+        if (names) *names = CFArrayCreate(0, 0, 0, &kCFTypeArrayCallBacks);
         return AX_OK;
     }
     {
         const char *list[] = {"AXBoundsForRange", "AXStringForRange", "AXRangeForPosition"};
         id tmp[3];
         for (int i = 0; i < 3; i++) tmp[i] = cx_str(list[i]);
-        if (names) *names = CFArrayCreate(0, tmp, 3, 0);
+        if (names) *names = CFArrayCreate(0, tmp, 3, &kCFTypeArrayCallBacks);
         for (int i = 0; i < 3; i++) objc_release(tmp[i]);
     }
     objc_release(held);

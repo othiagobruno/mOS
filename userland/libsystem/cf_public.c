@@ -5,6 +5,9 @@
  */
 #include "foundation.h"
 #include "cf_public_core.inc"
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryKeyCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 void *calloc(unsigned long n, unsigned long s);
 id objc_retain(id o);
@@ -389,7 +392,7 @@ static id deep_one(id o, int leaves_mut) {
     }
     if (is_class(o, "NSArray")) {
         long i, c = CFArrayGetCount(o);
-        id a = CFArrayCreateMutable(0, c, 0);
+        id a = CFArrayCreateMutable(0, c, &kCFTypeArrayCallBacks);
         for (i = 0; i < c; i++) {
             id v = deep_one(CFArrayGetValueAtIndex(o, i), leaves_mut);
             if (v) { CFArrayAppendValue(a, v); objc_release(v); }
@@ -398,7 +401,7 @@ static id deep_one(id o, int leaves_mut) {
     }
     if (is_class(o, "NSDictionary")) {
         nsdict_t *d = (nsdict_t *)o;
-        id m = CFDictionaryCreateMutable(0, (long)d->n, 0, 0);
+        id m = CFDictionaryCreateMutable(0, (long)d->n, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
         unsigned long i;
         for (i = 0; i < d->n; i++) {
             id v = deep_one(d->vals[i], leaves_mut);

@@ -8,6 +8,9 @@
 #include "libc.h"
 #include "pdf_core.h"
 #include <stdbool.h>
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryKeyCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 typedef double CGFloat;
 typedef struct { CGFloat x, y; } CGPoint;
@@ -454,7 +457,7 @@ static void *outline_children(pdf_doc *pd, pdf_obj *parent, cgpdfdoc_t *x, int d
         it = nx;
     }
     if (!n) return 0;
-    void *a = CFArrayCreate(0, v, n, 0);
+    void *a = CFArrayCreate(0, v, n, &kCFTypeArrayCallBacks);
     for (long i = 0; i < n; i++) CFRelease((void *)v[i]);
     return a;
 }
@@ -512,7 +515,7 @@ int cx_pdf_dest_page(pdf_doc *pd, pdf_obj *dest) {
 }
 static void *outline_node(pdf_doc *pd, pdf_obj *item, cgpdfdoc_t *x, int depth) {
     if (depth > 64) return 0;
-    void *d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    void *d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     pdf_obj *t = pdf_dict_get(pd, item, "Title");
     if (t) {
         void *s = CGPDFStringCopyTextString(t);
@@ -552,7 +555,7 @@ void *CGPDFDocumentGetOutline(void *doc) {
     if (!o) return 0;
     void *kids = outline_children(x->pd, o, x, 0);
     if (!kids) return 0;
-    void *d = CFDictionaryCreateMutable(0, 0, 0, 0), *k = CFStringCreateWithCString(0, "Children", 0x08000100);
+    void *d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks), *k = CFStringCreateWithCString(0, "Children", 0x08000100);
     CFDictionarySetValue(d, k, kids);
     CFRelease(kids);
     CFRelease(k);
@@ -608,7 +611,7 @@ void CGPDFContentStreamRelease(void *cv) {
 void *CGPDFContentStreamGetStreams(void *cv) {
     cgcs_t *c = cv;
     if (!c) return 0;
-    return CFArrayCreate(0, (const void **)c->streams, c->nstreams, 0);
+    return CFArrayCreate(0, (const void **)c->streams, c->nstreams, &kCFTypeArrayCallBacks);
 }
 /* recurso por categoria (Font, XObject, ExtGState, ColorSpace, Pattern, Shading, Properties) e nome; sobe pelos pais */
 pdf_obj *CGPDFContentStreamGetResource(void *cv, const char *category, const char *name) {

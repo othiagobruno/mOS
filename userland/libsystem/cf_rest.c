@@ -33,20 +33,6 @@ unsigned char CFStringFindWithOptions(id s, id find, rng_t range, unsigned long 
 static id S(const char *s) { return CFStringCreateWithCString(0, s ? s : "", UTF8); }
 static const char *C(id o) { return o ? cx_cstr(o) : ""; }
 
-long CFArrayGetFirstIndexOfValue(id a, rng_t r, id v) {
-    long i, n = CFArrayGetCount(a);
-    if (r.loc < 0) r.loc = 0;
-    for (i = r.loc; i < r.loc + r.len && i < n; i++) {
-        id x = CFArrayGetValueAtIndex(a, i);
-        if (x == v || (x && v && MSG(signed char, x, "isEqual:", v))) return i;
-    }
-    return -1;
-}
-void CFArrayGetValues(id a, rng_t r, id *out) {
-    long i, n = CFArrayGetCount(a), k = 0;
-    if (!out) return;
-    for (i = r.loc; i < r.loc + r.len && i < n; i++) out[k++] = CFArrayGetValueAtIndex(a, i);
-}
 
 id CFAttributedStringCreateMutable(void *alloc, long max) {
     (void)alloc; (void)max;

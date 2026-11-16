@@ -26,6 +26,8 @@ void *memset(void *d, int c, size_t n);
 int memcmp(const void *a, const void *b, size_t n);
 
 #include "seckey_core.inc"
+extern const char kCFTypeDictionaryKeyCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 /* ---- ponte com o Foundation do mOS */
 typedef struct cx_class cx_class_t;
@@ -176,7 +178,7 @@ static OSStatus persist(id_ key, id_ params) {
         if (!(half ? p_pub : p_priv)) continue;
         id_ sub = half ? ua : pa;
         id_ obj = half ? SecKeyCopyPublicKey(key) : objc_retain(key);
-        id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+        id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
         CFDictionarySetValue(d, K_(kSecClass), K_(kSecClassKey));
         CFDictionarySetValue(d, K_(kSecValueRef), obj);
         const void *keys[] = {kSecAttrApplicationTag, kSecAttrLabel, kSecAttrAccessGroup};
@@ -263,7 +265,7 @@ size_t SecKeyGetBlockSize(id_ key) {
 id_ SecKeyCopyAttributes(id_ key) {
     sk_key *k = unwrap(key);
     if (!k) return 0;
-    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     id_ t = k->type == SK_RSA ? K_(kSecAttrKeyTypeRSA) : K_(kSecAttrKeyTypeECSECPrimeRandom);
     id_ yes = (id_)kCFBooleanTrue, no = (id_)kCFBooleanFalse;
     CFDictionarySetValue(d, K_(kSecClass), K_(kSecClassKey));

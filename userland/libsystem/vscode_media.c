@@ -11,6 +11,8 @@
  *  - ServiceManagement: itens de login aceitos; sem launchd para jobs.
  */
 #include "foundation.h"
+extern const char kCFTypeDictionaryKeyCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 void *malloc(size_t n);
 void *calloc(size_t n, size_t s);
@@ -638,7 +640,7 @@ OSStatus VTSessionSetProperties(void *s, id props) {
 void VTCompressionSessionInvalidate(void *s) { vts_t *v = vts_as(s, VT_ENC); if (v) v->dead = 1; }
 OSStatus VTSessionSetProperty(void *s, id key, id val) { (void)s; (void)key; (void)val; return 0; }
 OSStatus VTSessionCopyProperty(void *s, id key, void *a, void *out) { (void)s; (void)key; (void)a; if (out) *(void **)out = 0; return kVTPropertyNotSupportedErr; }
-OSStatus VTSessionCopySupportedPropertyDictionary(void *s, id *out) { (void)s; if (out) *out = CFDictionaryCreateMutable(0, 0, 0, 0); return 0; }
+OSStatus VTSessionCopySupportedPropertyDictionary(void *s, id *out) { (void)s; if (out) *out = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks); return 0; }
 /* VTPixelTransferSession*: openbot_vt.c copia o quadro quando o formato coincide. */
 
 /* CoreAudio, AudioUnit, AudioQueue, AudioConverter, AudioFile e AudioServices: coreaudio.c */

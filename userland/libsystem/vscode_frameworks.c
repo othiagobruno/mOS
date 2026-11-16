@@ -11,6 +11,9 @@
  */
 #include "foundation.h"
 #include "computeruse_win.h"
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryKeyCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 void *malloc(size_t n);
 void *memset(void *d, int c, size_t n);
@@ -44,7 +47,7 @@ typedef struct { double x, y; } cg_pt_t;
 typedef struct { double x, y, w, h; } cg_rect_t;
 typedef struct { double a, b, c, d, tx, ty; } cg_affine_t;
 static id cls(const char *n) { return (id)cx_class_named(n); }
-static id empty_array(void) { return CFArrayCreate(0, 0, 0, 0); }
+static id empty_array(void) { return CFArrayCreate(0, 0, 0, &kCFTypeArrayCallBacks); }
 /* objeto opaco "vivo" (CFRelease funciona nele) para APIs que devolvem uma referência */
 static id token(void) { return objc_retain(MSG0(id, cls("NSObject"), "new")); }
 
@@ -100,7 +103,7 @@ OSStatus AXUIElementCopyMultipleAttributeValues(id e, id attrs, u32 options, id 
     *values = 0;
     if (!e || !attrs) return -25201;
     long n = CFArrayGetCount(attrs);
-    id out = CFArrayCreateMutable(0, n, 0);
+    id out = CFArrayCreateMutable(0, n, &kCFTypeArrayCallBacks);
     for (long i = 0; i < n; i++) {
         id v = 0;
         OSStatus err = cx_ax_copy(e, CFArrayGetValueAtIndex(attrs, i), &v);
@@ -145,7 +148,7 @@ u8 AXValueGetValue(id v, u32 type, void *out) {
 id AXTextMarkerCreate(void *alloc, const u8 *bytes, long len) { (void)alloc; return MSG(id, cls("NSData"), "dataWithBytes:length:", bytes, (u64)len); }
 const u8 *AXTextMarkerGetBytePtr(id m) { return m ? MSG0(const u8 *, m, "bytes") : 0; }
 long AXTextMarkerGetLength(id m) { return m ? (long)MSG0(u64, m, "length") : 0; }
-id AXTextMarkerRangeCreate(void *alloc, id a, id b) { (void)alloc; id v[2] = {a, b}; return CFArrayCreate(0, v, 2, 0); }
+id AXTextMarkerRangeCreate(void *alloc, id a, id b) { (void)alloc; id v[2] = {a, b}; return CFArrayCreate(0, v, 2, &kCFTypeArrayCallBacks); }
 id AXTextMarkerRangeCopyStartMarker(id r) { return r ? CFRetain(MSG(id, r, "objectAtIndex:", (u64)0)) : 0; }
 id AXTextMarkerRangeCopyEndMarker(id r) { return r ? CFRetain(MSG(id, r, "objectAtIndex:", (u64)1)) : 0; }
 u8 UAZoomEnabled(void) { return 0; }
@@ -279,7 +282,7 @@ static int cg_window_select(u32 opt, u32 rel, gui_cgwindow_t *all, int *sel) {
     return got;
 }
 static id cg_window_dict(const gui_cgwindow_t *w) {
-    id d = CFDictionaryCreateMutable(0, 8, 0, 0);
+    id d = CFDictionaryCreateMutable(0, 8, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     cg_put_num(d, kCGWindowNumber, (long long)w->number);
     cg_put_num(d, kCGWindowOwnerPID, w->pid);
     cg_put_num(d, kCGWindowLayer, w->layer);
@@ -305,7 +308,7 @@ id CGWindowListCopyWindowInfo(u32 opt, u32 rel) {
     id tmp[48];
     int got = cg_window_select(opt, rel, all, sel);
     for (int i = 0; i < got; i++) tmp[i] = cg_window_dict(&all[sel[i]]);
-    id arr = CFArrayCreate(0, tmp, got, 0);
+    id arr = CFArrayCreate(0, tmp, got, &kCFTypeArrayCallBacks);
     for (int i = 0; i < got; i++) objc_release(tmp[i]);
     return arr;
 }
@@ -360,7 +363,7 @@ id CGWindowListCreateDescriptionFromArray(id arr) {
         for (int i = 0; i < n; i++)
             if (all[i].number == wid) { tmp[got++] = cg_window_dict(&all[i]); break; }
     }
-    id out = CFArrayCreate(0, tmp, got, 0);
+    id out = CFArrayCreate(0, tmp, got, &kCFTypeArrayCallBacks);
     for (int i = 0; i < got; i++) objc_release(tmp[i]);
     return out;
 }
@@ -407,8 +410,8 @@ void *CGDataProviderCreateWithCFData(id data) {
 typedef u32 io_object_t;
 id IORegistryEntrySearchCFProperty(io_object_t e, const char *plane, id key, void *alloc, u32 opts) { (void)e; (void)plane; (void)key; (void)alloc; (void)opts; return 0; }
 kern_return_t IORegistryEntryGetParentEntry(io_object_t e, const char *plane, io_object_t *p) { (void)e; (void)plane; if (p) *p = 0; return kIOReturnNotFound; }
-id IORegistryEntryIDMatching(u64 id_) { (void)id_; return CFDictionaryCreateMutable(0, 0, 0, 0); }
-id IOBSDNameMatching(u32 port, u32 opts, const char *name) { (void)port; (void)opts; (void)name; return CFDictionaryCreateMutable(0, 0, 0, 0); }
+id IORegistryEntryIDMatching(u64 id_) { (void)id_; return CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks); }
+id IOBSDNameMatching(u32 port, u32 opts, const char *name) { (void)port; (void)opts; (void)name; return CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks); }
 kern_return_t IOCreatePlugInInterfaceForService(io_object_t s, id type, id iface, void ***plugin, i32 *score) { (void)s; (void)type; (void)iface; if (plugin) *plugin = 0; if (score) *score = 0; return kIOReturnUnsupported; }
 kern_return_t IOServiceAddMatchingNotification(void *port, const char *type, id match, void *cb, void *ref, io_object_t *it) {
     (void)port; (void)type; (void)cb; (void)ref;
@@ -421,7 +424,7 @@ void IONotificationPortSetDispatchQueue(void *port, void *q) { (void)port; (void
 kern_return_t IORegistryEntryGetRegistryEntryID(io_object_t e, u64 *id_) { if (id_) *id_ = e; return e ? kIOReturnSuccess : kIOReturnNotFound; }
 kern_return_t IORegistryEntryCreateIterator(io_object_t e, const char *plane, u32 opts, io_object_t *it) { (void)e; (void)plane; (void)opts; if (it) *it = 0; return kIOReturnSuccess; }
 u8 IOObjectConformsTo(io_object_t o, const char *name) { (void)o; (void)name; return 0; }
-kern_return_t IORegistryEntryCreateCFProperties(io_object_t e, id *props, void *alloc, u32 opts) { (void)e; (void)alloc; (void)opts; if (props) *props = CFDictionaryCreateMutable(0, 0, 0, 0); return kIOReturnSuccess; }
+kern_return_t IORegistryEntryCreateCFProperties(io_object_t e, id *props, void *alloc, u32 opts) { (void)e; (void)alloc; (void)opts; if (props) *props = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks); return kIOReturnSuccess; }
 kern_return_t IORegistryEntryGetName(io_object_t e, char *name) { (void)e; if (name) name[0] = 0; return kIOReturnSuccess; }
 kern_return_t IOServiceClose(u32 conn) { (void)conn; return kIOReturnSuccess; }
 /* HID: nenhum dispositivo além de teclado/mouse do sistema; o WebHID/gamepads ficam vazios */
@@ -502,18 +505,18 @@ u8 LMGetKbdType(void) { return 40; /* teclado ANSI genérico */ }
 static id tis_source(void) {
     static id src;
     if (!src) {
-        src = CFDictionaryCreateMutable(0, 4, 0, 0);
+        src = CFDictionaryCreateMutable(0, 4, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
         CFDictionarySetValue(src, cx_str("TISPropertyInputSourceID"), cx_str("com.apple.keylayout.Brazilian-ABNT2"));
         CFDictionarySetValue(src, cx_str("kTISPropertyLocalizedName"), cx_str("Brasileiro – ABNT2"));
         id lang = cx_str("pt");
-        CFDictionarySetValue(src, cx_str("kTISPropertyInputSourceLanguages"), CFArrayCreate(0, &lang, 1, 0));
+        CFDictionarySetValue(src, cx_str("kTISPropertyInputSourceLanguages"), CFArrayCreate(0, &lang, 1, &kCFTypeArrayCallBacks));
     }
     return src;
 }
 id TISCopyCurrentKeyboardInputSource(void) { return objc_retain(tis_source()); }
 id TISCopyCurrentKeyboardLayoutInputSource(void) { return objc_retain(tis_source()); }
 id TISCopyCurrentASCIICapableKeyboardLayoutInputSource(void) { return objc_retain(tis_source()); }
-id TISCreateASCIICapableInputSourceList(void) { id s = tis_source(); return CFArrayCreate(0, &s, 1, 0); }
+id TISCreateASCIICapableInputSourceList(void) { id s = tis_source(); return CFArrayCreate(0, &s, 1, &kCFTypeArrayCallBacks); }
 /* uchr não existe aqui: NULL faz o Chromium usar a tabela de teclas própria */
 void *TISGetInputSourceProperty(id src, id key) { return src && key ? (void *)CFDictionaryGetValue(src, key) : 0; }
 
