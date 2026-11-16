@@ -54,7 +54,6 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off);
 int munmap(void *a, size_t len);
 int cx_futex_wait(volatile int *w, int expected, long ms);
 int cx_futex_wake(volatile int *w, int n);
-void abort(void);
 int snprintf(char *b, size_t n, const char *fmt, ...);
 
 static int fail(int e) { cx_errno = e; return -1; }
@@ -212,14 +211,31 @@ int sem_destroy(void *s) { (void)s; return fail(E_NOSYS); }
 int sem_getvalue(void *s, int *v) { (void)s; (void)v; return fail(E_NOSYS); }
 int sem_timedwait(void *s, const void *ts) { (void)s; (void)ts; return fail(E_NOSYS); }
 
-/* ---- abort com motivo (os_crash, Swift, libdispatch): o motivo vai para o stderr e o processo leva SIGABRT */
+/* ---- abort com motivo (os_crash, Swift, libdispatch): o motivo vai para o stderr e o processo morre POR SIGABRT
+ * (WIFSIGNALED, WTERMSIG = 6), como no macOS: desbloqueia o SIGABRT e o levanta; se um tratador voltar, põe a ação
+ * padrão e levanta de novo. O _exit(134) só existe para o caso de o sinal não matar (não deveria acontecer). */
+typedef struct { void *handler; u32 mask; int flags; } ipc_sigaction_t;
+int raise(int s);
+int sigprocmask(int how, const void *set, void *old);
+int sigaction(int s, const ipc_sigaction_t *a, ipc_sigaction_t *o);
+void _exit(int code) __attribute__((noreturn));
+static __attribute__((noreturn)) void die_by_sigabrt(void) {
+    u32 set = 1u << (6 - 1);                              /* sigset_t do macOS: bit (sinal - 1) */
+    sigprocmask(2, &set, 0);                              /* SIG_UNBLOCK */
+    raise(6);
+    ipc_sigaction_t dfl = {0, 0, 0};                      /* SIG_DFL */
+    sigaction(6, &dfl, 0);
+    sigprocmask(2, &set, 0);
+    raise(6);
+    _exit(134);
+}
 __attribute__((noreturn)) void abort_with_payload(u32 ns, u64 code, void *payload, u32 size, const char *reason, u64 flags) {
     (void)payload; (void)size; (void)flags;
     char b[600];
     int n = snprintf(b, sizeof b, "abort_with_payload: reason: %s; namespace: %u; code: 0x%llx\n",
                      reason ? reason : "(nenhum)", ns, (unsigned long long)code);
     if (n > 0) write(2, b, (size_t)(n < (int)sizeof b ? n : (int)sizeof b - 1));
-    abort();
+    die_by_sigabrt();
 }
 __attribute__((noreturn)) void abort_with_reason(u32 ns, u64 code, const char *reason, u64 flags) {
     abort_with_payload(ns, code, 0, 0, reason, flags);

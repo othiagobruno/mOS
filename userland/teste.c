@@ -228,6 +228,14 @@ void _start(const char *arg) {
         int dm = spawn("darwinmiscteste", 0);
         CHECK(dm > 0 && wait(dm) == 0, "darwinmiscteste (Mach-O): F_GETPATH, sinais, libproc, __thread e execl");
     }
+    if (file_size("/Sistema/Programas/darwincxxteste") > 0) {   /* Mach-O: casos C++ do Darling (userland/tests-darwincxx) */
+        int dc = spawn("darwincxxteste", 0);
+        CHECK(dc > 0 && wait(dc) == 0, "darwincxxteste (Mach-O): exceções C++, thread_local e fstream");
+    }
+    if (file_size("/Sistema/Programas/darwinobjcteste") > 0) {   /* Mach-O: casos ObjC/CF do Darling (userland/tests-darwinobjc) */
+        int dob = spawn("darwinobjcteste", 0);
+        CHECK(dob > 0 && wait(dob) == 0, "darwinobjcteste (Mach-O): categoria, @try, super, stret/fpret, +load e a ponte CF");
+    }
     if (file_size("/Sistema/Programas/unixipc") > 0) {   /* ELF: AF_UNIX entre processos (userland/unixipc.c) */
         int ux = spawn("unixipc", 0);
         CHECK(ux > 0 && wait(ux) == 0, "unixipc: bind/listen/accept, send/recv e SCM_RIGHTS");
