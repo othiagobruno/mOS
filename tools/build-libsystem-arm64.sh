@@ -167,9 +167,12 @@ RO=$(command -v llvm-readobj || ls /usr/bin/llvm-readobj-* 2>/dev/null | head -1
 NM=$(command -v llvm-nm || ls /usr/bin/llvm-nm-* 2>/dev/null | head -1 || true)
 if [ -n "$RO" ] && [ -n "$NM" ]; then
     rels=$("$RO" -r "$OUT" | grep -o 'R_AARCH64_[A-Z0-9_]*' | sort | uniq -c | tr -s ' ' | tr '\n' ' ')
-    und=$("$NM" -u "$OUT" | wc -l)
-    echo "relocações: $rels símbolos fracos promovidos: $NWEAK  indefinidos: $und"
-    [ "$und" -eq 0 ] || { "$NM" -u "$OUT"; exit 1; }
+    # fraco indefinido (ex.: MusicDeviceSysEx, testado contra NULL antes da chamada) o ld.lld já resolve para 0 no
+    # static-pie, sem relocação; só um forte quebra o carregador
+    und=$("$NM" -u "$OUT" | grep -vcE '^ *[wv] ' || true)
+    fracos=$("$NM" -u "$OUT" | grep -cE '^ *[wv] ' || true)
+    echo "relocações: $rels símbolos fracos promovidos: $NWEAK  indefinidos: $und (fracos que valem 0: $fracos)"
+    [ "$und" -eq 0 ] || { "$NM" -u "$OUT" | grep -vE '^ *[wv] '; exit 1; }
     "$RO" -r "$OUT" | grep -o 'R_AARCH64_[A-Z0-9_]*' | grep -qv '^R_AARCH64_RELATIVE$' && { echo "relocação fora de R_AARCH64_RELATIVE" >&2; exit 1; }
 fi
 echo "build/libSystem-arm64.mos: $(( $(stat -c %s "$OUT") / 1024 )) KiB"

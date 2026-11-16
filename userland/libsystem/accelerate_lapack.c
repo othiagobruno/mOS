@@ -700,7 +700,11 @@ typedef int I;
  * mesmo nome */
 #if defined(__MACH__)
 # if defined(__aarch64__)
-#  define MOS_TRAMP(n, t) __asm__(".text\n.globl \"_" n "\"\n.p2align 2\n\"_" n "\":\n\tb _" t "\n");
+/* prefixo dos nomes C: "_" no Mach-O, vazio no ELF do libSystem arm64 (triplo arm64-apple-macos11-elf, também __MACH__) */
+#  define MOS_UP_S2(x) #x
+#  define MOS_UP_S(x) MOS_UP_S2(x)
+#  define MOS_UP MOS_UP_S(__USER_LABEL_PREFIX__)
+#  define MOS_TRAMP(n, t) __asm__(".text\n.globl \"" MOS_UP n "\"\n.p2align 2\n\"" MOS_UP n "\":\n\tb " MOS_UP t "\n");
 # else
 #  define MOS_TRAMP(n, t) __asm__(".text\n.globl \"_" n "\"\n\"_" n "\":\n\tjmp _" t "\n");
 # endif
