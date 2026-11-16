@@ -3114,6 +3114,7 @@ void js_dom_init(jsrealm *r) {
     js_plat_init(r);    /* structuredClone, MessageChannel, crypto */
     js_obs_init(r);     /* MutationObserver, ResizeObserver, IntersectionObserver */
     js_worker_init(r);  /* Worker, BroadcastChannel */
+    js_stream_init(r);  /* ReadableStream e companhia (carregados na primeira vez) */
     jsobj *dpp = js_newobj(op);
     js_defnative(dpp, "parseFromString", domparser_parse, 2, 0);
     js_defn(g, "DOMParser", jv_obj(js_newctor(domparser_ctor, "DOMParser", 0, dpp)), PF_NOENUM);

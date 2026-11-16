@@ -507,6 +507,11 @@ static bool fd_decode(const u8 *d, u32 n, const char *ctype, jsobj *l) {
 /* BodyInit → bytes e tipo padrão. 1 ok, -1 exceção */
 static int extract_body(jsv v, jsobj **buf, jsstr **ctype) {
     *ctype = NULL;
+    if (js_is_readable_stream(v)) {
+        /* fica como stream; quem consome junta os pedaços (body_read, fetch) */
+        *buf = jv_o(v);
+        return 1;
+    }
     const u8 *d;
     u32 n;
     const char *type;
@@ -576,6 +581,60 @@ static jsobj *body_owner(jsv v) {
 }
 
 /* magic: 0 text 1 json 2 arrayBuffer 3 blob 4 bytes 5 formData */
+/* valor de um corpo já em bytes, conforme o leitor (0 text 1 json 2 arrayBuffer 3 blob 4 bytes 5 formData); JS_EXC = lança */
+static jsv body_value(int op, const u8 *d, u32 n, jsstr *ct) {
+    switch (op) {
+    case 0: case 1: {
+        bool bad;
+        jsstr *s = js_utf8_decode(d, n, false, &bad);
+        if (!s) s = A[A_empty];
+        return op == 0 ? jv_str(s) : js_json_parse(s, JS_UNDEF);
+    }
+    case 2: case 4: {
+        jsobj *b = js_abuf_new(n);
+        if (!b) return JS_EXC;
+        if (n) memcpy(b->u.buf.data, d, n);
+        return op == 2 ? jv_obj(b) : jv_obj(js_typed_new(TA_UINT8, b, 0, n));
+    }
+    case 3: {
+        char type[200] = "";
+        if (ct) { int k = 0; for (u32 i = 0; i < ct->len && k < 199; i++) { u8 c = (u8)ct->d[i]; if (c >= 0x20 && c <= 0x7E) type[k++] = (char)tolower(c); } type[k] = 0; }
+        return jv_obj(js_blob_new(d, n, type));
+    }
+    case 5: {
+        jsobj *o = host_new(J.realm->p_formdata, 1);
+        jsobj *l = js_newarr(0);
+        SET(jv_o(o->u.host.extra), 0, jv_obj(l));
+        const char *c = ct ? ct->d : "";
+        if (!strncasecmp(c, "multipart/form-data", 19)) {
+            if (!fd_decode(d, n, c, l)) return js_throw_err(E_TYPE, "formData: multipart malformado");
+        } else if (!strncasecmp(c, "application/x-www-form-urlencoded", 33)) {
+            jsv ctor = js_getn(jv_obj(J.realm->global), "URLSearchParams");
+            bool bad;
+            jsstr *s = js_utf8_decode(d, n, false, &bad);
+            jsv a = jv_str(s ? s : A[A_empty]);
+            jsv usp = js_construct(ctor, 1, &a, ctor);
+            if (usp == JS_EXC) return JS_EXC;
+            jsv ents = js_invoke(usp, js_intern("entries", -1), 0, NULL);
+            jsv from = js_getn(jv_obj(J.realm->c_array), "from");
+            jsv arr = js_call(from, jv_obj(J.realm->c_array), 1, &ents);
+            if (arr == JS_EXC) return JS_EXC;
+            for (u32 i = 0; i < js_lengthof(arr); i++) { jsv pair = js_getidx(arr, i); js_arr_push(l, js_getidx(pair, 0)); js_arr_push(l, js_getidx(pair, 1)); }
+        } else return js_throw_err(E_TYPE, "formData: corpo não é multipart/form-data nem urlencoded");
+        return jv_obj(o);
+    }
+    }
+    return JS_UNDEF;
+}
+
+/* continuação depois de juntar um corpo em stream: data = content-type, magic = leitor */
+NATIVE(body_after) {
+    UNUSED_ARGS;
+    jsv b = ARG(0);
+    if (!jv_iscls(b, CL_ARRAYBUFFER)) return js_throw_err(E_TYPE, "corpo inválido");
+    return body_value(self->u.nat.magic, jv_o(b)->u.buf.data, jv_o(b)->u.buf.len, jv_isstr(self->u.nat.data) ? jv_s(self->u.nat.data) : NULL);
+}
+
 NATIVE(body_read) {
     UNUSED_ARGS;
     jsobj *x = body_owner(thisv);
@@ -583,59 +642,50 @@ NATIVE(body_read) {
     jsobj *pr = js_promise_new();
     if (js_truthy(SLOT(x, B_USED))) { js_promise_reject(pr, reject_value(E_TYPE, "o corpo já foi lido")); return jv_obj(pr); }
     jsv bv = SLOT(x, B_BODY);
+    jsstr *ct = headers_get(jv_o(jv_o(SLOT(x, B_HDR))->u.host.extra), "content-type");
+    if (bv != JS_NULL && !jv_iscls(bv, CL_ARRAYBUFFER)) {
+        /* corpo em ReadableStream: junta os pedaços e converte */
+        SET(x, B_USED, JS_TRUE);
+        jsv coll = js_stream_collect(bv);
+        if (coll == JS_EXC) { js_promise_reject(pr, js_catch()); return jv_obj(pr); }
+        jsobj *f = js_newnative(body_after, "corpo", 1, self->u.nat.magic);
+        f->u.nat.data = ct ? jv_str(ct) : JS_UNDEF;
+        jsv fv = jv_obj(f);
+        return js_invoke(coll, js_intern("then", -1), 1, &fv);
+    }
     const u8 *d = NULL;
     u32 n = 0;
     if (jv_iscls(bv, CL_ARRAYBUFFER)) { d = jv_o(bv)->u.buf.data; n = jv_o(bv)->u.buf.len; SET(x, B_USED, JS_TRUE); }
-    jsstr *ct = headers_get(jv_o(jv_o(SLOT(x, B_HDR))->u.host.extra), "content-type");
-    switch (self->u.nat.magic) {
-    case 0: case 1: {
-        bool bad;
-        jsstr *s = js_utf8_decode(d, n, false, &bad);
-        if (!s) s = A[A_empty];
-        if (self->u.nat.magic == 0) { js_promise_resolve(pr, jv_str(s)); break; }
-        jsv v = js_json_parse(s, JS_UNDEF);
-        if (v == JS_EXC) js_promise_reject(pr, js_catch()); else js_promise_resolve(pr, v);
-        break;
-    }
-    case 2: case 4: {
-        jsobj *b = js_abuf_new(n);
-        if (!b) { js_promise_reject(pr, js_catch()); break; }
-        if (n) memcpy(b->u.buf.data, d, n);
-        js_promise_resolve(pr, self->u.nat.magic == 2 ? jv_obj(b) : jv_obj(js_typed_new(TA_UINT8, b, 0, n)));
-        break;
-    }
-    case 3: {
-        char type[200] = "";
-        if (ct) { int k = 0; for (u32 i = 0; i < ct->len && k < 199; i++) { u8 c = (u8)ct->d[i]; if (c >= 0x20 && c <= 0x7E) type[k++] = (char)tolower(c); } type[k] = 0; }
-        js_promise_resolve(pr, jv_obj(js_blob_new(d, n, type)));
-        break;
-    }
-    case 5: {
-        jsobj *o = host_new(J.realm->p_formdata, 1);
-        jsobj *l = js_newarr(0);
-        SET(jv_o(o->u.host.extra), 0, jv_obj(l));
-        const char *c = ct ? ct->d : "";
-        bool ok = true;
-        if (!strncasecmp(c, "multipart/form-data", 19)) ok = fd_decode(d, n, c, l);
-        else if (!strncasecmp(c, "application/x-www-form-urlencoded", 33)) {
-            jsv ctor = js_getn(jv_obj(J.realm->global), "URLSearchParams");
-            bool bad;
-            jsstr *s = js_utf8_decode(d, n, false, &bad);
-            jsv a = jv_str(s ? s : A[A_empty]);
-            jsv usp = js_construct(ctor, 1, &a, ctor);
-            if (usp == JS_EXC) { js_promise_reject(pr, js_catch()); break; }
-            jsv ents = js_invoke(usp, js_intern("entries", -1), 0, NULL);
-            jsv from = js_getn(jv_obj(J.realm->c_array), "from");
-            jsv arr = js_call(from, jv_obj(J.realm->c_array), 1, &ents);
-            if (arr == JS_EXC) { js_promise_reject(pr, js_catch()); break; }
-            for (u32 i = 0; i < js_lengthof(arr); i++) { jsv pair = js_getidx(arr, i); js_arr_push(l, js_getidx(pair, 0)); js_arr_push(l, js_getidx(pair, 1)); }
-        } else ok = false;
-        if (!ok) js_promise_reject(pr, reject_value(E_TYPE, "formData: corpo não é multipart/form-data nem urlencoded"));
-        else js_promise_resolve(pr, jv_obj(o));
-        break;
-    }
-    }
+    jsv v = body_value(self->u.nat.magic, d, n, ct);
+    if (v == JS_EXC) js_promise_reject(pr, js_catch()); else js_promise_resolve(pr, v);
     return jv_obj(pr);
+}
+
+/* Request.body / Response.body: ReadableStream de bytes (o primeiro pull marca o corpo como usado) */
+NATIVE(body_on_read) {
+    UNUSED_ARGS;
+    jsobj *x = jv_o(self->u.nat.data);
+    if (js_truthy(SLOT(x, B_USED))) return JS_FALSE;
+    SET(x, B_USED, JS_TRUE);
+    return JS_TRUE;
+}
+
+NATIVE(body_stream_get) {
+    UNUSED_ARGS;
+    jsobj *x = body_owner(thisv);
+    if (!x) return js_throw_err(E_TYPE, "Invocação ilegal");
+    jsv b = SLOT(x, B_BODY);
+    if (b == JS_NULL || b == JS_UNDEF) return JS_NULL;
+    if (!jv_iscls(b, CL_ARRAYBUFFER)) return b;   /* o corpo já é um ReadableStream */
+    jsstr *k = js_intern("\x01" "stream", -1);
+    jsprop *pr = js_ownprop(jv_o(thisv), k);
+    if (pr) return pr->v;
+    jsobj *f = js_newnative(body_on_read, "lido", 0, 0);
+    f->u.nat.data = jv_obj(x);
+    jsv st = js_stream_from_bytes(b, jv_obj(f));
+    if (st == JS_EXC) return JS_EXC;
+    js_defprop(jv_o(thisv), k, st, PF_NOENUM);
+    return st;
 }
 
 NATIVE(body_used_get) {
@@ -806,6 +856,14 @@ NATIVE(body_clone) {
     jsobj *hl = hlist(hx);
     SET(jv_o(h->u.host.extra), H_LIST, jv_obj(js_arr_from(hl->arr, (int)hl->alen)));
     SET(y, B_HDR, jv_obj(h));
+    jsv bv = SLOT(x, B_BODY);
+    if (bv != JS_NULL && !jv_iscls(bv, CL_ARRAYBUFFER)) {
+        /* corpo em stream: tee, um ramo para cada */
+        jsv t = js_invoke(bv, js_intern("tee", -1), 0, NULL);
+        if (t == JS_EXC) return JS_EXC;
+        SET(x, B_BODY, js_getidx(t, 0));
+        SET(y, B_BODY, js_getidx(t, 1));
+    }
     if (!self->u.nat.magic) {
         jsobj *own = js_abort_signal_new();
         js_abort_follow(own, SLOT(x, R_SIGNAL));
@@ -1308,17 +1366,12 @@ static jsobj *wf_response(wf_t *w, jsobj *reqx, bool *net_err) {
     return o;
 }
 
-NATIVE(w_fetch) {
-    UNUSED_ARGS;
-    jsobj *pr = js_promise_new();
-    jsobj *req = make_request(ARG(0), ARG(1));
-    if (!req) { js_promise_reject(pr, js_catch()); return jv_obj(pr); }
+/* começa o pedido de rede de um Request cujo corpo já está em bytes (ou não tem corpo) */
+static void fetch_start(jsobj *pr, jsobj *req) {
     jsobj *x = jv_o(req->u.host.extra);
     jsobj *sig = jv_o(SLOT(x, R_SIGNAL));
     jsobj *sx = jv_o(sig->u.host.extra);
-    if (js_truthy(SLOT(sx, A_ABORTED))) { js_promise_reject(pr, SLOT(sx, A_REASON)); return jv_obj(pr); }
-    if (js_truthy(SLOT(x, B_USED)) && SLOT(x, B_BODY) != JS_NULL) { js_promise_reject(pr, reject_value(E_TYPE, "fetch: o corpo do Request já foi lido")); return jv_obj(pr); }
-    if (SLOT(x, B_BODY) != JS_NULL) SET(x, B_USED, JS_TRUE);
+    if (js_truthy(SLOT(sx, A_ABORTED))) { js_promise_reject(pr, SLOT(sx, A_REASON)); return; }
     jsv ownv[4] = { jv_int(0), jv_obj(pr), jv_obj(req), jv_obj(sig) };
     jsobj *owner = js_arr_from(ownv, 4);
     sbuf_t hw = { 0 };
@@ -1330,10 +1383,44 @@ NATIVE(w_fetch) {
     wf_t *w = wf_start(js_cur_page(), owner, jv_s(SLOT(x, R_URL))->d, jv_s(SLOT(x, R_METHOD))->d, hw.p ? hw.p : "", bd, bl,
                        !strcmp(redir, "manual") ? 2 : 0);
     sb_free(&hw);
-    if (!w) { js_promise_reject(pr, reject_value(E_RANGE, "sem memória")); return jv_obj(pr); }
+    if (!w) { js_promise_reject(pr, reject_value(E_RANGE, "sem memória")); return; }
     jsobj *algo = js_newnative(fetch_abort_algo, "abortar", 1, 0);
     algo->u.nat.data = jv_obj(owner);
     abort_add_algo(sig, jv_obj(algo));
+}
+
+/* corpo em stream juntado: data = [promessa, request] */
+NATIVE(fetch_after_body) {
+    UNUSED_ARGS;
+    jsobj *pair = jv_o(self->u.nat.data);
+    jsobj *pr = jv_o(js_arr_get(pair, 0)), *req = jv_o(js_arr_get(pair, 1));
+    if (self->u.nat.magic) { js_promise_reject(pr, ARG(0)); return JS_UNDEF; }
+    SET(jv_o(req->u.host.extra), B_BODY, ARG(0));
+    fetch_start(pr, req);
+    return JS_UNDEF;
+}
+
+NATIVE(w_fetch) {
+    UNUSED_ARGS;
+    jsobj *pr = js_promise_new();
+    jsobj *req = make_request(ARG(0), ARG(1));
+    if (!req) { js_promise_reject(pr, js_catch()); return jv_obj(pr); }
+    jsobj *x = jv_o(req->u.host.extra);
+    if (js_truthy(SLOT(x, B_USED)) && SLOT(x, B_BODY) != JS_NULL) { js_promise_reject(pr, reject_value(E_TYPE, "fetch: o corpo do Request já foi lido")); return jv_obj(pr); }
+    jsv bv = SLOT(x, B_BODY);
+    if (bv != JS_NULL) SET(x, B_USED, JS_TRUE);
+    if (bv != JS_NULL && !jv_iscls(bv, CL_ARRAYBUFFER)) {
+        /* corpo em ReadableStream: junta antes de enviar (o cliente HTTP manda Content-Length) */
+        jsv coll = js_stream_collect(bv);
+        if (coll == JS_EXC) { js_promise_reject(pr, js_catch()); return jv_obj(pr); }
+        jsv pair = jv_obj(js_arr_from((jsv[]){ jv_obj(pr), jv_obj(req) }, 2));
+        jsobj *ok = js_newnative(fetch_after_body, "corpo", 1, 0), *bad = js_newnative(fetch_after_body, "corpo", 1, 1);
+        ok->u.nat.data = bad->u.nat.data = pair;
+        jsv fns[2] = { jv_obj(ok), jv_obj(bad) };
+        js_invoke(coll, js_intern("then", -1), 2, fns);
+        return jv_obj(pr);
+    }
+    fetch_start(pr, req);
     return jv_obj(pr);
 }
 
@@ -1619,7 +1706,9 @@ NATIVE(xhr_method) {
         jsstr *ct = NULL;
         jsobj *hx = jv_o(jv_o(SLOT(x, X_REQHDRS))->u.host.extra);
         if (!jv_isnullish(ARG(0)) && strcmp(meth, "GET") && strcmp(meth, "HEAD")) {
-            if (extract_body(ARG(0), &buf, &ct) < 0) return JS_EXC;
+            jsv body = ARG(0);
+            if (js_is_readable_stream(body)) { body = js_tostrv(body); if (body == JS_EXC) return JS_EXC; }   /* XHR não aceita stream */
+            if (extract_body(body, &buf, &ct) < 0) return JS_EXC;
             if (ct && !headers_get(hx, "content-type")) headers_append(hx, S("Content-Type"), jv_str(ct), false);
         }
         SET(x, X_ERROR, JS_FALSE);
@@ -1826,6 +1915,7 @@ void js_fetch_init(jsrealm *r) {
     iface(g, "Request", r->p_request, request_ctor, 1, NULL);
     for (int i = 0; i < 6; i++) js_defnative(r->p_request, bm[i], body_read, 0, i);
     js_defgetter(r->p_request, "bodyUsed", body_used_get, 0);
+    js_defgetter(r->p_request, "body", body_stream_get, 0);
     js_defgetter(r->p_request, "headers", request_get, B_HDR);
     for (int i = R_URL; i < R_NSLOTS; i++) js_defgetter(r->p_request, req_names[i], request_get, i);
     js_defnative(r->p_request, "clone", body_clone, 0, 0);
@@ -1835,6 +1925,7 @@ void js_fetch_init(jsrealm *r) {
     iface(g, "Response", r->p_response, response_ctor, 0, &rc);
     for (int i = 0; i < 6; i++) js_defnative(r->p_response, bm[i], body_read, 0, i);
     js_defgetter(r->p_response, "bodyUsed", body_used_get, 0);
+    js_defgetter(r->p_response, "body", body_stream_get, 0);
     js_defgetter(r->p_response, "headers", response_get, B_HDR);
     js_defgetter(r->p_response, "url", response_get, S_URL);
     js_defgetter(r->p_response, "status", response_get, S_STATUS);

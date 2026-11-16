@@ -380,6 +380,22 @@ jsstr *js_str_cat(jsstr *a, jsstr *b) {
     if (!b->len) return a;
     usize n = (usize)a->len + b->len;
     if (n > (64u << 20)) { js_throw_err(E_RANGE, "String grande demais"); return NULL; }
+    /* surrogate alto solto no fim de a + baixo solto no começo de b: viram um ponto de código (UTF-8 de 4 bytes) */
+    const u8 *ta = (const u8 *)a->d + a->len - 3, *hb = (const u8 *)b->d;
+    if (a->len >= 3 && b->len >= 3 && ta[0] == 0xED && ta[1] >= 0xA0 && ta[1] <= 0xAF && hb[0] == 0xED && hb[1] >= 0xB0 && hb[1] <= 0xBF) {
+        u32 hi = 0xD000u | (u32)(ta[1] & 0x3F) << 6 | (ta[2] & 0x3F), lo = 0xD000u | (u32)(hb[1] & 0x3F) << 6 | (hb[2] & 0x3F);
+        u32 cp = 0x10000u + ((hi - 0xD800u) << 10) + (lo - 0xDC00u);
+        jsstr *s = str_alloc((int)(n - 2));
+        memcpy(s->d, a->d, a->len - 3);
+        u8 *o = (u8 *)s->d + a->len - 3;
+        o[0] = (u8)(0xF0 | cp >> 18); o[1] = (u8)(0x80 | ((cp >> 12) & 0x3F)); o[2] = (u8)(0x80 | ((cp >> 6) & 0x3F)); o[3] = (u8)(0x80 | (cp & 0x3F));
+        memcpy(o + 4, b->d + 3, b->len - 3);
+        s->d[n - 2] = 0;
+        s->ulen = a->ulen + b->ulen;
+        s->ascii = false;
+        s->hash = hash_bytes(s->d, (int)(n - 2));
+        return s;
+    }
     jsstr *s = str_alloc((int)n);
     memcpy(s->d, a->d, a->len);
     memcpy(s->d + a->len, b->d, b->len);

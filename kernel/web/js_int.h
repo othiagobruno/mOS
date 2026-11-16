@@ -599,6 +599,11 @@ jsv    js_structured_clone(jsv v);
 void   js_obs_init(jsrealm *r);
 /* Web Workers e BroadcastChannel (web_worker.c) */
 void   js_worker_init(jsrealm *r);
+/* Streams (web_stream.c + web_stream.js) */
+void   js_stream_init(jsrealm *r);
+jsv    js_stream_from_bytes(jsv abuf, jsv on_read);
+jsv    js_stream_collect(jsv stream);              /* promessa de ArrayBuffer */
+bool   js_is_readable_stream(jsv v);
 void   web_worker_pump(struct js_page *owner);
 bool   web_worker_busy(struct js_page *owner);
 void   web_worker_drop(struct js_page *owner);

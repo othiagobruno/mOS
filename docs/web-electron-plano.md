@@ -116,6 +116,13 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    tick da dona; mensagens por clone estruturado; blob:/data:/file:/http; workers clássicos e de módulo; erros e 404
    viram evento error na dona; terminate; workers aninhados; BroadcastChannel entre páginas e workers da mesma
    origem. Teste: `tools/web_host_worker.c`. Falta: SharedWorker e ServiceWorker.
+6h. ✅ **Streams** (`web_stream.js` embutido por `tools/gen_stream_js.py` em `web_stream_js.h`, ligado por
+   `web_stream.c`, carregado na primeira vez que a página usa os nomes): ReadableStream (padrão e bytes, leitores
+   padrão e BYOB, tee, pipeTo/pipeThrough com AbortSignal, iteração assíncrona, from), WritableStream com
+   contrapressão, TransformStream, estratégias, TextEncoderStream/TextDecoderStream, Response/Request.body (inclusive
+   corpo em stream no construtor, no fetch e no clone) e Blob.stream(). No núcleo JS: IteratorClose no for-of e no
+   for await, e surrogates soltos que se juntam ao concatenar. Teste: `tools/web_host_stream.c`.
+   Falta: CompressionStream/DecompressionStream.
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.
