@@ -3,44 +3,58 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Isabela (mídia) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**668** símbolos distintos.
+**724** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| CoreAudio.framework | `_AudioConvertHostTimeToNanos` | 18 | android-studio, audacity, cyberduck, dbeaver-community |
-| CoreAudio.framework | `_AudioGetCurrentHostTime` | 15 | android-studio, audacity, cyberduck, dbeaver-community |
-| CoreImage.framework | `_OBJC_CLASS_$_CIContext` | 14 | betterdisplay, claude, cmux, iina |
-| CoreImage.framework | `_kCIInputImageKey` | 11 | betterdisplay, claude, cmux, iina |
-| CoreMIDI.framework | `_MIDIPortDispose` | 11 | firefox, floorp, godot, hammerspoon |
-| CoreImage.framework | `_OBJC_CLASS_$_CIColor` | 9 | betterdisplay, claude, cmux, iina |
-| CoreMIDI.framework | `_MIDIEndpointDispose` | 9 | deluge, firefox, floorp, hammerspoon |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVPlayerLayer` | 8 | cmux, libreoffice, localsend, raycast |
-| CoreMIDI.framework | `_MIDIPortDisconnectSource` | 8 | android-studio, cyberduck, dbeaver-community, godot |
-| Accelerate.framework | `_vDSP_maxv` | 7 | android-studio, firefox, floorp, insomnia |
-| Accelerate.framework | `_vDSP_measqv` | 7 | android-studio, firefox, floorp, insomnia |
-| Accelerate.framework | `_vDSP_vsmsa` | 7 | android-studio, firefox, floorp, insomnia |
-| AudioToolbox.framework | `_AudioFileStreamClose` | 7 | firefox, floorp, mullvad-browser, thunderbird |
-| AudioToolbox.framework | `_AudioFileStreamGetProperty` | 7 | firefox, floorp, mullvad-browser, thunderbird |
-| AudioToolbox.framework | `_AudioFileStreamGetPropertyInfo` | 7 | firefox, floorp, mullvad-browser, thunderbird |
-| AudioToolbox.framework | `_AudioFileStreamOpen` | 7 | firefox, floorp, mullvad-browser, thunderbird |
-| AudioToolbox.framework | `_AudioFileStreamParseBytes` | 7 | firefox, floorp, mullvad-browser, thunderbird |
-| CoreMIDI.framework | `_MIDIInputPortCreateWithBlock` | 7 | firefox, floorp, mullvad-browser, musescore |
-| CoreMIDI.framework | `_MIDIReceived` | 7 | firefox, floorp, hammerspoon, mullvad-browser |
-| AVFoundation.framework | `_AVCaptureSessionPresetLow` | 6 | firefox, floorp, mullvad-browser, obs |
-| CoreAudio.framework | `_AudioDeviceDuck` | 6 | firefox, floorp, mullvad-browser, thunderbird |
+| CoreAudio.framework | `_AudioConvertHostTimeToNanos` | 22 | android-studio, audacity, cyberduck, dbeaver-community |
+| CoreImage.framework | `_OBJC_CLASS_$_CIContext` | 19 | betterdisplay, claude, cmux, figma |
+| CoreAudio.framework | `_AudioGetCurrentHostTime` | 18 | android-studio, audacity, cyberduck, dbeaver-community |
+| CoreImage.framework | `_kCIInputImageKey` | 14 | betterdisplay, claude, cmux, iina |
+| CoreImage.framework | `_OBJC_CLASS_$_CIColor` | 12 | betterdisplay, claude, cmux, figma |
+| CoreMIDI.framework | `_MIDIPortDispose` | 12 | firefox, floorp, godot, hammerspoon |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVPlayerLayer` | 11 | cmux, libreoffice, localsend, raycast |
+| CoreMIDI.framework | `_MIDIEndpointDispose` | 10 | deluge, firefox, floorp, hammerspoon |
+| AudioToolbox.framework | `_AudioFileStreamClose` | 9 | firefox, floorp, librewolf, mullvad-browser |
+| AudioToolbox.framework | `_AudioFileStreamGetProperty` | 9 | firefox, floorp, librewolf, mullvad-browser |
+| AudioToolbox.framework | `_AudioFileStreamGetPropertyInfo` | 9 | firefox, floorp, librewolf, mullvad-browser |
+| AudioToolbox.framework | `_AudioFileStreamOpen` | 9 | firefox, floorp, librewolf, mullvad-browser |
+| AudioToolbox.framework | `_AudioFileStreamParseBytes` | 9 | firefox, floorp, librewolf, mullvad-browser |
+| CoreMIDI.framework | `_MIDIPortDisconnectSource` | 9 | android-studio, cyberduck, dbeaver-community, godot |
+| Accelerate.framework | `_vDSP_maxv` | 8 | android-studio, firefox, floorp, insomnia |
+| Accelerate.framework | `_vDSP_measqv` | 8 | android-studio, firefox, floorp, insomnia |
+| Accelerate.framework | `_vDSP_vsmsa` | 8 | android-studio, firefox, floorp, insomnia |
+| CoreMIDI.framework | `_MIDIInputPortCreateWithBlock` | 8 | firefox, floorp, librewolf, mullvad-browser |
+| CoreMIDI.framework | `_MIDIReceived` | 8 | firefox, floorp, hammerspoon, librewolf |
+| AVFoundation.framework | `_AVCaptureSessionPresetLow` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| CoreAudio.framework | `_AudioDeviceDuck` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| CoreImage.framework | `_kCIContextCacheIntermediates` | 7 | betterdisplay, claude, cmux, figma |
+| CoreImage.framework | `_kCIInputScaleKey` | 7 | betterdisplay, claude, raycast, telegram |
+| CoreMIDI.framework | `_kMIDIPropertyName` | 7 | android-studio, cyberduck, dbeaver-community, hammerspoon |
+| CoreMedia.framework | `_CMSampleBufferGetOutputDuration` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| CoreMedia.framework | `_CMTimebaseCreateWithMasterClock` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| VideoToolbox.framework | `_VTRegisterProfessionalVideoWorkflowVideoDecoders` | 7 | iina, krita, obs, rustdesk |
+| VideoToolbox.framework | `_kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVAssetWriterInputPixelBufferAdaptor` | 6 | cmux, iterm2, openclaw, telegram |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableMetadataItem` | 6 | iterm2, localsend, shotcut, vorssaint |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVPlayerItemVideoOutput` | 6 | localsend, raycast, rustdesk, shotcut |
+| CoreImage.framework | `_kCIInputBackgroundImageKey` | 6 | betterdisplay, cmux, figma, telegram |
 | CoreImage.framework | `_kCIOutputImageKey` | 6 | cmux, iina, krita, obs |
-| CoreMIDI.framework | `_kMIDIPropertyName` | 6 | android-studio, cyberduck, dbeaver-community, hammerspoon |
-| CoreMedia.framework | `_CMSampleBufferGetOutputDuration` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| CoreMedia.framework | `_CMTimebaseCreateWithMasterClock` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| VideoToolbox.framework | `_kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableMetadataItem` | 5 | iterm2, localsend, shotcut, whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVPlayerItemVideoOutput` | 5 | localsend, raycast, shotcut, whatsapp |
-| CoreImage.framework | `_kCIInputScaleKey` | 5 | betterdisplay, claude, raycast, whatsapp |
-| VideoToolbox.framework | `_VTRegisterProfessionalVideoWorkflowVideoDecoders` | 5 | iina, krita, obs, shotcut |
+| Vision.framework | `_OBJC_CLASS_$_VNRecognizedText` | 6 | clipy, maccy, openclaw, raycast |
+| Vision.framework | `_OBJC_CLASS_$_VNRecognizedTextObservation` | 6 | clipy, maccy, openclaw, raycast |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVMetadataItem` | 5 | iterm2, localsend, telegram, vorssaint |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableVideoComposition` | 5 | localsend, rustdesk, telegram, vorssaint |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableVideoCompositionInstruction` | 5 | localsend, rustdesk, telegram, vorssaint |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableVideoCompositionLayerInstruction` | 5 | localsend, rustdesk, telegram, vorssaint |
+| AudioToolbox.framework | `_AUGraphNodeInfo` | 5 | deluge, hammerspoon, openttd, telegram |
+| CoreImage.framework | `_kCIFormatRGBA8` | 5 | figma, openclaw, pearcleaner, telegram |
+| CoreMIDI.framework | `_MIDIFlushOutput` | 5 | android-studio, cyberduck, dbeaver-community, hammerspoon |
 | AVFoundation.framework | `_AVFileTypeWAVE` | 4 | localsend, raycast, shotcut, wireshark-app |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVAssetWriterInputPixelBufferAdaptor` | 4 | cmux, iterm2, whatsapp, zoom |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVAssetExportSession` | 4 | localsend, openclaw, telegram, whatsapp |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVAssetReaderAudioMixOutput` | 4 | telegram, vorssaint, whatsapp, zoom |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureStillImageOutput` | 4 | pencil, shotcut, webtorrent, wireshark-app |
-| AudioToolbox.framework | `_AUGraphNodeInfo` | 4 | deluge, hammerspoon, openttd, vlc |
+| AudioToolbox.framework | `_AUGraphInitialize` | 4 | hammerspoon, openttd, telegram, vlc |
+| AudioToolbox.framework | `_AUGraphOpen` | 4 | hammerspoon, openttd, telegram, vlc |
 | CoreAudio.framework | `_AudioConvertNanosToHostTime` | 4 | lmms, pencil, shotcut, webtorrent |
 | CoreImage.framework | `_kCIAttributeClass` | 4 | iina, krita, obs, shotcut |
 | CoreImage.framework | `_kCIAttributeDefault` | 4 | iina, krita, obs, shotcut |
@@ -48,16 +62,50 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreImage.framework | `_kCIAttributeSliderMin` | 4 | iina, krita, obs, shotcut |
 | CoreImage.framework | `_kCIAttributeType` | 4 | iina, krita, obs, shotcut |
 | CoreImage.framework | `_kCICategoryGenerator` | 4 | iina, krita, obs, shotcut |
-| CoreImage.framework | `_kCIContextCacheIntermediates` | 4 | betterdisplay, claude, cmux, whatsapp |
+| CoreImage.framework | `_kCIContextWorkingColorSpace` | 4 | betterdisplay, pearcleaner, telegram, whatsapp |
 | CoreImage.framework | `_kCIFormatARGB8` | 4 | iina, krita, obs, shotcut |
-| CoreMIDI.framework | `_MIDIFlushOutput` | 4 | android-studio, cyberduck, dbeaver-community, hammerspoon |
-| Vision.framework | `_OBJC_CLASS_$_VNRecognizedText` | 4 | clipy, maccy, raycast, whatsapp |
-| Vision.framework | `_OBJC_CLASS_$_VNRecognizedTextObservation` | 4 | clipy, maccy, raycast, whatsapp |
+| CoreImage.framework | `_kCIImageColorSpace` | 4 | betterdisplay, claude, telegram, whatsapp |
+| CoreImage.framework | `_kCIInputAspectRatioKey` | 4 | claude, telegram, vorssaint, whatsapp |
+| CoreImage.framework | `_kCIInputMaskImageKey` | 4 | figma, telegram, vorssaint, whatsapp |
+| AVFoundation.framework | `_AVCaptureSessionPresetMedium` | 3 | obs, telegram, vorssaint |
+| AVFoundation.framework | `_AVErrorDeviceKey` | 3 | monitorcontrol, rustdesk, telegram |
+| AVFoundation.framework | `_AVErrorFileSizeKey` | 3 | monitorcontrol, rustdesk, telegram |
+| AVFoundation.framework | `_AVErrorMediaSubTypeKey` | 3 | monitorcontrol, rustdesk, telegram |
+| AVFoundation.framework | `_AVErrorMediaTypeKey` | 3 | monitorcontrol, rustdesk, telegram |
+| AVFoundation.framework | `_AVErrorPIDKey` | 3 | monitorcontrol, rustdesk, telegram |
+| AVFoundation.framework | `_AVErrorRecordingSuccessfullyFinishedKey` | 3 | monitorcontrol, rustdesk, telegram |
+| AVFoundation.framework | `_AVErrorTimeKey` | 3 | monitorcontrol, rustdesk, telegram |
 | AVFoundation.framework | `_AVFileTypeMPEGLayer3` | 3 | localsend, shotcut, wireshark-app |
+| AVFoundation.framework | `_AVMetadataCommonIdentifierArtist` | 3 | shotcut, telegram, wireshark-app |
+| AVFoundation.framework | `_AVMetadataCommonIdentifierArtwork` | 3 | shotcut, telegram, wireshark-app |
+| AVFoundation.framework | `_AVMetadataCommonIdentifierTitle` | 3 | shotcut, telegram, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonKeyTitle` | 3 | localsend, shotcut, wireshark-app |
+| AVFoundation.framework | `_AVMetadataIdentifierID3MetadataLeadPerformer` | 3 | shotcut, telegram, wireshark-app |
+| AVFoundation.framework | `_AVMetadataIdentifierID3MetadataTitleDescription` | 3 | shotcut, telegram, wireshark-app |
 | AVFoundation.framework | `_AVMetadataKeySpaceID3` | 3 | hammerspoon, shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataKeySpaceiTunes` | 3 | hammerspoon, shotcut, wireshark-app |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVMetadataItem` | 3 | iterm2, localsend, whatsapp |
+| AVFoundation.framework | `_AVMetadataQuickTimeUserDataKeyArtist` | 3 | shotcut, telegram, wireshark-app |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVAssetReaderVideoCompositionOutput` | 3 | telegram, vorssaint, whatsapp |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureDeviceFormat` | 3 | obs, openclaw, whatsapp |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureVideoPreviewLayer` | 3 | telegram, vorssaint, whatsapp |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableComposition` | 3 | telegram, vorssaint, whatsapp |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableCompositionTrack` | 3 | telegram, vorssaint, whatsapp |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVVideoCompositionLayerInstruction` | 3 | telegram, vorssaint, whatsapp |
+| Accelerate.framework | `_cblas_cgemm$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_cgesdd$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_cheevd$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_dgeev$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_dgeqrf$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_dgesdd$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_dgetrf$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_dorgqr$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_dpotrf$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_dsyevd$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_sgeev$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_sgesdd$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_sgetrf$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_spotrf$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
+| Accelerate.framework | `_ssyevd$NEWLAPACK` | 3 | blender, ollama-app, openclaw |
 | Accelerate.framework | `_vDSP_create_fftsetupD` | 3 | iina, shotcut, spotify |
 | Accelerate.framework | `_vDSP_ctozD` | 3 | iina, shotcut, spotify |
 | Accelerate.framework | `_vDSP_destroy_fftsetupD` | 3 | iina, shotcut, spotify |
@@ -67,6 +115,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Accelerate.framework | `_vDSP_vspdp` | 3 | iina, shotcut, spotify |
 | Accelerate.framework | `_vDSP_ztocD` | 3 | iina, shotcut, spotify |
 | Accelerate.framework | `_vDSP_zvmagsD` | 3 | iina, shotcut, spotify |
+| Accelerate.framework | `_vImageBufferFill_ARGB8888` | 3 | android-studio, dbeaver-community, temurin |
+| Accelerate.framework | `_vImageLookupTable_Planar8toPlanarF` | 3 | android-studio, dbeaver-community, temurin |
 | Accelerate.framework | `_vvatan2` | 3 | iina, shotcut, spotify |
 | Accelerate.framework | `_vvatan2f` | 3 | iina, shotcut, spotify |
 | Accelerate.framework | `_vvlog` | 3 | iina, shotcut, spotify |
@@ -74,8 +124,10 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Accelerate.framework | `_vvsincos` | 3 | iina, shotcut, spotify |
 | Accelerate.framework | `_vvsincosf` | 3 | iina, shotcut, spotify |
 | Accelerate.framework | `_vvsqrt` | 3 | iina, shotcut, spotify |
-| AudioToolbox.framework | `_AUGraphInitialize` | 3 | hammerspoon, openttd, vlc |
-| AudioToolbox.framework | `_AUGraphOpen` | 3 | hammerspoon, openttd, vlc |
+| AudioToolbox.framework | `_AUGraphAddNode` | 3 | hammerspoon, telegram, vlc |
+| AudioToolbox.framework | `_AUGraphConnectNodeInput` | 3 | hammerspoon, telegram, vlc |
+| AudioToolbox.framework | `_AUGraphStart` | 3 | hammerspoon, telegram, vlc |
+| AudioToolbox.framework | `_DisposeAUGraph` | 3 | hammerspoon, telegram, vlc |
 | AudioToolbox.framework | `_DisposeMusicPlayer` | 3 | deluge, hammerspoon, openttd |
 | AudioToolbox.framework | `_DisposeMusicSequence` | 3 | deluge, hammerspoon, openttd |
 | AudioToolbox.framework | `_MusicPlayerGetTime` | 3 | deluge, hammerspoon, openttd |
@@ -86,6 +138,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AudioToolbox.framework | `_MusicSequenceGetIndTrack` | 3 | deluge, hammerspoon, openttd |
 | AudioToolbox.framework | `_MusicSequenceGetTrackCount` | 3 | deluge, hammerspoon, openttd |
 | AudioToolbox.framework | `_MusicTrackGetProperty` | 3 | deluge, hammerspoon, openttd |
+| AudioToolbox.framework | `_NewAUGraph` | 3 | hammerspoon, telegram, vlc |
 | AudioToolbox.framework | `_NewMusicPlayer` | 3 | deluge, hammerspoon, openttd |
 | AudioToolbox.framework | `_NewMusicSequence` | 3 | deluge, hammerspoon, openttd |
 | CoreAudio.framework | `_AudioDeviceAddIOProc` | 3 | deluge, shotcut, zoom |
@@ -93,10 +146,17 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreAudio.framework | `_AudioDeviceRemoveIOProc` | 3 | deluge, shotcut, zoom |
 | CoreAudio.framework | `_AudioDeviceSetProperty` | 3 | deluge, lmms, shotcut |
 | CoreAudio.framework | `_AudioHardwareGetProperty` | 3 | deluge, lmms, shotcut |
-| CoreImage.framework | `_kCIImageColorSpace` | 3 | betterdisplay, claude, whatsapp |
-| CoreImage.framework | `_kCIInputBackgroundImageKey` | 3 | betterdisplay, cmux, whatsapp |
+| CoreImage.framework | `_kCIContextOutputColorSpace` | 3 | betterdisplay, telegram, whatsapp |
+| CoreImage.framework | `_kCIFormatBGRA8` | 3 | cmux, telegram, whatsapp |
 | CoreMIDI.framework | `_MIDIDestinationCreate` | 3 | deluge, hammerspoon, lmms |
 | CoreMedia.framework | `_CMSampleBufferGetOutputSampleTimingInfoArray` | 3 | iina, obs, shotcut |
+| CoreMedia.framework | `_CMTimeMakeFromDictionary` | 3 | monitorcontrol, rustdesk, telegram |
+| CoreMedia.framework | `_CMTimeRangeGetUnion` | 3 | monitorcontrol, rustdesk, telegram |
+| CoreMedia.framework | `_CMVideoFormatDescriptionGetCleanAperture` | 3 | pencil, vorssaint, webtorrent |
+| CoreMediaIO.framework | `_CMIOObjectGetPropertyDataSize` | 3 | hammerspoon, obs, telegram |
+| Speech.framework | `_OBJC_CLASS_$_SFSpeechRecognizer` | 3 | openclaw, raycast, whatsapp |
+| AVFAudio.framework | `_OBJC_CLASS_$_AVAudioChannelLayout` | 2 | vorssaint, whatsapp |
+| AVFAudio.framework | `_OBJC_CLASS_$_AVAudioRecorder` | 2 | openclaw, whatsapp |
 | AVFoundation.framework | `_AVMediaCharacteristicLegible` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMediaTypeSubtitle` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadata3GPUserDataKeyAlbumAndTrack` | 2 | shotcut, wireshark-app |
@@ -106,15 +166,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AVFoundation.framework | `_AVMetadata3GPUserDataKeyPerformer` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadata3GPUserDataKeyTitle` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonIdentifierAlbumName` | 2 | shotcut, wireshark-app |
-| AVFoundation.framework | `_AVMetadataCommonIdentifierArtist` | 2 | shotcut, wireshark-app |
-| AVFoundation.framework | `_AVMetadataCommonIdentifierArtwork` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonIdentifierAuthor` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonIdentifierCopyrights` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonIdentifierCreationDate` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonIdentifierDescription` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonIdentifierLanguage` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonIdentifierPublisher` | 2 | shotcut, wireshark-app |
-| AVFoundation.framework | `_AVMetadataCommonIdentifierTitle` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonIdentifierType` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonKeyAlbumName` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataCommonKeyArtist` | 2 | shotcut, wireshark-app |
@@ -135,11 +192,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AVFoundation.framework | `_AVMetadataIdentifierID3MetadataDate` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataIdentifierID3MetadataFileType` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataIdentifierID3MetadataLanguage` | 2 | shotcut, wireshark-app |
-| AVFoundation.framework | `_AVMetadataIdentifierID3MetadataLeadPerformer` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataIdentifierID3MetadataLength` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataIdentifierID3MetadataOfficialAudioSourceWebpage` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataIdentifierID3MetadataPublisher` | 2 | shotcut, wireshark-app |
-| AVFoundation.framework | `_AVMetadataIdentifierID3MetadataTitleDescription` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataIdentifierID3MetadataTrackNumber` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataIdentifierQuickTimeMetadataAlbum` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataIdentifierQuickTimeMetadataArtist` | 2 | shotcut, wireshark-app |
@@ -173,7 +228,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AVFoundation.framework | `_AVMetadataIdentifieriTunesMetadataUserGenre` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataKeySpaceQuickTimeUserData` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataQuickTimeUserDataKeyAlbum` | 2 | shotcut, wireshark-app |
-| AVFoundation.framework | `_AVMetadataQuickTimeUserDataKeyArtist` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataQuickTimeUserDataKeyAuthor` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataQuickTimeUserDataKeyComment` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataQuickTimeUserDataKeyCopyright` | 2 | shotcut, wireshark-app |
@@ -181,57 +235,60 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AVFoundation.framework | `_AVMetadataQuickTimeUserDataKeyDescription` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVMetadataQuickTimeUserDataKeyGenre` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_AVSampleBufferAudioRendererWasFlushedAutomaticallyNotification` | 2 | iina, spotify |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVAssetExportSession` | 2 | localsend, whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVAssetReaderAudioMixOutput` | 2 | whatsapp, zoom |
+| AVFoundation.framework | `_AVVideoAllowFrameReorderingKey` | 2 | vorssaint, zoom |
+| AVFoundation.framework | `_AVVideoCleanApertureHeightKey` | 2 | telegram, zoom |
+| AVFoundation.framework | `_AVVideoCleanApertureHorizontalOffsetKey` | 2 | telegram, zoom |
+| AVFoundation.framework | `_AVVideoCleanApertureKey` | 2 | telegram, zoom |
+| AVFoundation.framework | `_AVVideoCleanApertureVerticalOffsetKey` | 2 | telegram, zoom |
+| AVFoundation.framework | `_AVVideoCleanApertureWidthKey` | 2 | telegram, zoom |
+| AVFoundation.framework | `_AVVideoH264EntropyModeCABAC` | 2 | telegram, zoom |
+| AVFoundation.framework | `_AVVideoH264EntropyModeKey` | 2 | telegram, zoom |
+| AVFoundation.framework | `_AVVideoPixelAspectRatioHorizontalSpacingKey` | 2 | telegram, zoom |
+| AVFoundation.framework | `_AVVideoPixelAspectRatioKey` | 2 | telegram, zoom |
+| AVFoundation.framework | `_AVVideoPixelAspectRatioVerticalSpacingKey` | 2 | telegram, zoom |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVAssetWriterInputMetadataAdaptor` | 2 | localsend, whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureDeviceFormat` | 2 | obs, whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableVideoComposition` | 2 | localsend, whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableVideoCompositionInstruction` | 2 | localsend, whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableVideoCompositionLayerInstruction` | 2 | localsend, whatsapp |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVAudioMixInputParameters` | 2 | vorssaint, whatsapp |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureMovieFileOutput` | 2 | openclaw, zoom |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableAudioMix` | 2 | vorssaint, whatsapp |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableAudioMixInputParameters` | 2 | vorssaint, whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVPlayerItemLegibleOutput` | 2 | shotcut, wireshark-app |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVPlayerItemOutput` | 2 | raycast, whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVPlayerLooper` | 2 | cmux, whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVTimedMetadataGroup` | 2 | localsend, whatsapp |
-| Accelerate.framework | `_cblas_cgemm$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_cgesdd$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_cheevd$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_dgeev$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_dgeqrf$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_dgesdd$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_dgetrf$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_dorgqr$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_dpotrf$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_dsyevd$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_sgeev$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_sgesdd$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_sgetrf$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_spotrf$NEWLAPACK` | 2 | blender, ollama-app |
-| Accelerate.framework | `_ssyevd$NEWLAPACK` | 2 | blender, ollama-app |
+| Accelerate.framework | `_BNNSFilterApplyTwoInput` | 2 | ollama-app, openclaw |
+| Accelerate.framework | `_BNNSFilterCreateLayerBroadcastMatMul` | 2 | ollama-app, openclaw |
+| Accelerate.framework | `_BNNSFilterDestroy` | 2 | ollama-app, openclaw |
+| Accelerate.framework | `_cgeev$NEWLAPACK` | 2 | ollama-app, openclaw |
+| Accelerate.framework | `_dgetri$NEWLAPACK` | 2 | ollama-app, openclaw |
+| Accelerate.framework | `_dtrtri$NEWLAPACK` | 2 | ollama-app, openclaw |
+| Accelerate.framework | `_sgeqrf$NEWLAPACK` | 2 | ollama-app, openclaw |
+| Accelerate.framework | `_sgetri$NEWLAPACK` | 2 | ollama-app, openclaw |
+| Accelerate.framework | `_sorgqr$NEWLAPACK` | 2 | ollama-app, openclaw |
+| Accelerate.framework | `_strtri$NEWLAPACK` | 2 | ollama-app, openclaw |
 | Accelerate.framework | `_vDSP_dotpr` | 2 | iina, spotify |
 | Accelerate.framework | `_vDSP_vdpsp` | 2 | iina, shotcut |
-| Accelerate.framework | `_vImageBufferFill_ARGB8888` | 2 | android-studio, dbeaver-community |
-| Accelerate.framework | `_vImageLookupTable_Planar8toPlanarF` | 2 | android-studio, dbeaver-community |
+| Accelerate.framework | `_vDSP_vflt16` | 2 | raycast, telegram |
+| Accelerate.framework | `_vDSP_vrampmul` | 2 | spotify, vorssaint |
+| Accelerate.framework | `_vDSP_vrampmul2` | 2 | spotify, vorssaint |
 | Accelerate.framework | `_vvexp` | 2 | iina, shotcut |
-| AudioToolbox.framework | `_AUGraphAddNode` | 2 | hammerspoon, vlc |
-| AudioToolbox.framework | `_AUGraphConnectNodeInput` | 2 | hammerspoon, vlc |
 | AudioToolbox.framework | `_AUGraphGetIndNode` | 2 | deluge, openttd |
 | AudioToolbox.framework | `_AUGraphGetNodeCount` | 2 | deluge, openttd |
-| AudioToolbox.framework | `_AUGraphStart` | 2 | hammerspoon, vlc |
-| AudioToolbox.framework | `_DisposeAUGraph` | 2 | hammerspoon, vlc |
+| AudioToolbox.framework | `_AUGraphStop` | 2 | telegram, vlc |
 | AudioToolbox.framework | `_MusicPlayerSetTime` | 2 | deluge, hammerspoon |
 | AudioToolbox.framework | `_MusicSequenceFileLoadData` | 2 | deluge, hammerspoon |
 | AudioToolbox.framework | `_MusicSequenceGetAUGraph` | 2 | deluge, openttd |
-| AudioToolbox.framework | `_NewAUGraph` | 2 | hammerspoon, vlc |
 | CoreAudio.framework | `_AudioHardwareGetPropertyInfo` | 2 | lmms, shotcut |
+| CoreImage.framework | `_OBJC_CLASS_$_CIColorKernel` | 2 | telegram, whatsapp |
+| CoreImage.framework | `_OBJC_CLASS_$_CIRenderDestination` | 2 | vorssaint, whatsapp |
 | CoreImage.framework | `_kCIContextName` | 2 | betterdisplay, whatsapp |
-| CoreImage.framework | `_kCIContextOutputColorSpace` | 2 | betterdisplay, whatsapp |
-| CoreImage.framework | `_kCIContextWorkingColorSpace` | 2 | betterdisplay, whatsapp |
-| CoreImage.framework | `_kCIFormatBGRA8` | 2 | cmux, whatsapp |
-| CoreImage.framework | `_kCIInputAspectRatioKey` | 2 | claude, whatsapp |
+| CoreImage.framework | `_kCIContextUseSoftwareRenderer` | 2 | telegram, whatsapp |
+| CoreImage.framework | `_kCIImageApplyOrientationProperty` | 2 | vorssaint, whatsapp |
 | CoreImage.framework | `_kCIInputColorKey` | 2 | betterdisplay, whatsapp |
 | CoreImage.framework | `_kCIInputEVKey` | 2 | betterdisplay, whatsapp |
+| CoreImage.framework | `_kCIInputExtentKey` | 2 | pearcleaner, whatsapp |
 | CoreImage.framework | `_kCIInputIntensityKey` | 2 | betterdisplay, whatsapp |
 | CoreImage.framework | `_kCIInputSaturationKey` | 2 | betterdisplay, whatsapp |
+| CoreImage.framework | `_kCIInputSharpnessKey` | 2 | betterdisplay, vorssaint |
 | CoreImage.framework | `_kCIInputTransformKey` | 2 | betterdisplay, whatsapp |
 | CoreMIDI.framework | `_MIDIDeviceGetEntity` | 2 | hammerspoon, lmms |
 | CoreMIDI.framework | `_MIDIDeviceGetNumberOfEntities` | 2 | hammerspoon, lmms |
@@ -243,30 +300,50 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreMIDI.framework | `_MIDIGetNumberOfDevices` | 2 | hammerspoon, lmms |
 | CoreMIDI.framework | `_MIDIObjectFindByUniqueID` | 2 | hammerspoon, musescore |
 | CoreMIDI.framework | `_kMIDIPropertyOffline` | 2 | hammerspoon, lmms |
-| CoreMedia.framework | `_CMVideoFormatDescriptionGetCleanAperture` | 2 | pencil, webtorrent |
-| CoreMediaIO.framework | `_CMIOObjectGetPropertyDataSize` | 2 | hammerspoon, obs |
-| Speech.framework | `_OBJC_CLASS_$_SFSpeechRecognizer` | 2 | raycast, whatsapp |
+| CoreMedia.framework | `_CMMemoryPoolCreate` | 2 | telegram, zed |
+| CoreMedia.framework | `_CMMemoryPoolGetAllocator` | 2 | telegram, zed |
+| CoreMedia.framework | `_CMMemoryPoolInvalidate` | 2 | telegram, zed |
+| CoreMedia.framework | `_CMSimpleQueueDequeue` | 2 | obs, telegram |
+| CoreMediaIO.framework | `_CMIODeviceStartStream` | 2 | obs, telegram |
+| CoreMediaIO.framework | `_CMIODeviceStopStream` | 2 | obs, telegram |
+| CoreMediaIO.framework | `_CMIOStreamCopyBufferQueue` | 2 | obs, telegram |
+| MediaPlayer.framework | `_MPNowPlayingInfoPropertyMediaType` | 2 | iina, telegram |
+| MediaPlayer.framework | `_OBJC_CLASS_$_MPChangePlaybackPositionCommandEvent` | 2 | iina, telegram |
+| MediaPlayer.framework | `_OBJC_CLASS_$_MPRemoteCommand` | 2 | iina, telegram |
+| ScreenCaptureKit.framework | `_SCStreamErrorDomain` | 2 | openclaw, vorssaint |
+| Speech.framework | `_OBJC_CLASS_$_SFSpeechAudioBufferRecognitionRequest` | 2 | openclaw, raycast |
+| Speech.framework | `_OBJC_CLASS_$_SFTranscriptionSegment` | 2 | openclaw, whatsapp |
 | VideoToolbox.framework | `_VTCopyVideoEncoderList` | 2 | obs, zoom |
 | VideoToolbox.framework | `_kVTDecompressionPropertyKey_RealTime` | 2 | android-studio, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_Baseline_4_0` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_Baseline_4_2` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_Baseline_5_0` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_Baseline_5_1` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_Baseline_5_2` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_High_3_0` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_High_3_1` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_High_3_2` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_High_4_0` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_High_4_1` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_High_4_2` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_High_5_1` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_High_5_2` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_Main_4_2` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_Main_5_1` | 2 | telegram, zed |
+| VideoToolbox.framework | `_kVTProfileLevel_H264_Main_5_2` | 2 | telegram, zed |
 | VideoToolbox.framework | `_kVTVideoEncoderList_CodecType` | 2 | obs, zoom |
+| Vision.framework | `_OBJC_CLASS_$_VNDetectHumanRectanglesRequest` | 2 | figma, whatsapp |
+| libswiftAVFoundation.dylib | `_$sSo21AVAssetImageGeneratorC12AVFoundationE5image2atSo10CGImageRefaAD_So6CMTimea10actualTimetAI_tYaKF` | 2 | openclaw, vorssaint |
+| libswiftAVFoundation.dylib | `_$sSo21AVAssetImageGeneratorC12AVFoundationE5image2atSo10CGImageRefaAD_So6CMTimea10actualTimetAI_tYaKFTu` | 2 | openclaw, vorssaint |
+| libswiftVision.dylib | `_$sSo16VNRecognizedTextC6VisionE11boundingBox3forSo22VNRectangleObservationCSgSnySS5IndexVG_tKF` | 2 | raycast, vorssaint |
 | AVFAudio.framework | `_AVEncoderBitDepthHintKey` | 1 | shotcut |
-| AVFAudio.framework | `_OBJC_CLASS_$_AVAudioChannelLayout` | 1 | whatsapp |
 | AVFAudio.framework | `_OBJC_CLASS_$_AVAudioConnectionPoint` | 1 | whatsapp |
-| AVFAudio.framework | `_OBJC_CLASS_$_AVAudioRecorder` | 1 | whatsapp |
 | AVFAudio.framework | `_OBJC_CLASS_$_AVAudioRoutingArbiter` | 1 | spotify |
 | AVFoundation.framework | `_AVCaptureDeviceTypeDeskViewCamera` | 1 | obs |
 | AVFoundation.framework | `_AVCaptureSessionPreset320x240` | 1 | obs |
 | AVFoundation.framework | `_AVCaptureSessionPreset3840x2160` | 1 | obs |
 | AVFoundation.framework | `_AVCaptureSessionPreset960x540` | 1 | obs |
-| AVFoundation.framework | `_AVCaptureSessionPresetMedium` | 1 | obs |
 | AVFoundation.framework | `_AVEncoderBitDepthHintKey` | 1 | wireshark-app |
-| AVFoundation.framework | `_AVErrorDeviceKey` | 1 | monitorcontrol |
-| AVFoundation.framework | `_AVErrorFileSizeKey` | 1 | monitorcontrol |
-| AVFoundation.framework | `_AVErrorMediaSubTypeKey` | 1 | monitorcontrol |
-| AVFoundation.framework | `_AVErrorMediaTypeKey` | 1 | monitorcontrol |
-| AVFoundation.framework | `_AVErrorPIDKey` | 1 | monitorcontrol |
-| AVFoundation.framework | `_AVErrorRecordingSuccessfullyFinishedKey` | 1 | monitorcontrol |
-| AVFoundation.framework | `_AVErrorTimeKey` | 1 | monitorcontrol |
 | AVFoundation.framework | `_AVFileType3GPP` | 1 | localsend |
 | AVFoundation.framework | `_AVFileType3GPP2` | 1 | localsend |
 | AVFoundation.framework | `_AVFileTypeAC3` | 1 | localsend |
@@ -278,48 +355,36 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AVFoundation.framework | `_AVFileTypeProfileMPEG4AppleHLS` | 1 | whatsapp |
 | AVFoundation.framework | `_AVFileTypeSunAU` | 1 | localsend |
 | AVFoundation.framework | `_AVMediaCharacteristicAudible` | 1 | localsend |
+| AVFoundation.framework | `_AVMetadataCommonKeyArtwork` | 1 | telegram |
+| AVFoundation.framework | `_AVMetadataIdentifierQuickTimeMetadataContentIdentifier` | 1 | vorssaint |
+| AVFoundation.framework | `_AVMetadataQuickTimeUserDataKeyTrackName` | 1 | telegram |
+| AVFoundation.framework | `_AVMetadataiTunesMetadataKeyArtist` | 1 | telegram |
+| AVFoundation.framework | `_AVMetadataiTunesMetadataKeySongName` | 1 | telegram |
 | AVFoundation.framework | `_AVPlayerRateDidChangeNotification` | 1 | cmux |
 | AVFoundation.framework | `_AVSampleBufferAudioRendererFlushTimeKey` | 1 | spotify |
-| AVFoundation.framework | `_AVVideoAllowFrameReorderingKey` | 1 | zoom |
-| AVFoundation.framework | `_AVVideoCleanApertureHeightKey` | 1 | zoom |
-| AVFoundation.framework | `_AVVideoCleanApertureHorizontalOffsetKey` | 1 | zoom |
-| AVFoundation.framework | `_AVVideoCleanApertureKey` | 1 | zoom |
-| AVFoundation.framework | `_AVVideoCleanApertureVerticalOffsetKey` | 1 | zoom |
-| AVFoundation.framework | `_AVVideoCleanApertureWidthKey` | 1 | zoom |
-| AVFoundation.framework | `_AVVideoH264EntropyModeCABAC` | 1 | zoom |
-| AVFoundation.framework | `_AVVideoH264EntropyModeKey` | 1 | zoom |
-| AVFoundation.framework | `_AVVideoPixelAspectRatioHorizontalSpacingKey` | 1 | zoom |
-| AVFoundation.framework | `_AVVideoPixelAspectRatioKey` | 1 | zoom |
-| AVFoundation.framework | `_AVVideoPixelAspectRatioVerticalSpacingKey` | 1 | zoom |
+| AVFoundation.framework | `_AVVideoCodecH264` | 1 | telegram |
+| AVFoundation.framework | `_AVVideoProfileLevelH264High40` | 1 | telegram |
 | AVFoundation.framework | `_AVVideoProfileLevelH264MainAutoLevel` | 1 | iterm2 |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVAssetReaderVideoCompositionOutput` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVAssetResourceLoadingDataRequest` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVAssetTrackSegment` | 1 | whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVAudioMixInputParameters` | 1 | whatsapp |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVAudioCompressedBuffer` | 1 | telegram |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureAudioChannel` | 1 | telegram |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureConnection` | 1 | telegram |
+| AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureInput` | 1 | vorssaint |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureMetadataOutput` | 1 | whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureMovieFileOutput` | 1 | zoom |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureMultiCamSession` | 1 | whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureVideoPreviewLayer` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVComposition` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVCompositionTrack` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVCompositionTrackSegment` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVMetadataFaceObject` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVMetadataMachineReadableCodeObject` | 1 | whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableAudioMix` | 1 | whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableAudioMixInputParameters` | 1 | whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableComposition` | 1 | whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVMutableCompositionTrack` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVPlayerItemTrack` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVVideoComposition` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVVideoCompositionCoreAnimationTool` | 1 | whatsapp |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVVideoCompositionInstruction` | 1 | whatsapp |
-| AVFoundation.framework | `_OBJC_CLASS_$_AVVideoCompositionLayerInstruction` | 1 | whatsapp |
 | AVKit.framework | `_OBJC_CLASS_$_AVPictureInPictureControllerContentSource` | 1 | whatsapp |
 | AVKit.framework | `_OBJC_CLASS_$_AVPictureInPictureVideoCallViewController` | 1 | whatsapp |
 | AVKit.framework | `_OBJC_METACLASS_$_AVPictureInPictureVideoCallViewController` | 1 | whatsapp |
-| Accelerate.framework | `_BNNSFilterApplyTwoInput` | 1 | ollama-app |
-| Accelerate.framework | `_BNNSFilterCreateLayerBroadcastMatMul` | 1 | ollama-app |
-| Accelerate.framework | `_BNNSFilterDestroy` | 1 | ollama-app |
 | Accelerate.framework | `_cblas_caxpy$NEWLAPACK` | 1 | blender |
 | Accelerate.framework | `_cblas_cdotc_sub$NEWLAPACK` | 1 | blender |
 | Accelerate.framework | `_cblas_cdotu_sub$NEWLAPACK` | 1 | blender |
@@ -340,7 +405,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Accelerate.framework | `_cblas_zgemv$NEWLAPACK` | 1 | blender |
 | Accelerate.framework | `_cblas_zsyrk$NEWLAPACK` | 1 | blender |
 | Accelerate.framework | `_ccopy$NEWLAPACK` | 1 | blender |
-| Accelerate.framework | `_cgeev$NEWLAPACK` | 1 | ollama-app |
 | Accelerate.framework | `_cgelsd$NEWLAPACK` | 1 | blender |
 | Accelerate.framework | `_cgesv$NEWLAPACK` | 1 | blender |
 | Accelerate.framework | `_cgetrf$NEWLAPACK` | 1 | blender |
@@ -351,17 +415,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Accelerate.framework | `_dgemv_` | 1 | gimp |
 | Accelerate.framework | `_dger_` | 1 | gimp |
 | Accelerate.framework | `_dgesv$NEWLAPACK` | 1 | blender |
-| Accelerate.framework | `_dgetri$NEWLAPACK` | 1 | ollama-app |
 | Accelerate.framework | `_dtrsm_` | 1 | gimp |
 | Accelerate.framework | `_dtrsv_` | 1 | gimp |
-| Accelerate.framework | `_dtrtri$NEWLAPACK` | 1 | ollama-app |
+| Accelerate.framework | `_kvImage_YpCbCrToARGBMatrix_ITU_R_601_4` | 1 | telegram |
+| Accelerate.framework | `_kvImage_YpCbCrToARGBMatrix_ITU_R_709_2` | 1 | telegram |
 | Accelerate.framework | `_scopy$NEWLAPACK` | 1 | blender |
 | Accelerate.framework | `_sgelsd$NEWLAPACK` | 1 | blender |
-| Accelerate.framework | `_sgeqrf$NEWLAPACK` | 1 | ollama-app |
 | Accelerate.framework | `_sgesv$NEWLAPACK` | 1 | blender |
-| Accelerate.framework | `_sgetri$NEWLAPACK` | 1 | ollama-app |
-| Accelerate.framework | `_sorgqr$NEWLAPACK` | 1 | ollama-app |
-| Accelerate.framework | `_strtri$NEWLAPACK` | 1 | ollama-app |
 | Accelerate.framework | `_vDSP_DFT_zrop_CreateSetup` | 1 | spotify |
 | Accelerate.framework | `_vDSP_biquad` | 1 | spotify |
 | Accelerate.framework | `_vDSP_biquad_CreateSetup` | 1 | spotify |
@@ -372,13 +432,24 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Accelerate.framework | `_vDSP_biquadm_DestroySetup` | 1 | spotify |
 | Accelerate.framework | `_vDSP_biquadm_ResetState` | 1 | spotify |
 | Accelerate.framework | `_vDSP_biquadm_SetCoefficientsDouble` | 1 | spotify |
+| Accelerate.framework | `_vDSP_desamp` | 1 | vorssaint |
 | Accelerate.framework | `_vDSP_fft_zrop` | 1 | spotify |
-| Accelerate.framework | `_vDSP_vflt16` | 1 | raycast |
-| Accelerate.framework | `_vDSP_vrampmul` | 1 | spotify |
-| Accelerate.framework | `_vDSP_vrampmul2` | 1 | spotify |
+| Accelerate.framework | `_vDSP_vrampmuladd` | 1 | vorssaint |
 | Accelerate.framework | `_vDSP_vsmsma` | 1 | spotify |
 | Accelerate.framework | `_vDSP_zvma` | 1 | spotify |
+| Accelerate.framework | `_vImageAffineWarpCG_ARGB8888` | 1 | telegram |
 | Accelerate.framework | `_vImageConvert_16Uto16F` | 1 | iina |
+| Accelerate.framework | `_vImageConvert_420Yp8_Cb8_Cr8ToARGB8888` | 1 | telegram |
+| Accelerate.framework | `_vImageConvert_AnyToAny` | 1 | telegram |
+| Accelerate.framework | `_vImageConvert_YpCbCrToARGB_GenerateConversion` | 1 | telegram |
+| Accelerate.framework | `_vImageConverter_CreateWithCGImageFormat` | 1 | telegram |
+| Accelerate.framework | `_vImageConverter_MustOperateOutOfPlace` | 1 | telegram |
+| Accelerate.framework | `_vImageConvolve_Planar8` | 1 | openclaw |
+| Accelerate.framework | `_vImageHorizontalReflect_ARGB8888` | 1 | telegram |
+| Accelerate.framework | `_vImagePermuteChannels_ARGB8888` | 1 | telegram |
+| Accelerate.framework | `_vImagePremultiplyData_ARGB8888` | 1 | telegram |
+| Accelerate.framework | `_vImagePremultiplyData_Planar8` | 1 | telegram |
+| Accelerate.framework | `_vImageUnpremultiplyData_ARGB8888` | 1 | telegram |
 | Accelerate.framework | `_zcopy$NEWLAPACK` | 1 | blender |
 | Accelerate.framework | `_zgeev$NEWLAPACK` | 1 | blender |
 | Accelerate.framework | `_zgelsd$NEWLAPACK` | 1 | blender |
@@ -396,7 +467,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Accelerate.framework | `_zungqr$NEWLAPACK` | 1 | blender |
 | AudioToolbox.framework | `_AUEventListenerAddEventType` | 1 | audacity |
 | AudioToolbox.framework | `_AUEventListenerCreate` | 1 | audacity |
-| AudioToolbox.framework | `_AUGraphStop` | 1 | vlc |
+| AudioToolbox.framework | `_AUGraphClose` | 1 | telegram |
+| AudioToolbox.framework | `_AUGraphSetNodeInputCallback` | 1 | telegram |
+| AudioToolbox.framework | `_AUGraphUninitialize` | 1 | telegram |
 | AudioToolbox.framework | `_AUListenerDispose` | 1 | audacity |
 | AudioToolbox.framework | `_AUParameterListenerNotify` | 1 | audacity |
 | AudioToolbox.framework | `_AudioComponentInstantiate` | 1 | audacity |
@@ -457,30 +530,26 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreAudioKit.framework | `_OBJC_CLASS_$_AUGenericView` | 1 | audacity |
 | CoreAudioKit.framework | `_OBJC_CLASS_$_AUPannerView` | 1 | audacity |
 | CoreImage.framework | `_OBJC_CLASS_$_CIBlendKernel` | 1 | cmux |
-| CoreImage.framework | `_OBJC_CLASS_$_CIColorKernel` | 1 | whatsapp |
 | CoreImage.framework | `_OBJC_CLASS_$_CIFaceFeature` | 1 | whatsapp |
 | CoreImage.framework | `_OBJC_CLASS_$_CIFeature` | 1 | whatsapp |
 | CoreImage.framework | `_OBJC_CLASS_$_CIKernel` | 1 | whatsapp |
 | CoreImage.framework | `_OBJC_CLASS_$_CIQRCodeDescriptor` | 1 | whatsapp |
 | CoreImage.framework | `_OBJC_CLASS_$_CIQRCodeFeature` | 1 | whatsapp |
-| CoreImage.framework | `_OBJC_CLASS_$_CIRenderDestination` | 1 | whatsapp |
+| CoreImage.framework | `_kCIContextHighQualityDownsample` | 1 | figma |
 | CoreImage.framework | `_kCIContextOutputPremultiplied` | 1 | whatsapp |
 | CoreImage.framework | `_kCIContextPriorityRequestLow` | 1 | raycast |
-| CoreImage.framework | `_kCIContextUseSoftwareRenderer` | 1 | whatsapp |
 | CoreImage.framework | `_kCIContextWorkingFormat` | 1 | whatsapp |
-| CoreImage.framework | `_kCIFormatRGBA8` | 1 | whatsapp |
 | CoreImage.framework | `_kCIFormatRGBAf` | 1 | tailscale-app |
 | CoreImage.framework | `_kCIFormatRGBAh` | 1 | whatsapp |
-| CoreImage.framework | `_kCIImageApplyOrientationProperty` | 1 | whatsapp |
+| CoreImage.framework | `_kCIImageAutoAdjustRedEye` | 1 | telegram |
 | CoreImage.framework | `_kCIImageProperties` | 1 | whatsapp |
 | CoreImage.framework | `_kCIImageToneMapHDRtoSDR` | 1 | whatsapp |
 | CoreImage.framework | `_kCIInputAmountKey` | 1 | betterdisplay |
 | CoreImage.framework | `_kCIInputAngleKey` | 1 | betterdisplay |
 | CoreImage.framework | `_kCIInputBrightnessKey` | 1 | betterdisplay |
+| CoreImage.framework | `_kCIInputCenterKey` | 1 | vorssaint |
 | CoreImage.framework | `_kCIInputContrastKey` | 1 | betterdisplay |
-| CoreImage.framework | `_kCIInputExtentKey` | 1 | whatsapp |
-| CoreImage.framework | `_kCIInputMaskImageKey` | 1 | whatsapp |
-| CoreImage.framework | `_kCIInputSharpnessKey` | 1 | betterdisplay |
+| CoreImage.framework | `_kCIInputTargetImageKey` | 1 | telegram |
 | CoreImage.framework | `_kCIInputWidthKey` | 1 | betterdisplay |
 | CoreMIDI.framework | `_MIDIEndpointGetEntity` | 1 | lmms |
 | CoreMIDI.framework | `_MIDIEntityGetDevice` | 1 | lmms |
@@ -490,21 +559,27 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreMIDI.framework | `_MIDISourceCreate` | 1 | hammerspoon |
 | CoreMIDI.framework | `_kMIDIPropertyModel` | 1 | hammerspoon |
 | CoreMIDI.framework | `_kMIDIPropertyPrivate` | 1 | hammerspoon |
+| CoreMedia.framework | `_CMAudioDeviceClockCreate` | 1 | telegram |
+| CoreMedia.framework | `_CMAudioDeviceClockCreateFromAudioDeviceID` | 1 | telegram |
+| CoreMedia.framework | `_CMAudioFormatDescriptionGetChannelLayout` | 1 | vorssaint |
 | CoreMedia.framework | `_CMFormatDescriptionCreate` | 1 | obs |
-| CoreMedia.framework | `_CMMemoryPoolCreate` | 1 | zed |
-| CoreMedia.framework | `_CMMemoryPoolGetAllocator` | 1 | zed |
-| CoreMedia.framework | `_CMMemoryPoolInvalidate` | 1 | zed |
+| CoreMedia.framework | `_CMSampleBufferSetDataReady` | 1 | vorssaint |
 | CoreMedia.framework | `_CMSimpleQueueCreate` | 1 | obs |
-| CoreMedia.framework | `_CMSimpleQueueDequeue` | 1 | obs |
 | CoreMedia.framework | `_CMSimpleQueueEnqueue` | 1 | obs |
 | CoreMedia.framework | `_CMSimpleQueueGetCapacity` | 1 | obs |
 | CoreMedia.framework | `_CMSimpleQueueGetCount` | 1 | obs |
-| CoreMedia.framework | `_CMTimeMakeFromDictionary` | 1 | monitorcontrol |
-| CoreMedia.framework | `_CMTimeRangeGetUnion` | 1 | monitorcontrol |
+| CoreMedia.framework | `_CMSyncGetTime` | 1 | telegram |
+| CoreMedia.framework | `_CMTimebaseAddTimer` | 1 | telegram |
+| CoreMedia.framework | `_CMTimebaseGetMaster` | 1 | telegram |
 | CoreMedia.framework | `_CMTimebaseGetTimeWithTimeScale` | 1 | spotify |
+| CoreMedia.framework | `_CMTimebaseRemoveTimer` | 1 | telegram |
+| CoreMedia.framework | `_CMTimebaseSetRateAndAnchorTime` | 1 | telegram |
+| CoreMedia.framework | `_CMTimebaseSetTimerNextFireTime` | 1 | telegram |
+| CoreMedia.framework | `_kCMFormatDescriptionExtension_ContainsAlphaChannel` | 1 | vorssaint |
+| CoreMedia.framework | `_kCMFormatDescriptionTransferFunction_ITU_R_709_2` | 1 | vorssaint |
 | CoreMedia.framework | `_kCMSampleAttachmentKey_DependsOnOthers` | 1 | obs |
-| CoreMediaIO.framework | `_CMIODeviceStartStream` | 1 | obs |
-| CoreMediaIO.framework | `_CMIODeviceStopStream` | 1 | obs |
+| CoreMedia.framework | `_kCMSampleBufferAttachmentKey_DroppedFrameReason` | 1 | telegram |
+| CoreMedia.framework | `_kCMSampleBufferAttachmentKey_EndsPreviousSampleDuration` | 1 | telegram |
 | CoreMediaIO.framework | `_CMIOExtensionPropertyDeviceModel` | 1 | obs |
 | CoreMediaIO.framework | `_CMIOExtensionPropertyDeviceTransportType` | 1 | obs |
 | CoreMediaIO.framework | `_CMIOExtensionPropertyProviderManufacturer` | 1 | obs |
@@ -524,7 +599,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreMediaIO.framework | `_CMIOStreamClockCreate` | 1 | obs |
 | CoreMediaIO.framework | `_CMIOStreamClockInvalidate` | 1 | obs |
 | CoreMediaIO.framework | `_CMIOStreamClockPostTimingEvent` | 1 | obs |
-| CoreMediaIO.framework | `_CMIOStreamCopyBufferQueue` | 1 | obs |
 | CoreMediaIO.framework | `_OBJC_CLASS_$_CMIOExtensionDevice` | 1 | obs |
 | CoreMediaIO.framework | `_OBJC_CLASS_$_CMIOExtensionDeviceProperties` | 1 | obs |
 | CoreMediaIO.framework | `_OBJC_CLASS_$_CMIOExtensionProvider` | 1 | obs |
@@ -537,12 +611,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | MediaPlayer.framework | `_MPNowPlayingInfoPropertyChapterCount` | 1 | iina |
 | MediaPlayer.framework | `_MPNowPlayingInfoPropertyChapterNumber` | 1 | iina |
 | MediaPlayer.framework | `_MPNowPlayingInfoPropertyDefaultPlaybackRate` | 1 | iina |
-| MediaPlayer.framework | `_MPNowPlayingInfoPropertyMediaType` | 1 | iina |
 | MediaPlayer.framework | `_MPNowPlayingInfoPropertyPlaybackQueueCount` | 1 | iina |
 | MediaPlayer.framework | `_MPNowPlayingInfoPropertyPlaybackQueueIndex` | 1 | iina |
-| MediaPlayer.framework | `_OBJC_CLASS_$_MPChangePlaybackPositionCommandEvent` | 1 | iina |
 | MediaPlayer.framework | `_OBJC_CLASS_$_MPChangePlaybackRateCommandEvent` | 1 | iina |
-| MediaPlayer.framework | `_OBJC_CLASS_$_MPRemoteCommand` | 1 | iina |
 | MediaPlayer.framework | `_OBJC_CLASS_$_MPSkipIntervalCommandEvent` | 1 | iina |
 | MediaPlayer.framework | `_OBJC_CLASS_$_MPVolumeView` | 1 | whatsapp |
 | OpenAL.framework | `_alBufferData` | 1 | blender |
@@ -593,31 +664,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | QuartzCore.framework | `_kCIContextWorkingColorSpace` | 1 | vlc |
 | QuartzCore.framework | `_kCIInputImageKey` | 1 | vlc |
 | QuartzCore.framework | `_kCIOutputImageKey` | 1 | vlc |
-| Speech.framework | `_OBJC_CLASS_$_SFSpeechAudioBufferRecognitionRequest` | 1 | raycast |
 | Speech.framework | `_OBJC_CLASS_$_SFSpeechURLRecognitionRequest` | 1 | whatsapp |
-| Speech.framework | `_OBJC_CLASS_$_SFTranscriptionSegment` | 1 | whatsapp |
 | VideoToolbox.framework | `_kVTCompressionPropertyKey_ConstantBitRate` | 1 | obs |
 | VideoToolbox.framework | `_kVTDecompressionPropertyKey_DeinterlaceMode` | 1 | vlc |
 | VideoToolbox.framework | `_kVTDecompressionPropertyKey_FieldMode` | 1 | vlc |
 | VideoToolbox.framework | `_kVTDecompressionProperty_DeinterlaceMode_Temporal` | 1 | vlc |
 | VideoToolbox.framework | `_kVTDecompressionProperty_FieldMode_DeinterlaceFields` | 1 | vlc |
 | VideoToolbox.framework | `_kVTH264EntropyMode_CAVLC` | 1 | zoom |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_Baseline_4_0` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_Baseline_4_2` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_Baseline_5_0` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_Baseline_5_1` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_Baseline_5_2` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_High_3_0` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_High_3_1` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_High_3_2` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_High_4_0` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_High_4_1` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_High_4_2` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_High_5_1` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_High_5_2` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_Main_4_2` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_Main_5_1` | 1 | zed |
-| VideoToolbox.framework | `_kVTProfileLevel_H264_Main_5_2` | 1 | zed |
 | VideoToolbox.framework | `_kVTVideoEncoderList_DisplayName` | 1 | obs |
 | VideoToolbox.framework | `_kVTVideoEncoderList_EncoderID` | 1 | obs |
 | VideoToolbox.framework | `_kVTVideoEncoderList_IsHardwareAccelerated` | 1 | obs |
@@ -625,9 +678,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Vision.framework | `_OBJC_CLASS_$_VNContour` | 1 | whatsapp |
 | Vision.framework | `_OBJC_CLASS_$_VNContoursObservation` | 1 | whatsapp |
 | Vision.framework | `_OBJC_CLASS_$_VNDetectContoursRequest` | 1 | whatsapp |
-| Vision.framework | `_OBJC_CLASS_$_VNDetectHumanRectanglesRequest` | 1 | whatsapp |
 | Vision.framework | `_OBJC_CLASS_$_VNGenerateObjectnessBasedSaliencyImageRequest` | 1 | whatsapp |
 | Vision.framework | `_OBJC_CLASS_$_VNHumanObservation` | 1 | whatsapp |
+| Vision.framework | `_OBJC_CLASS_$_VNPixelBufferObservation` | 1 | figma |
 | Vision.framework | `_OBJC_CLASS_$_VNSaliencyImageObservation` | 1 | whatsapp |
 | Vision.framework | `_OBJC_CLASS_$_VNTrackObjectRequest` | 1 | whatsapp |
 | VisionKit.framework | `_$s9VisionKit13ImageAnalysisC10transcriptSSvg` | 1 | coteditor |
@@ -650,9 +703,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | VisionKit.framework | `_$s9VisionKit24ImageAnalysisOverlayViewCMa` | 1 | coteditor |
 | VisionKit.framework | `_$s9VisionKit24ImageAnalysisOverlayViewCMn` | 1 | coteditor |
 | VisionKit.framework | `_OBJC_CLASS_$_VNDocumentCameraViewController` | 1 | whatsapp |
+| libswiftAVFoundation.dylib | `_$s12AVFoundation22AVPartialAsyncPropertyCAASo12AVAssetTrackCRbzlE20mediaCharacteristicsAA07AVAsyncD0CyxSaySo21AVMediaCharacteristicaGGvgZ` | 1 | vorssaint |
+| libswiftAVFoundation.dylib | `_$s12AVFoundation22AVPartialAsyncPropertyCAASo12AVAssetTrackCRbzlE8metadataAA07AVAsyncD0CyxSaySo14AVMetadataItemCGGvgZ` | 1 | vorssaint |
 | libswiftAVFoundation.dylib | `_$s12AVFoundation22AVPartialAsyncPropertyCAASo7AVAssetCRbzlE033availableMediaCharacteristicsWithG16SelectionOptionsAA07AVAsyncD0CyxSaySo21AVMediaCharacteristicaGGvgZ` | 1 | cmux |
 | libswiftAVFoundation.dylib | `_$s12AVFoundation22AVPartialAsyncPropertyCMn` | 1 | raycast |
 | libswiftAVFoundation.dylib | `_$sSo12AVPlayerItemC12AVFoundationE5asset28automaticallyLoadedAssetKeysABSo7AVAssetC_SayAC22AVPartialAsyncPropertyCyAGGGtcfC` | 1 | raycast |
+| libswiftAVFoundation.dylib | `_$sSo20AVAssetExportSessionC12AVFoundationE6export2to2as9isolationy10Foundation3URLV_So10AVFileTypeaScA_pSgYitYaKF` | 1 | openclaw |
+| libswiftAVFoundation.dylib | `_$sSo20AVAssetExportSessionC12AVFoundationE6export2to2as9isolationy10Foundation3URLV_So10AVFileTypeaScA_pSgYitYaKFTu` | 1 | openclaw |
 | libswiftAVFoundation.dylib | `_$sSo29AVAsynchronousKeyValueLoadingP12AVFoundationE4load_9isolationqd__AC15AVAsyncPropertyCyxqd__G_ScA_pSgYitYaKlF` | 1 | coteditor |
 | libswiftAVFoundation.dylib | `_$sSo29AVAsynchronousKeyValueLoadingP12AVFoundationE4load_9isolationqd__AC15AVAsyncPropertyCyxqd__G_ScA_pSgYitYaKlFTu` | 1 | coteditor |
 | libswiftAVFoundation.dylib | `_$sSo29AVAsynchronousKeyValueLoadingP12AVFoundationE4load___9isolationqd___qd_0_qd_1_qd_1_QptAC15AVAsyncPropertyCyxqd__G_AGyxqd_0_GAGyxqd_1_Gqd_1_QpScA_pSgYitYaKRvd_1_r1_lF` | 1 | coteditor |
@@ -674,4 +731,3 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftCoreMediaIO.dylib | `_$sSo29CMIOExtensionStreamPropertiesC11CoreMediaIOE17activeFormatIndexSiSgvs` | 1 | obs |
 | libswiftCoreMediaIO.dylib | `_$sSo29CMIOExtensionStreamPropertiesC11CoreMediaIOE19sinkBufferQueueSizeSiSgvs` | 1 | obs |
 | libswiftCoreMediaIO.dylib | `_$sSo29CMIOExtensionStreamPropertiesC11CoreMediaIOE29sinkBuffersRequiredForStartupSiSgvs` | 1 | obs |
-| libswiftVision.dylib | `_$sSo16VNRecognizedTextC6VisionE11boundingBox3forSo22VNRectangleObservationCSgSnySS5IndexVG_tKF` | 1 | raycast |
