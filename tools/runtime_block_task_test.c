@@ -57,6 +57,8 @@ void _Block_release(const void *p) {
     free(b);
 }
 
+/* dispatch_block_wait converte o prazo pelo relógio da libdispatch (dispatch.c); aqui o valor já é absoluto */
+unsigned long long cx_dispatch_deadline_ns(unsigned long long t) { return t; }
 void dispatch_async(void *q, void *block) {
     (void)q;
     bloco_t *b = block;

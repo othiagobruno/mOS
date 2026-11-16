@@ -5,7 +5,7 @@
  * No SDK da Apple elas são "objc_runtime_visible": o código Swift só usa o objeto-classe (_OBJC_CLASS_$_OS_...,
  * objc_lookUpClass) para metadata, casts e inits de conveniência das extensões do overlay Dispatch. Sem elas o
  * carregador poria NSObject no lugar. Hierarquia como no macOS: NSObject > OS_object > OS_dispatch_object > ...
- * Os objetos do dispatch do mOS (dispatch.c, extra.c) têm estas classes no isa (1º word).
+ * Os objetos do dispatch do mOS (dispatch.c, dispatch_source.c, dispatch_io.c) têm estas classes no isa (1º word).
  */
 #include "foundation.h"
 
@@ -28,41 +28,7 @@ OSCLASS(OS_os_log)
 
 extern cx_class_t NSObject_c __asm__("OBJC_CLASS_$_NSObject");
 
-/* ---- SPI do libdispatch da Apple que o _Concurrency (DispatchGlobalExecutor.cpp, ExecutorBridge.cpp) chama */
-void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
-int cx_dispatch_drain_main(void);
-extern volatile int cx_main_queue_live;
-int usleep(unsigned us);
-
-/* um job Swift é um objeto cuja metadata é uma DispatchClassMetadata (swift/ABI/Metadata.h): kind, opaque,
- * opaqueObjC[3], vtableType, vtableInvoke -> o invoke fica 48 bytes depois do ponto de endereço */
-typedef void (*cx_swift_invoke_t)(void *job, void *ctx, u32 flags);
-static void run_swift_job(void *job) {
-    u8 *md = *(u8 **)job;
-    ((cx_swift_invoke_t)*(void **)(md + 48))(job, 0, 0);
-}
-extern char _dispatch_main_q[];
-extern volatile int cx_dispatch_main_used;
-void dispatch_async_swift_job(void *q, void *job, u32 qos) {
-    (void)qos;
-    /* o executor principal do Swift usa a fila principal: ela passa a segurar o run loop principal (dispatch.c) */
-    if (q == (void *)_dispatch_main_q) cx_dispatch_main_used = 1;
-    dispatch_async_f(q, job, run_swift_job);
-}
-
-/* dispatch_main: a thread principal vira o laço da fila principal (o `async main` do Swift termina com exit()) */
-__attribute__((noreturn)) void dispatch_main(void) {
-    cx_main_queue_live = 1;
-    for (;;) if (!cx_dispatch_drain_main()) usleep(1000);
-}
-
-/* asserções de fila (dispatchPrecondition / MainActor.assertIsolated): o dispatch do mOS não rastreia a fila atual */
-void dispatch_assert_queue(void *q) { (void)q; }
-void dispatch_assert_queue_V2(void *q) __asm__("dispatch_assert_queue$V2");
-void dispatch_assert_queue_V2(void *q) { (void)q; }
-void dispatch_assert_queue_not(void *q) { (void)q; }
-void dispatch_assert_queue_not_V2(void *q) __asm__("dispatch_assert_queue_not$V2");
-void dispatch_assert_queue_not_V2(void *q) { (void)q; }
+/* dispatch_async_swift_job, dispatch_main e dispatch_assert_queue: dispatch.c */
 
 /* vouchers (contexto de QoS/importância que viaja com o trabalho): o mOS não tem; nenhum voucher adotado */
 void *voucher_adopt(void *v) { (void)v; return 0; }
@@ -86,6 +52,9 @@ static void os_dealloc(id self, SEL c) { (void)self; (void)c; }
 static BOOL os_try_retain(id self, SEL c) { (void)c; cx_dispatch_retain(self); return YES; }
 static BOOL os_deallocating(id self, SEL c) { (void)self; (void)c; return NO; }
 
+static u64 os_data_length(id self, SEL c) { (void)self; (void)c; return 0; }
+static const void *os_data_bytes(id self, SEL c) { (void)self; (void)c; return 0; }
+
 /* chamado por cx_objc_boot (objc.c) depois do Foundation */
 void cx_swiftobjc_init(void) {
 #define DEF(N, S) cx_define_class(&N##_c, &N##_m, #N, &S##_c, 0)
@@ -105,7 +74,10 @@ void cx_swiftobjc_init(void) {
     DEF(OS_dispatch_workloop, OS_dispatch_queue);
     DEF(OS_os_log, OS_object);
 #undef DEF
-    /* as subclasses herdam (OS_dispatch_data não existe como objeto: o dispatch_data_t do mOS é um CFData) */
+    /* as subclasses herdam. Dos dados, só o dispatch_data_empty tem o isa OS_dispatch_data (os outros são CFData):
+     * ele responde como um NSData vazio */
+    cx_add_method(&OS_dispatch_data_c, "length", (void *)os_data_length);
+    cx_add_method(&OS_dispatch_data_c, "bytes", (void *)os_data_bytes);
     cx_add_method(&OS_dispatch_object_c, "retain", (void *)os_retain);
     cx_add_method(&OS_dispatch_object_c, "release", (void *)os_release);
     cx_add_method(&OS_dispatch_object_c, "retainCount", (void *)os_retain_count);

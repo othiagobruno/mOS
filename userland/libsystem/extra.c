@@ -1038,54 +1038,7 @@ int CCRandomGenerateBytes(void *buf, size_t n) { arc4random_buf(buf, n); return 
 int getentropy(void *buf, size_t n) { return kc_hwentropy(buf, n); }
 int SecRandomCopyBytes(void *rnd, size_t n, void *buf) { (void)rnd; arc4random_buf(buf, n); return 0; }
 
-/* libdispatch: semáforos de um processo com uma thread */
-/* contador + quantos esperam; a espera dorme no futex sobre os 32 bits baixos do contador (x86: mesmo endereço) */
-/* 1º word: isa ObjC (OS_dispatch_semaphore), como no macOS */
-extern char OS_dispatch_semaphore_c[] __asm__("OBJC_CLASS_$_OS_dispatch_semaphore");
-typedef struct { void *isa; long count; volatile int waiters; } cx_sema_t;
-void *dispatch_semaphore_create(long v) { cx_sema_t *s = malloc(sizeof *s); if (s) { s->isa = OS_dispatch_semaphore_c; s->count = v; s->waiters = 0; } return s; }
-long dispatch_semaphore_signal(void *s) {
-    cx_sema_t *x = s;
-    __sync_fetch_and_add(&x->count, 1);
-    if (x->waiters) cx_futex_wake((volatile int *)&x->count, 1);
-    return 0;
-}
-/* dispatch_time, como no macOS: absoluto, em ns na base do mach_absolute_time (SYS_TIME em ms * 10^6);
- * DISPATCH_TIME_NOW = 0, DISPATCH_TIME_FOREVER = ~0, DISPATCH_WALLTIME_NOW = ~1 (aqui o mesmo relógio). O bit 63
- * (DISPATCH_UP_OR_MONOTONIC_TIME_MASK, relógio contínuo do Swift) não muda a base no mOS. */
-static u64 now_ns(void) { return (u64)SYS0(SYS_TIME) * 1000000ull; }
-u64 cx_dispatch_deadline_ns(u64 t) { return t == 0 || t == ~1ull ? now_ns() : (t & ~(1ull << 63)); }
-u64 dispatch_time(u64 when, long delta) {
-    if (when == ~0ull) return when;
-    u64 base = cx_dispatch_deadline_ns(when);
-    if (delta < 0 && (u64)(-delta) >= base) return 1;
-    return base + (u64)delta;
-}
-/* espera de verdade: agora há threads (atrasos do dispatch.c, executor do Swift) que podem sinalizar */
-long dispatch_semaphore_wait(void *s, u64 timeout) {
-    cx_sema_t *x = s;
-    { extern void cx_dispatch_drain(void); cx_dispatch_drain(); }   /* dispatch.c: blocos adiados por esta thread */
-    u64 limit = timeout == ~0ull ? ~0ull : cx_dispatch_deadline_ns(timeout);
-    for (;;) {
-        long c = x->count;
-        if (c > 0) { if (__sync_bool_compare_and_swap(&x->count, c, c - 1)) return 0; continue; }
-        long left = -1;
-        if (limit != ~0ull) {
-            u64 now = now_ns();
-            if (now >= limit) return 1;
-            left = (long)((limit - now + 999999) / 1000000);
-        }
-        __sync_fetch_and_add(&x->waiters, 1);
-        if (x->count == c) cx_futex_wait((volatile int *)&x->count, (int)c, left);
-        __sync_fetch_and_sub(&x->waiters, 1);
-    }
-}
-/* contagem de referências em dispatch.c (antes: retain não fazia nada e release liberava na hora, o que
- * causava uso depois de liberar em todo par retain/release e free() nas filas estáticas) */
-void cx_dispatch_retain(void *o);
-void cx_dispatch_release(void *o);
-void dispatch_release(void *o) { cx_dispatch_release(o); }
-void dispatch_retain(void *o) { cx_dispatch_retain(o); }
+/* libdispatch (semáforos, dispatch_time, retain/release): dispatch.c */
 
 /* unwinder: só usado em panics; sem tabelas, informa "fim da pilha" */
 /* _Unwind_* no x86_64: cxx_unwind.c (eh_frame e __unwind_info). arm64: libunwind do script arm64. */

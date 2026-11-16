@@ -773,30 +773,7 @@ int memset_s(void *s, size_t smax, int c, size_t n) {
 }
 
 /* ================================================================ libdispatch */
-char _dispatch_queue_attr_concurrent[8];       /* DISPATCH_QUEUE_CONCURRENT: só o endereço importa */
-char _dispatch_source_type_memorypressure[8];  /* fontes que dispatch_source_create ainda devolve NULL */
-char _dispatch_source_type_proc[8];
-typedef void (*vs_dfn_t)(void *);
-#define DCTX_MAX 256
-static struct { void *obj, *ctx; vs_dfn_t fin; } dctx[DCTX_MAX];
-static int dctx_slot(void *o, int make) {
-    for (int i = 0; i < DCTX_MAX; i++) if (dctx[i].obj == o) return i;
-    if (!make) return -1;
-    for (int i = 0; i < DCTX_MAX; i++) if (!dctx[i].obj) { dctx[i].obj = o; return i; }
-    return -1;
-}
-void dispatch_set_context(void *o, void *ctx) { int i = dctx_slot(o, 1); if (i >= 0) dctx[i].ctx = ctx; }
-void dispatch_set_finalizer_f(void *o, vs_dfn_t f) { int i = dctx_slot(o, 1); if (i >= 0) dctx[i].fin = f; }
-void *dispatch_get_context(void *o) { int i = dctx_slot(o, 0); return i >= 0 ? dctx[i].ctx : 0; }
-/* dispatch_walltime(when, delta): tempo de parede em ns com o bit de "walltime" (negativo), como o libdispatch */
-u64 dispatch_walltime(const vs_timespec_t *when, i64 delta) {
-    u64 ns;
-    if (when) ns = (u64)when->tv_sec * 1000000000ull + (u64)when->tv_nsec;
-    else { vs_timespec_t t; clock_gettime(0, &t); ns = (u64)t.tv_sec * 1000000000ull + (u64)t.tv_nsec; }
-    ns += (u64)delta;
-    if (ns >= (1ull << 62)) return ~0ull;     /* DISPATCH_TIME_FOREVER */
-    return (u64)(-(i64)ns);
-}
+/* atributos, tipos de fonte, contexto/finalizador e dispatch_walltime: dispatch.c e dispatch_source.c */
 
 /* qsort_b está em sortb.c (heapsort via qsort_r, bloco no thunk). A trava global antiga
  * ficava presa se o comparador saía por exceção ou longjmp, e um qsort_b aninhado girava. */

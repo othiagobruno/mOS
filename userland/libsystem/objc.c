@@ -793,12 +793,12 @@ static id crr_send(id o, const char *sel) {
 }
 /* objetos do libdispatch (dispatch.c, extra.c): o isa é uma classe OS_dispatch_* (swiftobjc.c), mas eles não têm o
  * cabeçalho objhdr_t. Retain/release ObjC (ARC do Chromium com OS_OBJECT_USE_OBJC, o Swift) usam a contagem do
- * dispatch.c, como o libdispatch da Apple; nunca o hdr()/dealloc/cx_object_free genérico. O dispatch_data não entra:
- * no mOS ele é um CFData de verdade. */
+ * dispatch.c, como o libdispatch da Apple; nunca o hdr()/dealloc/cx_object_free genérico. Dos dados, só o
+ * dispatch_data_empty (estático, isa OS_dispatch_data) entra: os outros são CFData de verdade (dispatch_data.c). */
 #define DQ(N) extern cx_class_t N##_dqc __asm__("OBJC_CLASS_$_" #N);
 DQ(OS_dispatch_queue) DQ(OS_dispatch_queue_serial) DQ(OS_dispatch_queue_concurrent) DQ(OS_dispatch_queue_main)
 DQ(OS_dispatch_queue_global) DQ(OS_dispatch_queue_attr) DQ(OS_dispatch_group) DQ(OS_dispatch_semaphore)
-DQ(OS_dispatch_source) DQ(OS_dispatch_io) DQ(OS_dispatch_workloop) DQ(OS_dispatch_object)
+DQ(OS_dispatch_source) DQ(OS_dispatch_io) DQ(OS_dispatch_workloop) DQ(OS_dispatch_object) DQ(OS_dispatch_data)
 #undef DQ
 void cx_dispatch_retain(void *o);
 void cx_dispatch_release(void *o);
@@ -809,7 +809,7 @@ int cx_is_dispatch_object(id o) {
     return c == &OS_dispatch_queue_serial_dqc || c == &OS_dispatch_queue_concurrent_dqc || c == &OS_dispatch_queue_main_dqc ||
            c == &OS_dispatch_queue_global_dqc || c == &OS_dispatch_group_dqc || c == &OS_dispatch_semaphore_dqc ||
            c == &OS_dispatch_source_dqc || c == &OS_dispatch_queue_dqc || c == &OS_dispatch_queue_attr_dqc ||
-           c == &OS_dispatch_io_dqc || c == &OS_dispatch_workloop_dqc || c == &OS_dispatch_object_dqc;
+           c == &OS_dispatch_io_dqc || c == &OS_dispatch_workloop_dqc || c == &OS_dispatch_object_dqc || c == &OS_dispatch_data_dqc;
 }
 /* blocos no heap não têm objhdr_t: a contagem é a do próprio bloco (flags), a mesma do _Block_copy/_Block_release.
  * Como no runtime da Apple, objc_retain/objc_release de um bloco passam por ela; senão o par do ARC

@@ -1,4 +1,4 @@
-Lista completa. 1647 funcoes `void nome(void) {}` em userland/libsystem/sys_zerados.c.
+Lista completa. 1616 funcoes `void nome(void) {}` em userland/libsystem/sys_zerados.c.
 Formato: arquivo:linha simbolo
 Donos combinados: Sistemas = CF*/CoreFoundation, Foundation, Security, CoreMedia, Compression, libcurl, ImageIO, VideoToolbox, Metal, libcompression, libz.
 Runtime = libc++, libc++abi, libunwind/_Unwind_*/unw_*, stdlib e runtime Swift (swift_* e modulos Swift/Dispatch/Darwin/os/System/ObjectiveC neste arquivo).
@@ -1215,59 +1215,58 @@ userland/libsystem/sys_zerados.c:1382 $sSo6CMTimea9CoreMediaE7secondsSdvg
 userland/libsystem/sys_zerados.c:1383 $sSo6CMTimea9CoreMediaE9isNumericSbvg
 userland/libsystem/sys_zerados.c:1384 $sSo6CMTimeaSL9CoreMediaMc
 
-## libc/libm (C) | 52 | Runtime C/C++ e Swift
-userland/libsystem/sys_zerados.c:1560 NXGetArchInfoFromCpuType
-userland/libsystem/sys_zerados.c:1561 NXGetLocalArchInfo
-userland/libsystem/sys_zerados.c:1570 __CFStringMakeConstantString
-userland/libsystem/sys_zerados.c:1571 __ashlti3
-userland/libsystem/sys_zerados.c:1572 __invert_f3
-userland/libsystem/sys_zerados.c:1573 __lshrti3
-userland/libsystem/sys_zerados.c:1574 __pthread_workqueue_setkill
-userland/libsystem/sys_zerados.c:1575 __syscall_logger
-userland/libsystem/sys_zerados.c:1576 _nw_content_context_default_message
-userland/libsystem/sys_zerados.c:1577 acoshl
-userland/libsystem/sys_zerados.c:1578 acosl
-userland/libsystem/sys_zerados.c:1579 asinhl
-userland/libsystem/sys_zerados.c:1580 asinl
-userland/libsystem/sys_zerados.c:1581 atan2l
-userland/libsystem/sys_zerados.c:1582 atanhl
-userland/libsystem/sys_zerados.c:1583 atanl
-userland/libsystem/sys_zerados.c:1584 backtrace_async
-userland/libsystem/sys_zerados.c:1585 backtrace_from_fp
-userland/libsystem/sys_zerados.c:1586 cbrtl
-userland/libsystem/sys_zerados.c:1587 coshl
-userland/libsystem/sys_zerados.c:1592 erfcl
-userland/libsystem/sys_zerados.c:1593 erfl
-userland/libsystem/sys_zerados.c:1594 expm1l
-userland/libsystem/sys_zerados.c:1595 flsl
-userland/libsystem/sys_zerados.c:1596 fmaxf
-userland/libsystem/sys_zerados.c:1597 fminf
-userland/libsystem/sys_zerados.c:1599 hypotl
-userland/libsystem/sys_zerados.c:1600 initstate
-userland/libsystem/sys_zerados.c:1624 lgammaf_r
-userland/libsystem/sys_zerados.c:1625 lgammal_r
-userland/libsystem/sys_zerados.c:1626 lldiv
-userland/libsystem/sys_zerados.c:1627 log1pl
-userland/libsystem/sys_zerados.c:1631 malloc_logger
-userland/libsystem/sys_zerados.c:1632 matrix_identity_double3x3
-userland/libsystem/sys_zerados.c:1633 matrix_identity_float4x4
-userland/libsystem/sys_zerados.c:1661 os_proc_available_memory
-userland/libsystem/sys_zerados.c:1662 os_signpost_id_generate
-userland/libsystem/sys_zerados.c:1663 os_signpost_id_make_with_pointer
-userland/libsystem/sys_zerados.c:1664 os_unfair_lock_assert_not_owner
-userland/libsystem/sys_zerados.c:1665 posix_spawnattr_setexceptionports_np
-userland/libsystem/sys_zerados.c:1670 rintf
-userland/libsystem/sys_zerados.c:1672 setstate
-userland/libsystem/sys_zerados.c:1673 sinhl
-userland/libsystem/sys_zerados.c:1674 strtoll_l
-userland/libsystem/sys_zerados.c:1675 strtoull_l
-userland/libsystem/sys_zerados.c:1676 sys_nerr
-userland/libsystem/sys_zerados.c:1677 syscall
-userland/libsystem/sys_zerados.c:1678 tanhl
-userland/libsystem/sys_zerados.c:1679 tanl
-userland/libsystem/sys_zerados.c:1680 tgammal
-userland/libsystem/sys_zerados.c:1681 timingsafe_bcmp
-userland/libsystem/sys_zerados.c:1682 vasprintf_l
+## libc/libm (C) | 51 | Runtime C/C++ e Swift
+userland/libsystem/sys_zerados.c:1533 NXGetArchInfoFromCpuType
+userland/libsystem/sys_zerados.c:1534 NXGetLocalArchInfo
+userland/libsystem/sys_zerados.c:1543 __ashlti3
+userland/libsystem/sys_zerados.c:1544 __invert_f3
+userland/libsystem/sys_zerados.c:1545 __lshrti3
+userland/libsystem/sys_zerados.c:1546 __pthread_workqueue_setkill
+userland/libsystem/sys_zerados.c:1547 __syscall_logger
+userland/libsystem/sys_zerados.c:1548 _nw_content_context_default_message
+userland/libsystem/sys_zerados.c:1549 acoshl
+userland/libsystem/sys_zerados.c:1550 acosl
+userland/libsystem/sys_zerados.c:1551 asinhl
+userland/libsystem/sys_zerados.c:1552 asinl
+userland/libsystem/sys_zerados.c:1553 atan2l
+userland/libsystem/sys_zerados.c:1554 atanhl
+userland/libsystem/sys_zerados.c:1555 atanl
+userland/libsystem/sys_zerados.c:1556 backtrace_async
+userland/libsystem/sys_zerados.c:1557 backtrace_from_fp
+userland/libsystem/sys_zerados.c:1558 cbrtl
+userland/libsystem/sys_zerados.c:1559 coshl
+userland/libsystem/sys_zerados.c:1561 erfcl
+userland/libsystem/sys_zerados.c:1562 erfl
+userland/libsystem/sys_zerados.c:1563 expm1l
+userland/libsystem/sys_zerados.c:1564 flsl
+userland/libsystem/sys_zerados.c:1565 fmaxf
+userland/libsystem/sys_zerados.c:1566 fminf
+userland/libsystem/sys_zerados.c:1568 hypotl
+userland/libsystem/sys_zerados.c:1569 initstate
+userland/libsystem/sys_zerados.c:1589 lgammaf_r
+userland/libsystem/sys_zerados.c:1590 lgammal_r
+userland/libsystem/sys_zerados.c:1591 lldiv
+userland/libsystem/sys_zerados.c:1592 log1pl
+userland/libsystem/sys_zerados.c:1596 malloc_logger
+userland/libsystem/sys_zerados.c:1597 matrix_identity_double3x3
+userland/libsystem/sys_zerados.c:1598 matrix_identity_float4x4
+userland/libsystem/sys_zerados.c:1626 os_proc_available_memory
+userland/libsystem/sys_zerados.c:1627 os_signpost_id_generate
+userland/libsystem/sys_zerados.c:1628 os_signpost_id_make_with_pointer
+userland/libsystem/sys_zerados.c:1629 os_unfair_lock_assert_not_owner
+userland/libsystem/sys_zerados.c:1630 posix_spawnattr_setexceptionports_np
+userland/libsystem/sys_zerados.c:1635 rintf
+userland/libsystem/sys_zerados.c:1637 setstate
+userland/libsystem/sys_zerados.c:1638 sinhl
+userland/libsystem/sys_zerados.c:1639 strtoll_l
+userland/libsystem/sys_zerados.c:1640 strtoull_l
+userland/libsystem/sys_zerados.c:1641 sys_nerr
+userland/libsystem/sys_zerados.c:1642 syscall
+userland/libsystem/sys_zerados.c:1643 tanhl
+userland/libsystem/sys_zerados.c:1644 tanl
+userland/libsystem/sys_zerados.c:1645 tgammal
+userland/libsystem/sys_zerados.c:1646 timingsafe_bcmp
+userland/libsystem/sys_zerados.c:1647 vasprintf_l
 
 ## UniformTypeIdentifiers | 47 | Frameworks Apple
 userland/libsystem/sys_zerados.c:768 $s22UniformTypeIdentifiers10UTTagClassV04mimeB0ACvgZ
@@ -1387,35 +1386,6 @@ userland/libsystem/sys_zerados.c:887 $s6System8FilePathVSeAAMc
 userland/libsystem/sys_zerados.c:888 $s6System8FilePathVs23CustomStringConvertibleAAMc
 userland/libsystem/sys_zerados.c:889 $s6System8FilePathVyACSScfC
 
-## Foundation (C, NS*) | 27 | Sistemas
-userland/libsystem/sys_zerados.c:1533 NSLocaleCalendar
-userland/libsystem/sys_zerados.c:1534 NSLocaleCountryCode
-userland/libsystem/sys_zerados.c:1535 NSLocaleCurrencyCode
-userland/libsystem/sys_zerados.c:1536 NSLocaleCurrencySymbol
-userland/libsystem/sys_zerados.c:1537 NSLocaleIdentifier
-userland/libsystem/sys_zerados.c:1538 NSLocaleScriptCode
-userland/libsystem/sys_zerados.c:1539 NSLocaleVariantCode
-userland/libsystem/sys_zerados.c:1540 NSMallocException
-userland/libsystem/sys_zerados.c:1541 NSPresentationIntentAttributeName
-userland/libsystem/sys_zerados.c:1542 NSStreamFileCurrentOffsetKey
-userland/libsystem/sys_zerados.c:1543 NSStringTransformLatinToArabic
-userland/libsystem/sys_zerados.c:1544 NSStringTransformToLatin
-userland/libsystem/sys_zerados.c:1545 NSURLContentAccessDateKey
-userland/libsystem/sys_zerados.c:1546 NSURLFileAllocatedSizeKey
-userland/libsystem/sys_zerados.c:1547 NSURLFileResourceIdentifierKey
-userland/libsystem/sys_zerados.c:1548 NSURLIsHiddenKey
-userland/libsystem/sys_zerados.c:1549 NSURLIsUbiquitousItemKey
-userland/libsystem/sys_zerados.c:1550 NSURLLinkCountKey
-userland/libsystem/sys_zerados.c:1551 NSURLTotalFileAllocatedSizeKey
-userland/libsystem/sys_zerados.c:1552 NSURLTotalFileSizeKey
-userland/libsystem/sys_zerados.c:1553 NSURLUbiquitousItemDownloadingStatusCurrent
-userland/libsystem/sys_zerados.c:1554 NSURLUbiquitousItemDownloadingStatusDownloaded
-userland/libsystem/sys_zerados.c:1555 NSURLUbiquitousItemDownloadingStatusKey
-userland/libsystem/sys_zerados.c:1556 NSURLUbiquitousItemIsDownloadingKey
-userland/libsystem/sys_zerados.c:1557 NSURLVolumeAvailableCapacityForImportantUsageKey
-userland/libsystem/sys_zerados.c:1558 NSURLVolumeAvailableCapacityKey
-userland/libsystem/sys_zerados.c:1559 NSURLVolumeTotalCapacityKey
-
 ## PhotosUI | 27 | Interface
 userland/libsystem/sys_zerados.c:1048 $s8PhotosUI14PHPickerFilterV6imagesACvgZ
 userland/libsystem/sys_zerados.c:1049 $s8PhotosUI14PHPickerFilterV6videosACvgZ
@@ -1502,31 +1472,31 @@ userland/libsystem/sys_zerados.c:1260 $sSo17CGAffineTransformVSE12CoreGraphicsMc
 userland/libsystem/sys_zerados.c:1261 $sSo17CGAffineTransformVSe12CoreGraphicsMc
 
 ## Network (C, nw_*) | 25 | Runtime C/C++ e Swift
-userland/libsystem/sys_zerados.c:1635 nw_connection_cancel
-userland/libsystem/sys_zerados.c:1636 nw_connection_copy_endpoint
-userland/libsystem/sys_zerados.c:1637 nw_connection_create
-userland/libsystem/sys_zerados.c:1638 nw_connection_force_cancel
-userland/libsystem/sys_zerados.c:1639 nw_connection_receive
-userland/libsystem/sys_zerados.c:1640 nw_connection_send
-userland/libsystem/sys_zerados.c:1641 nw_connection_set_queue
-userland/libsystem/sys_zerados.c:1642 nw_connection_set_state_changed_handler
-userland/libsystem/sys_zerados.c:1643 nw_connection_start
-userland/libsystem/sys_zerados.c:1644 nw_content_context_get_is_final
-userland/libsystem/sys_zerados.c:1645 nw_endpoint_copy_address_string
-userland/libsystem/sys_zerados.c:1646 nw_endpoint_create_host
-userland/libsystem/sys_zerados.c:1647 nw_endpoint_get_hostname
-userland/libsystem/sys_zerados.c:1648 nw_endpoint_get_port
-userland/libsystem/sys_zerados.c:1649 nw_endpoint_get_type
-userland/libsystem/sys_zerados.c:1650 nw_error_copy_cf_error
-userland/libsystem/sys_zerados.c:1651 nw_error_get_error_domain
-userland/libsystem/sys_zerados.c:1652 nw_parameters_prohibit_interface_type
-userland/libsystem/sys_zerados.c:1653 nw_parameters_set_prohibit_expensive
-userland/libsystem/sys_zerados.c:1654 nw_parameters_set_required_interface_type
-userland/libsystem/sys_zerados.c:1655 nw_path_get_unsatisfied_reason
-userland/libsystem/sys_zerados.c:1656 nw_path_is_constrained
-userland/libsystem/sys_zerados.c:1657 nw_path_is_expensive
-userland/libsystem/sys_zerados.c:1658 nw_path_uses_interface_type
-userland/libsystem/sys_zerados.c:1659 nw_tcp_options_set_no_delay
+userland/libsystem/sys_zerados.c:1600 nw_connection_cancel
+userland/libsystem/sys_zerados.c:1601 nw_connection_copy_endpoint
+userland/libsystem/sys_zerados.c:1602 nw_connection_create
+userland/libsystem/sys_zerados.c:1603 nw_connection_force_cancel
+userland/libsystem/sys_zerados.c:1604 nw_connection_receive
+userland/libsystem/sys_zerados.c:1605 nw_connection_send
+userland/libsystem/sys_zerados.c:1606 nw_connection_set_queue
+userland/libsystem/sys_zerados.c:1607 nw_connection_set_state_changed_handler
+userland/libsystem/sys_zerados.c:1608 nw_connection_start
+userland/libsystem/sys_zerados.c:1609 nw_content_context_get_is_final
+userland/libsystem/sys_zerados.c:1610 nw_endpoint_copy_address_string
+userland/libsystem/sys_zerados.c:1611 nw_endpoint_create_host
+userland/libsystem/sys_zerados.c:1612 nw_endpoint_get_hostname
+userland/libsystem/sys_zerados.c:1613 nw_endpoint_get_port
+userland/libsystem/sys_zerados.c:1614 nw_endpoint_get_type
+userland/libsystem/sys_zerados.c:1615 nw_error_copy_cf_error
+userland/libsystem/sys_zerados.c:1616 nw_error_get_error_domain
+userland/libsystem/sys_zerados.c:1617 nw_parameters_prohibit_interface_type
+userland/libsystem/sys_zerados.c:1618 nw_parameters_set_prohibit_expensive
+userland/libsystem/sys_zerados.c:1619 nw_parameters_set_required_interface_type
+userland/libsystem/sys_zerados.c:1620 nw_path_get_unsatisfied_reason
+userland/libsystem/sys_zerados.c:1621 nw_path_is_constrained
+userland/libsystem/sys_zerados.c:1622 nw_path_is_expensive
+userland/libsystem/sys_zerados.c:1623 nw_path_uses_interface_type
+userland/libsystem/sys_zerados.c:1624 nw_tcp_options_set_no_delay
 
 ## _StringProcessing | 21 | Runtime C/C++ e Swift
 userland/libsystem/sys_zerados.c:747 $s17_StringProcessing13_RegexFactoryV10accumulateyAA0C0VyxGq__q0_tAA0C9ComponentR_AaHR0_r1_lF
@@ -1679,12 +1649,12 @@ userland/libsystem/sys_zerados.c:1236 $sSo13vImage_BufferV10AccelerateE5width6he
 userland/libsystem/sys_zerados.c:1296 $sSo20vImage_CGImageFormatV10AccelerateE02cgA0ABSgSo0B3Refa_tcfC
 
 ## filesystem (C) | 6 | Storage
-userland/libsystem/sys_zerados.c:1591 endfsent
-userland/libsystem/sys_zerados.c:1598 getfsent
-userland/libsystem/sys_zerados.c:1634 nftw$INODE64
-userland/libsystem/sys_zerados.c:1660 open_dprotected_np
-userland/libsystem/sys_zerados.c:1671 setfsent
-userland/libsystem/sys_zerados.c:1684 xattr_name_with_flags
+userland/libsystem/sys_zerados.c:1560 endfsent
+userland/libsystem/sys_zerados.c:1567 getfsent
+userland/libsystem/sys_zerados.c:1599 nftw$INODE64
+userland/libsystem/sys_zerados.c:1625 open_dprotected_np
+userland/libsystem/sys_zerados.c:1636 setfsent
+userland/libsystem/sys_zerados.c:1649 xattr_name_with_flags
 
 ## Combine | 5 | Interface
 userland/libsystem/sys_zerados.c:1206 $sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc
@@ -1694,60 +1664,51 @@ userland/libsystem/sys_zerados.c:1402 $sSo7NSTimerC10FoundationE14TimerPublisher
 userland/libsystem/sys_zerados.c:1416 $sSo8NSObjectC10FoundationE26KeyValueObservingPublisherVy_xq_G7Combine0F0ACMc
 
 ## mach (C) | 4 | Kernel
-userland/libsystem/sys_zerados.c:1628 mach_port_guard
-userland/libsystem/sys_zerados.c:1629 mach_port_set_mscount
-userland/libsystem/sys_zerados.c:1630 mach_port_unguard
-userland/libsystem/sys_zerados.c:1683 vm_read
+userland/libsystem/sys_zerados.c:1593 mach_port_guard
+userland/libsystem/sys_zerados.c:1594 mach_port_set_mscount
+userland/libsystem/sys_zerados.c:1595 mach_port_unguard
+userland/libsystem/sys_zerados.c:1648 vm_read
 
 ## pthread (C) | 4 | Runtime C/C++ e Swift
-userland/libsystem/sys_zerados.c:1666 pthread_fchdir_np
-userland/libsystem/sys_zerados.c:1667 pthread_from_mach_thread_np
-userland/libsystem/sys_zerados.c:1668 pthread_get_qos_class_np
-userland/libsystem/sys_zerados.c:1669 pthread_introspection_hook_install
-
-## libdispatch (C) | 3 | Runtime C/C++ e Swift
-userland/libsystem/sys_zerados.c:1588 dispatch_apply
-userland/libsystem/sys_zerados.c:1589 dispatch_data_create_map
-userland/libsystem/sys_zerados.c:1590 dispatch_queue_attr_make_initially_inactive
+userland/libsystem/sys_zerados.c:1631 pthread_fchdir_np
+userland/libsystem/sys_zerados.c:1632 pthread_from_mach_thread_np
+userland/libsystem/sys_zerados.c:1633 pthread_get_qos_class_np
+userland/libsystem/sys_zerados.c:1634 pthread_introspection_hook_install
 
 ## Security (C) | 2 | Sistemas
-userland/libsystem/sys_zerados.c:1568 SecTaskCopyTeamIdentifier
-userland/libsystem/sys_zerados.c:1569 SecTaskCreateWithAuditToken
+userland/libsystem/sys_zerados.c:1541 SecTaskCopyTeamIdentifier
+userland/libsystem/sys_zerados.c:1542 SecTaskCreateWithAuditToken
 
 ## xpc (C) | 2 | Kernel
-userland/libsystem/sys_zerados.c:1685 xpc_dictionary_get_audit_token
-userland/libsystem/sys_zerados.c:1686 xpc_pipe_simpleroutine
+userland/libsystem/sys_zerados.c:1650 xpc_dictionary_get_audit_token
+userland/libsystem/sys_zerados.c:1651 xpc_pipe_simpleroutine
 
 ## ponteiros nulos (dados, nao funcao) | Sistemas
-userland/libsystem/sys_zerados.c:1562 void *OBJC_CLASS_$_NSOutputStream;
-userland/libsystem/sys_zerados.c:1563 void *OBJC_CLASS_$_NSStream;
-userland/libsystem/sys_zerados.c:1564 void *OBJC_CLASS_$_SwiftNativeNSObject;
-userland/libsystem/sys_zerados.c:1565 void *OBJC_CLASS_$__TtCs12_SwiftObject;
-userland/libsystem/sys_zerados.c:1566 void *OBJC_METACLASS_$_SwiftNativeNSObject;
-userland/libsystem/sys_zerados.c:1567 void *OBJC_METACLASS_$__TtCs12_SwiftObject;
-userland/libsystem/sys_zerados.c:1601 void *kCFErrorLocalizedFailureReasonKey;
-userland/libsystem/sys_zerados.c:1602 void *kCFNetworkProxiesExceptionsList;
-userland/libsystem/sys_zerados.c:1603 void *kCFNetworkProxiesHTTPEnable;
-userland/libsystem/sys_zerados.c:1604 void *kCFNetworkProxiesHTTPPort;
-userland/libsystem/sys_zerados.c:1605 void *kCFNetworkProxiesHTTPProxy;
-userland/libsystem/sys_zerados.c:1606 void *kCFNetworkProxiesHTTPSEnable;
-userland/libsystem/sys_zerados.c:1607 void *kCFNetworkProxiesHTTPSPort;
-userland/libsystem/sys_zerados.c:1608 void *kCFNetworkProxiesHTTPSProxy;
-userland/libsystem/sys_zerados.c:1609 void *kCFNetworkProxiesProxyAutoConfigEnable;
-userland/libsystem/sys_zerados.c:1610 void *kCFNetworkProxiesProxyAutoConfigJavaScript;
-userland/libsystem/sys_zerados.c:1611 void *kCFNetworkProxiesProxyAutoConfigURLString;
-userland/libsystem/sys_zerados.c:1612 void *kCFStreamNetworkServiceType;
-userland/libsystem/sys_zerados.c:1613 void *kCFStreamNetworkServiceTypeVoIP;
-userland/libsystem/sys_zerados.c:1614 void *kCFStreamPropertySOCKSProxy;
-userland/libsystem/sys_zerados.c:1615 void *kCFStreamPropertySOCKSProxyHost;
-userland/libsystem/sys_zerados.c:1616 void *kCFStreamPropertySOCKSProxyPort;
-userland/libsystem/sys_zerados.c:1617 void *kCFStreamPropertySOCKSVersion;
-userland/libsystem/sys_zerados.c:1618 void *kCFStreamPropertyShouldCloseNativeSocket;
-userland/libsystem/sys_zerados.c:1619 void *kCFStreamPropertySocketNativeHandle;
-userland/libsystem/sys_zerados.c:1620 void *kCFStreamSocketSOCKSVersion5;
-userland/libsystem/sys_zerados.c:1621 void *kCFStringTransformToLatin;
-userland/libsystem/sys_zerados.c:1622 void *kCFURLContentAccessDateKey;
-userland/libsystem/sys_zerados.c:1623 void *kCFURLFileSizeKey;
+userland/libsystem/sys_zerados.c:1535 void *OBJC_CLASS_$_NSOutputStream;
+userland/libsystem/sys_zerados.c:1536 void *OBJC_CLASS_$_NSStream;
+userland/libsystem/sys_zerados.c:1537 void *OBJC_CLASS_$_SwiftNativeNSObject;
+userland/libsystem/sys_zerados.c:1538 void *OBJC_CLASS_$__TtCs12_SwiftObject;
+userland/libsystem/sys_zerados.c:1539 void *OBJC_METACLASS_$_SwiftNativeNSObject;
+userland/libsystem/sys_zerados.c:1540 void *OBJC_METACLASS_$__TtCs12_SwiftObject;
+userland/libsystem/sys_zerados.c:1570 void *kCFNetworkProxiesExceptionsList;
+userland/libsystem/sys_zerados.c:1571 void *kCFNetworkProxiesHTTPEnable;
+userland/libsystem/sys_zerados.c:1572 void *kCFNetworkProxiesHTTPPort;
+userland/libsystem/sys_zerados.c:1573 void *kCFNetworkProxiesHTTPProxy;
+userland/libsystem/sys_zerados.c:1574 void *kCFNetworkProxiesHTTPSEnable;
+userland/libsystem/sys_zerados.c:1575 void *kCFNetworkProxiesHTTPSPort;
+userland/libsystem/sys_zerados.c:1576 void *kCFNetworkProxiesHTTPSProxy;
+userland/libsystem/sys_zerados.c:1577 void *kCFNetworkProxiesProxyAutoConfigEnable;
+userland/libsystem/sys_zerados.c:1578 void *kCFNetworkProxiesProxyAutoConfigJavaScript;
+userland/libsystem/sys_zerados.c:1579 void *kCFNetworkProxiesProxyAutoConfigURLString;
+userland/libsystem/sys_zerados.c:1580 void *kCFStreamNetworkServiceType;
+userland/libsystem/sys_zerados.c:1581 void *kCFStreamNetworkServiceTypeVoIP;
+userland/libsystem/sys_zerados.c:1582 void *kCFStreamPropertySOCKSProxy;
+userland/libsystem/sys_zerados.c:1583 void *kCFStreamPropertySOCKSProxyHost;
+userland/libsystem/sys_zerados.c:1584 void *kCFStreamPropertySOCKSProxyPort;
+userland/libsystem/sys_zerados.c:1585 void *kCFStreamPropertySOCKSVersion;
+userland/libsystem/sys_zerados.c:1586 void *kCFStreamPropertyShouldCloseNativeSocket;
+userland/libsystem/sys_zerados.c:1587 void *kCFStreamPropertySocketNativeHandle;
+userland/libsystem/sys_zerados.c:1588 void *kCFStreamSocketSOCKSVersion5;
 
 ## userland/libsystem/swiftui_imports.c | Interface
 userland/libsystem/swiftui_imports.c:5 $s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV14underlineStyleAF09UnderlinehB0Ovg
