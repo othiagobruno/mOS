@@ -287,6 +287,7 @@ typedef struct {
     volatile int *cancel;                           /* != 0: cancela no próximo ponto de E/S */
     mnet_jar_t *jar;                                /* jar deste pedido (sessão efêmera); NULL = o do cliente */
     int no_store_cookies;                           /* manda cookies, mas não guarda os Set-Cookie (política "nunca") */
+    int bare_headers;                               /* não acrescenta User-Agent/Accept-Language padrão (libcurl) */
     /* conexão TLS nova: trust = SecTrustRef (pode ser NULL); != 0 cancela (desafio de servidor recusado) */
     int (*on_tls)(void *ctx, const char *host, int port, void *trust);
     void (*release_trust)(void *trust);
@@ -383,3 +384,12 @@ int mnet_proxy_bypass(const mnet_proxy_cfg_t *c, const char *host);   /* 1 = con
 int mnet_proxy_for_url(const mnet_proxy_cfg_t *c, const char *url, mnet_proxy_t *out, int max);
 /* resultado de um PAC ("PROXY a:1; SOCKS b:2; DIRECT") -> lista; devolve a quantidade */
 int mnet_proxy_parse_pac_result(const char *s, mnet_proxy_t *out, int max);
+
+/* ---- autenticação HTTP (RFC 7617 Basic, RFC 7616 Digest MD5/SHA-256/-sess, qop=auth) */
+/* escolhe o melhor desafio dos cabeçalhos (www-authenticate ou proxy-authenticate): 1 Basic, 2 Digest MD5, 3 Digest SHA-256 */
+const char *mnet_auth_pick(const mnet_hdrs_t *h, const char *field, int *score);
+/* valor de Authorization para o desafio; cnonce de 16 bytes aleatórios (NULL = gerado com rnd) */
+char *mnet_auth_value(const char *challenge, const char *user, const char *pass, const char *method, const char *uri,
+                      int nc, const uint8_t cnonce_raw[16]);
+void mnet_md5(const void *d, size_t n, uint8_t out[16]);
+void mnet_sha256(const void *d, size_t n, uint8_t out[32]);

@@ -766,12 +766,47 @@ static void t_proxy(void) {
     CHECK(mnet_proxy_parse_pac_result("", o, 8) == 1 && o[0].type == MNET_PX_NONE);
 }
 
+/* ---- autenticação: RFC 7616 §3.9.1 (SHA-256 e MD5, mesmo pedido), RFC 2617 §3.5, Basic */
+static void t_auth(void) {
+    uint8_t md[16]; char hx[65];
+    mnet_md5("abc", 3, md); for (int i = 0; i < 16; i++) sprintf(hx + 2 * i, "%02x", md[i]);
+    CHECKS(hx, "900150983cd24fb0d6963f7d28e17f72");
+    uint8_t sh[32]; mnet_sha256("abc", 3, sh); for (int i = 0; i < 32; i++) sprintf(hx + 2 * i, "%02x", sh[i]);
+    CHECKS(hx, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    char *v = mnet_auth_value("Basic realm=\"x\"", "Aladdin", "open sesame", "GET", "/", 1, 0);
+    CHECKS(v, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+    free(v);
+    /* RFC 2617 §3.5 (Mufasa): HA1 e HA2 da RFC; a resposta é conferida com o cnonce fixo em zeros */
+    const char *ch = "Digest realm=\"testrealm@host.com\", qop=\"auth,auth-int\", nonce=\"dcd98b7102dd2f0e8b11d0f600bfb0c093\", opaque=\"5ccc069c403ebaf9f0171e9517f40e41\"";
+    uint8_t cn[16] = {0};
+    v = mnet_auth_value(ch, "Mufasa", "Circle Of Life", "GET", "/dir/index.html", 1, cn);
+    /* esperado: HA1=939e7578ed9e3c518a452acee763bce9, HA2=39aff3a2bab6126f332b942af96d3366, cnonce = 32 zeros */
+    {
+        char a[300]; uint8_t m[16]; char h1[33] = "939e7578ed9e3c518a452acee763bce9", h2[33] = "39aff3a2bab6126f332b942af96d3366", r[33];
+        snprintf(a, sizeof a, "%s:dcd98b7102dd2f0e8b11d0f600bfb0c093:00000001:%s:auth:%s", h1, "00000000000000000000000000000000", h2);
+        mnet_md5(a, strlen(a), m); for (int i = 0; i < 16; i++) sprintf(r + 2 * i, "%02x", m[i]);
+        char want[64]; snprintf(want, sizeof want, "response=\"%s\"", r);
+        CHECK(v && strstr(v, want) && strstr(v, "qop=auth, nc=00000001") && strstr(v, "opaque=\"5ccc069c403ebaf9f0171e9517f40e41\""));
+        /* e o HA1 da RFC bate com o nosso MD5 */
+        mnet_md5("Mufasa:testrealm@host.com:Circle Of Life", 40, m); for (int i = 0; i < 16; i++) sprintf(r + 2 * i, "%02x", m[i]);
+        CHECKS(r, h1);
+    }
+    free(v);
+    mnet_hdrs_t h = {0};
+    mnet_hdrs_add(&h, "WWW-Authenticate", 16, "Basic realm=\"a\"", 15);
+    mnet_hdrs_add(&h, "WWW-Authenticate", 16, "Digest realm=\"a\", nonce=\"n\", algorithm=SHA-256", 47);
+    int sc; const char *best = mnet_auth_pick(&h, "www-authenticate", &sc);
+    CHECK(sc == 3 && best && mnet_ieqn(best, "Digest", 6));
+    mnet_hdrs_free(&h);
+}
+
 int main(void) {
     t_h1();
     t_dates();
     t_cookies();
     t_hpack();
     t_url();
+    t_auth();
     t_proxy();
     t_cache();
     t_decode();

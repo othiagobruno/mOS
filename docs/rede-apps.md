@@ -14,7 +14,7 @@ runtime Swift (Fernanda), Keychain/SecTrust além do que o TLS precisa (Natalia)
 | Motor TLS | `kernel/net/tls.c` + `crypto.c` + `x509.c`, syscalls `MOS_NET_TLS_*` | Cliente TLS 1.3/1.2, ALPN fixo `http/1.1`, sem servidor, sem retomada (ticket ignorado), sem certificado de cliente, sem ALPN negociável |
 | SecureTransport | `userland/libsystem/securetransport.c` | Cliente sobre o motor do kernel; `SSLSetALPNProtocols` ignorado; lado servidor devolve NULL |
 | NSURLSession | `userland/libsystem/foundation_more.c` (`http_do`) | Um pedido `Connection: close`, lê até o fim; **sem chunked**, sem redirect, sem keep-alive, sem cookies, sem cache, sem proxy, sem gzip, sem HTTP/2, sem WebSocket, configuração única compartilhada |
-| libcurl | `userland/libsystem/libcurl_easy.c` | easy + URL parser, HTTP/1.1 com chunked e redirect; sem multi, sem share, sem cookies, sem HTTP/2, sem proxy |
+| libcurl | `userland/libsystem/libcurl_easy.c` (substituído por `libcurl.c`) | easy + URL parser, HTTP/1.1 com chunked e redirect; sem multi, sem share, sem cookies, sem HTTP/2, sem proxy |
 | CFStream | `cfstream.c` | Só arquivo/memória sobre `NSInputStream`; par de socket em `wa_net.c` |
 | CFHost / reachability | `cfhost.c`, `wa_net.c` | Resolução real; reachability com estado fixo |
 | Network.framework C | `sys_zerados.c` | 25 `nw_*` vazios |
@@ -87,7 +87,8 @@ flowchart TD
 | 6. Proxy | regras e constantes prontas (`mnet_proxy.c`, `cfproxy.c`); NSURLSession usa o proxy do sistema quando a configuração não tem um. **PAC não é avaliado**: falta o motor JavaScript no userland (combinando com o Fabio) | `mnet_host_test` 778/778: exceções (curinga, domínio, CIDR, prefixo, nomes simples, loopback), ordem PAC → HTTP/HTTPS → SOCKS → direto, leitura de resultado PAC |
 | 6b. Interfaces, SystemConfiguration de rede, libresolv | syscall `MOS_NET_IFLIST` (placas reais do kernel), `netif.c` (`getifaddrs` com AF_INET/AF_INET6/AF_LINK e if_data, `if_nametoindex`/`if_indextoname`/`if_nameindex`), `scnetwork.c` (`SCNetworkInterface*`, `SCNetworkService*`, `SCPreferences*`, chaves kSC*), `res_9_nmkquery`/`nsend`/`setservers`/`getservers` | `tools/resolv_host.c`: consulta real montada por `res_9_nmkquery` e mandada por `res_9_nsend` (9.9.9.9). As partes que dependem da syscall nova só rodam no build final |
 | 7. Network.framework C | `nwnet.c`: ~250 funções `nw_*`/`sec_protocol_*` (endpoints, parâmetros, pilha, opções TCP/UDP/TLS/WS/IP, conexão TCP/UDP/TLS/WS com send/receive/receive_message e metadados, listener TCP/UDP, monitor de caminho com interfaces reais, contextos, erros); saem os 26 stubs de `sys_zerados.c`, `vscode_network.c` e os de `chrome.c`/`security.c`. Falta `nw_browser` (Bonjour), `nw_framer` e TLS de servidor no listener | só compilado (x86_64/arm64): objetos ObjC com blocos, sem harness de host; o primeiro teste é o build final |
-| 8–10 | não iniciado | — |
+| 8. libcurl | `libcurl.c` sobre o mnet (substitui `libcurl_easy.c`): easy, multi (callbacks no fio do chamador), share de cookies, URL API, MIME, `curl_easy_header`, escape, versão; Basic/Digest (`mnet_auth.c`), proxy por opção e por ambiente | `tools/libcurl_mnet_test.c`: 42/42 (GET/POST/PUT por READFUNCTION, redirects e limite, gzip com e sem ACCEPT_ENCODING, cookies em arquivo Netscape, FAILONERROR, Basic, Digest conferido pelo servidor, tempo, HEAD, MIME, multi com 3 transferências, URL API, escape; com `rede`: HTTP/2 em example.com e recusa de certificado vencido) |
+| 9–10 | não iniciado | — |
 
 ### Etapa 1 — o que está no código
 
