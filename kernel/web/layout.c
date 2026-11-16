@@ -701,8 +701,24 @@ static box_t *gen_atom(lay_t *L, node_t *n) {
     if (n->tag == T_SVG) {
         box_t *b = nbox(L, B_REPLACED, n, n->st);
         if (!b) return NULL;
-        if (!n->img && n->text && L->d->nimages < 400) {
-            img_t *im = kcalloc(1, sizeof(img_t));
+        if (n->svgdirty) {
+            /* mudado pelo JS: a fonte vem da subárvore do DOM */
+            n->svgdirty = 0;
+            sbuf_t x = { 0 };
+            node_xml(n, &x);
+            n->text = arena_strndup(&L->d->arena, x.p ? x.p : "", x.len);
+            n->len = x.len;
+            sb_free(&x);
+            if (n->img) {
+                img_t *old = n->img;
+                surface_free(old->surf); surface_free(old->scaled);
+                if (old->svg) kfree(old->svg);
+                old->surf = old->scaled = NULL; old->svg = NULL; old->svglen = 0; old->svgcolor = 0;
+            }
+        }
+        bool reuse = n->img && !n->img->surf && !n->img->svg;
+        if ((!n->img || reuse) && n->text && (reuse || L->d->nimages < 400)) {
+            img_t *im = reuse ? n->img : kcalloc(1, sizeof(img_t));
             if (im) {
                 snprintf(im->url, sizeof im->url, "about:svg#%d", n->index);
                 sbuf_t sp = { 0 };
@@ -727,10 +743,12 @@ static box_t *gen_atom(lay_t *L, node_t *n) {
                     im->surf = svg_render_ex(im->svg, im->svglen, 0, 0, im->svgcolor);
                 }
                 im->state = im->surf ? IMG_OK : IMG_ERROR;
-                im->next = L->d->images;
-                L->d->images = im;
-                L->d->nimages++;
-                n->img = im;
+                if (!reuse) {
+                    im->next = L->d->images;
+                    L->d->images = im;
+                    L->d->nimages++;
+                    n->img = im;
+                }
             }
         }
         return b;

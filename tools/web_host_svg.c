@@ -366,3 +366,55 @@ WEB_HOST_CASE(svg_marcadores_texto) {
     CHECK(ink(t, 40, 30, 60, 50) > 3, "texto acompanha a curva no topo: %d", ink(t, 40, 30, 60, 50));
     surface_free(t);
 }
+
+/* SVG inline como subárvore do DOM: atributos, caixa dos nomes, mudanças pelo JS redesenham */
+#include "js.h"
+static const char *svgjs(js_page_t *p, const char *code) {
+    static sbuf_t o;
+    if (o.p) sb_free(&o);
+    memset(&o, 0, sizeof o);
+    int t = js_page_eval_value(p, code, (int)strlen(code), &o);
+    if (t == JS_WK_EXCEPTION) { static char b[600]; snprintf(b, sizeof b, "EXC:%s", o.p ? o.p : ""); return b; }
+    return o.p ? o.p : "";
+}
+static u32 svg_page_px(doc_t *d, surface_t *s, int x, int y) {
+    doc_layout(d, 100, 60, 1.0f);
+    gfx_fill(s, 0, 0, 100, 60, RGB(255, 255, 255));
+    ui_t u;
+    memset(&u, 0, sizeof u);
+    u.s = s;
+    doc_paint(d, &u, rect_make(0, 0, 100, 60), 0, NULL);
+    return P(s, x, y);
+}
+#define SEQ(code, want) do { const char *r_ = svgjs(js, code); CHECK(!strcmp(r_, want), "%s -> [%s], esperado [%s]", code, r_, want); } while (0)
+
+WEB_HOST_CASE(svg_dom_js) {
+    const char *html = "<html><body style='margin:0'><svg id=s width='20' height='20' viewBox='0 0 20 20' style='display:block'>"
+                       "<defs><linearGradient id='lg'><stop offset='0' stop-color='#000'/></linearGradient></defs>"
+                       "<rect id='r' width='10' height='10' fill='red'/><text id='t' x='0' y='19'>oi &amp; tchau</text></svg></body></html>";
+    doc_t *d = doc_parse(html, strlen(html), "http://teste/sd.html");
+    js_page_t *js = js_page_new2(d, "http://teste/sd.html", 100, 60, NULL, NULL);
+    surface_t *s = surface_new(100, 60);
+    CHECK((svg_page_px(d, s, 5, 5) & 0xFFFFFF) == 0xFF0000, "rect vermelho inicial: %08x", P(s, 5, 5));
+    SEQ("var r=document.getElementById('r'); [r.tagName, r.getAttribute('fill'), r.namespaceURI, document.getElementById('lg').tagName, document.querySelector('#s rect').id].join()",
+        "rect,red,http://www.w3.org/2000/svg,linearGradient,r");
+    SEQ("document.getElementById('t').textContent+'|'+document.getElementById('s').getAttribute('viewBox')+'|'+document.getElementById('s').children.length", "oi & tchau|0 0 20 20|3");
+    svgjs(js, "r.setAttribute('fill','blue')");
+    js_page_tick(js);
+    CHECK((svg_page_px(d, s, 5, 5) & 0xFFFFFF) == 0x0000FF, "setAttribute redesenhou: %08x", P(s, 5, 5));
+    svgjs(js, "var c=document.createElementNS('http://www.w3.org/2000/svg','circle'); c.setAttribute('cx','15'); c.setAttribute('cy','15'); c.setAttribute('r','3'); c.setAttribute('fill','lime');"
+              "document.getElementById('s').appendChild(c);");
+    js_page_tick(js);
+    CHECK((svg_page_px(d, s, 15, 15) & 0xFFFFFF) == 0x00FF00, "createElementNS + appendChild: %08x", P(s, 15, 15));
+    SEQ("c.tagName+','+c.namespaceURI.slice(-3)+','+(c.parentNode.id)", "circle,svg,s");
+    svgjs(js, "r.remove();");
+    js_page_tick(js);
+    CHECK((svg_page_px(d, s, 5, 5) & 0xFFFFFF) == 0xFFFFFF, "remove tirou o rect: %08x", P(s, 5, 5));
+    svgjs(js, "document.getElementById('s').innerHTML=\"<rect width='20' height='5' fill='#ff00ff'/><linearGradient id='g2'/>\"");
+    js_page_tick(js);
+    CHECK((svg_page_px(d, s, 10, 2) & 0xFFFFFF) == 0xFF00FF, "innerHTML em SVG: %08x", P(s, 10, 2));
+    SEQ("document.getElementById('g2').tagName", "linearGradient");
+    js_page_free(js);
+    doc_free(d);
+    surface_free(s);
+}
