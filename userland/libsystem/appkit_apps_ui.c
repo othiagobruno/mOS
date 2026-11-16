@@ -500,7 +500,7 @@ void cx_appkit_apps_ui_init(void) {
     DEF(NSCollectionViewCompositionalLayoutConfiguration, "NSObject");
     DEF(NSCollectionViewCompositionalLayout, "NSCollectionViewLayout");
 
-    DEF(NSArrayController, "NSObject");
+    DEF(NSArrayController, "NSObjectController");
     IM(NSArrayController, "arrangedObjects", ac_arranged); IM(NSArrayController, "content", ac_arranged);
     IM(NSArrayController, "setContent:", ac_set_content);
     IM(NSArrayController, "addObject:", ac_add); IM(NSArrayController, "removeObject:", ac_remove);

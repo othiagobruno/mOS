@@ -600,6 +600,7 @@ void cx_appkit_input_init(void) {
     cx_uttype_init();           /* vscode_media.c: classe UTType */
     cx_const_objs_init();       /* constobjs.c: NSConstantArray/NSConstantDictionary dos literais do clang */
     cx_vscode_cf_classes();     /* vscode_cf.c: classes internas de CF (locale, UUID, CharacterSet, BinaryHeap) e kCFNull */
+    { extern void cx_appkit_more_classes(void); cx_appkit_more_classes(); }   /* appkit_more.c: NSGestureRecognizer, NSObjectController, NSTextBlock antes das subclasses */
     { extern void cx_appkit_postico_init(void); cx_appkit_postico_init(); }   /* appkit_postico.c: NSOutlineView, NSSplitView, NSToolbarItem... (Postico) */
     { extern void cx_appkit_nsopengl_init(void); cx_appkit_nsopengl_init(); } /* appkit_nsopengl.c: NSOpenGLPixelFormat/Context/View */
     { extern void cx_appkit_public_init(void); cx_appkit_public_init(); }     /* appkit_public.c: stepper, combo, level, path, AX, cadeia */
@@ -613,6 +614,8 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_filepromise_init(void); cx_appkit_filepromise_init(); } /* appkit_filepromise.c: promessas de arquivo no arrasto */
     { extern void cx_appkit_offscreen_init(void); cx_appkit_offscreen_init(); }   /* appkit_offscreen.c: desenho em PDF/bitmap, lockFocus */
     { extern void cx_appkit_print_init(void); cx_appkit_print_init(); }       /* appkit_print.c: impressão (PDF), NSPrintOperation, PM* */
+    { extern void cx_appkit_cells_init(void); cx_appkit_cells_init(); }       /* appkit_cells.c: família NSCell, NSMatrix, NSSwitch */
+    { extern void cx_appkit_more_init(void); cx_appkit_more_init(); }         /* appkit_more.c: gestos, NSAnimation, fontes, NSTextBlock, PDF/EPS */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");
