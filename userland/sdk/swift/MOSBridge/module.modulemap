@@ -1,4 +1,0 @@
-module MOSBridge {
-    header "MOSBridge.h"
-    export *
-}
