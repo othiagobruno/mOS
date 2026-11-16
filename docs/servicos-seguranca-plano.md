@@ -61,7 +61,8 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 | 7 Spotlight | ✅ (16 nov.); não executado em VM | `tools/agentes_host.c` **39/39** (predicado com `$time.*` e `InRange`), `tools/mdclitest.sh` **18/18** (mdfind, mdls, mdutil) |
 | 8 Apple Events, AppleScript, osascript | ✅ (16 nov.); não executado em VM | `tools/astest.c` **118/118** sob ASan (descritores, API C `AEDesc`, linguagem), `tools/osascripttest.sh` **18/18** |
 | 6 UserNotifications | ✅ (16 nov.); não executado em VM | `userland/tests-appkit/un_host.c` **49/49** sob ASan (gatilhos, calendário em hora local, Central, ações, persistência) |
-| 4, 9, 10, 12 | a fazer | — |
+| 10 Login items | ✅ (16 nov.); painel dos Ajustes com a Camila | `tools/loginitemtest.c` 25/25, `tools/smlogintest.c` 16/16, `tools/smjobtest.c` 26/0; `init.c` com `zig -fsyntax-only` |
+| 4, 9, 12 | a fazer | — |
 
 ## Fase 1 — o que entrou (15 nov.)
 
@@ -198,4 +199,13 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
   ou 1 ano), botões de ação e resposta, ações adicionais, entregues/agendadas, delegate `shouldPresent`/`didDeliver`/`didActivate`.
 - Limites: sem APNs (push falha com `UNErrorDomain`); a imagem do anexo não aparece no banner; outras repetições do
   `NSUserNotification` (ex.: a cada 2 meses) dão aviso e não são agendadas.
+
+## Fase 10 — login items (16 nov.)
+
+- O init (launchd) sobe login items que são `.app` pelo `Contents/MacOS/<CFBundleExecutable>` do Info.plist; antes o
+  spawn de diretório falhava e `SMLoginItemSetEnabled`/`LSSharedFileList` nunca abriam o app.
+- `SMAppService`: `mainAppService` e `loginItemServiceWithIdentifier:` gravam na lista de login items; o status vem da
+  lista (o usuário pode tirar) e do disco; `notFound` sem o ajudante ou o plist; erros `SMAppServiceErrorDomain`;
+  `statusForLegacyURL:`; `openSystemSettingsLoginItems` abre `x-apple.systempreferences:com.apple.LoginItems-Settings.extension`.
+- Pedido à Camila: o painel Ajustes > Geral > Itens de Início (lista e interruptores de segundo plano) e a URL acima.
 
