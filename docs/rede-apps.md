@@ -81,7 +81,9 @@ flowchart TD
 | 1. Núcleo HTTP portátil | pronto (PR desta etapa): `mnet_util.c`, `mnet_h1.c`, `mnet_cookie.c`, `mnet_hpack.c` | `tools/mnet_host_test.c`: 638/638 no gcc com ASan/UBSan; os 12 blocos do Apêndice C da RFC 7541 decodificam e o codificador gera os mesmos bytes; `zig cc` freestanding x86_64 e arm64 compila sem aviso |
 | 2. TLS (ALPN) | ALPN configurável e lido de volta; versão e cifra reais no SecureTransport. Falta: retomada por ticket, certificado de cliente, lado servidor | `tools/tls_local_test.c`: 14/14 contra `openssl s_server` (h2 em 1.3 e 1.2, queda para http/1.1, servidor sem ALPN) |
 | 3. HTTP/2 | codec pronto (`mnet_h2.c`); ainda não ligado a API pública | `tools/mnet_host_test.c`: 9 MiB por janelas, 103 + 200 + trailers, CONTINUATION, PING, RST, GOAWAY, erros; servidor h2c do mnet contra o `curl --http2-prior-knowledge` do host (nghttp2): 201 e 64 KB de corpo |
-| 4–10 | não iniciado | — |
+| 4a. Motor do cliente | pronto (`mnet_client.c`, `mnet_decode.c`, `mnet_url.c`); ainda não ligado ao NSURLSession | `tools/mnet_client_test.c`: 22/22 contra `tools/mnet_http_servidor.py` (keep-alive, 5 redirects, laço, 303, 307 com corpo, delegate recusando redirect, gzip, chunked, cookies no redirect, tempo esgotado, erros); com `rede`: 35/35, HTTP/2 real por ALPN sobre o TLS do mOS em google, cloudflare, github e example.com, reuso de conexão, certificado vencido recusado |
+| 4b. NSURLSession novo | não iniciado | — |
+| 5–10 | não iniciado | — |
 
 ### Etapa 1 — o que está no código
 
@@ -114,3 +116,18 @@ Ainda não ligado a nenhuma API pública: isso entra nas etapas 2–4.
   WINDOW_UPDATE, mudança de INITIAL_WINDOW_SIZE aplicada aos fluxos abertos, PING, RST_STREAM, GOAWAY (fluxos acima
   do último viram REFUSED_STREAM para serem refeitos), validação de campos (minúsculas, pseudo-cabeçalhos primeiro,
   campos de conexão proibidos), 1xx e trailers. Servidor também, para `NWListener` e testes.
+
+### Etapa 4a — motor do cliente
+
+- `mnet_fetch`: um pedido por chamada, bloqueante, transporte trocável (`mnet_io_t`: conectar, TLS com ALPN, ler e
+  escrever com tempo, relógios, trava do pool). Pool por origem (até 32 ociosas, 90 s), segunda tentativa quando a
+  conexão reaproveitada cai antes da resposta. HTTPS oferece `h2,http/1.1` e segue o que o servidor escolher.
+- Redirect: 301/302 com POST e 303 viram GET sem corpo; 307/308 repetem método e corpo (corpo em fluxo só com
+  `body_rewind`); limite de 16 (`NSURLErrorHTTPTooManyRedirects`); delegate pode trocar a URL ou receber o 3xx.
+- Cookies do jar em todo salto (Set-Cookie de redirect vale no seguinte), `Accept-Encoding: gzip, deflate, br`
+  com descompressão em fluxo, cabeçalhos de conexão do app descartados, `User-Agent`/`Accept`/`Accept-Language` padrão.
+- Proxy HTTP (forma absoluta), túnel CONNECT para HTTPS (com `Proxy-Authorization`), SOCKS5 com usuário e senha e
+  nome resolvido pelo proxy. Proxy HTTPS com destino HTTPS (TLS dentro de TLS) devolve `MNET_E_UNSUPPORTED`.
+- Erros com os códigos de `NSURLErrorDomain` (-1001 tempo, -1003 nome, -1004 conexão, -1005 perdida, -1007, -1015,
+  -1200 TLS...). Cancelamento por flag, conferida a cada 250 ms.
+- Limite conhecido: pedidos simultâneos para a mesma origem em HTTP/2 usam conexões separadas (sem multiplexar).
