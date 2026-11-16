@@ -69,6 +69,87 @@ float _Complex __mulsc3(float a, float b, float c, float d) {
     return z;
 }
 
+/* ---- divisão complexa (compiler-rt): (a+bi)/(c+di), com o algoritmo de Smith para evitar overflow/underflow */
+double fabs(double);
+double _Complex __divdc3(double a, double b, double c, double d) {
+    double _Complex z;
+    if (fabs(c) >= fabs(d)) {
+        double r = d / c, den = c + d * r;
+        __real__ z = (a + b * r) / den;
+        __imag__ z = (b - a * r) / den;
+    } else {
+        double r = c / d, den = c * r + d;
+        __real__ z = (a * r + b) / den;
+        __imag__ z = (b * r - a) / den;
+    }
+    return z;
+}
+float _Complex __divsc3(float a, float b, float c, float d) {
+    double _Complex q = __divdc3(a, b, c, d);
+    float _Complex z;
+    __real__ z = (float)__real__ q;
+    __imag__ z = (float)__imag__ q;
+    return z;
+}
+long double _Complex __divxc3(long double a, long double b, long double c, long double d) {
+    long double _Complex z;
+    long double C = c < 0 ? -c : c, D = d < 0 ? -d : d;
+    if (C >= D) {
+        long double r = d / c, den = c + d * r;
+        __real__ z = (a + b * r) / den;
+        __imag__ z = (b - a * r) / den;
+    } else {
+        long double r = c / d, den = c * r + d;
+        __real__ z = (a * r + b) / den;
+        __imag__ z = (b * r - a) / den;
+    }
+    return z;
+}
+long double _Complex __mulxc3(long double a, long double b, long double c, long double d) {
+    long double _Complex z;
+    __real__ z = a * c - b * d;
+    __imag__ z = a * d + b * c;
+    return z;
+}
+
+/* ---- raiz quadrada complexa (libm). csqrt(z) = sqrt((|z|+Re)/2) + i·sign(Im)·sqrt((|z|-Re)/2) */
+double sqrt(double), hypot(double, double), copysign(double, double);
+double _Complex csqrt(double _Complex z) {
+    double x = __real__ z, y = __imag__ z;
+    double _Complex r;
+    if (y == 0) {
+        if (x >= 0) { __real__ r = sqrt(x); __imag__ r = copysign(0.0, y); }
+        else { __real__ r = 0; __imag__ r = copysign(sqrt(-x), y); }
+        return r;
+    }
+    double m = hypot(x, y);
+    double re = sqrt((m + x) * 0.5);
+    double im = sqrt((m - x) * 0.5);
+    __real__ r = re;
+    __imag__ r = copysign(im, y);
+    return r;
+}
+float _Complex csqrtf(float _Complex z) {
+    double _Complex d;
+    __real__ d = (double)__real__ z;
+    __imag__ d = (double)__imag__ z;
+    d = csqrt(d);
+    float _Complex o;
+    __real__ o = (float)__real__ d;
+    __imag__ o = (float)__imag__ d;
+    return o;
+}
+long double _Complex csqrtl(long double _Complex z) {
+    double _Complex r;
+    __real__ r = (double)__real__ z;
+    __imag__ r = (double)__imag__ z;
+    r = csqrt(r);
+    long double _Complex o;
+    __real__ o = (long double)__real__ r;
+    __imag__ o = (long double)__imag__ r;
+    return o;
+}
+
 typedef struct {
     u32 st_dev; u16 st_mode, st_nlink; u64 st_ino; u32 st_uid, st_gid, st_rdev;
     i64 atime, atime_ns, mtime, mtime_ns, ctime, ctime_ns, btime, btime_ns;

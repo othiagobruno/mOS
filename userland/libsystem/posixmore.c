@@ -41,6 +41,42 @@ int wcsncmp(const wchar_t_ *a, const wchar_t_ *b, size_t n) {
     return 0;
 }
 int wcscoll(const wchar_t_ *a, const wchar_t_ *b) { return wcscmp(a, b); }
+/* strings largas que os apps do corpus (blender, gimp, krita, libreoffice...) importam */
+wchar_t_ *wcsrchr(const wchar_t_ *s, wchar_t_ c) {
+    const wchar_t_ *last = 0;
+    do { if (*s == c) last = s; } while (*s++);
+    return (wchar_t_ *)last;
+}
+wchar_t_ *wcsstr(const wchar_t_ *h, const wchar_t_ *n) {
+    if (!*n) return (wchar_t_ *)h;
+    for (; *h; h++) {
+        const wchar_t_ *a = h, *b = n;
+        while (*a && *b && *a == *b) a++, b++;
+        if (!*b) return (wchar_t_ *)h;
+    }
+    return 0;
+}
+static int wcs_in(wchar_t_ c, const wchar_t_ *set) { for (; *set; set++) if (*set == c) return 1; return 0; }
+wchar_t_ *wcstok(wchar_t_ *s, const wchar_t_ *sep, wchar_t_ **ctx) {
+    wchar_t_ *p = s ? s : *ctx;
+    if (!p) return 0;
+    while (*p && wcs_in(*p, sep)) p++;              /* pula separadores iniciais */
+    if (!*p) { *ctx = 0; return 0; }
+    wchar_t_ *tok = p;
+    while (*p && !wcs_in(*p, sep)) p++;
+    if (*p) { *p = 0; *ctx = p + 1; } else *ctx = 0;
+    return tok;
+}
+/* sem ordenação por locale (só "C"): wcsxfrm é uma cópia, como strxfrm */
+size_t wcsxfrm(wchar_t_ *d, const wchar_t_ *s, size_t n) {
+    size_t len = wcslen(s);
+    if (n) { size_t k = len < n - 1 ? len : n - 1; for (size_t i = 0; i < k; i++) d[i] = s[i]; d[k] = 0; }
+    return len;
+}
+/* wcsxfrm_l fica em vscode_libc.c (chama este wcsxfrm) */
+/* duplocale: o mOS tem um locale "C" único; devolve o mesmo objeto */
+void *newlocale(int mask, const char *name, void *base);
+void *duplocale(void *l) { (void)l; return newlocale(0, "C", 0); }
 wchar_t_ *wcsdup(const wchar_t_ *s) {
     size_t n = 0;
     while (s[n]) n++;

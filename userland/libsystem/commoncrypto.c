@@ -139,6 +139,10 @@ int uuid_compare(const u8_ *a, const u8_ *b) { return memcmp(a, b, 16); }
 int uuid_is_null(const u8_ *u) { for (int i = 0; i < 16; i++) if (u[i]) return 0; return 1; }
 void uuid_generate_random(u8_ *u) { arc4random_buf(u, 16); u[6] = (u8_)((u[6] & 0x0F) | 0x40); u[8] = (u8_)((u[8] & 0x3F) | 0x80); }
 void uuid_generate(u8_ *u) { uuid_generate_random(u); }
+/* uuid_generate_time: a Apple gera UUID v1 (tempo+nó); o mOS não expõe o endereço MAC, então usa o aleatório v4,
+ * que é um UUID válido e único. Os apps do corpus (blender, gimp, krita) só precisam de um UUID único. */
+void uuid_generate_time(u8_ *u) { uuid_generate_random(u); }
+void uuid_generate_time_safe(u8_ *u) { uuid_generate_random(u); }
 static void unparse(const u8_ *u, char *out, const char *hex) {
     int j = 0;
     for (int i = 0; i < 16; i++) {

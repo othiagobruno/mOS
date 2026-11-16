@@ -371,6 +371,10 @@ echo "==> multibyte (UTF-8 estrito, estado parcial; teste de host)"
 ZIG="$ZIG" bash "$ROOT/tools/multibyte_hosttest.sh" "$OUT/multibyte-hosttest"
 echo "==> wctype largo (tabelas Unicode do musl; teste de host)"
 ZIG="$ZIG" bash "$ROOT/tools/wctype_hosttest.sh" "$OUT/wctype-hosttest"
+echo "==> rand48 (família drand48 vs glibc; teste de host)"
+ZIG="$ZIG" bash "$ROOT/tools/rand48_hosttest.sh" "$OUT/rand48-hosttest"
+echo "==> libc de apps (swab/putenv/getproto/getloadavg...; teste de host)"
+ZIG="$ZIG" bash "$ROOT/tools/libc_apps_hosttest.sh" "$OUT/libc-apps-hosttest"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
