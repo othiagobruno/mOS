@@ -20,7 +20,7 @@ C="-f lavfi -i testsrc=size=426x238:rate=30:duration=2"
 L="-f lavfi -i life=size=320x240:rate=25:mold=10:ratio=0.5,trim=duration=3"
 H="-f lavfi -i testsrc2=size=1280x720:rate=30:duration=1"
 ok=0; n=0
-t() { # nome entrada parâmetros do x264...
+t() { # nome entrada parâmetros do x264... (COR=faixa,matriz,primárias,transferência para conferir o VUI)
     local nm=$1 src=$2; shift 2
     n=$((n+1))
     ffmpeg $F $src -c:v libx264 -pix_fmt yuv420p "$@" -f h264 "$T/$nm.264" || { echo "$nm: FALHA ao codificar"; return; }
@@ -38,7 +38,7 @@ fb = sorted(hashlib.md5(b[i:i + fs]).digest() for i in range(0, len(b), fs))
 sys.exit(0 if fa == fb and len(a) == len(b) else 1)
 P
     local gl=FALHA
-    "$T/gt" "$T/$nm.264" "$T/$nm.ref" > "$T/$nm.gl" && gl=ok
+    "$T/gt" "$T/$nm.264" "$T/$nm.ref" ${COR:-} > "$T/$nm.gl" && gl=ok
     echo "$nm: exibição $ex, ordem de decodificação $dord, casca cx_h264 $gl $(grep -v '^glue ok' "$T/$nm.gl" | head -1)"
     [ "$ex" = bit-exato ] && [ "$dord" = ok ] && [ "$gl" = ok ] && ok=$((ok+1))
 }
@@ -62,5 +62,28 @@ t qp45 "$B" -profile:v high -qp 45 -x264-params bframes=2
 t slices "$A" -profile:v high -x264-params slices=4:bframes=2
 t zerolatency "$A" -profile:v main -preset ultrafast -tune zerolatency
 t hd720 "$H" -profile:v high -x264-params bframes=3:ref=4
+COR=1,1,1,1 t full709 "$A" -profile:v high -x264-params fullrange=on:colormatrix=bt709:colorprim=bt709:transfer=bt709
+COR=0,2,2,2 t semcor "$A" -profile:v main
+# VTDecompressionSession (vscode_media.c de verdade; o runtime em volta substituído em tools/vt_test.c), amostras de MP4
+gcc -std=gnu11 -O1 -w -fno-builtin -I"$R/userland/libsystem/kshim" -I"$R/userland/libsystem" -I"$R/kernel/include" \
+    -c "$R/userland/libsystem/vscode_media.c" -o "$T/vm.o" || exit 1
+gcc -O1 -w -I"$R/userland/libsystem" -c "$R/userland/libsystem/mp4demux.c" -o "$T/mp4d.o" && gcc -O1 -w -I"$R/userland/libsystem" \
+    -c "$R/tools/vt_test.c" -o "$T/vtt.o" || exit 1
+g++ "$T/vtt.o" "$T/vm.o" "$T/mp4d.o" "$T/glue.o" "$T"/o/*.o -lm -lpthread -Wl,--unresolved-symbols=ignore-all -o "$T/vtt" || exit 1
+v() { # nome entrada [full] parâmetros do x264...
+    local nm=$1 src=$2 full=$3; shift 3
+    n=$((n+1))
+    ffmpeg $F $src -c:v libx264 -pix_fmt yuv420p "$@" "$T/$nm.mp4" && ffmpeg $F -i "$T/$nm.mp4" -fps_mode passthrough -f rawvideo -pix_fmt yuv420p "$T/$nm.vref"
+    local r; r=$("$T/vtt" "$T/$nm.mp4" "$T/$nm.vref" $full 2>&1); echo "vt $nm: $r"
+    case "$r" in "vt ok"*) ok=$((ok+1));; esac
+}
+v vt_high "$A" "" -profile:v high -x264-params bframes=3:b-pyramid=normal
+v vt_720 "$H" "" -profile:v main
+v vt_full709 "$A" full -profile:v high -x264-params fullrange=on:colormatrix=bt709:colorprim=bt709:transfer=bt709:bframes=2
+v vt_baseline "$A" "" -profile:v baseline
+# codificador I_PCM (h264sw.c) com ida e volta pelo mesmo decodificador e pelo ffmpeg
+gcc -std=c11 -O2 -w -c "$R/tools/vtcodec_test.c" -o "$T/vct.o" && gcc -std=gnu11 -O2 -w -I"$R/userland/libsystem" \
+    -c "$R/userland/libsystem/h264sw.c" -o "$T/hsw.o" && g++ "$T/vct.o" "$T/hsw.o" "$T/glue.o" "$T"/o/*.o -lm -lpthread -o "$T/vct" || exit 1
+n=$((n+1)); r=$(cd "$T" && ./vct 2>/dev/null | tail -1); echo "codificador I_PCM: $r"; [ "$r" = ok ] && ok=$((ok+1))
 echo "h264: $ok/$n ok"
 [ "$ok" = "$n" ]

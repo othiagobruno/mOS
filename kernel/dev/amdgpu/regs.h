@@ -158,6 +158,10 @@
 #define R_VM_CTX_PT_END_HI(n)         (R_VM_CTX0_PT_END_HI + 8u * (n))
 #define   CTX_DEPTH_4LEVEL            (3u << 1)      /* PDB2 -> PDB1 -> PDB0 -> PTB, blocos de 512 entradas */
 #define   CTX_FAULT_DEFAULTS          0x00555400u    /* range, dummy, PDE0, valid, read, write, exec: página de rascunho */
+#define   CTX_FAULT_INTERRUPTS        0x002AAA00u    /* e cada uma delas avisa pelo IH */
+#define R_VM_L2_PROT_FAULT_CNTL2      MMHUB_REG(0x0688)
+#define R_VM_L2_PROT_FAULT_STATUS     MMHUB_REG(0x068B)
+#define   PROT_FAULT_CLEAR_STATUS     0x1u
 #define   AMD_VM_MAX_PFN              (1ull << 36)   /* 48 bits de VA */
 #define R_VM_INV_ENG17_REQ            MMHUB_REG(0x06F4)
 #define R_VM_INV_ENG17_ACK            MMHUB_REG(0x0706)
@@ -583,6 +587,9 @@
 #define MQD_DYN_CU_MASK_BYTES        2056u           /* deslocamento da máscara dinâmica de CUs na alocação */
 #define R_RCC_DOORBELL_APER_EN        NBIF_REG(0x00C0)
 #define   DOORBELL_APER_EN            0x1u
+#define IH_CLIENT_VMC            0x12u          /* falha de página na MMHUB */
+#define IH_CLIENT_UTCL2          0x1Bu          /* falha de página na GFXHUB */
+#define IH_SRC_VM_FAULT          0u
 #define IH_CLIENT_GRBM_CP        0x14u
 #define IH_SRC_CP_EOP            181u
 #define IH_SRC_CP_PRIV_REG       184u

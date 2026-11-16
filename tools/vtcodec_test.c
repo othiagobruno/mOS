@@ -1,5 +1,5 @@
-/* Teste de host do H.264 em software. Sem QEMU.
- *   clang -std=c11 -O2 -o /tmp/vtcodec_test tools/vtcodec_test.c userland/libsystem/h264sw.c -lm
+/* Teste de host do codificador H.264 (I_PCM) com ida e volta pelo decodificador do libSystem. Rodado por tools/h264_test.sh.
+ * Liga h264sw.c, a casca host-audio/h264_glue.cpp e o OpenH264 (ver tools/h264_test.sh).
  * Confere o nosso decodificador (PSNR) e o ffmpeg como decodificador de referência.
  */
 #include "../userland/libsystem/h264sw.h"

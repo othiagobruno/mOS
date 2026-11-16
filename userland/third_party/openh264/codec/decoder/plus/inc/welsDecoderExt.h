@@ -122,6 +122,11 @@ class CWelsDecoder : public ISVCDecoder {
    * kVTDecodeFrame_EnableTemporalProcessing); false = ordem de exibição (o padrão do OpenH264) */
  public:
   bool                    m_bOutputDecodeOrder;
+  /* mOS: VUI do SPS ativo (cor e faixa do quadro que acabou de sair), NULL sem VUI */
+  const SVui* MosActiveVui () const {
+    PWelsDecoderContext pCtx = m_pDecThrCtx ? m_pDecThrCtx[0].pCtx : NULL;
+    return pCtx && pCtx->pSps && pCtx->pSps->bVuiParamPresentFlag ? &pCtx->pSps->sVui : NULL;
+  }
  private:
   int32_t                 m_iCpuCount;
   int32_t                 m_iThreadCount;

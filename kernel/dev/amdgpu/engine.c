@@ -93,6 +93,12 @@ static void hub_invalidate(amdgpu_t *a, int hub, u32 vmid_mask) {
     if (n >= SPIN_MAX) a->gmc_timeouts++;
 }
 
+/* falha de página: libera o registro de status da hub para a próxima (gmc_v9_0_process_interrupt) */
+void amdgpu_vm_fault_ack(amdgpu_t *a, int hub) {
+    a->vm_fault_status = RR(a, HV(hub, R_VM_L2_PROT_FAULT_STATUS));
+    WR(a, HV(hub, R_VM_L2_PROT_FAULT_CNTL2), RR(a, HV(hub, R_VM_L2_PROT_FAULT_CNTL2)) | PROT_FAULT_CLEAR_STATUS);
+}
+
 void amdgpu_tlb_flush(amdgpu_t *a, u32 vmid_mask) {
     hub_invalidate(a, 0, vmid_mask);
     if (a->gfxhub_ok) hub_invalidate(a, 1, vmid_mask);
@@ -103,7 +109,7 @@ static void gmc_invalidate(amdgpu_t *a) { amdgpu_tlb_flush(a, INV_REQ_VMID0); }
 static void hub_setup_vmids(amdgpu_t *a, int hub) {
     for (u32 n = 1; n < 16; n++) {
         u32 t = RR(a, HV(hub, R_VM_CTX_CNTL(n))) & ~0x007FFFFFu;
-        WR(a, HV(hub, R_VM_CTX_CNTL(n)), t | CTX0_ENABLE | CTX_DEPTH_4LEVEL | CTX_FAULT_DEFAULTS);
+        WR(a, HV(hub, R_VM_CTX_CNTL(n)), t | CTX0_ENABLE | CTX_DEPTH_4LEVEL | CTX_FAULT_DEFAULTS | CTX_FAULT_INTERRUPTS);
         WR(a, HV(hub, R_VM_CTX_PT_START_LO(n)), 0);
         WR(a, HV(hub, R_VM_CTX_PT_START_HI(n)), 0);
         WR(a, HV(hub, R_VM_CTX_PT_END_LO(n)), (u32)(AMD_VM_MAX_PFN - 1));

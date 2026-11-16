@@ -11,7 +11,7 @@ O repositório é MIT. Só entra decodificador com licença compatível, e só o
 
 Os codecs entram no libSystem por `tools/build-midia.sh` com `-fvisibility=hidden`: os nomes internos ficam locais e não aparecem como exportações do libSystem. As patentes de AAC (Via LA) não são resolvidas por nenhuma licença de código; isso fica registrado aqui como limitação legal do produto, não técnica.
 
-O decodificador H.264 Baseline (CAVLC, intra 4x4 e 16x16, P-slice, deblocking) é o [h264bsd](https://github.com/oneam/h264bsd) (Apache-2.0, Android Open Source) em `userland/third_party/h264bsd/`, com a casca `h264bsd_glue.c`. O codificador em `h264sw.c` continua I_PCM: o residual CAVLC próprio não passa no ffmpeg. Não há x264, x265, libde265 nem libavcodec no fonte. HEVC é stub: VideoToolbox devolve -12906/-12908. Não se contorna FairPlay nem outro DRM.
+O decodificador H.264 (Baseline, Main e High) é o [OpenH264](https://github.com/cisco/openh264) 2.6.0 (BSD-2, Cisco) em `userland/third_party/openh264/` (só o decodificador, com as correções do mOS em `README.mos.md`), com a casca `userland/host-audio/h264_glue.cpp`. O codificador em `h264sw.c` continua I_PCM: o residual CAVLC próprio não passa no ffmpeg. Não há x264, x265, libde265 nem libavcodec no fonte. HEVC é stub: VideoToolbox devolve -12906/-12908. Não se contorna FairPlay nem outro DRM.
 
 A permissão de microfone e câmera não está nesta frente. O contrato é o símbolo fraco
 

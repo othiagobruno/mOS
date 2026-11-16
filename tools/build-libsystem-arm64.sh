@@ -24,7 +24,7 @@ BASE=(--target=$TRIPLE -mcpu=apple-m1 -O2 -g0 -ffreestanding -fno-stack-protecto
     -fPIC -ffixed-x18 -fsigned-char -fno-common -funwind-tables
     -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header
     -Wno-unknown-warning-option -Wno-unused-function)
-F_LS=(-I"$LS/kshim" -I"$LS/fsinc" -I"$ROOT/kernel/include" -I"$TP/h264bsd" -isystem "$INC")
+F_LS=(-I"$LS/kshim" -I"$LS/fsinc" -I"$ROOT/kernel/include" -isystem "$INC")
 # SQLite e ALAC escolhem cabeçalhos da Apple por __APPLE__/TARGET_OS_MAC (o x86 compila com x86_64-freestanding-none, sem ele);
 # a ABI continua a do triplo Darwin, só a macro sai
 F_SHIM=(-U__APPLE__ -U__MACH__ -UTARGET_OS_MAC -UTARGET_OS_OSX -DTARGET_OS_MAC=0 -DTARGET_OS_OSX=0 -Wno-unused-variable -Wno-unreachable-code -I"$ROOT/userland/host-audio/shim" -I"$LS" -isystem "$INC")
@@ -48,7 +48,6 @@ for f in "$LS"/*.c "$LS"/*.S; do
     skip=0; for p in $X86_SWIFTCC; do [[ $b == $p ]] && skip=1; done; [ $skip = 1 ] && continue
     if [ "$b" = sqlite3_mos.c ]; then add shim "$f"; else add ls "$f"; fi
 done
-for f in "$TP"/h264bsd/*.c; do add ls "$f"; done
 add shim "$ROOT/userland/host-audio/audiodec.c"
 add compls "$ROOT/userland/frameworks/libcompression/compression.c"   # MOS_LIBSYSTEM: usa o cz_raw_* de compression_z.c
 for f in lz4.c lz4hc.c lz4frame.c xxhash.c; do add comp "$TP/lz4/$f"; done
