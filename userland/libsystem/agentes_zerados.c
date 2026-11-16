@@ -60,29 +60,7 @@ OSStatus CopySymbolicHotKeys(id *out) {
     return 0;
 }
 
-/* ---------------------------------------------------------------- AppleEvents: especificador de objeto
- * Monta o descritor 'obj ' com classe, forma da chave e cópias do contêiner e da chave. Não há outro app para
- * receber AppleEvents no mOS (AESendMessage devolve errAEEventNotHandled), mas o descritor é coerente. */
-typedef struct { u32 type; void *data; } ae_desc_t;
-typedef struct { u32 desired_class, key_form; ae_desc_t container, key; } ae_objspec_t;
-void *calloc(size_t n, size_t s);
-OSStatus CreateObjSpecifier(u32 desired_class, ae_desc_t *container, u32 key_form, ae_desc_t *key, u8 dispose, ae_desc_t *out) {
-    if (!out || !key) return paramErr;
-    ae_objspec_t *o = calloc(1, sizeof *o);
-    if (!o) return -108;                               /* memFullErr */
-    o->desired_class = desired_class;
-    o->key_form = key_form;
-    if (container) o->container = *container; else o->container.type = 0x6E756C6C;   /* 'null': o aplicativo */
-    o->key = *key;
-    out->type = 0x6F626A20;                            /* 'obj ' (typeObjectSpecifier) */
-    out->data = o;
-    if (dispose) {                                     /* o descritor novo fica com o conteúdo: só zera as entradas */
-        if (container) { container->type = 0x6E756C6C; container->data = 0; }
-        key->type = 0x6E756C6C;
-        key->data = 0;
-    }
-    return 0;
-}
+/* CreateObjSpecifier (AppleEvents): appleevents.c */
 
 /* ---------------------------------------------------------------- Acessibilidade */
 enum { kAXErrorIllegalArgument = -25201, kAXErrorActionUnsupported = -25206, kAXErrorAttributeUnsupported = -25205 };

@@ -169,4 +169,6 @@ void cx_compat_objc_extra_init(void) {
     { extern void cx_avcapture_init(void); cx_avcapture_init(); }                 /* avcapture.c */
     { extern void cx_icloud_init(void); cx_icloud_init(); }                       /* icloud.c: NSUbiquitousKeyValueStore */
     { extern void cx_mdquery_init(void); cx_mdquery_init(); }                     /* mdquery.c: NSMetadataQuery real */
+    { extern void cx_appleevents_init(void); cx_appleevents_init(); }             /* appleevents.c: NSAppleEventDescriptor e Manager reais */
+    { extern void cx_applescript_init(void); cx_applescript_init(); }             /* applescript.c: NSAppleScript, NSUserAppleScriptTask */
 }

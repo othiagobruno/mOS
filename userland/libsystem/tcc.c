@@ -25,9 +25,13 @@ static void tcc_file_path(char *out, size_t cap) {
     snprintf(out, cap, "%s/Library/Application Support/com.mos.tcc/decisions.txt", s);
 }
 
+static char g_ident[256];
+/* ferramentas sem pacote (osascript): a identidade que o TCC grava e o diálogo mostra */
+void cx_tcc_set_identity(const char *bundle) { snprintf(g_ident, sizeof g_ident, "%s", bundle ? bundle : ""); }
 static const char *tcc_bundle(void) {
     static char buf[256];
     static int ok;
+    if (g_ident[0]) return g_ident;
     if (ok) return buf;
     id b = MSG0(id, (id)cx_class_named("NSBundle"), "mainBundle");
     id bid = b ? MSG0(id, b, "bundleIdentifier") : 0;
