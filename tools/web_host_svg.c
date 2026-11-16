@@ -279,3 +279,90 @@ WEB_HOST_CASE(svg_lixo) {
     }
     CHECK(true, "sobreviveu");
 }
+
+#define SVGH "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'>"
+
+static int ink(surface_t *s, int x0, int y0, int x1, int y1) {
+    int n = 0;
+    for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) if ((P(s, x, y) >> 24) > 100) n++;
+    return n;
+}
+
+WEB_HOST_CASE(svg_padrao_mascara) {
+    surface_t *s = R(SVGH "<defs><pattern id='p' width='10' height='10' patternUnits='userSpaceOnUse'><rect width='5' height='5' fill='red'/></pattern></defs>"
+                     "<rect width='20' height='20' fill='url(#p)'/></svg>", 20, 20);
+    PX(s, 2, 2, 0xFFFF0000u, 2); PX(s, 7, 2, 0, 2); PX(s, 12, 2, 0xFFFF0000u, 2); PX(s, 12, 12, 0xFFFF0000u, 2); PX(s, 2, 7, 0, 2);
+    surface_free(s);
+    /* padrão em unidades da caixa: 2×2 ladrilhos sobre o retângulo, conteúdo pela viewBox */
+    s = R(SVGH "<pattern id='q' width='0.5' height='0.5' viewBox='0 0 2 2'><rect width='1' height='1' fill='blue'/></pattern>"
+          "<rect x='0' y='0' width='20' height='20' fill='url(#q)'/></svg>", 20, 20);
+    PX(s, 2, 2, 0xFF0000FFu, 2); PX(s, 7, 7, 0, 2); PX(s, 12, 2, 0xFF0000FFu, 2);
+    surface_free(s);
+    /* máscara: metade esquerda branca, e cinza 50% → alfa ~128 */
+    s = R(SVGH "<mask id='m'><rect width='10' height='20' fill='white'/><rect x='10' width='10' height='10' fill='#808080'/></mask>"
+          "<rect width='20' height='20' fill='blue' mask='url(#m)'/></svg>", 20, 20);
+    PX(s, 5, 10, 0xFF0000FFu, 2); PX(s, 15, 15, 0, 2);
+    u32 c = P(s, 15, 5);
+    CHECK((c >> 24) > 100 && (c >> 24) < 150, "máscara cinza: %08x", c);
+    surface_free(s);
+    /* região da máscara (padrão −10%..120%) recorta conteúdo fora dela; mask-type alpha */
+    s = R(SVGH "<mask id='a' style='mask-type:alpha'><rect width='20' height='20' fill='black'/></mask>"
+          "<rect x='2' y='2' width='10' height='10' fill='red' mask='url(#a)'/></svg>", 20, 20);
+    PX(s, 6, 6, 0xFFFF0000u, 2);
+    surface_free(s);
+}
+
+WEB_HOST_CASE(svg_filtros) {
+    surface_t *s = R(SVGH "<filter id='o' filterUnits='userSpaceOnUse' x='0' y='0' width='20' height='20'><feOffset dx='10' dy='0'/></filter>"
+                     "<rect width='5' height='5' fill='red' filter='url(#o)'/></svg>", 20, 20);
+    PX(s, 2, 2, 0, 2); PX(s, 12, 2, 0xFFFF0000u, 2);
+    surface_free(s);
+    s = R(SVGH "<filter id='b' filterUnits='userSpaceOnUse' x='0' y='0' width='20' height='20'><feGaussianBlur stdDeviation='2'/></filter>"
+          "<rect x='5' y='5' width='10' height='10' fill='black' filter='url(#b)'/></svg>", 20, 20);
+    u32 e = P(s, 5, 10), m = P(s, 10, 10);
+    CHECK((e >> 24) > 40 && (e >> 24) < 200 && (m >> 24) > 230, "blur: borda %08x meio %08x", e, m);
+    surface_free(s);
+    s = R(SVGH "<filter id='g'><feColorMatrix type='saturate' values='0'/></filter><rect width='20' height='20' fill='red' filter='url(#g)'/></svg>", 20, 20);
+    u32 g = P(s, 10, 10);
+    CHECK(((g >> 16) & 255) == ((g >> 8) & 255) && ((g >> 8) & 255) == (g & 255) && (g >> 24) == 255, "saturate 0 vira cinza: %08x", g);
+    surface_free(s);
+    /* flood + composite in + merge: sombra verde atrás do original */
+    s = R(SVGH "<filter id='f' filterUnits='userSpaceOnUse' x='0' y='0' width='20' height='20'><feFlood flood-color='lime' result='cor'/>"
+          "<feComposite in='cor' in2='SourceAlpha' operator='in' result='som'/><feOffset in='som' dx='5' dy='5' result='desl'/>"
+          "<feMerge><feMergeNode in='desl'/><feMergeNode in='SourceGraphic'/></feMerge></filter>"
+          "<rect width='10' height='10' fill='red' filter='url(#f)'/></svg>", 20, 20);
+    PX(s, 2, 2, 0xFFFF0000u, 2); PX(s, 12, 12, 0xFF00FF00u, 2); PX(s, 17, 17, 0, 2);
+    surface_free(s);
+    s = R(SVGH "<filter id='d' x='-1' y='-1' width='3' height='3'><feDropShadow dx='3' dy='3' stdDeviation='0' flood-color='blue'/></filter><rect x='2' y='2' width='8' height='8' fill='red' filter='url(#d)'/></svg>", 20, 20);
+    PX(s, 5, 5, 0xFFFF0000u, 2); PX(s, 11, 11, 0xFF0000FFu, 2);
+    surface_free(s);
+}
+
+WEB_HOST_CASE(svg_marcadores_texto) {
+    surface_t *s = R(SVGH "<marker id='q' markerWidth='4' markerHeight='4' refX='2' refY='2' markerUnits='userSpaceOnUse'><rect width='4' height='4' fill='red'/></marker>"
+                     "<polyline points='2,10 10,10 18,10' stroke='black' stroke-width='1' fill='none' marker-start='url(#q)' marker-mid='url(#q)' marker-end='url(#q)'/></svg>", 20, 20);
+    PX(s, 1, 8, 0xFFFF0000u, 2); PX(s, 10, 8, 0xFFFF0000u, 2); PX(s, 19, 8, 0xFFFF0000u, 2); PX(s, 5, 5, 0, 2);
+    surface_free(s);
+    /* orient=auto numa linha vertical: o marcador triangular aponta para baixo */
+    s = R(SVGH "<marker id='t' markerWidth='6' markerHeight='6' refX='0' refY='3' orient='auto' markerUnits='userSpaceOnUse'><path d='M0,0 L6,3 L0,6 Z' fill='blue'/></marker>"
+          "<path d='M10,2 L10,10' stroke='black' marker-end='url(#t)'/></svg>", 20, 20);
+    CHECK(ink(s, 7, 11, 14, 16) > 6, "seta para baixo desenhada: %d", ink(s, 7, 11, 14, 16));
+    surface_free(s);
+    /* texto com gradiente, girado por rotate e em textPath */
+    surface_t *t = R("<svg xmlns='http://www.w3.org/2000/svg' width='120' height='60'><linearGradient id='lg'><stop offset='0' stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient>"
+                     "<text x='5' y='30' font-size='24' fill='url(#lg)'>MMMM</text></svg>", 120, 60);
+    int red = 0, blue = 0;
+    for (int y = 0; y < 60; y++) for (int x = 0; x < 120; x++) { u32 c = P(t, x, y); if ((c >> 24) > 200) { if (((c >> 16) & 255) > 150) red++; if ((c & 255) > 150) blue++; } }
+    CHECK(red > 10 && blue > 10, "texto com gradiente: %d vermelhos %d azuis", red, blue);
+    surface_free(t);
+    t = R("<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60'><text x='20' y='40' font-size='30' rotate='90'>I</text></svg>", 60, 60);
+    int wide = 0;
+    for (int x = 0; x < 60; x++) { int col = 0; for (int y = 0; y < 60; y++) if ((P(t, x, y) >> 24) > 100) col++; if (col) wide++; }
+    CHECK(wide > 12, "I girado 90° fica largo: %d colunas", wide);
+    surface_free(t);
+    t = R("<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><path id='c' d='M10,90 Q50,0 90,90' fill='none'/>"
+          "<text font-size='14'><textPath href='#c'>curva curva</textPath></text></svg>", 100, 100);
+    CHECK(ink(t, 0, 0, 100, 100) > 40, "textPath desenhou %d pixels", ink(t, 0, 0, 100, 100));
+    CHECK(ink(t, 40, 30, 60, 50) > 3, "texto acompanha a curva no topo: %d", ink(t, 40, 30, 60, 50));
+    surface_free(t);
+}

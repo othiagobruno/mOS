@@ -10,9 +10,13 @@ int  host_printf(const char *fmt, ...);
 int  host_write_ppm(const char *path, const u32 *px, int w, int h, int stride);
 
 int web_host_ok, web_host_fail;
-static struct { const char *name; void (*fn)(void); } casos[64];
+static struct { const char *name; void (*fn)(void); } casos[256];
 static int ncasos;
-void web_host_register(const char *name, void (*fn)(void)) { if (ncasos < 64) { casos[ncasos].name = name; casos[ncasos++].fn = fn; } }
+/* estouro do registro é falha (nunca deixar caso de teste de fora em silêncio) */
+void web_host_register(const char *name, void (*fn)(void)) {
+    if (ncasos < 256) { casos[ncasos].name = name; casos[ncasos++].fn = fn; }
+    else { web_host_fail++; host_printf("FALHOU: caso %s ficou de fora (limite de 256)\n", name); }
+}
 
 /* documento pintado num surface w×h */
 typedef struct { doc_t *d; js_page_t *js; surface_t *s; } page_t;
