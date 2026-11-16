@@ -43,6 +43,7 @@ static int s_shift_scalar(T *t, a64_u32 w);
 static int s_shimm(T *t, int x, int eb, int kind, int sh);
 static int s_fcmpv(T *t, int q, int dbl, int kind, int abs, int n, int m, int d, int sc);
 static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc);
+static int s_fcvt_vec(T *t, int q, int dbl, int u, int mode, int n, int d, int sc);
 static void s_widen(T *t, int x, int v, int hi, int sz, int sgn);
 static int s_dot(T *t, int q, int sa, int sb, int n, int m, int lane, int d);
 static void s_qaddsub_core(T *t, int u, int size, int sub);
@@ -265,7 +266,10 @@ static int s_misc_x(T *t, a64_u32 w, int sc) {
         if (key == 0x18 || key == 0x19 || key == 0x38 || key == 0x39 || key == 0x79)
             return s_frint_vec(t, q, size, key == 0x79 ? -1 : key == 0x18 ? 0 : key == 0x19 ? 1 : key == 0x38 ? 2 : 3, n, d);
         if (key == 0x2F || key == 0x6F) return s_fabsneg_vec(t, q, size, key == 0x6F, n, d);
-        if ((key == 0x3B || key == 0x7B) && !(size == 3 && !q && !sc)) return s_fcvtz_vec(t, q, size & 1, u, n, d, sc);
+        if (!((size & 1) && !q && !sc)) {           /* FCVT{N,P,M,Z,A}{S,U}; D com Q = 0 é reservado */
+            int k = key & 0x3F, mode = k == 0x1A ? 0 : k == 0x3A ? 1 : k == 0x1B ? 2 : k == 0x3B ? 3 : k == 0x1C ? 4 : -1;
+            if (mode >= 0) return s_fcvt_vec(t, q, size & 1, u, mode, n, d, sc);
+        }
         if ((key == 0x2C || key == 0x6C || key == 0x2D || key == 0x6D || key == 0x2E) && !(size == 3 && !q && !sc)) {
             int kind = key == 0x2D ? 0 : key == 0x6C ? -1 : key == 0x2C ? -2 : key == 0x6D ? 3 : 4;
             if (kind < 0) {                         /* FCMGE/FCMGT #0: 0 <= n, 0 < n como m = 0 */
@@ -1565,11 +1569,40 @@ static int s_fcmpv(T *t, int q, int dbl, int kind, int abs, int n, int m, int d,
     s_st(t, d, r, q && !sc);
     return 1;
 }
-/* FCVTZS / FCVTZU de S/D para inteiro do mesmo tamanho (vetor ou escalar). O que o x86 não
- * converte igual ao ARM vai ao interpretador antes de gravar: resultado "indefinido" do cvtt
- * (NaN, fora da faixa, e o -2^31/-2^63 exato, raro), FCVTZU com sinal ligado ou >= 2^31/2^63, e
- * FPCR.FZ (IDC). IXC sai do PE do cvtt. Lanes de D: resultados em xmm1/xmm2 e só então V[d]. */
-static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc) {
+/* FCVT{N,P,M,Z,A}{S,U} de S/D para inteiro do mesmo tamanho (vetor ou escalar). mode: 0 N (par),
+ * 1 P (teto), 2 M (chão), 3 Z, 4 A (empate longe do zero). O valor é arredondado no FP (roundps/
+ * roundsd: o PE dá o IXC) e então truncado; A = trunc(x) ± 1 quando |x - trunc(x)| >= 0,5 (resto
+ * exato). O que o x86 não converte igual ao ARM vai ao interpretador antes de gravar: resultado
+ * "indefinido" do cvtt (NaN, fora da faixa, e o -2^31/-2^63 exato, raro), sem sinal com o bit de
+ * sinal ligado ou >= 2^31/2^63, e FPCR.FZ (IDC). Lanes de D: resultados em xmm1/xmm2 e só então V[d]. */
+static void s_fround(T *t, int dbl, int packed, int x, int mode) {   /* x = arredondado(x); usa xmm3..xmm5 */
+    if (mode == 3 && !packed) return;               /* Z: o cvtt já trunca */
+    int kind = (packed ? 2 : 0) + dbl;
+    if (mode != 4) {
+        static const int rc[4] = { 0, 2, 1, 3 };    /* N par, P teto, M chão, Z trunca */
+        static const unsigned op[4] = { 0x0A, 0x0B, 0x08, 0x09 };
+        xop3(B, XF_66, 0x3A, op[kind], x, XR(x)); xe8(B, (a64_u8)rc[mode]);
+        return;
+    }
+    int ps = dbl ? XF_66 : 0, sd = packed ? ps : dbl ? XF_F2 : XF_F3;
+    static const unsigned op[4] = { 0x0A, 0x0B, 0x08, 0x09 };
+    x_movdqa_ld(B, 3, XR(x));
+    xop3(B, XF_66, 0x3A, op[kind], x, XR(x)); xe8(B, 3);   /* x = trunc */
+    xop2(B, sd, 0x5C, 3, XR(x));                   /* xmm3 = resto (exato) */
+    s_const(t, 4, dbl ? 0x3FE0000000000000ull : 0x3F0000003F000000ull);   /* 0,5 */
+    x_movdqa_ld(B, 5, XR(4));
+    xop2(B, ps, 0xC2, 5, XR(3)); xe8(B, 2);        /* xmm5 = 0,5 <= resto */
+    s_const(t, 4, dbl ? 0x3FF0000000000000ull : 0x3F8000003F800000ull);   /* 1,0 */
+    xop2(B, ps, 0x54, 5, XR(4));                    /* andps */
+    xop2(B, sd, 0x58, x, XR(5));                    /* x += 1 */
+    s_const(t, 4, dbl ? 0xBFE0000000000000ull : 0xBF000000BF000000ull);   /* -0,5 */
+    xop2(B, ps, 0xC2, 3, XR(4)); xe8(B, 2);        /* xmm3 = resto <= -0,5 */
+    s_const(t, 4, dbl ? 0x3FF0000000000000ull : 0x3F8000003F800000ull);
+    xop2(B, ps, 0x54, 3, XR(4));
+    xop2(B, sd, 0x5C, x, XR(3));                    /* x -= 1 */
+}
+static int s_fcvt_vec(T *t, int q, int dbl, int u, int mode, int n, int d, int sc) {
+    if (mode != 3 && !jit_g.sse41) return 0;
     fl_clobber(t);
     x_test_ri(B, 0, XM(RCPU, OFF_FPCR), 1u << 24);
     slow_if(t, CC_NE);
@@ -1586,6 +1619,7 @@ static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc) {
             x_test_ri(B, 0, XR(XAX), req);
             slow_if(t, CC_NE);
         }
+        if (mode != 3) s_fround(t, 0, 1, 0, mode);
         xop2(B, XF_F3, 0x5B, 0, XR(0));                         /* cvttps2dq */
         xop2(B, 0, 0xAE, 3, XM(XSP, 0));                        /* stmxcsr */
         t->mxclean = 0;
@@ -1604,6 +1638,7 @@ static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc) {
         x_mov_rm(B, 1, XAX, VOE(n, 8 * e));
         if (u) { x_mov_ri(B, XCX, 0x43DFFFFFFFFFFFFFull); x_alu_rr(B, 1, A_CMP, XAX, XCX); slow_if(t, CC_A); }
         xop2(B, XF_66 | XF_W, 0x6E, 0, XR(XAX));               /* movq xmm0, rax */
+        s_fround(t, 1, 0, 0, mode);
         xop2(B, XF_F2 | XF_W, 0x2C, XAX, XR(0));               /* cvttsd2si rax, xmm0 */
         t->mxclean = 0;
         if (!u) { x_alu_rr(B, 1, A_XOR, XCX, XCX); x_alu_rr(B, 1, A_SUB, XCX, XAX); slow_if(t, CC_O); }   /* rax = INT64_MIN */
@@ -1615,6 +1650,7 @@ static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc) {
     s_st(t, d, 1, !sc);
     return 1;
 }
+static int s_fcvtz_vec(T *t, int q, int dbl, int u, int n, int d, int sc) { return s_fcvt_vec(t, q, dbl, u, 3, n, d, sc); }
 /* SDOT / UDOT / USDOT / SUDOT: cada lane de 32 bits soma 4 produtos de bytes. Bytes alargados a
  * 16 bits (pmovsx/zxbw), pmaddwd soma pares (|produto| <= 2^16, sem saturar) e phaddd junta os
  * pares em quádruplas. sa/sb: n/m com sinal. lane >= 0: m é o grupo de 32 bits difundido. */
@@ -2753,7 +2789,10 @@ static int s_scalar_simd(T *t, a64_u32 w) {
         int n = (int)BITS(w, 9, 5), d = (int)(w & 31), u = (int)BIT(w, 29);
         if (op == 0x0B && !u) return s_iabs(t, 0, size, n, d, 1);
         if (op == 0x1D && !(size & 2)) return s_scvtf(t, 0, u, size, n, d, 1);
-        if ((size & 2) && op == 0x1B) return s_fcvtz_vec(t, 0, size & 1, u, n, d, 1);   /* FCVTZS FCVTZU escalares */
+        {                                           /* FCVT{N,P,M,Z,A}{S,U} escalares */
+            int k = ((size >> 1) << 5) | op, mode = k == 0x1A ? 0 : k == 0x3A ? 1 : k == 0x1B ? 2 : k == 0x3B ? 3 : k == 0x1C ? 4 : -1;
+            if (mode >= 0) return s_fcvt_vec(t, 0, size & 1, u, mode, n, d, 1);
+        }
         if (op == 0x07) return s_sqabsneg(t, 0, size, u, n, d, 1);                      /* SQABS SQNEG escalares */
         if ((size & 2) && (op == 0x0C || op == 0x0D || (op == 0x0E && !u)))   /* FCMxx #0 escalares */
             return s_misc_x(t, w & ~((1u << 28) | (1u << 30)), 1);
