@@ -61,8 +61,9 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
 | 7 Spotlight | ✅ (16 nov.); não executado em VM | `tools/agentes_host.c` **39/39** (predicado com `$time.*` e `InRange`), `tools/mdclitest.sh` **18/18** (mdfind, mdls, mdutil) |
 | 8 Apple Events, AppleScript, osascript | ✅ (16 nov.); não executado em VM | `tools/astest.c` **118/118** sob ASan (descritores, API C `AEDesc`, linguagem), `tools/osascripttest.sh` **18/18** |
 | 6 UserNotifications | ✅ (16 nov.); não executado em VM | `userland/tests-appkit/un_host.c` **49/49** sob ASan (gatilhos, calendário em hora local, Central, ações, persistência) |
-| 10 Login items | ✅ (16 nov.); painel dos Ajustes com a Camila | `tools/loginitemtest.c` 25/25, `tools/smlogintest.c` 16/16, `tools/smjobtest.c` 26/0; `init.c` com `zig -fsyntax-only` |
-| 4, 9, 12 | a fazer | — |
+| 10 Login items | ✅ (16 nov.); painel Ajustes > Itens de Início da Camila (PR #437) | `tools/loginitemtest.c` 25/25, `tools/smlogintest.c` 16/16, `tools/smjobtest.c` 26/0; `init.c` com `zig -fsyntax-only` |
+| 12 Launch Services: lsregister e quarentena | ✅ (16 nov.); não executado em VM | `tools/lsregistertest.sh` **11/11**, `tools/gatekeepertest.c` **11/11** |
+| 4, 9 | a fazer | — |
 
 ## Fase 1 — o que entrou (15 nov.)
 
@@ -208,4 +209,12 @@ login items, CloudKit/iCloud sem crash. Cada item só vira ✅ com teste de host
   lista (o usuário pode tirar) e do disco; `notFound` sem o ajudante ou o plist; erros `SMAppServiceErrorDomain`;
   `statusForLegacyURL:`; `openSystemSettingsLoginItems` abre `x-apple.systempreferences:com.apple.LoginItems-Settings.extension`.
 - Pedido à Camila: o painel Ajustes > Geral > Itens de Início (lista e interruptores de segundo plano) e a URL acima.
+
+## Fase 12 — lsregister e aviso de app baixado (16 nov.)
+
+- `MOS_LS_DUMP`, `MOS_LS_UNREGISTER` e `MOS_LS_RESCAN` no fim do enum (kernel/compat/launchsvc.c) e `/usr/bin/lsregister`
+  (`-dump`, registrar com `-R`, `-u`, `-kill`/`-r`/`-seed`, `-v`).
+- `kernel/compat/gatekeeper.c`: app com `com.apple.quarantine` sem a marca de aprovado (0x0040) abre o alerta
+  "“X” é um app baixado da Internet…" com o agente e a data; Abrir grava a marca e abre; Cancelar não abre.
+  O mOS não confere assinatura nem notarização (fase 4).
 
