@@ -3,22 +3,22 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Otavio (OpenGL, Metal, Core Animation) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**191** símbolos distintos.
+**193** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
+| CoreVideo.framework | `_kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey` | 8 | iina, krita, obs, rustdesk |
+| CoreVideo.framework | `_kCVImageBufferColorPrimaries_P22` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| CoreVideo.framework | `_CVBufferGetAttachments` | 6 | iina, krita, obs, telegram |
 | CoreVideo.framework | `_CVDisplayLinkSetCurrentCGDisplayFromOpenGLContext` | 6 | krita, love, openrct2, shotcut |
-| CoreVideo.framework | `_kCVImageBufferColorPrimaries_P22` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| CoreVideo.framework | `_kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey` | 6 | iina, krita, obs, shotcut |
-| CoreVideo.framework | `_CVBufferGetAttachments` | 5 | iina, krita, obs, vlc |
-| AppKit.framework | `_NSOpenGLGetOption` | 3 | bitwarden, monitorcontrol, mos |
-| AppKit.framework | `_NSOpenGLGetVersion` | 3 | bitwarden, monitorcontrol, mos |
-| AppKit.framework | `_NSOpenGLSetOption` | 3 | bitwarden, monitorcontrol, mos |
+| AppKit.framework | `_NSOpenGLGetOption` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| AppKit.framework | `_NSOpenGLGetVersion` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| AppKit.framework | `_NSOpenGLSetOption` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
 | CoreVideo.framework | `_CVImageBufferGetEncodedSize` | 3 | iina, obs, shotcut |
-| CoreVideo.framework | `_CVOpenGLTextureCacheCreate` | 2 | shotcut, wireshark-app |
-| CoreVideo.framework | `_CVOpenGLTextureCacheCreateTextureFromImage` | 2 | shotcut, wireshark-app |
-| CoreVideo.framework | `_CVOpenGLTextureCacheFlush` | 2 | shotcut, wireshark-app |
-| CoreVideo.framework | `_CVOpenGLTextureGetName` | 2 | shotcut, wireshark-app |
+| CoreVideo.framework | `_CVOpenGLTextureCacheCreate` | 3 | shotcut, telegram, wireshark-app |
+| CoreVideo.framework | `_CVOpenGLTextureCacheCreateTextureFromImage` | 3 | shotcut, telegram, wireshark-app |
+| CoreVideo.framework | `_CVOpenGLTextureCacheFlush` | 3 | shotcut, telegram, wireshark-app |
+| CoreVideo.framework | `_CVOpenGLTextureGetName` | 3 | shotcut, telegram, wireshark-app |
 | CoreVideo.framework | `_CVOpenGLTextureRelease` | 2 | shotcut, wireshark-app |
 | Metal.framework | `_OBJC_CLASS_$_MTLAccelerationStructureBoundingBoxGeometryDescriptor` | 2 | blender, utm |
 | Metal.framework | `_OBJC_CLASS_$_MTLAccelerationStructureTriangleGeometryDescriptor` | 2 | blender, utm |
@@ -41,7 +41,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | OpenGL.framework | `_gluUnProject` | 2 | lmms, openscad |
 | AppKit.framework | `_OBJC_CLASS_$_NSOpenGLLayer` | 1 | zoom |
 | AppKit.framework | `_OBJC_METACLASS_$_NSOpenGLLayer` | 1 | zoom |
+| CoreVideo.framework | `_CVOpenGLTextureGetTarget` | 1 | telegram |
 | CoreVideo.framework | `_kCVImageBufferChromaLocation_DV420` | 1 | vlc |
+| CoreVideo.framework | `_kCVPixelFormatOpenGLCompatibility` | 1 | telegram |
 | Metal.framework | `_MTLMakeShaderCacheWritableByAllUsers` | 1 | utm |
 | Metal.framework | `_MTLSetShaderCachePath` | 1 | utm |
 | Metal.framework | `_MTLTextureSwizzleChannelsToKey` | 1 | utm |

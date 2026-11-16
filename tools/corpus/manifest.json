@@ -1219,8 +1219,8 @@
       "id": "lm-studio",
       "nome": "LM Studio",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
-      "url": "https://installers.lmstudio.ai/darwin/x64/0.4.28-2/LM-Studio-0.4.28-2-x64.dmg",
-      "sha256": null,
+      "url": "https://installers.lmstudio.ai/darwin/arm64/0.4.28-2/LM-Studio-0.4.28-2-arm64.dmg",
+      "sha256": "f8be634f1eeabaa19d9004d6de8b8bf8cd805a22e34b1f9538d4d702cf884775",
       "cask": "lm-studio",
       "versao": "0.4.28,2",
       "tipo": "app",
@@ -1228,7 +1228,8 @@
       "rank_brew_365d": 83,
       "instalacoes_365d": 59510,
       "url_arm64": "https://installers.lmstudio.ai/darwin/arm64/0.4.28-2/LM-Studio-0.4.28-2-arm64.dmg",
-      "sha256_arm64": "f8be634f1eeabaa19d9004d6de8b8bf8cd805a22e34b1f9538d4d702cf884775"
+      "sha256_arm64": "f8be634f1eeabaa19d9004d6de8b8bf8cd805a22e34b1f9538d4d702cf884775",
+      "url_x86_64_404": "https://installers.lmstudio.ai/darwin/x64/0.4.28-2/LM-Studio-0.4.28-2-x64.dmg"
     },
     {
       "id": "karabiner-elements",
@@ -1453,13 +1454,14 @@
       "nome": "Google Drive",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
       "url": "https://dl.google.com/drive-file-stream/5-percent/GoogleDrive.dmg",
-      "sha256": null,
+      "sha256": "81133901d4dc794c5f736e862af69a89a34b5d79feab975e0b13fbd09fc1dcc0",
       "cask": "google-drive",
       "versao": "134.0.1",
       "tipo": "pkg",
       "homepage": "https://www.google.com/drive/",
       "rank_brew_365d": 113,
-      "instalacoes_365d": 44255
+      "instalacoes_365d": 44255,
+      "sha256_fixado_em": "2026-11-16"
     },
     {
       "id": "adobe-acrobat-reader",

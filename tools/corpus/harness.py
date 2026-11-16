@@ -418,6 +418,9 @@ def run_one(mc: Path, lib: Path, disco, app: dict, lib_arm64: Path | None = None
     if imagens_no_log(texto) == 0 and lib_arm64 is not None and lib_arm64.is_file():
         texto = roda_machocheck(mc, lib_arm64, discos_arm64 or [], bundle, report, "arm64")
         arch = "arm64"
+    if imagens_no_log(texto) == 0:
+        # .app sem nenhum Mach-O (Payload que o extrator abriu só em parte): é falha, não medida com 0 ausentes
+        raise SystemExit(f"{app['id']}: {bundle.relative_to(extracted)} sem imagem Mach-O x86_64 nem arm64")
     log.write_text(f"# arch {arch} bundle {bundle.relative_to(extracted)}\n" + texto, encoding="utf-8")
     return log
 

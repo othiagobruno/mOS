@@ -3,525 +3,800 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Ricardo (SwiftUI, Combine, UIKit) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**3447** símbolos distintos.
+**4540** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| Combine.framework | `_$s7Combine10PublishersO3MapVMn` | 15 | betterdisplay, clipy, cmux, coteditor |
-| Combine.framework | `_$s7Combine10PublishersO3MapVy_xq_GAA9PublisherAAMc` | 15 | betterdisplay, clipy, cmux, coteditor |
-| Combine.framework | `_$s7Combine9PublisherPAAE3mapyAA10PublishersO3MapVy_xqd__Gqd__6OutputQzclF` | 15 | betterdisplay, clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI11ControlSizeO5largeyA2CmFWC` | 13 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI17VerticalAlignmentV3topACvgZ` | 13 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI26NSViewRepresentableContextV11coordinator11CoordinatorQzvg` | 13 | betterdisplay, clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6IDViewVMn` | 13 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6VStackVMa` | 13 | 1password, betterdisplay, clipy, cmux |
-| Combine.framework | `_$s7Combine10PublishersO9MergeManyVy_xGAA9PublisherAAMc` | 12 | clipy, cmux, coteditor, ghostty |
-| Combine.framework | `_$s7Combine11CancellableMp` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI26NSViewRepresentableContextVMn` | 12 | clipy, cmux, coteditor, iina |
-| Combine.framework | `_$s6Output7Combine9PublisherPTl` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine06CustomA21IdentifierConvertibleMp` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine06CustomA21IdentifierConvertibleP07combineC0AA0aC0VvgTq` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine06CustomA21IdentifierConvertiblePAARlzCrlE07combineC0AA0aC0Vvg` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine10PublishersO9MergeManyVMn` | 11 | clipy, cmux, coteditor, ghostty |
-| Combine.framework | `_$s7Combine10SubscriberMp` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine10SubscriberP7receive12subscriptionyAA12Subscription_p_tFTj` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine10SubscriberP7receiveyAA11SubscribersO6DemandV5InputQzFTj` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine11CancellableP6cancelyyFTq` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine12SubscriptionMp` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine12SubscriptionP7requestyyAA11SubscribersO6DemandVFTq` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine12SubscriptionPAA06CustomA21IdentifierConvertibleTb` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine12SubscriptionPAA11CancellableTb` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine14AnyCancellableCSHAAMc` | 11 | clipy, cmux, coteditor, ghostty |
-| Combine.framework | `_$s7Combine9PublisherMp` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine9PublisherP7FailureAC_s5ErrorTn` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Combine9PublisherP7receive10subscriberyqd___tAA10SubscriberRd__7FailureQyd__AGRtz5InputQyd__6OutputRtzlFTq` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| Combine.framework | `_$s7Failure7Combine9PublisherPTl` | 11 | clipy, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s5Value7SwiftUI13PreferenceKeyPTl` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyMp` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyP12defaultValue0F0QzvgZTq` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyP17_isReadableByHostSbvgZTq` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyP22_includesRemovedValuesSbvgZTq` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyP6reduce5value9nextValuey0H0Qzz_AHyXEtFZTq` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyPAAE17_isReadableByHostSbvgZ` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyPAAE22_includesRemovedValuesSbvgZ` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI21PinnedScrollableViewsVMa` | 11 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI21PinnedScrollableViewsVs9OptionSetAAMc` | 11 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI25_PreferenceActionModifierVMn` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI25_PreferenceActionModifierVyxGAA04ViewE0AAMc` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI26_PreferenceWritingModifierVMn` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetV8rawValueAEs4Int8V_tcfC` | 11 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13textSelectionyQrqd__AA17TextSelectabilityRd__lF` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13textSelectionyQrqd__AA17TextSelectabilityRd__lFQOMQ` | 11 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI6IDViewVyxq_GAA4ViewAAMc` | 11 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6PickerV9selection5label7contentACyxq_q0_GAA7BindingVyq_G_xq0_yXEtcfC` | 11 | 1password, clipy, cmux, coteditor |
-| SwiftUI.framework | `_$sSi7SwiftUI18_FormatSpecifiableAAWP` | 11 | 1password, betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI15ScrollViewProxyV8scrollTo_6anchoryx_AA9UnitPointVSgtSHRzlF` | 10 | betterdisplay, cmux, ghostty, iina |
-| SwiftUI.framework | `_$s7SwiftUI15ScrollViewProxyVMa` | 10 | betterdisplay, cmux, ghostty, iina |
-| SwiftUI.framework | `_$s7SwiftUI15ScrollViewProxyVMn` | 10 | betterdisplay, cmux, ghostty, iina |
-| SwiftUI.framework | `_$s7SwiftUI16ScrollViewReaderVMn` | 10 | betterdisplay, cmux, ghostty, iina |
-| SwiftUI.framework | `_$s7SwiftUI16TagValueTraitKeyVMn` | 10 | betterdisplay, clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI19HorizontalAlignmentV8trailingACvgZ` | 10 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI24EnabledTextSelectabilityVAA0dE0AAWP` | 10 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI24EnabledTextSelectabilityVACycfC` | 10 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI24EnabledTextSelectabilityVMa` | 10 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI24EnabledTextSelectabilityVMn` | 10 | 1password, betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4LinkVMn` | 10 | 1password, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI6ButtonVMa` | 10 | 1password, betterdisplay, cmux, linearmouse |
-| Combine.framework | `_$s7Combine10PublishersO8DebounceVMn` | 9 | betterdisplay, cmux, coteditor, ghostty |
-| Combine.framework | `_$s7Combine10PublishersO8DebounceVy_xq_GAA9PublisherAAMc` | 9 | betterdisplay, cmux, coteditor, ghostty |
-| Combine.framework | `_$s7Combine14AnyCancellableCSQAAMc` | 9 | clipy, cmux, coteditor, ghostty |
-| Combine.framework | `_$s7Combine4JustVMn` | 9 | betterdisplay, clipy, cmux, coteditor |
-| Combine.framework | `_$s7Combine4JustVyACyxGxcfC` | 9 | betterdisplay, clipy, cmux, coteditor |
-| Combine.framework | `_$s7Combine9PublisherPAAE8debounce3for9scheduler7optionsAA10PublishersO8DebounceVy_xqd__G17SchedulerTimeType_6StrideQYd___qd__0I7OptionsQyd__SgtAA0I0Rd__lF` | 9 | betterdisplay, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7Combine16ObservableObjectP7SwiftUIE16environmentStores15WritableKeyPathCyAD17EnvironmentValuesVxSgGvgZ` | 9 | 1password, betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI10ButtonRoleV6cancelACvgZ` | 9 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI10ButtonRoleVMa` | 9 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI10ButtonRoleVMn` | 9 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI16ScrollViewReaderVyxGAA0D0AAMc` | 9 | betterdisplay, cmux, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentObjectV5errors5NeverOyF` | 9 | 1password, betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentObjectVACyxGycfC` | 9 | 1password, betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentObjectVMn` | 9 | 1password, betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4FontV6title2ACvgZ` | 9 | betterdisplay, cmux, iina, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11toggleStyleyQrqd__AA06ToggleE0Rd__lF` | 9 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11toggleStyleyQrqd__AA06ToggleE0Rd__lFQOMQ` | 9 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16keyboardShortcutyQrAA08KeyboardE0VF` | 9 | betterdisplay, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16keyboardShortcutyQrAA08KeyboardE0VFQOMQ` | 9 | betterdisplay, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE22accessibilityAddTraitsyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA0iF0VF` | 9 | 1password, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI6SpacerVN` | 9 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI17VerticalAlignmentV3topACvgZ` | 18 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI26NSViewRepresentableContextV11coordinator11CoordinatorQzvg` | 18 | betterdisplay, clipy, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI6IDViewVMn` | 18 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI26NSViewRepresentableContextVMn` | 17 | clipy, cmux, coteditor, iina |
+| SwiftUI.framework | `_$s7SwiftUI6VStackVMa` | 17 | 1password, betterdisplay, clipy, cmux |
+| Combine.framework | `_$s7Combine10PublishersO3MapVMn` | 16 | betterdisplay, clipy, cmux, coteditor |
+| Combine.framework | `_$s7Combine10PublishersO3MapVy_xq_GAA9PublisherAAMc` | 16 | betterdisplay, clipy, cmux, coteditor |
+| Combine.framework | `_$s7Combine9PublisherPAAE3mapyAA10PublishersO3MapVy_xqd__Gqd__6OutputQzclF` | 16 | betterdisplay, clipy, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI11ControlSizeO5largeyA2CmFWC` | 16 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetV8rawValueAEs4Int8V_tcfC` | 16 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI6IDViewVyxq_GAA4ViewAAMc` | 16 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI6PickerV9selection5label7contentACyxq_q0_GAA7BindingVyq_G_xq0_yXEtcfC` | 16 | 1password, clipy, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI15ScrollViewProxyV8scrollTo_6anchoryx_AA9UnitPointVSgtSHRzlF` | 15 | betterdisplay, cmux, ghostty, iina |
+| SwiftUI.framework | `_$s7SwiftUI15ScrollViewProxyVMa` | 15 | betterdisplay, cmux, ghostty, iina |
+| SwiftUI.framework | `_$s7SwiftUI15ScrollViewProxyVMn` | 15 | betterdisplay, cmux, ghostty, iina |
+| SwiftUI.framework | `_$s7SwiftUI16ScrollViewReaderVMn` | 15 | betterdisplay, cmux, ghostty, iina |
+| SwiftUI.framework | `_$s7SwiftUI21PinnedScrollableViewsVMa` | 15 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI21PinnedScrollableViewsVs9OptionSetAAMc` | 15 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s5Value7SwiftUI13PreferenceKeyPTl` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyMp` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyP12defaultValue0F0QzvgZTq` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyP17_isReadableByHostSbvgZTq` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyP22_includesRemovedValuesSbvgZTq` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyP6reduce5value9nextValuey0H0Qzz_AHyXEtFZTq` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyPAAE17_isReadableByHostSbvgZ` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI13PreferenceKeyPAAE22_includesRemovedValuesSbvgZ` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI16ScrollViewReaderVyxGAA0D0AAMc` | 14 | betterdisplay, cmux, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI16TagValueTraitKeyVMn` | 14 | betterdisplay, clipy, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI19HorizontalAlignmentV8trailingACvgZ` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI25_PreferenceActionModifierVMn` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI26_PreferenceWritingModifierVMn` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11toggleStyleyQrqd__AA06ToggleE0Rd__lF` | 14 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11toggleStyleyQrqd__AA06ToggleE0Rd__lFQOMQ` | 14 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13textSelectionyQrqd__AA17TextSelectabilityRd__lF` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13textSelectionyQrqd__AA17TextSelectabilityRd__lFQOMQ` | 14 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$sSi7SwiftUI18_FormatSpecifiableAAWP` | 14 | 1password, betterdisplay, cmux, ghostty |
+| Combine.framework | `_$s7Combine10PublishersO9MergeManyVy_xGAA9PublisherAAMc` | 13 | clipy, cmux, coteditor, ghostty |
+| Combine.framework | `_$s7Combine11CancellableMp` | 13 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine14AnyCancellableCSHAAMc` | 13 | clipy, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI10ButtonRoleV6cancelACvgZ` | 13 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI10ButtonRoleVMa` | 13 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI10ButtonRoleVMn` | 13 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI24EnabledTextSelectabilityVAA0dE0AAWP` | 13 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI24EnabledTextSelectabilityVACycfC` | 13 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI24EnabledTextSelectabilityVMa` | 13 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI24EnabledTextSelectabilityVMn` | 13 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI4LinkVMn` | 13 | 1password, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$sSo7NSColorC7SwiftUIEyAbC5ColorVcfC` | 13 | cmux, coteditor, ghostty, karabiner-elements |
+| Combine.framework | `_$s6Output7Combine9PublisherPTl` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine06CustomA21IdentifierConvertibleMp` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine06CustomA21IdentifierConvertibleP07combineC0AA0aC0VvgTq` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine06CustomA21IdentifierConvertiblePAARlzCrlE07combineC0AA0aC0Vvg` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine10PublishersO9MergeManyVMn` | 12 | clipy, cmux, coteditor, ghostty |
+| Combine.framework | `_$s7Combine10SubscriberMp` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine10SubscriberP7receive12subscriptionyAA12Subscription_p_tFTj` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine10SubscriberP7receiveyAA11SubscribersO6DemandV5InputQzFTj` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine11CancellableP6cancelyyFTq` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine12SubscriptionMp` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine12SubscriptionP7requestyyAA11SubscribersO6DemandVFTq` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine12SubscriptionPAA06CustomA21IdentifierConvertibleTb` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine12SubscriptionPAA11CancellableTb` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine9PublisherMp` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine9PublisherP7FailureAC_s5ErrorTn` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Combine9PublisherP7receive10subscriberyqd___tAA10SubscriberRd__7FailureQyd__AGRtz5InputQyd__6OutputRtzlFTq` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| Combine.framework | `_$s7Failure7Combine9PublisherPTl` | 12 | clipy, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7Combine16ObservableObjectP7SwiftUIE16environmentStores15WritableKeyPathCyAD17EnvironmentValuesVxSgGvgZ` | 12 | 1password, betterdisplay, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentObjectV5errors5NeverOyF` | 12 | 1password, betterdisplay, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentObjectVACyxGycfC` | 12 | 1password, betterdisplay, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentObjectVMn` | 12 | 1password, betterdisplay, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI25_PreferenceActionModifierVyxGAA04ViewE0AAMc` | 12 | 1password, betterdisplay, clipy, cmux |
+| SwiftUI.framework | `_$s7SwiftUI4FontV5titleACvgZ` | 12 | betterdisplay, coteditor, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6title2ACvgZ` | 12 | betterdisplay, cmux, iina, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16keyboardShortcutyQrAA08KeyboardE0VF` | 12 | betterdisplay, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16keyboardShortcutyQrAA08KeyboardE0VFQOMQ` | 12 | betterdisplay, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV13RGBColorSpaceO10sRGBLinearyA2EmFWC` | 12 | betterdisplay, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI5LabelVA2A4TextVRszAA5ImageVRs_rlE_06systemE0ACyAeGGqd___SStcSyRd__lufC` | 12 | cmux, coteditor, iina, karabiner-elements |
+| Combine.framework | `_$s7Combine14AnyCancellableCSQAAMc` | 11 | clipy, cmux, coteditor, ghostty |
+| Combine.framework | `_$s7Combine25ObservableObjectPublisherC4sendyyF` | 11 | cmux, jordanbaird-ice, linearmouse, localsend |
+| SwiftUI.framework | `_$s7SwiftUI10ButtonRoleV11destructiveACvgZ` | 11 | betterdisplay, cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI10LazyVStackV9alignment7spacing11pinnedViews7contentACyxGAA19HorizontalAlignmentV_12CoreGraphics7CGFloatVSgAA016PinnedScrollableH0VxyXEtcfC` | 11 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI10LazyVStackVMn` | 11 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI11ControlSizeO4miniyA2CmFWC` | 11 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV12cancelActionACvgZ` | 11 | betterdisplay, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI17SwitchToggleStyleVAA0dE0AAMc` | 11 | betterdisplay, cmux, jordanbaird-ice, karabiner-elements |
+| SwiftUI.framework | `_$s7SwiftUI17SwitchToggleStyleVACycfC` | 11 | betterdisplay, cmux, jordanbaird-ice, karabiner-elements |
+| SwiftUI.framework | `_$s7SwiftUI17SwitchToggleStyleVMa` | 11 | betterdisplay, cmux, jordanbaird-ice, karabiner-elements |
+| SwiftUI.framework | `_$s7SwiftUI17SwitchToggleStyleVMn` | 11 | betterdisplay, cmux, jordanbaird-ice, karabiner-elements |
+| SwiftUI.framework | `_$s7SwiftUI4FormV7contentACyxGxyXE_tcfC` | 11 | cmux, coteditor, linearmouse, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FormVMn` | 11 | cmux, coteditor, linearmouse, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FormVyxGAA4ViewAAMc` | 11 | cmux, coteditor, linearmouse, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10labelStyleyQrqd__AA05LabelE0Rd__lF` | 11 | betterdisplay, clipy, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10labelStyleyQrqd__AA05LabelE0Rd__lFQOMQ` | 11 | betterdisplay, clipy, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenu9menuItemsQrqd__yXE_tAaBRd__lF` | 11 | betterdisplay, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenu9menuItemsQrqd__yXE_tAaBRd__lFQOMQ` | 11 | betterdisplay, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE22accessibilityAddTraitsyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA0iF0VF` | 11 | 1password, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI6ButtonVMa` | 11 | 1password, betterdisplay, cmux, linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI6SpacerVN` | 11 | 1password, betterdisplay, cmux, coteditor |
+| Combine.framework | `_$s7Combine10PublishersO8DebounceVMn` | 10 | betterdisplay, cmux, coteditor, ghostty |
+| Combine.framework | `_$s7Combine10PublishersO8DebounceVy_xq_GAA9PublisherAAMc` | 10 | betterdisplay, cmux, coteditor, ghostty |
+| Combine.framework | `_$s7Combine4JustVMn` | 10 | betterdisplay, clipy, cmux, coteditor |
+| Combine.framework | `_$s7Combine4JustVyACyxGxcfC` | 10 | betterdisplay, clipy, cmux, coteditor |
+| Combine.framework | `_$s7Combine9PublisherPAAE8debounce3for9scheduler7optionsAA10PublishersO8DebounceVy_xqd__G17SchedulerTimeType_6StrideQYd___qd__0I7OptionsQyd__SgtAA0I0Rd__lF` | 10 | betterdisplay, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s5Value7SwiftUI14EnvironmentKeyPTl` | 10 | 1password, clipy, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI13AnyShapeStyleVyACxcAA0dE0RzlufC` | 10 | 1password, betterdisplay, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI14EnvironmentKeyMp` | 10 | 1password, clipy, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI14EnvironmentKeyP12defaultValue0F0QzvgZTq` | 10 | 1password, clipy, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI15LinkButtonStyleVAA09PrimitivedE0AAMc` | 10 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15LinkButtonStyleVACycfC` | 10 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15LinkButtonStyleVMa` | 10 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15LinkButtonStyleVMn` | 10 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVy5ValueQzxmcAA0C3KeyRzluig` | 10 | 1password, clipy, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI18_OpacityShapeStyleVMn` | 10 | betterdisplay, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI19HorizontalAlignmentVMn` | 10 | 1password, betterdisplay, clipy, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI25_AlignmentWritingModifierVMn` | 10 | 1password, clipy, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI28BorderedProminentButtonStyleVAA09PrimitiveeF0AAMc` | 10 | clipy, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI28BorderedProminentButtonStyleVACycfC` | 10 | clipy, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI28BorderedProminentButtonStyleVMa` | 10 | clipy, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI28BorderedProminentButtonStyleVMn` | 10 | clipy, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FontV10largeTitleACvgZ` | 10 | clipy, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6title3ACvgZ` | 10 | betterdisplay, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI4LinkV11destination5labelACyxG10Foundation3URLV_xyXEtcfC` | 10 | 1password, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10fontWeightyQrAA4FontV0E0VSgF` | 10 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10fontWeightyQrAA4FontV0E0VSgFQOMQ` | 10 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9focusableyQrSbF` | 10 | 1password, betterdisplay, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9focusableyQrSbFQOMQ` | 10 | 1password, betterdisplay, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI8GridItemV4SizeOMa` | 10 | betterdisplay, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI8GridItemVMa` | 10 | betterdisplay, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI8GridItemVMn` | 10 | betterdisplay, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI8GridItemV_7spacing9alignmentA2C4SizeO_12CoreGraphics7CGFloatVSgAA9AlignmentVSgtcfC` | 10 | betterdisplay, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI9LazyVGridV7columns9alignment7spacing11pinnedViews7contentACyxGSayAA8GridItemVG_AA19HorizontalAlignmentV12CoreGraphics7CGFloatVSgAA016PinnedScrollableI0VxyXEtcfC` | 10 | betterdisplay, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI9LazyVGridVMn` | 10 | betterdisplay, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI9RectangleV6_InsetVMn` | 10 | 1password, betterdisplay, clipy, cmux |
+| Combine.framework | `_$s7Combine10PublishersO10MapKeyPathVy_xq_GAA9PublisherAAMc` | 9 | clipy, coteditor, ghostty, jordanbaird-ice |
+| Combine.framework | `_$s7Combine9PublisherPAAE3mapyAA10PublishersO10MapKeyPathVy_xqd__Gs0fG0Cy6OutputQzqd__GlF` | 9 | clipy, coteditor, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI10LazyVStackVyxGAA4ViewAAMc` | 9 | 1password, cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI13_TrimmedShapeVMn` | 9 | 1password, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV5shiftACvgZ` | 9 | cmux, coteditor, ghostty, linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI14ZIndexTraitKeyVMn` | 9 | betterdisplay, cmux, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI15BackgroundStyleVMn` | 9 | betterdisplay, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI16GroupedFormStyleVAA0dE0AAMc` | 9 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI16GroupedFormStyleVMa` | 9 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI16GroupedFormStyleVMn` | 9 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVy5ValueQzxmcAA0C3KeyRzluis` | 9 | 1password, clipy, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI18ColorRenderingModeO9nonLinearyA2CmFWC` | 9 | cmux, jordanbaird-ice, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18ColorRenderingModeOMa` | 9 | cmux, jordanbaird-ice, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyVMn` | 9 | betterdisplay, clipy, ghostty, linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI18_TaskValueModifierVMa` | 9 | 1password, cmux, ghostty, maccy |
+| SwiftUI.framework | `_$s7SwiftUI19BorderedButtonStyleVAA09PrimitivedE0AAMc` | 9 | cmux, coteditor, linearmouse, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19BorderedButtonStyleVACycfC` | 9 | cmux, coteditor, linearmouse, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19BorderedButtonStyleVMa` | 9 | cmux, coteditor, linearmouse, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19BorderedButtonStyleVMn` | 9 | cmux, coteditor, linearmouse, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleV8tertiaryACvgZ` | 9 | cmux, coteditor, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI4LinkVyxGAA4ViewAAMc` | 9 | 1password, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11onDisappear7performQryycSg_tF` | 9 | 1password, cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9formStyleyQrqd__AA04FormE0Rd__lF` | 9 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9formStyleyQrqd__AA04FormE0Rd__lFQOMQ` | 9 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9menuStyleyQrqd__AA04MenuE0Rd__lF` | 9 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9menuStyleyQrqd__AA04MenuE0Rd__lFQOMQ` | 9 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI6ButtonV4role6action5labelACyxGAA0C4RoleVSg_yycxyXEtcfC` | 9 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI9FormStylePA2A07GroupedcD0VRszrlE7groupedAEvgZ` | 9 | betterdisplay, cmux, coteditor, openclaw |
+| Combine.framework | `_$s7Combine10PublishersO0A6LatestVMn` | 8 | clipy, cmux, ghostty, jordanbaird-ice |
+| Combine.framework | `_$s7Combine10PublishersO0A6LatestVy_xq_GAA9PublisherAAMc` | 8 | clipy, cmux, ghostty, jordanbaird-ice |
 | Combine.framework | `_$s7Combine10PublishersO3MapVMa` | 8 | clipy, linearmouse, localsend, maccy |
 | Combine.framework | `_$s7Combine10PublishersO9MergeManyVyAEy_xGqd__c7ElementQyd__RszSTRd__lufC` | 8 | clipy, cmux, coteditor, ghostty |
-| Combine.framework | `_$s7Combine25ObservableObjectPublisherC4sendyyF` | 8 | cmux, jordanbaird-ice, linearmouse, localsend |
+| Combine.framework | `_$s7Combine11SubscribersO6DemandV9unlimitedAEvgZ` | 8 | clipy, cmux, coteditor, drawio |
+| Combine.framework | `_$s7Combine18PassthroughSubjectCyxq_GAA9PublisherAAMc` | 8 | betterdisplay, cmux, orbstack, raycast |
 | Combine.framework | `_$s7Combine25ObservableObjectPublisherCMa` | 8 | betterdisplay, cmux, jordanbaird-ice, linearmouse |
 | Combine.framework | `_$s7Combine5EmptyV19completeImmediatelyACyxq_GSb_tcfC` | 8 | betterdisplay, cmux, linearmouse, localsend |
 | Combine.framework | `_$s7Combine5EmptyVMn` | 8 | betterdisplay, cmux, linearmouse, localsend |
 | Combine.framework | `_$s7Combine5EmptyVyxq_GAA9PublisherAAMc` | 8 | betterdisplay, cmux, linearmouse, localsend |
-| SwiftUI.framework | `_$s5Value7SwiftUI14EnvironmentKeyPTl` | 8 | 1password, clipy, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI10LazyVStackV9alignment7spacing11pinnedViews7contentACyxGAA19HorizontalAlignmentV_12CoreGraphics7CGFloatVSgAA016PinnedScrollableH0VxyXEtcfC` | 8 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI10LazyVStackVMn` | 8 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI14EnvironmentKeyMp` | 8 | 1password, clipy, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI14EnvironmentKeyP12defaultValue0F0QzvgZTq` | 8 | 1password, clipy, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV12cancelActionACvgZ` | 8 | betterdisplay, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVy5ValueQzxmcAA0C3KeyRzluig` | 8 | 1password, clipy, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyVMn` | 8 | betterdisplay, clipy, ghostty, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI19HorizontalAlignmentVMn` | 8 | 1password, betterdisplay, clipy, coteditor |
+| Combine.framework | `_$s7Combine9PublisherPAAE13combineLatestyAA10PublishersO0aD0Vy_xqd__Gqd__AaBRd__7FailureQyd__AJRtzlF` | 8 | clipy, cmux, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s4Body7SwiftUI3AppPTl` | 8 | clipy, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACySSGSS_SSSo14NSUserDefaultsCSgtcSSRszlufC` | 8 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACySbGSb_SSSo14NSUserDefaultsCSgtcSbRszlufC` | 8 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValuexvg` | 8 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValuexvs` | 8 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageV14projectedValueAA7BindingVyxGvg` | 8 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageVMn` | 8 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10FocusStateVACyqd__SgGycADRszSHRd__lufC` | 8 | 1password, cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI11ControlSizeO7regularyA2CmFWC` | 8 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI11DragGestureV5ValueV11translationSo6CGSizeVvg` | 8 | cmux, coteditor, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI11TableColumnVMn` | 8 | coteditor, orbstack, pearcleaner, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI13OpenURLActionVMa` | 8 | clipy, cmux, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI13OpenURLActionVMn` | 8 | clipy, cmux, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI14EnvironmentKeyP12_valuesEqualySb5ValueQz_AFtFZTq` | 8 | 1password, cmux, ghostty, maccy |
+| SwiftUI.framework | `_$s7SwiftUI16SidebarListStyleVAA0dE0AAWP` | 8 | cmux, iina, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI16SidebarListStyleVACycfC` | 8 | cmux, iina, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI16SidebarListStyleVMa` | 8 | cmux, iina, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI16SidebarListStyleVMn` | 8 | cmux, iina, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentObjectV14projectedValueAC7WrapperVyx_Gvg` | 8 | betterdisplay, cmux, jordanbaird-ice, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentObjectV7WrapperV13dynamicMemberAA7BindingVyqd__Gs24ReferenceWritableKeyPathCyxqd__G_tcluig` | 8 | betterdisplay, cmux, jordanbaird-ice, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV7openURLAA13OpenURLActionVvg` | 8 | clipy, cmux, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV7openURLAA13OpenURLActionVvpMV` | 8 | clipy, cmux, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV7openURLAA13OpenURLActionVvs` | 8 | clipy, cmux, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI18IconOnlyLabelStyleVAA0eF0AAMc` | 8 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18IconOnlyLabelStyleVACycfC` | 8 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18IconOnlyLabelStyleVMa` | 8 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18IconOnlyLabelStyleVMn` | 8 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19CheckboxToggleStyleVAA0dE0AAMc` | 8 | cmux, linearmouse, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI19CheckboxToggleStyleVACycfC` | 8 | cmux, linearmouse, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI19CheckboxToggleStyleVMa` | 8 | cmux, linearmouse, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI19CheckboxToggleStyleVMn` | 8 | cmux, linearmouse, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI19TableForEachContentVMn` | 8 | coteditor, orbstack, pearcleaner, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI21RadioGroupPickerStyleVAA0eF0AAWP` | 8 | betterdisplay, coteditor, karabiner-elements, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI21RadioGroupPickerStyleVACycfC` | 8 | betterdisplay, coteditor, karabiner-elements, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI21RadioGroupPickerStyleVMa` | 8 | betterdisplay, coteditor, karabiner-elements, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI21RadioGroupPickerStyleVMn` | 8 | betterdisplay, coteditor, karabiner-elements, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI22LayoutPriorityTraitKeyVMn` | 8 | 1password, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI22TitleAndIconLabelStyleVAA0fG0AAMc` | 8 | betterdisplay, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI22TitleAndIconLabelStyleVACycfC` | 8 | betterdisplay, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI22TitleAndIconLabelStyleVMa` | 8 | betterdisplay, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI22TitleAndIconLabelStyleVMn` | 8 | betterdisplay, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI23TupleTableColumnContentVMn` | 8 | coteditor, orbstack, pearcleaner, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI23TupleTableColumnContentVyxq_q0_GAA0deF0AAMc` | 8 | coteditor, orbstack, pearcleaner, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI26AccessibilityChildBehaviorV7containACvgZ` | 8 | clipy, cmux, coteditor, ghostty |
 | SwiftUI.framework | `_$s7SwiftUI26_PreferenceWritingModifierVyxGAA04ViewE0AAMc` | 8 | 1password, betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4FontV5titleACvgZ` | 8 | betterdisplay, coteditor, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4FormV7contentACyxGxyXE_tcfC` | 8 | cmux, coteditor, linearmouse, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4FormVMn` | 8 | cmux, coteditor, linearmouse, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4FormVyxGAA4ViewAAMc` | 8 | cmux, coteditor, linearmouse, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4LinkV11destination5labelACyxG10Foundation3URLV_xyXEtcfC` | 8 | 1password, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10fontWeightyQrAA4FontV0E0VSgF` | 8 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10fontWeightyQrAA4FontV0E0VSgFQOMQ` | 8 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10labelStyleyQrqd__AA05LabelE0Rd__lF` | 8 | betterdisplay, clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10labelStyleyQrqd__AA05LabelE0Rd__lFQOMQ` | 8 | betterdisplay, clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI5LabelVA2A4TextVRszAA5ImageVRs_rlE_06systemE0ACyAeGGqd___SStcSyRd__lufC` | 8 | cmux, coteditor, iina, maccy |
-| SwiftUI.framework | `_$sSo7NSColorC7SwiftUIEyAbC5ColorVcfC` | 8 | cmux, coteditor, ghostty, maccy |
-| Combine.framework | `_$s7Combine10PublishersO0A6LatestVMn` | 7 | clipy, cmux, ghostty, jordanbaird-ice |
-| Combine.framework | `_$s7Combine10PublishersO0A6LatestVy_xq_GAA9PublisherAAMc` | 7 | clipy, cmux, ghostty, jordanbaird-ice |
-| Combine.framework | `_$s7Combine10PublishersO10MapKeyPathVy_xq_GAA9PublisherAAMc` | 7 | clipy, coteditor, ghostty, jordanbaird-ice |
-| Combine.framework | `_$s7Combine11SubscribersO6DemandV9unlimitedAEvgZ` | 7 | clipy, cmux, coteditor, drawio |
+| SwiftUI.framework | `_$s7SwiftUI28NSApplicationDelegateAdaptorVMa` | 8 | clipy, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI28NSApplicationDelegateAdaptorVMn` | 8 | clipy, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI28NSApplicationDelegateAdaptorVyACyxGxmcfC` | 8 | clipy, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI3AppMp` | 8 | clipy, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI3AppP4BodyAC_AA5SceneTn` | 8 | clipy, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI3AppP4body4BodyQzvgTq` | 8 | clipy, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI3AppPAAE4mainyyFZ` | 8 | clipy, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI3AppPxycfCTq` | 8 | clipy, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI4AxisO3SetV8rawValueAEs4Int8V_tcfC` | 8 | 1password, clipy, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7focused_6equalsQrAA10FocusStateV7BindingVyqd___G_qd__tSHRd__lF` | 8 | 1password, cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7focused_6equalsQrAA10FocusStateV7BindingVyqd___G_qd__tSHRd__lFQOMQ` | 8 | 1password, cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI5SceneMp` | 8 | clipy, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI5TableVMn` | 8 | coteditor, orbstack, pearcleaner, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI6ButtonVA2A4TextVRszrlE_4role6actionACyAEGAA18LocalizedStringKeyV_AA0C4RoleVSgyyctcfC` | 8 | betterdisplay, maccy, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI6ButtonVA2A4TextVRszrlE_4role6actionACyAEGqd___AA0C4RoleVSgyyctcSyRd__lufC` | 8 | 1password, cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI6ToggleVA2A4TextVRszrlE_4isOnACyAEGqd___AA7BindingVySbGtcSyRd__lufC` | 8 | cmux, coteditor, linearmouse, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8MaterialVMa` | 8 | cmux, coteditor, jordanbaird-ice, openclaw |
+| Combine.framework | `_$s7Combine10PublishersO10MapKeyPathVMn` | 7 | coteditor, ghostty, jordanbaird-ice, swiftbar |
+| Combine.framework | `_$s7Combine10PublishersO11AutoconnectCMn` | 7 | betterdisplay, ghostty, jordanbaird-ice, linearmouse |
+| Combine.framework | `_$s7Combine10PublishersO11AutoconnectCy_xGAA9PublisherAAMc` | 7 | betterdisplay, ghostty, jordanbaird-ice, linearmouse |
+| Combine.framework | `_$s7Combine10PublishersO12HandleEventsVMn` | 7 | betterdisplay, cmux, ghostty, linearmouse |
+| Combine.framework | `_$s7Combine10PublishersO12HandleEventsVy_xGAA9PublisherAAMc` | 7 | betterdisplay, cmux, ghostty, linearmouse |
+| Combine.framework | `_$s7Combine20ConnectablePublisherPAAE11autoconnectAA10PublishersO11AutoconnectCy_xGyF` | 7 | betterdisplay, ghostty, jordanbaird-ice, linearmouse |
 | Combine.framework | `_$s7Combine4JustVyxGAA9PublisherAAMc` | 7 | betterdisplay, clipy, cmux, coteditor |
-| Combine.framework | `_$s7Combine9PublisherPAAE13combineLatestyAA10PublishersO0aD0Vy_xqd__Gqd__AaBRd__7FailureQyd__AJRtzlF` | 7 | clipy, cmux, ghostty, jordanbaird-ice |
-| Combine.framework | `_$s7Combine9PublisherPAAE3mapyAA10PublishersO10MapKeyPathVy_xqd__Gs0fG0Cy6OutputQzqd__GlF` | 7 | clipy, coteditor, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI10ButtonRoleV11destructiveACvgZ` | 7 | betterdisplay, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI11ControlSizeO4miniyA2CmFWC` | 7 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI13AnyShapeStyleVyACxcAA0dE0RzlufC` | 7 | 1password, betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI14ZIndexTraitKeyVMn` | 7 | betterdisplay, cmux, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI16GroupedFormStyleVAA0dE0AAMc` | 7 | betterdisplay, cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI16GroupedFormStyleVMa` | 7 | betterdisplay, cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI16GroupedFormStyleVMn` | 7 | betterdisplay, cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVy5ValueQzxmcAA0C3KeyRzluis` | 7 | 1password, clipy, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI18_OpacityShapeStyleVMn` | 7 | betterdisplay, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI18_TaskValueModifierVMa` | 7 | 1password, cmux, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI25_AlignmentWritingModifierVMn` | 7 | 1password, clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI28BorderedProminentButtonStyleVAA09PrimitiveeF0AAMc` | 7 | clipy, cmux, ghostty, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI28BorderedProminentButtonStyleVACycfC` | 7 | clipy, cmux, ghostty, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI28BorderedProminentButtonStyleVMa` | 7 | clipy, cmux, ghostty, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI28BorderedProminentButtonStyleVMn` | 7 | clipy, cmux, ghostty, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4LinkVyxGAA4ViewAAMc` | 7 | 1password, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenu9menuItemsQrqd__yXE_tAaBRd__lF` | 7 | betterdisplay, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenu9menuItemsQrqd__yXE_tAaBRd__lFQOMQ` | 7 | betterdisplay, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11onDisappear7performQryycSg_tF` | 7 | 1password, cmux, maccy, raycast |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9focusableyQrSbF` | 7 | 1password, betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9focusableyQrSbFQOMQ` | 7 | 1password, betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9formStyleyQrqd__AA04FormE0Rd__lF` | 7 | betterdisplay, cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9formStyleyQrqd__AA04FormE0Rd__lFQOMQ` | 7 | betterdisplay, cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5ColorV13RGBColorSpaceO10sRGBLinearyA2EmFWC` | 7 | betterdisplay, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI6ButtonV4role6action5labelACyxGAA0C4RoleVSg_yycxyXEtcfC` | 7 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI9FormStylePA2A07GroupedcD0VRszrlE7groupedAEvgZ` | 7 | betterdisplay, cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI9RectangleV6_InsetVMn` | 7 | 1password, betterdisplay, clipy, cmux |
-| Combine.framework | `_$s7Combine10PublishersO11AutoconnectCMn` | 6 | betterdisplay, ghostty, jordanbaird-ice, linearmouse |
-| Combine.framework | `_$s7Combine10PublishersO11AutoconnectCy_xGAA9PublisherAAMc` | 6 | betterdisplay, ghostty, jordanbaird-ice, linearmouse |
+| Combine.framework | `_$s7Combine9PublisherPAAE12handleEvents19receiveSubscription0E6Output0E10Completion0E6Cancel0E7RequestAA10PublishersO06HandleD0Vy_xGyAA0F0_pcSg_y0G0QzcSgyAA11SubscribersO0H0Oy_7FailureQzGcSgyycSgyAU6DemandVcSgtF` | 7 | betterdisplay, cmux, ghostty, linearmouse |
+| Combine.framework | `_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE6assign2toyAA9PublishedVABVy6OutputQz_Gz_tF` | 7 | jordanbaird-ice, karabiner-elements, orbstack, raycast |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACySiGSi_SSSo14NSUserDefaultsCSgtcSiRszlufC` | 7 | betterdisplay, cmux, coteditor, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI10GridLayoutVMn` | 7 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10ScrollViewVMa` | 7 | betterdisplay, clipy, jordanbaird-ice, linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI10VisibilityOMn` | 7 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV30extendedGraphemeClusterLiteralACSJ_tcfC` | 7 | betterdisplay, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI13OpenURLActionV14callAsFunctionyy10Foundation3URLVF` | 7 | clipy, cmux, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV6optionACvgZ` | 7 | cmux, coteditor, ghostty, maccy |
+| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV7controlACvgZ` | 7 | cmux, ghostty, linearmouse, maccy |
+| SwiftUI.framework | `_$s7SwiftUI14LabeledContentVMn` | 7 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI14LabeledContentVyxq_GAA4ViewA2aERzAaER_rlMc` | 7 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupVMn` | 7 | 1password, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15SafeAreaRegionsV9containerACvgZ` | 7 | betterdisplay, cmux, ghostty, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI17ContentTransitionVMa` | 7 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17ContentTransitionVMn` | 7 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV17contentTransitionAA07ContentF0Vvg` | 7 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV17contentTransitionAA07ContentF0VvpMV` | 7 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV17contentTransitionAA07ContentF0Vvs` | 7 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV4tintAA13AnyShapeStyleVSgvg` | 7 | betterdisplay, cmux, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV4tintAA13AnyShapeStyleVSgvpMV` | 7 | betterdisplay, cmux, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV4tintAA13AnyShapeStyleVSgvs` | 7 | betterdisplay, cmux, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI18RoundedCornerStyleO2eeoiySbAC_ACtFZ` | 7 | cmux, ghostty, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18_InsetViewModifierVMn` | 7 | betterdisplay, cmux, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18_InsetViewModifierVyxGAA0dE0AAMc` | 7 | betterdisplay, cmux, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV10isSelectedACvgZ` | 7 | cmux, maccy, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsVMn` | 7 | cmux, maccy, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsVs10SetAlgebraAAMc` | 7 | cmux, maccy, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI19TupleToolbarContentVMn` | 7 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI19TupleToolbarContentVyACyxGxcfC` | 7 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI19TupleToolbarContentVyxGAA0dE0AAMc` | 7 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleV10quaternaryACvgZ` | 7 | cmux, jordanbaird-ice, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI23_GeometryActionModifierVMn` | 7 | 1password, betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4FontV10monospacedACyF` | 7 | cmux, ghostty, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6system_6design6weightA2C9TextStyleO_AC6DesignOSgAC6WeightVSgtFZ` | 7 | betterdisplay, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4GridVMn` | 7 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4TextV15monospacedDigitACyF` | 7 | cmux, coteditor, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10transitionyQrAA13AnyTransitionVF` | 7 | betterdisplay, cmux, maccy, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12fileImporter11isPresented19allowedContentTypes12onCompletionQrAA7BindingVySbG_Say22UniformTypeIdentifiers6UTTypeVGys6ResultOy10Foundation3URLVs5Error_pGctF` | 7 | betterdisplay, coteditor, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12fileImporter11isPresented19allowedContentTypes12onCompletionQrAA7BindingVySbG_Say22UniformTypeIdentifiers6UTTypeVGys6ResultOy10Foundation3URLVs5Error_pGctFQOMQ` | 7 | betterdisplay, coteditor, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19simultaneousGesture_9includingQrqd___AA0E4MaskVtAA0E0Rd__lF` | 7 | betterdisplay, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19simultaneousGesture_9includingQrqd___AA0E4MaskVtAA0E0Rd__lFQOMQ` | 7 | betterdisplay, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE23scrollContentBackgroundyQrAA10VisibilityOF` | 7 | cmux, coteditor, jordanbaird-ice, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE23scrollContentBackgroundyQrAA10VisibilityOFQOMQ` | 7 | cmux, coteditor, jordanbaird-ice, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5sheet4item9onDismiss7contentQrAA7BindingVyqd__SgG_yycSgqd_0_qd__cts12IdentifiableRd__AaBRd_0_r0_lF` | 7 | coteditor, linearmouse, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5sheet4item9onDismiss7contentQrAA7BindingVyqd__SgG_yycSgqd_0_qd__cts12IdentifiableRd__AaBRd_0_r0_lFQOMQ` | 7 | coteditor, linearmouse, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8onChange2of7initial_Qrqd___SbyyctSQRd__lF` | 7 | cmux, coteditor, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8onChange2of7initial_Qrqd___SbyyctSQRd__lFQOMQ` | 7 | cmux, coteditor, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV4cyanACvgZ` | 7 | betterdisplay, clipy, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI5GroupVMa` | 7 | 1password, cmux, linearmouse, maccy |
+| SwiftUI.framework | `_$s7SwiftUI5TableVyxq_q0_GAA4ViewAAMc` | 7 | coteditor, orbstack, pearcleaner, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI7GridRowVMn` | 7 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8GridItemV4SizeO8adaptiveyAE12CoreGraphics7CGFloatV_AItcAEmFWC` | 7 | betterdisplay, cmux, openclaw, pearcleaner |
 | Combine.framework | `_$s7Combine10PublishersO11ConcatenateVy_xq_GAA9PublisherAAMc` | 6 | clipy, cmux, ghostty, raycast |
-| Combine.framework | `_$s7Combine10PublishersO12HandleEventsVMn` | 6 | betterdisplay, cmux, ghostty, linearmouse |
-| Combine.framework | `_$s7Combine10PublishersO12HandleEventsVy_xGAA9PublisherAAMc` | 6 | betterdisplay, cmux, ghostty, linearmouse |
 | Combine.framework | `_$s7Combine10PublishersO5DelayVMn` | 6 | betterdisplay, cmux, ghostty, jordanbaird-ice |
 | Combine.framework | `_$s7Combine10PublishersO5DelayVy_xq_GAA9PublisherAAMc` | 6 | betterdisplay, cmux, ghostty, jordanbaird-ice |
+| Combine.framework | `_$s7Combine10PublishersO5MergeVMn` | 6 | coteditor, jordanbaird-ice, linearmouse, raycast |
+| Combine.framework | `_$s7Combine10PublishersO5MergeVy_xq_GAA9PublisherAAMc` | 6 | coteditor, jordanbaird-ice, linearmouse, raycast |
+| Combine.framework | `_$s7Combine10SubscriberP7receive10completionyAA11SubscribersO10CompletionOy_7FailureQzG_tFTj` | 6 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$s7Combine11CancellableP6cancelyyFTj` | 6 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$s7Combine11SubscribersO6DemandV4noneAEvgZ` | 6 | clipy, cmux, coteditor, openclaw |
 | Combine.framework | `_$s7Combine12AnyPublisherVMa` | 6 | linearmouse, maccy, orbstack, raycast |
-| Combine.framework | `_$s7Combine18PassthroughSubjectCyxq_GAA9PublisherAAMc` | 6 | betterdisplay, cmux, orbstack, raycast |
-| Combine.framework | `_$s7Combine20ConnectablePublisherPAAE11autoconnectAA10PublishersO11AutoconnectCy_xGyF` | 6 | betterdisplay, ghostty, jordanbaird-ice, linearmouse |
-| Combine.framework | `_$s7Combine9PublisherPAAE12handleEvents19receiveSubscription0E6Output0E10Completion0E6Cancel0E7RequestAA10PublishersO06HandleD0Vy_xGyAA0F0_pcSg_y0G0QzcSgyAA11SubscribersO0H0Oy_7FailureQzGcSgyycSgyAU6DemandVcSgtF` | 6 | betterdisplay, cmux, ghostty, linearmouse |
+| Combine.framework | `_$s7Combine19CurrentValueSubjectC4sendyyxF` | 6 | cmux, orbstack, raycast, swiftbar |
+| Combine.framework | `_$s7Combine19CurrentValueSubjectCMn` | 6 | cmux, orbstack, raycast, swiftbar |
+| Combine.framework | `_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc` | 6 | cmux, orbstack, raycast, swiftbar |
+| Combine.framework | `_$s7Combine9PublisherPAAE4sink17receiveCompletion0D5ValueAA14AnyCancellableCyAA11SubscribersO0E0Oy_7FailureQzGc_y6OutputQzctF` | 6 | clipy, drawio, jordanbaird-ice, raycast |
 | Combine.framework | `_$s7Combine9PublisherPAAE5delay3for9tolerance9scheduler7optionsAA10PublishersO5DelayVy_xqd__G17SchedulerTimeType_6StrideQYd___APSgqd__0J7OptionsQyd__SgtAA0J0Rd__lF` | 6 | betterdisplay, cmux, ghostty, jordanbaird-ice |
+| Combine.framework | `_$s7Combine9PublisherPAAE5merge4withAA10PublishersO9MergeManyVy_xGx_tF` | 6 | cmux, linearmouse, localsend, maccy |
 | Combine.framework | `_$s7Combine9PublisherPAAE7prependyAA10PublishersO11ConcatenateVy_AF8SequenceVy_Say6OutputQzG7FailureQzGxGALd_tF` | 6 | clipy, cmux, ghostty, raycast |
-| SwiftUI.framework | `_$s4Body7SwiftUI3AppPTl` | 6 | clipy, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI10FocusStateVACyqd__SgGycADRszSHRd__lufC` | 6 | 1password, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI10LazyVStackVyxGAA4ViewAAMc` | 6 | 1password, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI11ControlSizeO7regularyA2CmFWC` | 6 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI11DragGestureV5ValueV11translationSo6CGSizeVvg` | 6 | cmux, coteditor, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI13OpenURLActionVMa` | 6 | clipy, cmux, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI13OpenURLActionVMn` | 6 | clipy, cmux, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI13_TrimmedShapeVMn` | 6 | 1password, cmux, ghostty, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI14EnvironmentKeyP12_valuesEqualySb5ValueQz_AFtFZTq` | 6 | 1password, cmux, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV5shiftACvgZ` | 6 | cmux, coteditor, ghostty, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI15BackgroundStyleVMn` | 6 | betterdisplay, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACyxGx_SSSo14NSUserDefaultsCSgtcSYRzSS03RawF0RtzlufC` | 6 | betterdisplay, coteditor, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI10FocusStateV7BindingVMn` | 6 | cmux, coteditor, maccy, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI10_ShapeViewVMa` | 6 | 1password, jordanbaird-ice, linearmouse, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI11AlignmentIDMp` | 6 | clipy, cmux, linearmouse, maccy |
+| SwiftUI.framework | `_$s7SwiftUI11AlignmentIDP12defaultValue2in12CoreGraphics7CGFloatVAA14ViewDimensionsV_tFZTq` | 6 | clipy, cmux, linearmouse, maccy |
+| SwiftUI.framework | `_$s7SwiftUI11AlignmentIDP16_combineExplicit10childValue_4intoy12CoreGraphics7CGFloatV_SiAISgztFZTq` | 6 | clipy, cmux, linearmouse, maccy |
+| SwiftUI.framework | `_$s7SwiftUI11AlignmentIDPAAE16_combineExplicit10childValue_4intoy12CoreGraphics7CGFloatV_SiAISgztFZ` | 6 | clipy, cmux, linearmouse, maccy |
+| SwiftUI.framework | `_$s7SwiftUI11DragGestureV15minimumDistance15coordinateSpaceAC12CoreGraphics7CGFloatV_xtcAA010CoordinateH8ProtocolRzlufC` | 6 | cmux, coteditor, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI12DropDelegateMp` | 6 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI12DropDelegateP07performC04infoSbAA0C4InfoV_tFTq` | 6 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI12DropDelegateP08validateC04infoSbAA0C4InfoV_tFTq` | 6 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI12DropDelegateP10dropExited4infoyAA0C4InfoV_tFTq` | 6 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI12DropDelegateP11dropEntered4infoyAA0C4InfoV_tFTq` | 6 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI12DropDelegateP11dropUpdated4infoAA0C8ProposalVSgAA0C4InfoV_tFTq` | 6 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI12VerticalEdgeO3SetV3allAEvgZ` | 6 | 1password, coteditor, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI12VerticalEdgeO8rawValues4Int8Vvg` | 6 | betterdisplay, cmux, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13DropOperationOMa` | 6 | cmux, coteditor, ghostty, maccy |
+| SwiftUI.framework | `_$s7SwiftUI13EquatableViewVMn` | 6 | cmux, jordanbaird-ice, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV5spaceACvgZ` | 6 | cmux, ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV7upArrowACvgZ` | 6 | cmux, coteditor, ghostty, maccy |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV9downArrowACvgZ` | 6 | cmux, coteditor, ghostty, maccy |
+| SwiftUI.framework | `_$s7SwiftUI14EnvironmentKeyPAAE12_valuesEqualySb5ValueQz_AFtFZ` | 6 | 1password, cmux, ghostty, maccy |
+| SwiftUI.framework | `_$s7SwiftUI14EnvironmentKeyPAASQ5ValueRpzrlE12_valuesEqualySbAE_AEtFZ` | 6 | cmux, ghostty, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI14ViewDimensionsVy12CoreGraphics7CGFloatVAA19HorizontalAlignmentVcig` | 6 | 1password, clipy, linearmouse, maccy |
+| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupVyxq_GAA4ViewAAMc` | 6 | 1password, cmux, coteditor, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicPropertyMp` | 6 | clipy, cmux, linearmouse, localsend |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicPropertyP05_makeD02in9container11fieldOffset6inputsyAA01_cD6BufferVz_AA11_GraphValueVyqd__GSiAA01_L6InputsVztlFZTq` | 6 | clipy, cmux, linearmouse, localsend |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicPropertyP6updateyyFTq` | 6 | clipy, cmux, linearmouse, localsend |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicPropertyPAAE05_makeD02in9container11fieldOffset6inputsyAA01_cD6BufferVz_AA11_GraphValueVyqd__GSiAA01_L6InputsVztlFZ` | 6 | clipy, cmux, linearmouse, localsend |
-| SwiftUI.framework | `_$s7SwiftUI15LinkButtonStyleVAA09PrimitivedE0AAMc` | 6 | cmux, coteditor, jordanbaird-ice, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI15LinkButtonStyleVACycfC` | 6 | cmux, coteditor, jordanbaird-ice, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI15LinkButtonStyleVMa` | 6 | cmux, coteditor, jordanbaird-ice, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI15LinkButtonStyleVMn` | 6 | cmux, coteditor, jordanbaird-ice, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentObjectV14projectedValueAC7WrapperVyx_Gvg` | 6 | betterdisplay, cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentObjectV7WrapperV13dynamicMemberAA7BindingVyqd__Gs24ReferenceWritableKeyPathCyxqd__G_tcluig` | 6 | betterdisplay, cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV7openURLAA13OpenURLActionVvg` | 6 | clipy, cmux, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV7openURLAA13OpenURLActionVvpMV` | 6 | clipy, cmux, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV7openURLAA13OpenURLActionVvs` | 6 | clipy, cmux, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI17SwitchToggleStyleVAA0dE0AAMc` | 6 | betterdisplay, cmux, jordanbaird-ice, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI17SwitchToggleStyleVACycfC` | 6 | betterdisplay, cmux, jordanbaird-ice, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI17SwitchToggleStyleVMa` | 6 | betterdisplay, cmux, jordanbaird-ice, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI17SwitchToggleStyleVMn` | 6 | betterdisplay, cmux, jordanbaird-ice, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI18ColorRenderingModeO9nonLinearyA2CmFWC` | 6 | cmux, jordanbaird-ice, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI18ColorRenderingModeOMa` | 6 | cmux, jordanbaird-ice, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI19BorderedButtonStyleVAA09PrimitivedE0AAMc` | 6 | cmux, coteditor, linearmouse, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI19BorderedButtonStyleVACycfC` | 6 | cmux, coteditor, linearmouse, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI19BorderedButtonStyleVMa` | 6 | cmux, coteditor, linearmouse, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI19BorderedButtonStyleVMn` | 6 | cmux, coteditor, linearmouse, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI21RadioGroupPickerStyleVAA0eF0AAWP` | 6 | betterdisplay, coteditor, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI21RadioGroupPickerStyleVACycfC` | 6 | betterdisplay, coteditor, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI21RadioGroupPickerStyleVMa` | 6 | betterdisplay, coteditor, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI21RadioGroupPickerStyleVMn` | 6 | betterdisplay, coteditor, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleV8tertiaryACvgZ` | 6 | cmux, coteditor, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI22LayoutPriorityTraitKeyVMn` | 6 | 1password, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI26AccessibilityChildBehaviorV7containACvgZ` | 6 | clipy, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI28NSApplicationDelegateAdaptorVMa` | 6 | clipy, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI28NSApplicationDelegateAdaptorVMn` | 6 | clipy, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI28NSApplicationDelegateAdaptorVyACyxGxmcfC` | 6 | clipy, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI3AppMp` | 6 | clipy, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI3AppP4BodyAC_AA5SceneTn` | 6 | clipy, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI3AppP4body4BodyQzvgTq` | 6 | clipy, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI3AppPAAE4mainyyFZ` | 6 | clipy, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI3AppPxycfCTq` | 6 | clipy, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4FontV10largeTitleACvgZ` | 6 | clipy, orbstack, raycast, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI4FontV6title3ACvgZ` | 6 | betterdisplay, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10transitionyQrAA13AnyTransitionVF` | 6 | betterdisplay, cmux, maccy, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12fileImporter11isPresented19allowedContentTypes12onCompletionQrAA7BindingVySbG_Say22UniformTypeIdentifiers6UTTypeVGys6ResultOy10Foundation3URLVs5Error_pGctF` | 6 | betterdisplay, coteditor, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12fileImporter11isPresented19allowedContentTypes12onCompletionQrAA7BindingVySbG_Say22UniformTypeIdentifiers6UTTypeVGys6ResultOy10Foundation3URLVs5Error_pGctFQOMQ` | 6 | betterdisplay, coteditor, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE23scrollContentBackgroundyQrAA10VisibilityOF` | 6 | cmux, coteditor, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE23scrollContentBackgroundyQrAA10VisibilityOFQOMQ` | 6 | cmux, coteditor, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7focused_6equalsQrAA10FocusStateV7BindingVyqd___G_qd__tSHRd__lF` | 6 | 1password, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7focused_6equalsQrAA10FocusStateV7BindingVyqd___G_qd__tSHRd__lFQOMQ` | 6 | 1password, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9menuStyleyQrqd__AA04MenuE0Rd__lF` | 6 | cmux, coteditor, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9menuStyleyQrqd__AA04MenuE0Rd__lFQOMQ` | 6 | cmux, coteditor, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5GroupVMa` | 6 | 1password, cmux, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI5SceneMp` | 6 | clipy, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI6ToggleVA2A4TextVRszrlE_4isOnACyAEGqd___AA7BindingVySbGtcSyRd__lufC` | 6 | cmux, coteditor, linearmouse, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI8GridItemV4SizeOMa` | 6 | betterdisplay, cmux, orbstack, raycast |
-| SwiftUI.framework | `_$s7SwiftUI8GridItemVMa` | 6 | betterdisplay, cmux, orbstack, raycast |
-| SwiftUI.framework | `_$s7SwiftUI8GridItemVMn` | 6 | betterdisplay, cmux, orbstack, raycast |
-| SwiftUI.framework | `_$s7SwiftUI8GridItemV_7spacing9alignmentA2C4SizeO_12CoreGraphics7CGFloatVSgAA9AlignmentVSgtcfC` | 6 | betterdisplay, cmux, orbstack, raycast |
-| SwiftUI.framework | `_$s7SwiftUI9LazyVGridV7columns9alignment7spacing11pinnedViews7contentACyxGSayAA8GridItemVG_AA19HorizontalAlignmentV12CoreGraphics7CGFloatVSgAA016PinnedScrollableI0VxyXEtcfC` | 6 | betterdisplay, cmux, orbstack, raycast |
-| SwiftUI.framework | `_$s7SwiftUI9LazyVGridVMn` | 6 | betterdisplay, cmux, orbstack, raycast |
+| SwiftUI.framework | `_$s7SwiftUI16RoundedRectangleVAA15InsettableShapeAAMc` | 6 | 1password, cmux, jordanbaird-ice, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV23menuIndicatorVisibilityAA0G0Ovg` | 6 | cmux, coteditor, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV23menuIndicatorVisibilityAA0G0OvpMV` | 6 | cmux, coteditor, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV23menuIndicatorVisibilityAA0G0Ovs` | 6 | cmux, coteditor, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17OpacityTransitionVMn` | 6 | cmux, coteditor, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyVyACSScfC` | 6 | cmux, jordanbaird-ice, linearmouse, maccy |
+| SwiftUI.framework | `_$s7SwiftUI18_TaskValueModifierV5value8priority6actionACyxGx_ScPyyYaYbctcfC` | 6 | cmux, maccy, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerCMa` | 6 | betterdisplay, coteditor, linearmouse, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI19NavigationSplitViewVMn` | 6 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19NavigationSplitViewVyxq_q0_GAA0E0AAMc` | 6 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI20LocalCoordinateSpaceVAA0dE8ProtocolAAWP` | 6 | cmux, coteditor, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI20LocalCoordinateSpaceVMa` | 6 | cmux, coteditor, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI20_TransactionModifierVMn` | 6 | betterdisplay, cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI23AccessibilityActionKindV7defaultACvgZ` | 6 | cmux, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI23AccessibilityActionKindVMa` | 6 | cmux, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI23CoordinateSpaceProtocolPA2A05LocalcD0VRszrlE5localAEvgZ` | 6 | cmux, coteditor, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI25BorderlessButtonMenuStyleVAA0eF0AAMc` | 6 | cmux, jordanbaird-ice, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25BorderlessButtonMenuStyleVACycfC` | 6 | cmux, jordanbaird-ice, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25BorderlessButtonMenuStyleVMa` | 6 | cmux, jordanbaird-ice, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25BorderlessButtonMenuStyleVMn` | 6 | cmux, jordanbaird-ice, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI26AccessibilityChildBehaviorV7combineACvgZ` | 6 | 1password, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI26NSViewRepresentableContextVMa` | 6 | betterdisplay, cmux, coteditor, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO8rawValueACSgs4Int8V_tcfC` | 6 | betterdisplay, cmux, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FontV15monospacedDigitACyF` | 6 | cmux, coteditor, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4GridVyxGAA4ViewAAMc` | 6 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4LinkVA2A4TextVRszrlE_11destinationACyAEGqd___10Foundation3URLVtcSyRd__lufC` | 6 | cmux, coteditor, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12fileImporter11isPresented19allowedContentTypes23allowsMultipleSelection12onCompletionQrAA7BindingVySbG_Say22UniformTypeIdentifiers6UTTypeVGSbys6ResultOySay10Foundation3URLVGs5Error_pGctF` | 6 | betterdisplay, clipy, coteditor, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12fileImporter11isPresented19allowedContentTypes23allowsMultipleSelection12onCompletionQrAA7BindingVySbG_Say22UniformTypeIdentifiers6UTTypeVGSbys6ResultOySay10Foundation3URLVGs5Error_pGctFQOMQ` | 6 | betterdisplay, clipy, coteditor, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15monospacedDigitQryF` | 6 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15monospacedDigitQryFQOMQ` | 6 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15onDeleteCommand7performQryycSg_tF` | 6 | clipy, coteditor, maccy, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15onDeleteCommand7performQryycSg_tFQOMQ` | 6 | clipy, coteditor, maccy, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE2idyQrqd__SHRd__lF` | 6 | betterdisplay, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of10isTargeted7performQrSay22UniformTypeIdentifiers6UTTypeVG_AA7BindingVySbGSgSbSaySo14NSItemProviderCGctF` | 6 | cmux, maccy, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of10isTargeted7performQrSay22UniformTypeIdentifiers6UTTypeVG_AA7BindingVySbGSgSbSaySo14NSItemProviderCGctFQOMQ` | 6 | cmux, maccy, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of8delegateQrSay22UniformTypeIdentifiers6UTTypeVG_AA0E8Delegate_ptF` | 6 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of8delegateQrSay22UniformTypeIdentifiers6UTTypeVG_AA0E8Delegate_ptFQOMQ` | 6 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9animation_5valueQrAA9AnimationVSg_qd__tSQRd__lF` | 6 | cmux, jordanbaird-ice, openclaw, raycast |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV4pinkACvgZ` | 6 | betterdisplay, clipy, cmux, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV4tealACvgZ` | 6 | betterdisplay, clipy, cmux, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV19symbolRenderingModeyAcA06SymboleF0VSgF` | 6 | betterdisplay, cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI6IDViewVMa` | 6 | betterdisplay, cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI6PickerVA2A4TextVRszrlE_9selection7contentACyAEq_q0_Gqd___AA7BindingVyq_Gq0_yXEtcSyRd__lufC` | 6 | cmux, linearmouse, openclaw, swiftbar |
+| SwiftUI.framework | `_$s7SwiftUI6SliderVA2A9EmptyViewVRszAERs_rlE5value2in16onEditingChangedACyA2EGAA7BindingVyqd__G_SNyqd__GySbctcSBRd__SB6StrideRpd__lufC` | 6 | betterdisplay, linearmouse, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI6SpacerVAA4ViewAAWP` | 6 | betterdisplay, cmux, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI7StepperV5value2in4step16onEditingChanged5labelACyxGAA7BindingVyqd__G_SNyqd__G6StrideQyd__ySbcxyXEtcSxRd__lufC` | 6 | clipy, cmux, coteditor, karabiner-elements |
+| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6ResultO7handledyA2EmFWC` | 6 | 1password, cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6ResultOMa` | 6 | 1password, cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI9LazyStateV12wrappedValueACyxGxyXA_tcfC` | 6 | 1password, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9LazyStateV12wrappedValuexvg` | 6 | 1password, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9LazyStateV12wrappedValuexvs` | 6 | 1password, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9LazyStateV14projectedValueAA7BindingVyxGvg` | 6 | 1password, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9LazyStateV7StorageOMn` | 6 | 1password, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9LazyStateVMa` | 6 | 1password, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9LazyStateVMn` | 6 | 1password, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9LazyVGridVyxGAA4ViewAAMc` | 6 | cmux, orbstack, raycast, swiftbar |
+| SwiftUI.framework | `_$s7SwiftUI9NamespaceVMn` | 6 | betterdisplay, cmux, coteditor, maccy |
 | Combine.framework | `_$s7Combine10PublishersO0A6LatestVyAEy_xq_Gx_q_tcfC` | 5 | clipy, cmux, jordanbaird-ice, tailscale-app |
+| Combine.framework | `_$s7Combine10PublishersO0A7Latest3VMn` | 5 | cmux, raycast, tailscale-app, vorssaint |
+| Combine.framework | `_$s7Combine10PublishersO0A7Latest3Vy_xq_q0_GAA9PublisherAAMc` | 5 | cmux, raycast, tailscale-app, vorssaint |
 | Combine.framework | `_$s7Combine10PublishersO0A7Latest4VMn` | 5 | cmux, orbstack, raycast, tailscale-app |
 | Combine.framework | `_$s7Combine10PublishersO10CompactMapVMa` | 5 | clipy, linearmouse, raycast, sequel-ace |
-| Combine.framework | `_$s7Combine10PublishersO10MapKeyPathVMn` | 5 | coteditor, ghostty, jordanbaird-ice, tailscale-app |
 | Combine.framework | `_$s7Combine10PublishersO11ConcatenateVMn` | 5 | clipy, cmux, ghostty, raycast |
-| Combine.framework | `_$s7Combine10PublishersO5MergeVMn` | 5 | coteditor, jordanbaird-ice, linearmouse, raycast |
-| Combine.framework | `_$s7Combine10PublishersO5MergeVy_xq_GAA9PublisherAAMc` | 5 | coteditor, jordanbaird-ice, linearmouse, raycast |
 | Combine.framework | `_$s7Combine10PublishersO7FlatMapVy_xq_GAA9PublisherAAMc` | 5 | clipy, drawio, raycast, sequel-ace |
 | Combine.framework | `_$s7Combine10PublishersO8SequenceVMn` | 5 | clipy, cmux, ghostty, raycast |
-| Combine.framework | `_$s7Combine10SubscriberP7receive10completionyAA11SubscribersO10CompletionOy_7FailureQzG_tFTj` | 5 | clipy, cmux, raycast, sequel-ace |
-| Combine.framework | `_$s7Combine11CancellableP6cancelyyFTj` | 5 | clipy, cmux, raycast, tailscale-app |
-| Combine.framework | `_$s7Combine11SubscribersO6DemandV4noneAEvgZ` | 5 | clipy, cmux, coteditor, raycast |
+| Combine.framework | `_$s7Combine10SubscriberP7FailureAC_s5ErrorTn` | 5 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$s7Combine10SubscriberTL` | 5 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$s7Combine11SubscribersO10CompletionOMn` | 5 | clipy, cmux, drawio, openclaw |
+| Combine.framework | `_$s7Combine11SubscribersO6DemandV2eeoiySbAE_AEtFZ` | 5 | clipy, cmux, coteditor, openclaw |
+| Combine.framework | `_$s7Combine11SubscribersO6DemandVMn` | 5 | clipy, cmux, coteditor, openclaw |
 | Combine.framework | `_$s7Combine14AsyncPublisherV8IteratorVMn` | 5 | cmux, ghostty, orbstack, tailscale-app |
 | Combine.framework | `_$s7Combine14AsyncPublisherVMn` | 5 | cmux, ghostty, orbstack, tailscale-app |
-| Combine.framework | `_$s7Combine19CurrentValueSubjectC4sendyyxF` | 5 | cmux, orbstack, raycast, tailscale-app |
-| Combine.framework | `_$s7Combine19CurrentValueSubjectCMn` | 5 | cmux, orbstack, raycast, tailscale-app |
-| Combine.framework | `_$s7Combine19CurrentValueSubjectCyxq_GAA9PublisherAAMc` | 5 | cmux, orbstack, raycast, tailscale-app |
-| Combine.framework | `_$s7Combine9PublisherPAAE4sink17receiveCompletion0D5ValueAA14AnyCancellableCyAA11SubscribersO0E0Oy_7FailureQzGc_y6OutputQzctF` | 5 | clipy, drawio, jordanbaird-ice, raycast |
-| Combine.framework | `_$s7Combine9PublisherPAAE5merge4withAA10PublishersO9MergeManyVy_xGx_tF` | 5 | cmux, linearmouse, localsend, maccy |
-| Combine.framework | `_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE6assign2toyAA9PublishedVABVy6OutputQz_Gz_tF` | 5 | jordanbaird-ice, orbstack, raycast, tailscale-app |
+| Combine.framework | `_$s7Combine18PassthroughSubjectCyxq_GAA0C0AAMc` | 5 | orbstack, raycast, tailscale-app, vorssaint |
+| Combine.framework | `_$s7Combine19CurrentValueSubjectCyACyxq_Gxcfc` | 5 | cmux, orbstack, raycast, swiftbar |
+| Combine.framework | `_$s7Combine7SubjectPAAyt6OutputRtzrlE4sendyyF` | 5 | orbstack, raycast, tailscale-app, vorssaint |
+| Combine.framework | `_$s7Combine9PublisherPAAE13combineLatestyAA10PublishersO0A7Latest3Vy_xqd__qd_0_Gqd___qd_0_tAaBRd__AaBRd_0_7FailureQyd__AJRtzAJQyd_0_AKRSr0_lF` | 5 | cmux, raycast, tailscale-app, vorssaint |
+| Combine.framework | `_$s7Combine9PublisherPAAE5merge4withAA10PublishersO5MergeVy_xqd__Gqd___tAaBRd__7FailureQyd__AKRtz6OutputQyd__ANRtzlF` | 5 | coteditor, jordanbaird-ice, raycast, vorssaint |
 | Combine.framework | `_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE6valuesAA05AsyncB0VyxGvg` | 5 | cmux, ghostty, orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACySSGSS_SSSo14NSUserDefaultsCSgtcSSRszlufC` | 5 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACySbGSb_SSSo14NSUserDefaultsCSgtcSbRszlufC` | 5 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACySiGSi_SSSo14NSUserDefaultsCSgtcSiRszlufC` | 5 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValuexvg` | 5 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValuexvs` | 5 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageV14projectedValueAA7BindingVyxGvg` | 5 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageVMn` | 5 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10FocusStateV7BindingVMn` | 5 | cmux, coteditor, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI10GridLayoutVMn` | 5 | clipy, cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI10ScrollViewVMa` | 5 | betterdisplay, clipy, jordanbaird-ice, linearmouse |
+| Combine.framework | `_$s7Combine9SchedulerTL` | 5 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$s7Failure7Combine10SubscriberPTl` | 5 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$ss6ResultO7CombineE9PublisherVMn` | 5 | drawio, raycast, sequel-ace, swiftbar |
+| Combine.framework | `_$ss6ResultO7CombineE9PublisherVyxq__GAcdCMc` | 5 | drawio, raycast, sequel-ace, swiftbar |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACySdGSd_SSSo14NSUserDefaultsCSgtcSdRszlufC` | 5 | betterdisplay, cmux, coteditor, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI10TapGestureV5countACSi_tcfC` | 5 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10TapGestureVMa` | 5 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10TapGestureVMn` | 5 | cmux, coteditor, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10TransitionPAAE8combined4withQrqd___tAaBRd__lF` | 5 | cmux, openclaw, orbstack, rectangle |
+| SwiftUI.framework | `_$s7SwiftUI10TransitionPAAE8combined4withQrqd___tAaBRd__lFQOMQ` | 5 | cmux, openclaw, orbstack, rectangle |
 | SwiftUI.framework | `_$s7SwiftUI11StateObjectV14projectedValueAA08ObservedD0V7WrapperVyx_Gvg` | 5 | jordanbaird-ice, maccy, orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI11TableColumnVMn` | 5 | coteditor, orbstack, sequel-ace, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI11TableColumnV5width3min5ideal3maxACyxq_q0_q1_G12CoreGraphics7CGFloatVSg_A2LtF` | 5 | coteditor, pearcleaner, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI11TableColumnV5widthyACyxq_q0_q1_G12CoreGraphics7CGFloatVSgF` | 5 | coteditor, pearcleaner, swiftbar, utm |
+| SwiftUI.framework | `_$s7SwiftUI11TableColumnVAAs5NeverORs_AA4TextVRs1_rlE_7contentACyxAEq0_AGGAA18LocalizedStringKeyV_q0_xctcfC` | 5 | orbstack, pearcleaner, sequel-ace, swiftbar |
 | SwiftUI.framework | `_$s7SwiftUI11TransactionVMn` | 5 | clipy, cmux, orbstack, raycast |
+| SwiftUI.framework | `_$s7SwiftUI12CommandGroupV9replacing8additionACyxGAA0cD9PlacementV_xyXEtcfC` | 5 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI12CommandGroupVMn` | 5 | cmux, openclaw, orbstack, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI12ControlGroupVMn` | 5 | clipy, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI12DropDelegateMp` | 5 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI12DropDelegateP07performC04infoSbAA0C4InfoV_tFTq` | 5 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI12DropDelegateP08validateC04infoSbAA0C4InfoV_tFTq` | 5 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI12DropDelegateP10dropExited4infoyAA0C4InfoV_tFTq` | 5 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI12DropDelegateP11dropEntered4infoyAA0C4InfoV_tFTq` | 5 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI12DropDelegateP11dropUpdated4infoAA0C8ProposalVSgAA0C4InfoV_tFTq` | 5 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI13DropOperationOMa` | 5 | cmux, coteditor, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13OpenURLActionV14callAsFunctionyy10Foundation3URLVF` | 5 | clipy, cmux, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI14EnvironmentKeyPAAE12_valuesEqualySb5ValueQz_AFtFZ` | 5 | 1password, cmux, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV6optionACvgZ` | 5 | cmux, coteditor, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV7controlACvgZ` | 5 | cmux, ghostty, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI14LabeledContentVMn` | 5 | cmux, coteditor, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI14LabeledContentVyxq_GAA4ViewA2aERzAaER_rlMc` | 5 | cmux, coteditor, jordanbaird-ice, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI12DropProposalV9operationAcA0C9OperationO_tcfC` | 5 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI12DropProposalVMa` | 5 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI12SceneBuilderV10buildBlockyxxAA0C0RzlFZ` | 5 | clipy, jordanbaird-ice, maccy, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI12TimelineViewV7ContextV4date10Foundation4DateVvg` | 5 | betterdisplay, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13DropOperationO4moveyA2CmFWC` | 5 | cmux, ghostty, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV6escapeACvgZ` | 5 | cmux, ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13_VariadicViewO4TreeVy_xq_GAA0D0A2A01_cd1_D4RootRzAaGR_rlMc` | 5 | 1password, cmux, coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI14LabeledContentVA2A4ViewRzAaDR_rlE7content5labelACyxq_Gq_yXE_xyXEtcfC` | 5 | coteditor, jordanbaird-ice, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI14MoveTransitionV4edgeAcA4EdgeO_tcfC` | 5 | cmux, openclaw, orbstack, rectangle |
+| SwiftUI.framework | `_$s7SwiftUI14MoveTransitionVAA0D0AAMc` | 5 | cmux, openclaw, orbstack, rectangle |
+| SwiftUI.framework | `_$s7SwiftUI14MoveTransitionVMa` | 5 | cmux, openclaw, orbstack, rectangle |
+| SwiftUI.framework | `_$s7SwiftUI14MoveTransitionVMn` | 5 | cmux, openclaw, orbstack, rectangle |
+| SwiftUI.framework | `_$s7SwiftUI15ButtonMenuStyleVAA0dE0AAMc` | 5 | cmux, coteditor, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI15ButtonMenuStyleVACycfC` | 5 | cmux, coteditor, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI15ButtonMenuStyleVMa` | 5 | cmux, coteditor, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI15ButtonMenuStyleVMn` | 5 | cmux, coteditor, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupV10isExpanded7content5labelACyxq_GAA7BindingVySbG_q_ycxyXEtcfC` | 5 | 1password, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupV7content5labelACyxq_Gq_yc_xyXEtcfC` | 5 | cmux, coteditor, openclaw, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicPropertyPAAE6updateyyF` | 5 | clipy, linearmouse, localsend, maccy |
-| SwiftUI.framework | `_$s7SwiftUI16RoundedRectangleVAA15InsettableShapeAAMc` | 5 | 1password, cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI16SidebarListStyleVAA0dE0AAWP` | 5 | cmux, iina, orbstack, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI16SidebarListStyleVACycfC` | 5 | cmux, iina, orbstack, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI16SidebarListStyleVMa` | 5 | cmux, iina, orbstack, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI16SidebarListStyleVMn` | 5 | cmux, iina, orbstack, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI18IconOnlyLabelStyleVAA0eF0AAMc` | 5 | clipy, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI18IconOnlyLabelStyleVACycfC` | 5 | clipy, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI18IconOnlyLabelStyleVMa` | 5 | clipy, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI18IconOnlyLabelStyleVMn` | 5 | clipy, cmux, coteditor, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV4fill_4with5styleyAA4PathV_AC7ShadingVAA9FillStyleVtF` | 5 | cmux, jordanbaird-ice, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV7ShadingVMa` | 5 | cmux, jordanbaird-ice, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE17accessibilityHintyACyxAEGqd__SyRd__lF` | 5 | 1password, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE19accessibilityActionyACyxAEGAA0eI4KindV_yyctF` | 5 | cmux, coteditor, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV_9modifiersAcA13KeyEquivalentV_AA14EventModifiersVtcfC` | 5 | cmux, ghostty, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI17ButtonBorderShapeVMa` | 5 | cmux, coteditor, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI17ButtonBorderShapeVMn` | 5 | cmux, coteditor, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18_buttonBorderShapeAA06ButtonfG0Vvg` | 5 | cmux, coteditor, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18_buttonBorderShapeAA06ButtonfG0VvpMV` | 5 | cmux, coteditor, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18_buttonBorderShapeAA06ButtonfG0Vvs` | 5 | cmux, coteditor, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18minimumScaleFactor12CoreGraphics7CGFloatVvg` | 5 | cmux, openclaw, raycast, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18minimumScaleFactor12CoreGraphics7CGFloatVvpMV` | 5 | cmux, openclaw, raycast, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18minimumScaleFactor12CoreGraphics7CGFloatVvs` | 5 | cmux, openclaw, raycast, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI17VerticalAlignmentVMn` | 5 | clipy, cmux, maccy, swiftbar |
 | SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyVN` | 5 | betterdisplay, clipy, linearmouse, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyVyACSScfC` | 5 | cmux, jordanbaird-ice, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI18RoundedCornerStyleO2eeoiySbAC_ACtFZ` | 5 | cmux, ghostty, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV10isSelectedACvgZ` | 5 | cmux, maccy, orbstack, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsVMn` | 5 | cmux, maccy, orbstack, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsVs10SetAlgebraAAMc` | 5 | cmux, maccy, orbstack, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI19CheckboxToggleStyleVAA0dE0AAMc` | 5 | cmux, linearmouse, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI19CheckboxToggleStyleVACycfC` | 5 | cmux, linearmouse, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI19CheckboxToggleStyleVMa` | 5 | cmux, linearmouse, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI19CheckboxToggleStyleVMn` | 5 | cmux, linearmouse, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI19TableForEachContentVMn` | 5 | coteditor, orbstack, sequel-ace, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI22TitleAndIconLabelStyleVAA0fG0AAMc` | 5 | betterdisplay, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI22TitleAndIconLabelStyleVACycfC` | 5 | betterdisplay, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI22TitleAndIconLabelStyleVMa` | 5 | betterdisplay, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI22TitleAndIconLabelStyleVMn` | 5 | betterdisplay, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI23TupleTableColumnContentVMn` | 5 | coteditor, orbstack, sequel-ace, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI23TupleTableColumnContentVyxq_q0_GAA0deF0AAMc` | 5 | coteditor, orbstack, sequel-ace, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI23_GeometryActionModifierVMn` | 5 | 1password, betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI26NSViewRepresentableContextVMa` | 5 | betterdisplay, cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4AxisO3SetV8rawValueAEs4Int8V_tcfC` | 5 | 1password, clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4FontV10monospacedACyF` | 5 | cmux, ghostty, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4GridVMn` | 5 | clipy, cmux, coteditor, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV8isHeaderACvgZ` | 5 | 1password, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19HorizontalAlignmentVyAcA0D2ID_pXpcfC` | 5 | clipy, linearmouse, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfCTq` | 5 | clipy, cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC8rootViewACyxGx_tcfCTq` | 5 | clipy, cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC8rootViewxvsTj` | 5 | betterdisplay, cmux, pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI19SymbolRenderingModeV7paletteACvgZ` | 5 | betterdisplay, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19TupleCommandContentVMn` | 5 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI19TupleCommandContentVyACyxGxcfC` | 5 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI19TupleCommandContentVyxGAA8CommandsAAMc` | 5 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI20RectangleCornerRadiiV7topLeft0F5Right06bottomH00iG0AC12CoreGraphics7CGFloatV_A3JtcfC` | 5 | ghostty, jordanbaird-ice, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI20_TransactionModifierVAA04ViewD0AAWP` | 5 | betterdisplay, cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementVMa` | 5 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI21StrokeBorderShapeViewVyxq_q0_GAA0F0AAMc` | 5 | 1password, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI22ContentUnavailableViewVMn` | 5 | cmux, coteditor, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI22ContentUnavailableViewVyxq_q0_GAA0E0AAMc` | 5 | cmux, coteditor, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI22NSHostingSizingOptionsVMa` | 5 | cmux, coteditor, openclaw, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI22UnevenRoundedRectangleVMa` | 5 | ghostty, jordanbaird-ice, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI23_GeometryActionModifierV5value6actionACyxGxAA0C5ProxyVc_yxctcfC` | 5 | 1password, cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI23_GeometryActionModifierVMa` | 5 | 1password, cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI23_GeometryActionModifierVyxGAA04ViewE0AAMc` | 5 | 1password, cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI24PeriodicTimelineScheduleV4from2byAC10Foundation4DateV_SdtcfC` | 5 | cmux, coteditor, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI24PeriodicTimelineScheduleVAA0dE0AAMc` | 5 | cmux, coteditor, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI24PeriodicTimelineScheduleVMa` | 5 | cmux, coteditor, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI24PeriodicTimelineScheduleVMn` | 5 | cmux, coteditor, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25ScrollIndicatorVisibilityV6hiddenACvgZ` | 5 | cmux, openclaw, pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI25ScrollIndicatorVisibilityVMa` | 5 | cmux, openclaw, pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI25_AlignmentWritingModifierVAA04ViewE0AAWP` | 5 | cmux, linearmouse, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI26NSViewRepresentableContextV11environmentAA17EnvironmentValuesVvg` | 5 | cmux, maccy, openclaw, utm |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6DesignO7roundedyA2EmFWC` | 5 | betterdisplay, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO7captionyA2EmFWC` | 5 | cmux, openclaw, pearcleaner, swiftbar |
 | SwiftUI.framework | `_$s7SwiftUI4ListV9selection7contentACyxq_GAA7BindingVyxG_q_yXEtcfC` | 5 | cmux, coteditor, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12fileImporter11isPresented19allowedContentTypes23allowsMultipleSelection12onCompletionQrAA7BindingVySbG_Say22UniformTypeIdentifiers6UTTypeVGSbys6ResultOySay10Foundation3URLVGs5Error_pGctF` | 5 | betterdisplay, clipy, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12fileImporter11isPresented19allowedContentTypes23allowsMultipleSelection12onCompletionQrAA7BindingVySbG_Say22UniformTypeIdentifiers6UTTypeVGSbys6ResultOySay10Foundation3URLVGs5Error_pGctFQOMQ` | 5 | betterdisplay, clipy, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15onDeleteCommand7performQryycSg_tF` | 5 | clipy, coteditor, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15onDeleteCommand7performQryycSg_tFQOMQ` | 5 | clipy, coteditor, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19simultaneousGesture_9includingQrqd___AA0E4MaskVtAA0E0Rd__lF` | 5 | betterdisplay, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19simultaneousGesture_9includingQrqd___AA0E4MaskVtAA0E0Rd__lFQOMQ` | 5 | betterdisplay, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE2idyQrqd__SHRd__lF` | 5 | betterdisplay, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of8delegateQrSay22UniformTypeIdentifiers6UTTypeVG_AA0E8Delegate_ptF` | 5 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of8delegateQrSay22UniformTypeIdentifiers6UTTypeVG_AA0E8Delegate_ptFQOMQ` | 5 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8onChange2of7initial_Qrqd___SbyyctSQRd__lF` | 5 | cmux, coteditor, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8onChange2of7initial_Qrqd___SbyyctSQRd__lFQOMQ` | 5 | cmux, coteditor, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI5ColorV4cyanACvgZ` | 5 | betterdisplay, clipy, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI5TableVMn` | 5 | coteditor, orbstack, sequel-ace, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI5TableVyxq_q0_GAA4ViewAAMc` | 5 | coteditor, orbstack, sequel-ace, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI6ButtonVA2A4TextVRszrlE_4role6actionACyAEGqd___AA0C4RoleVSgyyctcSyRd__lufC` | 5 | 1password, cmux, maccy, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI6IDViewVMa` | 5 | betterdisplay, cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI7GridRowVMn` | 5 | clipy, cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI8MaterialVMa` | 5 | cmux, coteditor, jordanbaird-ice, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4MenuV_7contentACyAA4TextVq_Gqd___q_yXEtcAFRszSyRd__lufC` | 5 | cmux, karabiner-elements, openclaw, utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10background_2in9fillStyleQrqd___qd_0_AA04FillG0VtAA05ShapeG0Rd__AA010InsettableI0Rd_0_r0_lF` | 5 | cmux, orbstack, pearcleaner, raycast |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress_6actionQrAA0E10EquivalentV_AA0eF0V6ResultOyctF` | 5 | 1password, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress_6actionQrAA0E10EquivalentV_AA0eF0V6ResultOyctFQOMQ` | 5 | 1password, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12drawingGroup6opaque9colorModeQrSb_AA014ColorRenderingH0OtF` | 5 | maccy, orbstack, pearcleaner, raycast |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12drawingGroup6opaque9colorModeQrSb_AA014ColorRenderingH0OtFQOMQ` | 5 | maccy, orbstack, pearcleaner, raycast |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15ignoresSafeArea_5edgesQrAA0eF7RegionsV_AA4EdgeO3SetVtF` | 5 | cmux, maccy, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16listRowSeparator_5edgesQrAA10VisibilityO_AA12VerticalEdgeO3SetVtF` | 5 | 1password, coteditor, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16listRowSeparator_5edgesQrAA10VisibilityO_AA12VerticalEdgeO3SetVtFQOMQ` | 5 | 1password, coteditor, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16scrollIndicators_4axesQrAA25ScrollIndicatorVisibilityV_AA4AxisO3SetVtF` | 5 | cmux, openclaw, pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16scrollIndicators_4axesQrAA25ScrollIndicatorVisibilityV_AA4AxisO3SetVtFQOMQ` | 5 | cmux, openclaw, pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18accessibilityValueyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGqd__SyRd__lF` | 5 | 1password, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actions7messageQrqd___AA7BindingVySbGAA0I0Oqd_0_yXEqd_1_yXEtSyRd__AaBRd_0_AaBRd_1_r1_lF` | 5 | cmux, openclaw, orbstack, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actions7messageQrqd___AA7BindingVySbGAA0I0Oqd_0_yXEqd_1_yXEtSyRd__AaBRd_0_AaBRd_1_r1_lFQOMQ` | 5 | cmux, openclaw, orbstack, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE23accessibilityIdentifieryAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGSSF` | 5 | cmux, maccy, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7clipped11antialiasedQrSb_tF` | 5 | betterdisplay, cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV3hue10saturation10brightness7opacityACSd_S3dtcfC` | 5 | coteditor, ghostty, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV4mintACvgZ` | 5 | betterdisplay, clipy, cmux, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV5brownACvgZ` | 5 | betterdisplay, clipy, cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV6indigoACvgZ` | 5 | betterdisplay, clipy, cmux, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE8commands7contentQrqd__yXE_tAA8CommandsRd__lF` | 5 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE8commands7contentQrqd__yXE_tAA8CommandsRd__lFQOMQ` | 5 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI6PickerVMa` | 5 | cmux, jordanbaird-ice, linearmouse, swiftbar |
+| SwiftUI.framework | `_$s7SwiftUI6SliderVyxq_GAA4ViewAAMc` | 5 | betterdisplay, cmux, linearmouse, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI6ToggleVMa` | 5 | jordanbaird-ice, linearmouse, maccy, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI7CapsuleV6_InsetVMn` | 5 | cmux, ghostty, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8GridItemV4SizeO8flexibleyAE12CoreGraphics7CGFloatV_AItcAEmFWC` | 5 | cmux, openclaw, orbstack, stats |
+| SwiftUI.framework | `_$s7SwiftUI8GroupBoxVA2A9EmptyViewVRszrlE7contentACyAEq_Gq_yXE_tcfC` | 5 | cmux, coteditor, iina, karabiner-elements |
+| SwiftUI.framework | `_$s7SwiftUI8GroupBoxVMn` | 5 | cmux, coteditor, iina, karabiner-elements |
+| SwiftUI.framework | `_$s7SwiftUI8MaterialVAA10ShapeStyleAAMc` | 5 | cmux, orbstack, pearcleaner, raycast |
 | SwiftUI.framework | `_$s7SwiftUI9AnimationV6linearACvgZ` | 5 | 1password, betterdisplay, clipy, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI9LazyStateV12wrappedValueACyxGxyXA_tcfC` | 5 | 1password, coteditor, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI9LazyStateV12wrappedValuexvg` | 5 | 1password, coteditor, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI9LazyStateV12wrappedValuexvs` | 5 | 1password, coteditor, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI9LazyStateV14projectedValueAA7BindingVyxGvg` | 5 | 1password, coteditor, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI9LazyStateV7StorageOMn` | 5 | 1password, coteditor, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI9LazyStateVMa` | 5 | 1password, coteditor, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI9LazyStateVMn` | 5 | 1password, coteditor, maccy, orbstack |
-| Combine.framework | `_$s7Combine10PublishersO0A7Latest3VMn` | 4 | cmux, raycast, tailscale-app, whatsapp |
-| Combine.framework | `_$s7Combine10PublishersO0A7Latest3Vy_xq_q0_GAA9PublisherAAMc` | 4 | cmux, raycast, tailscale-app, whatsapp |
+| SwiftUI.framework | `_$s7SwiftUI9LazyStateV7StorageO5valueyAEyx_GxcAGmlFWC` | 5 | 1password, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9NamespaceV12wrappedValueAC2IDVvg` | 5 | betterdisplay, cmux, coteditor, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldV4text6prompt5labelACyxGAA7BindingVySSG_AA0C0VSgxyXEtcfC` | 5 | coteditor, jordanbaird-ice, openclaw, orbstack |
+| Combine.framework | `_$s16SchedulerOptions7Combine0A0PTl` | 4 | clipy, openclaw, raycast, whatsapp |
+| Combine.framework | `_$s5Input7Combine10SubscriberPTl` | 4 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$s5Input7Combine15TopLevelDecoderPTl` | 4 | coteditor, iterm2, qlmarkdown, utm |
+| Combine.framework | `_$s7Combine10PublishersO0A7Latest3VyAEy_xq_q0_Gx_q_q0_tcfC` | 4 | cmux, tailscale-app, vorssaint, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO0A7Latest4Vy_xq_q0_q1_GAA9PublisherAAMc` | 4 | cmux, raycast, tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO14SwitchToLatestVMn` | 4 | betterdisplay, cmux, ghostty, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO14SwitchToLatestVy_xq_GAA9PublisherAAMc` | 4 | betterdisplay, cmux, ghostty, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO4ScanVy_xq_GAA9PublisherAAMc` | 4 | cmux, ghostty, raycast, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO5MergeVyAEy_xq_Gx_q_tcfC` | 4 | coteditor, jordanbaird-ice, linearmouse, whatsapp |
+| Combine.framework | `_$s7Combine10PublishersO6Merge3VMn` | 4 | jordanbaird-ice, tailscale-app, vorssaint, whatsapp |
+| Combine.framework | `_$s7Combine10PublishersO6Merge3Vy_xq_q0_GAA9PublisherAAMc` | 4 | jordanbaird-ice, tailscale-app, vorssaint, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO7FlatMapVMn` | 4 | clipy, drawio, raycast, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO8SequenceVy_xq_GAA9PublisherAAMc` | 4 | clipy, raycast, tailscale-app, whatsapp |
-| Combine.framework | `_$s7Combine10SubscriberP7FailureAC_s5ErrorTn` | 4 | clipy, cmux, raycast, sequel-ace |
-| Combine.framework | `_$s7Combine10SubscriberTL` | 4 | clipy, cmux, raycast, sequel-ace |
-| Combine.framework | `_$s7Combine11SubscribersO10CompletionOMn` | 4 | clipy, cmux, drawio, raycast |
-| Combine.framework | `_$s7Combine11SubscribersO6DemandV2eeoiySbAE_AEtFZ` | 4 | clipy, cmux, coteditor, raycast |
-| Combine.framework | `_$s7Combine11SubscribersO6DemandVMn` | 4 | clipy, cmux, coteditor, raycast |
+| Combine.framework | `_$s7Combine10SubscriberP7receive10completionyAA11SubscribersO10CompletionOy_7FailureQzG_tFTq` | 4 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$s7Combine10SubscriberP7receive12subscriptionyAA12Subscription_p_tFTq` | 4 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$s7Combine10SubscriberP7receiveyAA11SubscribersO6DemandV5InputQzFTq` | 4 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$s7Combine10SubscriberPAA06CustomA21IdentifierConvertibleTb` | 4 | clipy, cmux, openclaw, raycast |
+| Combine.framework | `_$s7Combine11SubscribersO10CompletionOMa` | 4 | clipy, openclaw, raycast, sequel-ace |
+| Combine.framework | `_$s7Combine12AnyPublisherV7receive10subscriberyqd___t5InputQyd__Rsz7FailureQyd__Rs_AA10SubscriberRd__lF` | 4 | clipy, openclaw, raycast, whatsapp |
 | Combine.framework | `_$s7Combine12AnyPublisherVyACyxq_Gqd__c6OutputQyd__Rsz7FailureQyd__Rs_AA0C0Rd__lufC` | 4 | linearmouse, localsend, maccy, orbstack |
+| Combine.framework | `_$s7Combine12SubscriptionP7requestyyAA11SubscribersO6DemandVFTj` | 4 | clipy, cmux, openclaw, raycast |
 | Combine.framework | `_$s7Combine14AsyncPublisherV04makeB8IteratorAC0E0Vyx_GyF` | 4 | cmux, orbstack, tailscale-app, utm |
 | Combine.framework | `_$s7Combine14AsyncPublisherV8IteratorV4next6OutputQzSgyYaF` | 4 | cmux, orbstack, tailscale-app, utm |
 | Combine.framework | `_$s7Combine14AsyncPublisherV8IteratorV4next6OutputQzSgyYaFTu` | 4 | cmux, orbstack, tailscale-app, utm |
-| Combine.framework | `_$s7Combine18PassthroughSubjectCyxq_GAA0C0AAMc` | 4 | orbstack, raycast, tailscale-app, whatsapp |
-| Combine.framework | `_$s7Combine19CurrentValueSubjectCyACyxq_Gxcfc` | 4 | cmux, orbstack, raycast, tailscale-app |
+| Combine.framework | `_$s7Combine15TopLevelDecoderMp` | 4 | coteditor, iterm2, qlmarkdown, utm |
+| Combine.framework | `_$s7Combine15TopLevelDecoderP6decode_4fromqd__qd__m_5InputQztKSeRd__lFTq` | 4 | coteditor, iterm2, qlmarkdown, utm |
 | Combine.framework | `_$s7Combine6FutureCMn` | 4 | clipy, drawio, raycast, whatsapp |
-| Combine.framework | `_$s7Combine7SubjectPAAyt6OutputRtzrlE4sendyyF` | 4 | orbstack, raycast, tailscale-app, whatsapp |
-| Combine.framework | `_$s7Combine9PublisherPAAE13combineLatestyAA10PublishersO0A7Latest3Vy_xqd__qd_0_Gqd___qd_0_tAaBRd__AaBRd_0_7FailureQyd__AJRtzAJQyd_0_AKRSr0_lF` | 4 | cmux, raycast, tailscale-app, whatsapp |
+| Combine.framework | `_$s7Combine9PublisherPAAE16removeDuplicates2byAA10PublishersO06RemoveD0Vy_xGSb6OutputQz_ALtc_tF` | 4 | cmux, tailscale-app, vorssaint, whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE4scanyAA10PublishersO4ScanVy_xqd__Gqd___qd__qd___6OutputQztctlF` | 4 | cmux, ghostty, raycast, whatsapp |
-| Combine.framework | `_$s7Combine9PublisherPAAE5merge4withAA10PublishersO5MergeVy_xqd__Gqd___tAaBRd__7FailureQyd__AKRtz6OutputQyd__ANRtzlF` | 4 | coteditor, jordanbaird-ice, raycast, whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE7flatMap13maxPublishers_AA0F0O04FlatD0Vy_qd_0_xGAA11SubscribersO6DemandV_qd_0_6OutputQzctAOQyd_0_Rsd__AaBRd_0_7FailureQyd_0_ARRtzr0_lF` | 4 | drawio, raycast, sequel-ace, whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAs5NeverO7FailureRtzAaB6OutputRpzAeH_AFRTzrlE14switchToLatestAA10PublishersO06SwitchgH0Vy_AIxGyF` | 4 | betterdisplay, cmux, ghostty, whatsapp |
-| Combine.framework | `_$s7Combine9SchedulerTL` | 4 | clipy, cmux, raycast, whatsapp |
-| Combine.framework | `_$s7Failure7Combine10SubscriberPTl` | 4 | clipy, cmux, raycast, sequel-ace |
-| Combine.framework | `_$ss6ResultO7CombineE9PublisherVMn` | 4 | drawio, raycast, sequel-ace, whatsapp |
-| Combine.framework | `_$ss6ResultO7CombineE9PublisherVyxq__GAcdCMc` | 4 | drawio, raycast, sequel-ace, whatsapp |
-| SwiftUI.framework | `_$s7SwiftUI10TapGestureV5countACSi_tcfC` | 4 | cmux, coteditor, jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10TapGestureVMa` | 4 | cmux, coteditor, jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10TapGestureVMn` | 4 | cmux, coteditor, jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10VisibilityOMn` | 4 | cmux, coteditor, jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10_ShapeViewVMa` | 4 | 1password, jordanbaird-ice, linearmouse, raycast |
-| SwiftUI.framework | `_$s7SwiftUI11AlignmentIDMp` | 4 | clipy, cmux, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI11AlignmentIDP12defaultValue2in12CoreGraphics7CGFloatVAA14ViewDimensionsV_tFZTq` | 4 | clipy, cmux, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI11AlignmentIDP16_combineExplicit10childValue_4intoy12CoreGraphics7CGFloatV_SiAISgztFZTq` | 4 | clipy, cmux, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI11AlignmentIDPAAE16_combineExplicit10childValue_4intoy12CoreGraphics7CGFloatV_SiAISgztFZ` | 4 | clipy, cmux, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI11DragGestureV15minimumDistance15coordinateSpaceAC12CoreGraphics7CGFloatV_xtcAA010CoordinateH8ProtocolRzlufC` | 4 | cmux, coteditor, jordanbaird-ice, maccy |
+| Combine.framework | `_$s7Combine9PublisherTL` | 4 | clipy, openclaw, raycast, whatsapp |
+| Combine.framework | `_$s7Combine9SchedulerMp` | 4 | clipy, cmux, openclaw, raycast |
+| CoreTransferable.framework | `_$s14Representation16CoreTransferable0C0PTl` | 4 | cmux, coteditor, ghostty, openclaw |
+| CoreTransferable.framework | `_$s16CoreTransferable0B0Mp` | 4 | cmux, coteditor, ghostty, openclaw |
+| CoreTransferable.framework | `_$s16CoreTransferable0B0P14RepresentationAC_AA08TransferC0Tn` | 4 | cmux, coteditor, ghostty, openclaw |
+| CoreTransferable.framework | `_$s16CoreTransferable0B0P22transferRepresentation0D0QzvgZTq` | 4 | cmux, coteditor, ghostty, openclaw |
+| CoreTransferable.framework | `_$s16CoreTransferable22TransferRepresentationMp` | 4 | cmux, coteditor, ghostty, openclaw |
+| SwiftUI.framework | `_$s10InsetShape7SwiftUI010InsettableB0PTl` | 4 | 1password, jordanbaird-ice, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s4Body7SwiftUI11ToggleStylePTl` | 4 | 1password, jordanbaird-ice, pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s4Body7SwiftUI8CommandsPTl` | 4 | clipy, openclaw, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACy10Foundation4DataVGAH_SSSo14NSUserDefaultsCSgtcAHRszlufC` | 4 | pearcleaner, tailscale-app, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10TapGestureVAA0D0AAWP` | 4 | cmux, jordanbaird-ice, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI11ColorPickerVMn` | 4 | cmux, coteditor, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11CommandMenuVMn` | 4 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI11SecureFieldVMn` | 4 | 1password, cmux, openclaw, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI11StrokeStyleVN` | 4 | cmux, iterm2, openclaw, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI11TableColumnVyxq_q0_q1_GAA0cD7ContentAAMc` | 4 | coteditor, orbstack, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI11ToggleStyleMp` | 4 | 1password, jordanbaird-ice, pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ToggleStyleP4BodyAC_AA4ViewTn` | 4 | 1password, jordanbaird-ice, pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ToggleStyleP8makeBody13configuration0F0QzAA0cD13ConfigurationV_tFTq` | 4 | 1password, jordanbaird-ice, pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11TransactionV9animationAcA9AnimationVSg_tcfC` | 4 | cmux, openclaw, raycast, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11WindowGroupVMn` | 4 | cmux, orbstack, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI11WindowGroupVyxGAA5SceneAAMc` | 4 | cmux, orbstack, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI11_LayoutRootVMn` | 4 | cmux, coteditor, openclaw, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11_TupleSceneVMn` | 4 | cmux, jordanbaird-ice, orbstack, utm |
 | SwiftUI.framework | `_$s7SwiftUI11_TupleSceneVyACyxGxcfC` | 4 | cmux, jordanbaird-ice, orbstack, utm |
 | SwiftUI.framework | `_$s7SwiftUI11_TupleSceneVyxGAA0D0AAMc` | 4 | cmux, jordanbaird-ice, orbstack, utm |
 | SwiftUI.framework | `_$s7SwiftUI12ControlGroupV7contentACyxGxyXE_tcfC` | 4 | clipy, coteditor, maccy, sequel-ace |
 | SwiftUI.framework | `_$s7SwiftUI12ControlGroupVyxGAA4ViewAAMc` | 4 | clipy, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI12DropProposalV9operationAcA0C9OperationO_tcfC` | 4 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI12DropProposalVMa` | 4 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI12SceneBuilderV10buildBlockyxxAA0C0RzlFZ` | 4 | clipy, jordanbaird-ice, maccy, utm |
-| SwiftUI.framework | `_$s7SwiftUI12VerticalEdgeO3SetV3allAEvgZ` | 4 | 1password, coteditor, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI12ScaledMetricV12wrappedValue10relativeToACyxGx_AA4FontV9TextStyleOtcfC` | 4 | 1password, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI12ScaledMetricV12wrappedValuexvg` | 4 | 1password, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI12ScaledMetricVMa` | 4 | 1password, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI12ScaledMetricVMn` | 4 | 1password, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI12ViewThatFitsVMn` | 4 | cmux, openclaw, raycast, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI12_ScaleEffectVN` | 4 | 1password, coteditor, maccy, raycast |
-| SwiftUI.framework | `_$s7SwiftUI13DropOperationO4moveyA2CmFWC` | 4 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI13EquatableViewVMn` | 4 | cmux, jordanbaird-ice, orbstack, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV30extendedGraphemeClusterLiteralACSJ_tcfC` | 4 | betterdisplay, orbstack, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV5spaceACvgZ` | 4 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV7upArrowACvgZ` | 4 | cmux, coteditor, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV9downArrowACvgZ` | 4 | cmux, coteditor, ghostty, maccy |
+| SwiftUI.framework | `_$s7SwiftUI13AnyShapeStyleVN` | 4 | 1password, cmux, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13EquatableViewVyxGAA0D0AAMc` | 4 | cmux, jordanbaird-ice, openclaw, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI13GeometryProxyV5frame2inSo6CGRectVx_tAA23CoordinateSpaceProtocolRzlF` | 4 | cmux, jordanbaird-ice, maccy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV10rightArrowACvgZ` | 4 | cmux, ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV3tabACvgZ` | 4 | cmux, ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV6deleteACvgZ` | 4 | cmux, ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV9leftArrowACvgZ` | 4 | cmux, ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentVMn` | 4 | cmux, ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC13sizingOptionsAA0c6SizingF0VvsTj` | 4 | cmux, coteditor, openclaw, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13_VariadicViewO4TreeVMa` | 4 | 1password, cmux, coteditor, jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI13_VariadicViewO4TreeV_7contentAEy_xq_Gx_q_yXEtcfC` | 4 | 1password, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI13_VariadicViewO4TreeVy_xq_GAA0D0A2A01_cd1_D4RootRzAaGR_rlMc` | 4 | 1password, cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI14EnvironmentKeyPAASQ5ValueRpzrlE12_valuesEqualySbAE_AEtFZ` | 4 | cmux, ghostty, orbstack, raycast |
-| SwiftUI.framework | `_$s7SwiftUI14LabeledContentVA2A4ViewRzAaDR_rlE7content5labelACyxq_Gq_yXE_xyXEtcfC` | 4 | coteditor, jordanbaird-ice, orbstack, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI14EventModifiersVMn` | 4 | betterdisplay, cmux, ghostty, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI14NavigationPathVMn` | 4 | 1password, cmux, openclaw, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI14PlainListStyleVAA0dE0AAWP` | 4 | cmux, coteditor, iina, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI14PlainListStyleVACycfC` | 4 | cmux, coteditor, iina, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI14PlainListStyleVMa` | 4 | cmux, coteditor, iina, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI14PlainListStyleVMn` | 4 | cmux, coteditor, iina, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI14ViewDimensionsVy12CoreGraphics7CGFloatVAA19HorizontalAlignmentVcig` | 4 | 1password, clipy, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupVMn` | 4 | 1password, cmux, coteditor, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupVyxq_GAA4ViewAAMc` | 4 | 1password, cmux, coteditor, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI14TintShapeStyleVACycfC` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14TintShapeStyleVMn` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentMp` | 4 | clipy, openclaw, pearcleaner, utm |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicPropertyP18_propertyBehaviorss6UInt32VvgZTq` | 4 | clipy, cmux, maccy, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicPropertyPAAE18_propertyBehaviorss6UInt32VvgZ` | 4 | clipy, cmux, maccy, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV7ShadingV5coloryAeA5ColorVFZ` | 4 | cmux, openclaw, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15InsettableShapeMp` | 4 | 1password, jordanbaird-ice, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI15InsettableShapeP05InsetD0AC_AaBTn` | 4 | 1password, jordanbaird-ice, openclaw, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI15LayoutDirectionO11leftToRightyA2CmFWC` | 4 | 1password, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE19accessibilityActionyACyxAEGAA0eI4KindV_yyctF` | 4 | cmux, coteditor, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI15SafeAreaRegionsV9containerACvgZ` | 4 | betterdisplay, cmux, ghostty, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI17ButtonBorderShapeVMa` | 4 | cmux, coteditor, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI17ButtonBorderShapeVMn` | 4 | cmux, coteditor, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI17ContentTransitionVMa` | 4 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17ContentTransitionVMn` | 4 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV17contentTransitionAA07ContentF0Vvg` | 4 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV17contentTransitionAA07ContentF0VvpMV` | 4 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV17contentTransitionAA07ContentF0Vvs` | 4 | betterdisplay, cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18_buttonBorderShapeAA06ButtonfG0Vvg` | 4 | cmux, coteditor, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18_buttonBorderShapeAA06ButtonfG0VvpMV` | 4 | cmux, coteditor, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18_buttonBorderShapeAA06ButtonfG0Vvs` | 4 | cmux, coteditor, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV4tintAA13AnyShapeStyleVSgvg` | 4 | betterdisplay, cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV4tintAA13AnyShapeStyleVSgvpMV` | 4 | betterdisplay, cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV4tintAA13AnyShapeStyleVSgvs` | 4 | betterdisplay, cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17OpacityTransitionVMn` | 4 | cmux, coteditor, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI17VerticalAlignmentVMn` | 4 | clipy, cmux, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI18_InsetViewModifierVMn` | 4 | betterdisplay, cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI18_InsetViewModifierVyxGAA0dE0AAMc` | 4 | betterdisplay, cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI18_TaskValueModifierV5value8priority6actionACyxGx_ScPyyYaYbctcfC` | 4 | cmux, maccy, orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfCTq` | 4 | clipy, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC8rootViewACyxGx_tcfCTq` | 4 | clipy, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerCMa` | 4 | betterdisplay, coteditor, linearmouse, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI19NavigationSplitViewVMn` | 4 | cmux, coteditor, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI19NavigationSplitViewVyxq_q0_GAA0E0AAMc` | 4 | cmux, coteditor, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI19TupleToolbarContentVMn` | 4 | cmux, orbstack, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI19TupleToolbarContentVyACyxGxcfC` | 4 | cmux, orbstack, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI19TupleToolbarContentVyxGAA0dE0AAMc` | 4 | cmux, orbstack, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE18accessibilityLabelyACyxAEGqd__SyRd__lF` | 4 | cmux, ghostty, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE18accessibilityValueyACyxAEGAA4TextVF` | 4 | cmux, maccy, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE18accessibilityValueyACyxAEGqd__SyRd__lF` | 4 | cmux, ghostty, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15NavigationStackVMn` | 4 | 1password, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI15NavigationStackVyxq_GAA4ViewAAMc` | 4 | 1password, cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI15StrokeShapeViewVyxq_q0_GAA0E0AAMc` | 4 | 1password, cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15_PositionLayoutVAA12ViewModifierAAWP` | 4 | betterdisplay, cmux, ghostty, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16RedactionReasonsVMa` | 4 | cmux, pearcleaner, raycast, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI16ScrollViewReaderV7contentACyxGxAA0cD5ProxyVc_tcfC` | 4 | betterdisplay, jordanbaird-ice, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16ScrollViewReaderVMa` | 4 | betterdisplay, jordanbaird-ice, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_SizeFittingRootVMn` | 4 | cmux, openclaw, raycast, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17ContentTransitionV11numericText10countsDownACSb_tFZ` | 4 | betterdisplay, coteditor, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV19colorSchemeContrastAA05ColorfG0Ovg` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV19colorSchemeContrastAA05ColorfG0OvpMV` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17_SaturationEffectVAA12ViewModifierAAWP` | 4 | betterdisplay, cmux, pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18ControlActiveStateOMn` | 4 | betterdisplay, cmux, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18ControlActiveStateOSQAAMc` | 4 | betterdisplay, cmux, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18_OpacityShapeStyleVyxGAA0dE0AAMc` | 4 | cmux, openclaw, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19ColorSchemeContrastO2eeoiySbAC_ACtFZ` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19ColorSchemeContrastOMa` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19ColorSchemeContrastOMn` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC13sizingOptionsAA0c6SizingF0VvsTj` | 4 | cmux, coteditor, sequel-ace, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NavigationSplitViewV16columnVisibility7sidebar6detailACyxAA05EmptyE0Vq0_GAA7BindingVyAA0cdeG0VG_xyXEq0_yXEtcAHRs_rlufC` | 4 | cmux, coteditor, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19SeparatorShapeStyleVACycfC` | 4 | clipy, cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19SeparatorShapeStyleVMa` | 4 | clipy, cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19SeparatorShapeStyleVMn` | 4 | clipy, cmux, coteditor, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI19_BackgroundModifierVMa` | 4 | 1password, linearmouse, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI20LocalCoordinateSpaceVAA0dE8ProtocolAAWP` | 4 | cmux, coteditor, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI20LocalCoordinateSpaceVMa` | 4 | cmux, coteditor, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI20_TransactionModifierVMn` | 4 | betterdisplay, cmux, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionO2upyA2CmFWC` | 4 | 1password, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionO4downyA2CmFWC` | 4 | 1password, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionOMa` | 4 | 1password, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementV10navigationACvgZ` | 4 | orbstack, pearcleaner, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementV9automaticACvgZ` | 4 | openclaw, orbstack, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV4helpACvgZ` | 4 | cmux, orbstack, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV7appInfoACvgZ` | 4 | cmux, openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV7newItemACvgZ` | 4 | cmux, openclaw, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI21GlobalCoordinateSpaceVAA0dE8ProtocolAAWP` | 4 | cmux, jordanbaird-ice, maccy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21GlobalCoordinateSpaceVMa` | 4 | cmux, jordanbaird-ice, maccy, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI22ContentMarginPlacementVMa` | 4 | cmux, coteditor, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleV10quaternaryACvgZ` | 4 | cmux, jordanbaird-ice, orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI23AccessibilityActionKindV7defaultACvgZ` | 4 | cmux, coteditor, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI23AccessibilityActionKindVMa` | 4 | cmux, coteditor, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI23CoordinateSpaceProtocolPA2A05LocalcD0VRszrlE5localAEvgZ` | 4 | cmux, coteditor, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI22ContentUnavailableViewV5label11description7actionsACyxq_q0_GxyXE_q_yXEq0_yXEtcfC` | 4 | cmux, coteditor, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI22NSHostingSizingOptionsV20preferredContentSizeACvgZ` | 4 | cmux, coteditor, sequel-ace, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22NSHostingSizingOptionsVMn` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22NSHostingSizingOptionsVs10SetAlgebraAAMc` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22UnevenRoundedRectangleVMn` | 4 | ghostty, jordanbaird-ice, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI22_GridAlignmentModifierVMn` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23CoordinateSpaceProtocolPA2A06GlobalcD0VRszrlE6globalAEvgZ` | 4 | cmux, jordanbaird-ice, maccy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV5LabelVMa` | 4 | 1password, jordanbaird-ice, pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV5LabelVMn` | 4 | 1password, jordanbaird-ice, pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV5labelAC5LabelVvg` | 4 | 1password, jordanbaird-ice, pearcleaner, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI24_GridUnsizedAxesModifierVMn` | 4 | clipy, cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI26AccessibilityChildBehaviorV7combineACvgZ` | 4 | 1password, cmux, coteditor, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI25DisabledTextSelectabilityVACycfC` | 4 | cmux, coteditor, jordanbaird-ice, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25DisabledTextSelectabilityVMa` | 4 | cmux, coteditor, jordanbaird-ice, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25DisabledTextSelectabilityVMn` | 4 | cmux, coteditor, jordanbaird-ice, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25HiddenTitleBarWindowStyleVAA0fG0AAWP` | 4 | cmux, jordanbaird-ice, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25HiddenTitleBarWindowStyleVACycfC` | 4 | cmux, jordanbaird-ice, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25HiddenTitleBarWindowStyleVMa` | 4 | cmux, jordanbaird-ice, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25HiddenTitleBarWindowStyleVMn` | 4 | cmux, jordanbaird-ice, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25ScrollIndicatorVisibilityV5neverACvgZ` | 4 | cmux, pearcleaner, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25_AlignmentWritingModifierVN` | 4 | jordanbaird-ice, linearmouse, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI25_ForegroundStyleModifier2VMn` | 4 | 1password, betterdisplay, cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI28NSApplicationDelegateAdaptorV12wrappedValuexvg` | 4 | cmux, jordanbaird-ice, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI4FontV15monospacedDigitACyF` | 4 | cmux, coteditor, orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4FontV6DesignO7roundedyA2EmFWC` | 4 | betterdisplay, cmux, coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4FontV6system_6design6weightA2C9TextStyleO_AC6DesignOSgAC6WeightVSgtFZ` | 4 | betterdisplay, cmux, ghostty, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4GridVyxGAA4ViewAAMc` | 4 | clipy, cmux, coteditor, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI4TextV15monospacedDigitACyF` | 4 | cmux, coteditor, ghostty, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI29NavigationSplitViewVisibilityV3allACvgZ` | 4 | cmux, coteditor, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI29NavigationSplitViewVisibilityVMa` | 4 | cmux, coteditor, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI29NavigationSplitViewVisibilityVMn` | 4 | cmux, coteditor, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI30HierarchicalShapeStyleModifierVMn` | 4 | cmux, coteditor, maccy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI31_IndefiniteSymbolEffectModifierVMa` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI31_IndefiniteSymbolEffectModifierVMn` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6WeightVMn` | 4 | cmux, raycast, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ListV9selection7contentACyxq_GAA7BindingVyShyxGGSg_q_yXEtcfC` | 4 | clipy, coteditor, linearmouse, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4PathV9ellipseInACSo6CGRectV_tcfC` | 4 | jordanbaird-ice, openclaw, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV18accessibilityLabelyACxSyRzlF` | 4 | 1password, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV9DateStyleVMa` | 4 | cmux, maccy, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV_5styleAC10Foundation4DateV_AC0F5StyleVtcfC` | 4 | cmux, maccy, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextVyAC10Foundation23LocalizedStringResourceVcfC` | 4 | clipy, cmux, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC11ColumnWidthyQr12CoreGraphics7CGFloatVF` | 4 | cmux, jordanbaird-ice, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC11ColumnWidthyQr12CoreGraphics7CGFloatVFQOMQ` | 4 | cmux, jordanbaird-ice, orbstack, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10preference3key5valueQrqd__m_5ValueQyd__tAA13PreferenceKeyRd__lF` | 4 | 1password, cmux, orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12drawingGroup6opaque9colorModeQrSb_AA014ColorRenderingH0OtF` | 4 | maccy, orbstack, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12drawingGroup6opaque9colorModeQrSb_AA014ColorRenderingH0OtFQOMQ` | 4 | maccy, orbstack, raycast, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenu16forSelectionType4menu13primaryActionQrqd__m_qd_0_Shyqd__GcyAHcSgtSHRd__AaBRd_0_r0_lF` | 4 | 1password, coteditor, pearcleaner, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenu16forSelectionType4menu13primaryActionQrqd__m_qd_0_Shyqd__GcyAHcSgtSHRd__AaBRd_0_r0_lFQOMQ` | 4 | 1password, coteditor, pearcleaner, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13onMoveCommand7performQryAA0eF9DirectionOcSg_tF` | 4 | 1password, cmux, ghostty, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13onMoveCommand7performQryAA0eF9DirectionOcSg_tFQOMQ` | 4 | 1password, cmux, ghostty, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14contentMargins__3forQrAA4EdgeO3SetV_12CoreGraphics7CGFloatVSgAA22ContentMarginPlacementVtF` | 4 | cmux, coteditor, jordanbaird-ice, maccy |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14contentMargins__3forQrAA4EdgeO3SetV_12CoreGraphics7CGFloatVSgAA22ContentMarginPlacementVtFQOMQ` | 4 | cmux, coteditor, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5sheet4item9onDismiss7contentQrAA7BindingVyqd__SgG_yycSgqd_0_qd__cts12IdentifiableRd__AaBRd_0_r0_lF` | 4 | coteditor, linearmouse, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5sheet4item9onDismiss7contentQrAA7BindingVyqd__SgG_yycSgqd_0_qd__cts12IdentifiableRd__AaBRd_0_r0_lFQOMQ` | 4 | coteditor, linearmouse, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of10isTargeted7performQrSay22UniformTypeIdentifiers6UTTypeVG_AA7BindingVySbGSgSbSaySo14NSItemProviderCGctF` | 4 | cmux, maccy, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of10isTargeted7performQrSay22UniformTypeIdentifiers6UTTypeVG_AA7BindingVySbGSgSbSaySo14NSItemProviderCGctFQOMQ` | 4 | cmux, maccy, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7clipped11antialiasedQrSb_tF` | 4 | betterdisplay, cmux, maccy, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9animation_5valueQrAA9AnimationVSg_qd__tSQRd__lF` | 4 | cmux, jordanbaird-ice, raycast, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14layoutPriorityyQrSdF` | 4 | cmux, jordanbaird-ice, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17accessibilityHintyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGqd__SyRd__lF` | 4 | cmux, coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19focusEffectDisabledyQrSbF` | 4 | 1password, cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19focusEffectDisabledyQrSbFQOMQ` | 4 | 1password, cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actions7messageQrqd___AA7BindingVySbGqd_0_yXEqd_1_yXEtSyRd__AaBRd_0_AaBRd_1_r1_lF` | 4 | cmux, sequel-ace, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actions7messageQrqd___AA7BindingVySbGqd_0_yXEqd_1_yXEtSyRd__AaBRd_0_AaBRd_1_r1_lFQOMQ` | 4 | cmux, sequel-ace, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrag_7previewQrSo14NSItemProviderCyc_qd__yXEtAaBRd__lF` | 4 | cmux, maccy, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrag_7previewQrSo14NSItemProviderCyc_qd__yXEtAaBRd__lFQOMQ` | 4 | cmux, maccy, tailscale-app, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9onReceive_7performQrqd___y6OutputQyd__ct7Combine9PublisherRd__s5NeverO7FailureRtd__lF` | 4 | betterdisplay, cmux, orbstack, raycast |
-| SwiftUI.framework | `_$s7SwiftUI5ColorV4mintACvgZ` | 4 | betterdisplay, clipy, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5ColorV4pinkACvgZ` | 4 | betterdisplay, clipy, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5ColorV4tealACvgZ` | 4 | betterdisplay, clipy, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5ColorV6indigoACvgZ` | 4 | betterdisplay, clipy, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5ImageV19symbolRenderingModeyAcA06SymboleF0VSgF` | 4 | betterdisplay, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI6ButtonVA2A4TextVRszrlE_4role6actionACyAEGAA18LocalizedStringKeyV_AA0C4RoleVSgyyctcfC` | 4 | betterdisplay, maccy, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI6SpacerVAA4ViewAAWP` | 4 | betterdisplay, cmux, orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI6ToggleVMa` | 4 | jordanbaird-ice, linearmouse, maccy, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI5AlertV5title7message13primaryButton09secondaryG0AcA4TextV_AISgAC0G0VALtcfC` | 4 | linearmouse, openclaw, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI5AlertV6ButtonV11destructive_6actionAeA4TextV_yycSgtFZ` | 4 | linearmouse, openclaw, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI5AlertV6ButtonV6cancelyAEyycSgFZ` | 4 | linearmouse, openclaw, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV02cgC0ACSo10CGColorRefa_tcfC` | 4 | jordanbaird-ice, maccy, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV02cgC0So10CGColorRefaSgvg` | 4 | maccy, orbstack, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI5GroupVA2A4ViewRzlE7contentACyxGxyXE_tcfC` | 4 | cmux, pearcleaner, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV21TemplateRenderingModeO8originalyA2EmFWC` | 4 | cmux, openclaw, swiftbar, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV5ScaleO5largeyA2EmFWC` | 4 | cmux, coteditor, maccy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV5ScaleO6mediumyA2EmFWC` | 4 | betterdisplay, cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE11windowStyleyQrqd__AA06WindowE0Rd__lF` | 4 | cmux, jordanbaird-ice, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE11windowStyleyQrqd__AA06WindowE0Rd__lFQOMQ` | 4 | cmux, jordanbaird-ice, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI6CanvasVA2A9EmptyViewVRszrlE6opaque9colorMode21rendersAsynchronously8rendererACyAEGSb_AA014ColorRenderingH0OSbyAA15GraphicsContextVz_So6CGSizeVtctcfC` | 4 | cmux, openclaw, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6CanvasVMn` | 4 | cmux, openclaw, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6CanvasVyxGAA4ViewAAMc` | 4 | cmux, openclaw, tailscale-app, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI7BindingV9animationyACyxGAA9AnimationVSgF` | 4 | betterdisplay, coteditor, linearmouse, utm |
-| SwiftUI.framework | `_$s7SwiftUI7CapsuleV6_InsetVMn` | 4 | cmux, ghostty, jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI7StepperV5value2in4step16onEditingChanged5labelACyxGAA7BindingVyqd__G_SNyqd__G6StrideQyd__ySbcxyXEtcSxRd__lufC` | 4 | clipy, cmux, coteditor, utm |
+| SwiftUI.framework | `_$s7SwiftUI8BindableV14projectedValueACyxGvg` | 4 | cmux, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8BindableVAARlzClE13dynamicMemberAA7BindingVyqd__Gs24ReferenceWritableKeyPathCyxqd__G_tcluig` | 4 | cmux, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8CommandsMp` | 4 | clipy, openclaw, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI8CommandsP05_makeC07content6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZTq` | 4 | clipy, openclaw, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI8CommandsP4BodyAC_AaBTn` | 4 | clipy, openclaw, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI8CommandsP4body4BodyQzvgTq` | 4 | clipy, openclaw, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI8CommandsP8_resolve4intoyAA09_ResolvedC0Vz_tFTq` | 4 | clipy, openclaw, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI8CommandsPAAE05_makeC07content6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZ` | 4 | clipy, openclaw, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI8CommandsPAAE8_resolve4intoyAA09_ResolvedC0Vz_tF` | 4 | clipy, openclaw, pearcleaner, utm |
 | SwiftUI.framework | `_$s7SwiftUI8DropInfoV13itemProviders3forSaySo14NSItemProviderCGSay22UniformTypeIdentifiers6UTTypeVG_tF` | 4 | cmux, ghostty, tailscale-app, utm |
 | SwiftUI.framework | `_$s7SwiftUI8DropInfoV8locationSo7CGPointVvg` | 4 | cmux, ghostty, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6ResultO7handledyA2EmFWC` | 4 | 1password, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6ResultOMa` | 4 | 1password, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI9LazyStateV7StorageO5valueyAEyx_GxcAGmlFWC` | 4 | 1password, coteditor, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI9LazyVGridVyxGAA4ViewAAMc` | 4 | cmux, orbstack, raycast, utm |
-| SwiftUI.framework | `_$s7SwiftUI9NamespaceVMn` | 4 | betterdisplay, cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI9TextFieldV4text6prompt5labelACyxGAA7BindingVySSG_AA0C0VSgxyXEtcfC` | 4 | coteditor, jordanbaird-ice, orbstack, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI8GridItemV4SizeO5fixedyAE12CoreGraphics7CGFloatVcAEmFWC` | 4 | openclaw, raycast, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6ResultO7ignoredyA2EmFWC` | 4 | cmux, coteditor, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9AlignmentVMn` | 4 | betterdisplay, cmux, raycast, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_4text6promptACyAEGAA18LocalizedStringKeyV_AA7BindingVySSGAESgtcfC` | 4 | openclaw, orbstack, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_5value6format6promptACyAEGAA18LocalizedStringKeyV_AA7BindingVy11FormatInputQyd__Gqd__AESgtc10Foundation09ParseableL5StyleRd__SS0L6OutputRtd__lufC` | 4 | cmux, orbstack, pearcleaner, rectangle |
+| SwiftUI.framework | `_$sSM7SwiftUIE4move11fromOffsets8toOffsety10Foundation8IndexSetV_SitF` | 4 | coteditor, jordanbaird-ice, utm, vorssaint |
 | SwiftUI.framework | `_$sSm7SwiftUISMRzrlE6remove9atOffsetsy10Foundation8IndexSetV_tF` | 4 | iterm2, raycast, tailscale-app, utm |
-| Combine.framework | `_$s16SchedulerOptions7Combine0A0PTl` | 3 | clipy, raycast, whatsapp |
+| Symbols.framework | `_$s7Symbols12SymbolEffectP13configurationAA0bC13ConfigurationVvgTj` | 4 | cmux, coteditor, openclaw, vorssaint |
+| Symbols.framework | `_$s7Symbols19SymbolEffectOptionsV7defaultACvgZ` | 4 | cmux, coteditor, openclaw, vorssaint |
+| Symbols.framework | `_$s7Symbols19SymbolEffectOptionsVMa` | 4 | cmux, coteditor, openclaw, vorssaint |
+| Charts.framework | `_$s6Charts12ChartContentPAAE15foregroundStyleyQrqd__7SwiftUI05ShapeE0Rd__lF` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts12ChartContentPAAE15foregroundStyleyQrqd__7SwiftUI05ShapeE0Rd__lFQOMQ` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts14AxisMarkPresetVMa` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts14AxisMarkValuesV9automaticACvgZ` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts14AxisMarkValuesVMa` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts14AxisValueLabelVMn` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts14AxisValueLabelVyxGAA0B4MarkAAMc` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts14PlottableValueVMn` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts16AxisMarkPositionV9automaticACvgZ` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts16AxisMarkPositionVMa` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts25AxisValueLabelOrientationV9automaticACvgZ` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts25AxisValueLabelOrientationVMa` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts33AxisValueLabelCollisionResolutionV9automaticACvgZ` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts33AxisValueLabelCollisionResolutionVMa` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts5ChartVMn` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts5ChartVyxG7SwiftUI4ViewAAMc` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts9AxisMarksVMn` | 3 | iterm2, openclaw, tailscale-app |
+| Charts.framework | `_$s6Charts9AxisMarksVyxGAA0B7ContentAAMc` | 3 | iterm2, openclaw, tailscale-app |
 | Combine.framework | `_$s17SchedulerTimeType7Combine0A0PTl` | 3 | clipy, cmux, whatsapp |
-| Combine.framework | `_$s5Input7Combine10SubscriberPTl` | 3 | clipy, cmux, raycast |
-| Combine.framework | `_$s5Input7Combine15TopLevelDecoderPTl` | 3 | coteditor, iterm2, utm |
-| Combine.framework | `_$s7Combine10PublishersO0A7Latest3VyAEy_xq_q0_Gx_q_q0_tcfC` | 3 | cmux, tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO0A7Latest4VyAEy_xq_q0_q1_Gx_q_q0_q1_tcfC` | 3 | cmux, tailscale-app, whatsapp |
+| Combine.framework | `_$s7Combine10PublishersO10CompactMapV3mapyAEy_xqd__Gqd__q_clF` | 3 | raycast, swiftbar, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO10MapKeyPathVMa` | 3 | clipy, sequel-ace, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO11ConcatenateVMa` | 3 | clipy, tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO14SetFailureTypeVMn` | 3 | ghostty, raycast, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO14SetFailureTypeVy_xq_GAA9PublisherAAMc` | 3 | ghostty, sequel-ace, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO16RemoveDuplicatesVMa` | 3 | linearmouse, tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO4ScanVMn` | 3 | cmux, ghostty, whatsapp |
-| Combine.framework | `_$s7Combine10PublishersO6Merge3VMn` | 3 | jordanbaird-ice, tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO6Merge3VyAEy_xq_q0_Gx_q_q0_tcfC` | 3 | jordanbaird-ice, tailscale-app, whatsapp |
-| Combine.framework | `_$s7Combine10PublishersO6Merge3Vy_xq_q0_GAA9PublisherAAMc` | 3 | jordanbaird-ice, tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO7FlatMapVMa` | 3 | clipy, sequel-ace, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO8MapErrorVMn` | 3 | drawio, raycast, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO8MapErrorVy_xq_GAA9PublisherAAMc` | 3 | drawio, raycast, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO8SequenceVMa` | 3 | clipy, tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO9ReceiveOnVMa` | 3 | clipy, linearmouse, whatsapp |
-| Combine.framework | `_$s7Combine10SubscriberP7receive10completionyAA11SubscribersO10CompletionOy_7FailureQzG_tFTq` | 3 | clipy, cmux, raycast |
-| Combine.framework | `_$s7Combine10SubscriberP7receive12subscriptionyAA12Subscription_p_tFTq` | 3 | clipy, cmux, raycast |
-| Combine.framework | `_$s7Combine10SubscriberP7receiveyAA11SubscribersO6DemandV5InputQzFTq` | 3 | clipy, cmux, raycast |
-| Combine.framework | `_$s7Combine10SubscriberPAA06CustomA21IdentifierConvertibleTb` | 3 | clipy, cmux, raycast |
-| Combine.framework | `_$s7Combine11SubscribersO10CompletionOMa` | 3 | clipy, raycast, sequel-ace |
-| Combine.framework | `_$s7Combine12AnyPublisherV7receive10subscriberyqd___t5InputQyd__Rsz7FailureQyd__Rs_AA10SubscriberRd__lF` | 3 | clipy, raycast, whatsapp |
+| Combine.framework | `_$s7Combine11SubscribersO6DemandVN` | 3 | clipy, openclaw, raycast |
 | Combine.framework | `_$s7Combine12PublisherBoxCMn` | 3 | linearmouse, maccy, orbstack |
 | Combine.framework | `_$s7Combine12PublisherBoxCMo` | 3 | linearmouse, maccy, orbstack |
-| Combine.framework | `_$s7Combine12SubscriptionP7requestyyAA11SubscribersO6DemandVFTj` | 3 | clipy, cmux, raycast |
 | Combine.framework | `_$s7Combine13AnySubscriberVMn` | 3 | clipy, raycast, whatsapp |
 | Combine.framework | `_$s7Combine14AnyCancellableCAA0C0AAWP` | 3 | clipy, tailscale-app, whatsapp |
-| Combine.framework | `_$s7Combine15TopLevelDecoderMp` | 3 | coteditor, iterm2, utm |
-| Combine.framework | `_$s7Combine15TopLevelDecoderP6decode_4fromqd__qd__m_5InputQztKSeRd__lFTq` | 3 | coteditor, iterm2, utm |
 | Combine.framework | `_$s7Combine19CurrentValueSubjectC5valuexvg` | 3 | raycast, tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine19CurrentValueSubjectC5valuexvs` | 3 | raycast, tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine25ObservableObjectPublisherCACycfc` | 3 | linearmouse, localsend, orbstack |
@@ -531,276 +806,315 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Combine.framework | `_$s7Combine5EmptyVMa` | 3 | linearmouse, raycast, whatsapp |
 | Combine.framework | `_$s7Combine6FutureCyACyxq_Gyys6ResultOyxq_Gcccfc` | 3 | clipy, drawio, raycast |
 | Combine.framework | `_$s7Combine6FutureCyxq_GAA9PublisherAAMc` | 3 | drawio, raycast, whatsapp |
+| Combine.framework | `_$s7Combine9PublisherP7receive10subscriberyqd___tAA10SubscriberRd__7FailureQyd__AGRtz5InputQyd__6OutputRtzlFTj` | 3 | clipy, openclaw, raycast |
 | Combine.framework | `_$s7Combine9PublisherPAAE13combineLatestyAA10PublishersO0A7Latest4Vy_xqd__qd_0_qd_1_Gqd___qd_0_qd_1_tAaBRd__AaBRd_0_AaBRd_1_7FailureQyd__AJRtzAJQyd_0_AKRSAJQyd_1_AMRSr1_lF` | 3 | cmux, raycast, tailscale-app |
-| Combine.framework | `_$s7Combine9PublisherPAAE16removeDuplicates2byAA10PublishersO06RemoveD0Vy_xGSb6OutputQz_ALtc_tF` | 3 | cmux, tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE8mapErroryAA10PublishersO03MapD0Vy_xqd__Gqd__7FailureQzcs0D0Rd__lF` | 3 | drawio, raycast, whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE03setD4Type2toAA10PublishersO03SetdF0Vy_xqd__Gqd__m_ts5ErrorRd__lF` | 3 | ghostty, sequel-ace, whatsapp |
+| Combine.framework | `_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE6assign2to2onAA14AnyCancellableCs24ReferenceWritableKeyPathCyqd__6OutputQzG_qd__tlF` | 3 | coteditor, pearcleaner, whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE7flatMap13maxPublishers_AA0H0O04FlatF0Vy_qd__xGAA11SubscribersO6DemandV_qd__6OutputQzctAaBRd__AeFRtd__lF` | 3 | clipy, raycast, whatsapp |
-| Combine.framework | `_$s7Combine9PublisherTL` | 3 | clipy, raycast, whatsapp |
-| Combine.framework | `_$s7Combine9SchedulerMp` | 3 | clipy, cmux, raycast |
 | Combine.framework | `_$s7Combine9SchedulerP0B8TimeTypeAC_SxTn` | 3 | clipy, cmux, whatsapp |
-| CoreTransferable.framework | `_$s14Representation16CoreTransferable0C0PTl` | 3 | cmux, coteditor, ghostty |
-| CoreTransferable.framework | `_$s16CoreTransferable0B0Mp` | 3 | cmux, coteditor, ghostty |
-| CoreTransferable.framework | `_$s16CoreTransferable0B0P14RepresentationAC_AA08TransferC0Tn` | 3 | cmux, coteditor, ghostty |
-| CoreTransferable.framework | `_$s16CoreTransferable0B0P22transferRepresentation0D0QzvgZTq` | 3 | cmux, coteditor, ghostty |
-| CoreTransferable.framework | `_$s16CoreTransferable22TransferRepresentationMp` | 3 | cmux, coteditor, ghostty |
+| Combine.framework | `_$s7Combine9SchedulerP8schedule7options_y0B7OptionsQzSg_yyctFTj` | 3 | clipy, openclaw, raycast |
+| CoreTransferable.framework | `_$s10Foundation3URLV16CoreTransferable0D0ADMc` | 3 | cmux, coteditor, vorssaint |
+| CoreTransferable.framework | `_$s16CoreTransferable21CodableRepresentationV3for11contentTypeACyx10Foundation11JSONEncoderCAF11JSONDecoderCGxm_07UniformG11Identifiers6UTTypeVtcAHRs_AJRs0_rlufC` | 3 | cmux, coteditor, openclaw |
+| CoreTransferable.framework | `_$s16CoreTransferable21CodableRepresentationVMn` | 3 | cmux, coteditor, openclaw |
+| CoreTransferable.framework | `_$s16CoreTransferable21CodableRepresentationVyxq_q0_GAA08TransferD0AAMc` | 3 | cmux, coteditor, openclaw |
+| CoreTransferable.framework | `_$s16CoreTransferable29TransferRepresentationBuilderV15buildExpressionyAA07CodableD0Vyxqd__qd_0_GAGSeRzSERz7Combine15TopLevelEncoderRd__AH0jK7DecoderRd_0_10Foundation4DataV6OutputRtd__AM5InputRtd_0_r0_lFZ` | 3 | cmux, coteditor, openclaw |
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport13ColorResourceV4name6bundleACSS_So8NSBundleCtcfC` | 3 | 1password, coteditor, jordanbaird-ice |
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport13ColorResourceVMa` | 3 | 1password, coteditor, jordanbaird-ice |
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport13ImageResourceV4name6bundleACSS_So8NSBundleCtcfC` | 3 | 1password, coteditor, jordanbaird-ice |
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport13ImageResourceVMa` | 3 | 1password, coteditor, jordanbaird-ice |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV015BackgroundColorB0OAA19AttributedStringKeyADMc` | 3 | cmux, coteditor, tailscale-app |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV015BackgroundColorB0ON` | 3 | cmux, coteditor, tailscale-app |
+| SwiftUI.framework | `_$s4Body7SwiftUI10LabelStylePTl` | 3 | orbstack, utm, vorssaint |
+| SwiftUI.framework | `_$s4Body7SwiftUI14ToolbarContentPTl` | 3 | clipy, pearcleaner, utm |
 | SwiftUI.framework | `_$s4Body7SwiftUI5ScenePTl` | 3 | clipy, jordanbaird-ice, utm |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACySdGSd_SSSo14NSUserDefaultsCSgtcSdRszlufC` | 3 | betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACyxGx_SSSo14NSUserDefaultsCSgtcSYRzSS03RawF0RtzlufC` | 3 | betterdisplay, coteditor, tailscale-app |
+| SwiftUI.framework | `_$s5Cache7SwiftUI6LayoutPTl` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10AnimatablePAAE05_makeC05value6inputsyAA11_GraphValueVyxGz_AA01_G6InputsVtFZ` | 3 | betterdisplay, raycast, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACyxGx_SSSo14NSUserDefaultsCSgtcSYRzSi03RawF0RtzlufC` | 3 | coteditor, pearcleaner, utm |
 | SwiftUI.framework | `_$s7SwiftUI10AppStorageVAAs23ExpressibleByNilLiteralRzlE_5storeACySSSgGSS_So14NSUserDefaultsCSgtcAFRszrlufC` | 3 | betterdisplay, cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI10FocusStateVMa` | 3 | cmux, coteditor, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI10LabelStyleMp` | 3 | orbstack, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10LabelStyleP4BodyAC_AA4ViewTn` | 3 | orbstack, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10LabelStyleP8makeBody13configuration0F0QzAA0cD13ConfigurationV_tFTq` | 3 | orbstack, utm, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI10LazyVStackVMa` | 3 | 1password, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10TapGestureVAA0D0AAWP` | 3 | cmux, jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI10TransitionPAAE8combined4withQrqd___tAaBRd__lF` | 3 | cmux, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI10TransitionPAAE8combined4withQrqd___tAaBRd__lFQOMQ` | 3 | cmux, orbstack, rectangle |
 | SwiftUI.framework | `_$s7SwiftUI10VSplitViewV7contentACyxGxyXE_tcfC` | 3 | coteditor, iina, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI10VSplitViewVMn` | 3 | coteditor, iina, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI10VSplitViewVyxGAA0D0AAMc` | 3 | coteditor, iina, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI11ColorPickerVMn` | 3 | cmux, coteditor, utm |
-| SwiftUI.framework | `_$s7SwiftUI11SecureFieldVMn` | 3 | 1password, cmux, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI11StrokeStyleVN` | 3 | cmux, iterm2, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI11TableColumnV5width3min5ideal3maxACyxq_q0_q1_G12CoreGraphics7CGFloatVSg_A2LtF` | 3 | coteditor, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI11TableColumnVAAs5NeverORs_AA4TextVRs1_rlE_7contentACyxAEq0_AGGAA18LocalizedStringKeyV_q0_xctcfC` | 3 | orbstack, sequel-ace, utm |
-| SwiftUI.framework | `_$s7SwiftUI11WindowGroupVMn` | 3 | cmux, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI11WindowGroupVyxGAA5SceneAAMc` | 3 | cmux, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI11SecureFieldV4text6prompt5labelACyxGAA7BindingVySSG_AA4TextVSgxyXEtcfC` | 3 | 1password, openclaw, sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI11SecureFieldVyxGAA4ViewAAMc` | 3 | 1password, cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI11WindowGroupV7contentACyxGxyXE_tcfC` | 3 | cmux, pearcleaner, utm |
 | SwiftUI.framework | `_$s7SwiftUI11_BlurEffectVAA12ViewModifierAAWP` | 3 | betterdisplay, cmux, raycast |
-| SwiftUI.framework | `_$s7SwiftUI12CommandGroupV9replacing8additionACyxGAA0cD9PlacementV_xyXEtcfC` | 3 | cmux, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI12CommandGroupVMn` | 3 | cmux, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI11_ClipEffectVMa` | 3 | linearmouse, pearcleaner, raycast |
+| SwiftUI.framework | `_$s7SwiftUI11_LayoutRootVyxGAA014_VariadicView_fD0AAMc` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12CommandGroupV5after8additionACyxGAA0cD9PlacementV_xyXEtcfC` | 3 | cmux, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI12DropDelegatePAAE10dropExited4infoyAA0C4InfoV_tF` | 3 | maccy, utm, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI12ProgressViewVA2A05EmptyD0VRs_rlE5labelACyxAEGxyXE_tcfC` | 3 | 1password, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI12ScaledMetricV12wrappedValue10relativeToACyxGx_AA4FontV9TextStyleOtcfC` | 3 | 1password, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI12ScaledMetricV12wrappedValuexvg` | 3 | 1password, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI12ScaledMetricVMa` | 3 | 1password, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI12ScaledMetricVMn` | 3 | 1password, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI12TimelineViewV7ContextV4date10Foundation4DateVvg` | 3 | betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI12VerticalEdgeO8rawValues4Int8Vvg` | 3 | betterdisplay, cmux, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI13AnyShapeStyleVN` | 3 | 1password, cmux, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI12ProgressViewVA2A05EmptyD0VRs_rlEyACyAA4TextVAEGqd__cAGRszSyRd__lufC` | 3 | cmux, openclaw, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV8identityACvgZ` | 3 | betterdisplay, tailscale-app, utm |
 | SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV9animationyAcA9AnimationVSgF` | 3 | cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI13EquatableViewVyxGAA0D0AAMc` | 3 | cmux, jordanbaird-ice, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI13GeometryProxyV5frame2inSo6CGRectVx_tAA23CoordinateSpaceProtocolRzlF` | 3 | cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV10rightArrowACvgZ` | 3 | cmux, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV3tabACvgZ` | 3 | cmux, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV6deleteACvgZ` | 3 | cmux, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV6escapeACvgZ` | 3 | cmux, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV9leftArrowACvgZ` | 3 | cmux, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentVMn` | 3 | cmux, ghostty, maccy |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV13deleteForwardACvgZ` | 3 | ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV3endACvgZ` | 3 | ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV4homeACvgZ` | 3 | ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV6pageUpACvgZ` | 3 | ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV8pageDownACvgZ` | 3 | ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13LayoutSubviewV12sizeThatFitsySo6CGSizeVAA16ProposedViewSizeVF` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13LayoutSubviewV5place2at6anchor8proposalySo7CGPointV_AA9UnitPointVAA16ProposedViewSizeVtF` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13LayoutSubviewVMa` | 3 | cmux, coteditor, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC04rootD0ACyxGx_tcfC` | 3 | betterdisplay, raycast, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC15safeAreaRegionsAA04SafefG0VvsTj` | 3 | cmux, coteditor, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13NSHostingViewCMa` | 3 | betterdisplay, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI14EventModifiersVMn` | 3 | betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI14MoveTransitionV4edgeAcA4EdgeO_tcfC` | 3 | cmux, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI14MoveTransitionVAA0D0AAMc` | 3 | cmux, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI14MoveTransitionVMa` | 3 | cmux, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI14MoveTransitionVMn` | 3 | cmux, orbstack, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI14NavigationPathVMn` | 3 | 1password, cmux, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI13_StrokedShapeVMa` | 3 | 1password, linearmouse, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI13_StrokedShapeVyxGAA0D0AAMc` | 3 | 1password, linearmouse, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV8capsLockACvgZ` | 3 | ghostty, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI14LayoutSubviewsVMa` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14LayoutSubviewsVMn` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14LayoutSubviewsVSlAAMc` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14LinearGradientVAA10ShapeStyleAAMc` | 3 | cmux, linearmouse, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14NavigationLinkV11destination3tag9selection5labelACyxq_Gq__qd__AA7BindingVyqd__SgGxyXEtcSHRd__lufC` | 3 | orbstack, swiftbar, utm |
+| SwiftUI.framework | `_$s7SwiftUI14NavigationLinkVyxq_GAA4ViewAAMc` | 3 | orbstack, swiftbar, utm |
 | SwiftUI.framework | `_$s7SwiftUI14ObservedObjectVMa` | 3 | linearmouse, localsend, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI14ObservedObjectVyxGAA15DynamicPropertyAAMc` | 3 | linearmouse, localsend, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI14OnMoveTraitKeyVMn` | 3 | coteditor, karabiner-elements, utm |
 | SwiftUI.framework | `_$s7SwiftUI14SymbolVariantsV4fillACvgZ` | 3 | betterdisplay, cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI14SymbolVariantsVMa` | 3 | betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI14TintShapeStyleVMa` | 3 | coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentP05_makeD07content6inputs8resolvedyAA11_GraphValueVyxG_AA01_I6InputsVAA01_C8ItemListVztFZTq` | 3 | clipy, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentP4BodyAC_AaBTn` | 3 | clipy, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentP4body4BodyQzvgTq` | 3 | clipy, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentPAAE05_makeD07content6inputs8resolvedyAA11_GraphValueVyxG_AA01_I6InputsVAA01_C8ItemListVztFZ` | 3 | clipy, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI14ViewDimensionsVy12CoreGraphics7CGFloatVAA17VerticalAlignmentVcig` | 3 | cmux, jordanbaird-ice, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15AngularGradientV8gradient6center5angleAcA0D0V_AA9UnitPointVAA5AngleVtcfC` | 3 | cmux, ghostty, raycast |
 | SwiftUI.framework | `_$s7SwiftUI15AngularGradientVMn` | 3 | cmux, ghostty, raycast |
 | SwiftUI.framework | `_$s7SwiftUI15BackgroundStyleVN` | 3 | ghostty, orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI15ButtonMenuStyleVAA0dE0AAMc` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI15ButtonMenuStyleVACycfC` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI15ButtonMenuStyleVMa` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI15ButtonMenuStyleVMn` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupV10isExpanded7content5labelACyxq_GAA7BindingVySbG_q_ycxyXEtcfC` | 3 | 1password, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV4fill_4with5styleyAA4PathV_AC7ShadingVAA9FillStyleVtF` | 3 | cmux, jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV7ShadingVMa` | 3 | cmux, jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE17accessibilityHintyACyxAEGqd__SyRd__lF` | 3 | 1password, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI15NavigationStackVMn` | 3 | 1password, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI15NavigationStackVyxq_GAA4ViewAAMc` | 3 | 1password, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI15_PositionLayoutVAA12ViewModifierAAWP` | 3 | betterdisplay, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV_9modifiersAcA13KeyEquivalentV_AA14EventModifiersVtcfC` | 3 | cmux, ghostty, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupVMa` | 3 | 1password, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV6stroke_4with9lineWidthyAA4PathV_AC7ShadingV04CoreC07CGFloatVtF` | 3 | cmux, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI15InsettableShapeP5inset2by05InsetD0Qz12CoreGraphics7CGFloatV_tFTq` | 3 | 1password, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15InsettableShapePAA0D0Tb` | 3 | 1password, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15InsettableShapeTL` | 3 | 1password, jordanbaird-ice, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE17accessibilityHintyACyxAEGAA18LocalizedStringKeyVF` | 3 | ghostty, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE18accessibilityValueyACyxAEGAA18LocalizedStringKeyVF` | 3 | ghostty, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE19accessibilityAction5named_ACyxAEGAA4TextV_yyctF` | 3 | cmux, maccy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE19accessibilityHiddenyACyxAEGSbF` | 3 | maccy, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE23accessibilityIdentifieryACyxAEGSSF` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE29accessibilityAdjustableActionyACyxAEGyAA0E19AdjustmentDirectionOcF` | 3 | cmux, ghostty, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15NavigationStackV4rootACyAA0C4PathVq_Gq_yXE_tcAFRszrlufC` | 3 | cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI15SidebarCommandsVACycfC` | 3 | openclaw, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI15SidebarCommandsVMa` | 3 | openclaw, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI15SidebarCommandsVMn` | 3 | openclaw, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI16PresentationModeV7dismissyyF` | 3 | swiftbar, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI16PresentationModeVMa` | 3 | swiftbar, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI16PresentationModeVMn` | 3 | swiftbar, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI16ProposedViewSizeV11unspecifiedACvgZ` | 3 | cmux, coteditor, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI16RedactionReasonsV11placeholderACvgZ` | 3 | cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI16RedactionReasonsVMa` | 3 | cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI16ScrollViewReaderV7contentACyxGxAA0cD5ProxyVc_tcfC` | 3 | betterdisplay, jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI16ScrollViewReaderVMa` | 3 | betterdisplay, jordanbaird-ice, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI16ToolbarItemGroupV9placement7contentACyxGAA0cD9PlacementV_xyXEtcfC` | 3 | pearcleaner, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16ToolbarItemGroupVMn` | 3 | pearcleaner, utm, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI16_GrayscaleEffectVMn` | 3 | betterdisplay, cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17ContentTransitionV11numericText10countsDownACSb_tFZ` | 3 | betterdisplay, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18minimumScaleFactor12CoreGraphics7CGFloatVvg` | 3 | cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18minimumScaleFactor12CoreGraphics7CGFloatVvpMV` | 3 | cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18minimumScaleFactor12CoreGraphics7CGFloatVvs` | 3 | cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV23menuIndicatorVisibilityAA0G0Ovg` | 3 | cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV23menuIndicatorVisibilityAA0G0OvpMV` | 3 | cmux, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV23menuIndicatorVisibilityAA0G0Ovs` | 3 | cmux, coteditor, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI17ButtonBorderShapeV7capsuleACvgZ` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17ButtonToggleStyleVAA0dE0AAMc` | 3 | coteditor, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17ButtonToggleStyleVACycfC` | 3 | coteditor, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17ButtonToggleStyleVMa` | 3 | coteditor, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17ButtonToggleStyleVMn` | 3 | coteditor, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17ContentTransitionV7opacityACvgZ` | 3 | betterdisplay, pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV12displayScale12CoreGraphics7CGFloatVvg` | 3 | cmux, openclaw, raycast |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV12displayScale12CoreGraphics7CGFloatVvpMV` | 3 | cmux, openclaw, raycast |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV12displayScale12CoreGraphics7CGFloatVvs` | 3 | cmux, openclaw, raycast |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16presentationModeAA7BindingVyAA012PresentationF0VGvg` | 3 | swiftbar, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16presentationModeAA7BindingVyAA012PresentationF0VGvpMV` | 3 | swiftbar, tailscale-app, utm |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV25accessibilityReduceMotionSbvg` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV25accessibilityReduceMotionSbvpMV` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV6locale10Foundation6LocaleVvg` | 3 | coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV6locale10Foundation6LocaleVvpMV` | 3 | coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV6locale10Foundation6LocaleVvs` | 3 | coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17_BrightnessEffectVAA12ViewModifierAAWP` | 3 | betterdisplay, cmux, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI17_ShadowShapeStyleVMn` | 3 | coteditor, jordanbaird-ice, raycast |
-| SwiftUI.framework | `_$s7SwiftUI18ControlActiveStateOMn` | 3 | betterdisplay, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI18ControlActiveStateOSQAAMc` | 3 | betterdisplay, cmux, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI18IdentityTransitionVAA0D0AAMc` | 3 | cmux, maccy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18IdentityTransitionVACycfC` | 3 | cmux, maccy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18IdentityTransitionVMa` | 3 | cmux, maccy, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0yy10Foundation010AttributedD0VF` | 3 | coteditor, raycast, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI18WindowResizabilityVMa` | 3 | jordanbaird-ice, orbstack, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI18_AnimationModifierVMa` | 3 | cmux, jordanbaird-ice, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV8isHeaderACvgZ` | 3 | 1password, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI19HorizontalAlignmentVyAcA0D2ID_pXpcfC` | 3 | clipy, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC13sizingOptionsAA0c6SizingF0VvsTj` | 3 | cmux, coteditor, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC8rootViewxvsTj` | 3 | betterdisplay, cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI19NavigationSplitViewV16columnVisibility7sidebar6detailACyxAA05EmptyE0Vq0_GAA7BindingVyAA0cdeG0VG_xyXEq0_yXEtcAHRs_rlufC` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI19SeparatorShapeStyleVACycfC` | 3 | clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI19SeparatorShapeStyleVMa` | 3 | clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI19SeparatorShapeStyleVMn` | 3 | clipy, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI19ColorSchemeContrastO9increasedyA2CmFWC` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC8rootViewxvMTj` | 3 | coteditor, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19SymbolRenderingModeV10monochromeACvgZ` | 3 | betterdisplay, cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI19SymbolRenderingModeV10multicolorACvgZ` | 3 | cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI19SymbolRenderingModeV7paletteACvgZ` | 3 | betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI19TupleCommandContentVMn` | 3 | cmux, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI19TupleCommandContentVyACyxGxcfC` | 3 | cmux, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI19TupleCommandContentVyxGAA8CommandsAAMc` | 3 | cmux, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionO2upyA2CmFWC` | 3 | 1password, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionO4downyA2CmFWC` | 3 | 1password, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionOMa` | 3 | 1password, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI20RectangleCornerRadiiV7topLeft0F5Right06bottomH00iG0AC12CoreGraphics7CGFloatV_A3JtcfC` | 3 | ghostty, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI20_TransactionModifierVAA04ViewD0AAWP` | 3 | betterdisplay, cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV4helpACvgZ` | 3 | cmux, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV7newItemACvgZ` | 3 | cmux, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementVMa` | 3 | cmux, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI21GlobalCoordinateSpaceVAA0dE8ProtocolAAWP` | 3 | cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI21GlobalCoordinateSpaceVMa` | 3 | cmux, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI21StrokeBorderShapeViewVyxq_q0_GAA0F0AAMc` | 3 | 1password, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI20LocalCoordinateSpaceVMn` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20ScrollBounceBehaviorV11basedOnSizeACvgZ` | 3 | 1password, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI20ScrollBounceBehaviorVMa` | 3 | 1password, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI20SearchFieldPlacementV7sidebarACvgZ` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementV18confirmationActionACvgZ` | 3 | cmux, openclaw, utm |
+| SwiftUI.framework | `_$s7SwiftUI21ToolbarContentBuilderV10buildBlockyQrxAA0cD0RzlFZ` | 3 | openclaw, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI21ToolbarContentBuilderV10buildBlockyQrxAA0cD0RzlFZQOMQ` | 3 | openclaw, pearcleaner, utm |
 | SwiftUI.framework | `_$s7SwiftUI22ContentMarginPlacementV06scrollC0ACvgZ` | 3 | cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI22ContentUnavailableViewV5label11description7actionsACyxq_q0_GxyXE_q_yXEq0_yXEtcfC` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI22ContentUnavailableViewVMn` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI22ContentUnavailableViewVyxq_q0_GAA0E0AAMc` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI22NSHostingSizingOptionsV20preferredContentSizeACvgZ` | 3 | cmux, coteditor, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI22NSHostingSizingOptionsVMa` | 3 | cmux, coteditor, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI22UnevenRoundedRectangleVMa` | 3 | ghostty, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI22UnevenRoundedRectangleVMn` | 3 | ghostty, jordanbaird-ice, maccy |
-| SwiftUI.framework | `_$s7SwiftUI23CoordinateSpaceProtocolPA2A06GlobalcD0VRszrlE6globalAEvgZ` | 3 | cmux, jordanbaird-ice, maccy |
+| SwiftUI.framework | `_$s7SwiftUI22ContentUnavailableViewVA2A5LabelVyAA4TextVAA5ImageVGRszAGSgRs_AA05EmptyE0VRs0_rlE_06systemH011descriptionACyAjkMGqd___SSAKtcSyRd__lufC` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22_AnchorWritingModifierVMn` | 3 | betterdisplay, cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22_GridAlignmentModifierVAA04ViewE0AAMc` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22_GridAlignmentModifierVN` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22_MatchedGeometryEffectVMn` | 3 | cmux, pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV4IconVMn` | 3 | orbstack, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV4iconAC4IconVvg` | 3 | orbstack, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV5TitleVMn` | 3 | orbstack, utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV5titleAC5TitleVvg` | 3 | orbstack, utm, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI23PreferredColorSchemeKeyVMn` | 3 | betterdisplay, cmux, raycast |
-| SwiftUI.framework | `_$s7SwiftUI23_GeometryActionModifierV5value6actionACyxGxAA0C5ProxyVc_yxctcfC` | 3 | 1password, cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI23_GeometryActionModifierVMa` | 3 | 1password, cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI23_GeometryActionModifierVyxGAA04ViewE0AAMc` | 3 | 1password, cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI25BorderlessButtonMenuStyleVAA0eF0AAMc` | 3 | cmux, jordanbaird-ice, utm |
-| SwiftUI.framework | `_$s7SwiftUI25BorderlessButtonMenuStyleVACycfC` | 3 | cmux, jordanbaird-ice, utm |
-| SwiftUI.framework | `_$s7SwiftUI25BorderlessButtonMenuStyleVMa` | 3 | cmux, jordanbaird-ice, utm |
-| SwiftUI.framework | `_$s7SwiftUI25BorderlessButtonMenuStyleVMn` | 3 | cmux, jordanbaird-ice, utm |
-| SwiftUI.framework | `_$s7SwiftUI25DisabledTextSelectabilityVACycfC` | 3 | cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI25DisabledTextSelectabilityVMa` | 3 | cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI25DisabledTextSelectabilityVMn` | 3 | cmux, coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI25HiddenTitleBarWindowStyleVAA0fG0AAWP` | 3 | cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI25HiddenTitleBarWindowStyleVACycfC` | 3 | cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI25HiddenTitleBarWindowStyleVMa` | 3 | cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI25HiddenTitleBarWindowStyleVMn` | 3 | cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI25_AlignmentWritingModifierVAA04ViewE0AAWP` | 3 | cmux, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI25_AlignmentWritingModifierVN` | 3 | jordanbaird-ice, linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI25_ForegroundStyleModifier2VMn` | 3 | 1password, betterdisplay, cmux |
-| SwiftUI.framework | `_$s7SwiftUI26NSViewRepresentableContextV11environmentAA17EnvironmentValuesVvg` | 3 | cmux, maccy, utm |
-| SwiftUI.framework | `_$s7SwiftUI29NavigationSplitViewVisibilityV3allACvgZ` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI29NavigationSplitViewVisibilityVMa` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI29NavigationSplitViewVisibilityVMn` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI30HierarchicalShapeStyleModifierVMn` | 3 | cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI23_SafeAreaIgnoringLayoutVMn` | 3 | betterdisplay, pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI25DisabledTextSelectabilityVAA0dE0AAWP` | 3 | cmux, coteditor, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25MatchedGeometryPropertiesV5frameACvgZ` | 3 | cmux, pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25ScrollIndicatorVisibilityV9automaticACvgZ` | 3 | openclaw, pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25_ForegroundStyleModifier2Vyxq_GAA12ViewModifierAAMc` | 3 | 1password, betterdisplay, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI29NSHostingSceneBridgingOptionsVMa` | 3 | cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI29NSHostingSceneBridgingOptionsVMn` | 3 | cmux, openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI29NSHostingSceneBridgingOptionsVs10SetAlgebraAAMc` | 3 | cmux, openclaw, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI30_EnvironmentKeyWritingModifierVMa` | 3 | clipy, cmux, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI4EdgeO8rawValueACSgs4Int8V_tcfC` | 3 | betterdisplay, cmux, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4FontV6WeightVMn` | 3 | cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4LinkVA2A4TextVRszrlE_11destinationACyAEGqd___10Foundation3URLVtcSyRd__lufC` | 3 | cmux, coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ListV9selection7contentACyxq_GAA7BindingVyShyxGGSg_q_yXEtcfC` | 3 | clipy, coteditor, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI4TextV9DateStyleVMa` | 3 | cmux, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4TextV_5styleAC10Foundation4DateV_AC0F5StyleVtcfC` | 3 | cmux, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4TextVyAC10Foundation23LocalizedStringResourceVcfC` | 3 | clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC11ColumnWidthyQr12CoreGraphics7CGFloatVF` | 3 | cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC11ColumnWidthyQr12CoreGraphics7CGFloatVFQOMQ` | 3 | cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10background_2in9fillStyleQrqd___qd_0_AA04FillG0VtAA05ShapeG0Rd__AA010InsettableI0Rd_0_r0_lF` | 3 | cmux, orbstack, raycast |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress_6actionQrAA0E10EquivalentV_AA0eF0V6ResultOyctF` | 3 | 1password, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress_6actionQrAA0E10EquivalentV_AA0eF0V6ResultOyctFQOMQ` | 3 | 1password, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenu16forSelectionType4menu13primaryActionQrqd__m_qd_0_Shyqd__GcyAHcSgtSHRd__AaBRd_0_r0_lF` | 3 | 1password, coteditor, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenu16forSelectionType4menu13primaryActionQrqd__m_qd_0_Shyqd__GcyAHcSgtSHRd__AaBRd_0_r0_lFQOMQ` | 3 | 1password, coteditor, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13onMoveCommand7performQryAA0eF9DirectionOcSg_tF` | 3 | 1password, cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13onMoveCommand7performQryAA0eF9DirectionOcSg_tFQOMQ` | 3 | 1password, cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI30_SafeAreaRegionsIgnoringLayoutVN` | 3 | maccy, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI31_IndefiniteSymbolEffectModifierVAA04ViewF0AAMc` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI32AccessibilityAdjustmentDirectionO9decrementyA2CmFWC` | 3 | cmux, ghostty, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI32AccessibilityAdjustmentDirectionO9incrementyA2CmFWC` | 3 | cmux, ghostty, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI32AccessibilityAdjustmentDirectionOMa` | 3 | cmux, ghostty, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4AxisO3SetVMn` | 3 | betterdisplay, cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetVMn` | 3 | betterdisplay, cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeOMn` | 3 | coteditor, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6custom_4sizeACSS_12CoreGraphics7CGFloatVtFZ` | 3 | coteditor, karabiner-elements, raycast |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6italicACyF` | 3 | cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO11subheadlineyA2EmFWC` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO7calloutyA2EmFWC` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO8footnoteyA2EmFWC` | 3 | betterdisplay, cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4MenuV7content5label13primaryActionACyxq_Gq_yXE_xyXEyyctcfC` | 3 | coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4MenuV_7contentACyAA4TextVq_GAA18LocalizedStringKeyV_q_yXEtcAFRszrlufC` | 3 | betterdisplay, openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4PathV02cgC0So9CGPathRefavg` | 3 | 1password, cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathV12addQuadCurve2to7controlySo7CGPointV_AHtF` | 3 | cmux, openclaw, raycast |
+| SwiftUI.framework | `_$s7SwiftUI4PathV6addArc6center6radius10startAngle03endI09clockwise9transformySo7CGPointV_12CoreGraphics7CGFloatVAA0I0VAQSbSo17CGAffineTransformVtF` | 3 | cmux, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathVyACSo6CGRectVcfC` | 3 | cmux, jordanbaird-ice, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathVyACSo9CGPathRefacfC` | 3 | 1password, cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV10fontDesignyAcA4FontV0E0OSgF` | 3 | coteditor, openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4TextV8trackingyAC12CoreGraphics7CGFloatVF` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV9DateStyleV4timeAEvgZ` | 3 | cmux, maccy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV9LineStyleV7PatternV5solidAGvgZ` | 3 | 1password, cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4TextV9LineStyleV7PatternVMa` | 3 | 1password, cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC11ColumnWidth3min5ideal3maxQr12CoreGraphics7CGFloatVSg_AjKtF` | 3 | coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC11ColumnWidth3min5ideal3maxQr12CoreGraphics7CGFloatVSg_AjKtFQOMQ` | 3 | coteditor, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC5StyleyQrqd__AA010NavigationecF0Rd__lF` | 3 | cmux, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC5StyleyQrqd__AA010NavigationecF0Rd__lFQOMQ` | 3 | cmux, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10monospacedyQrSbF` | 3 | cmux, ghostty, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10monospacedyQrSbFQOMQ` | 3 | cmux, ghostty, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress6phases6actionQrAA0eF0V6PhasesV_AH6ResultOAHctF` | 3 | cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress6phases6actionQrAA0eF0V6PhasesV_AH6ResultOAHctFQOMQ` | 3 | cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10tableStyleyQrqd__AA05TableE0Rd__lF` | 3 | coteditor, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10tableStyleyQrqd__AA05TableE0Rd__lFQOMQ` | 3 | coteditor, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13safeAreaInset4edge9alignment7spacing7contentQrAA12VerticalEdgeO_AA19HorizontalAlignmentV12CoreGraphics7CGFloatVSgqd__yXEtAaBRd__lF` | 3 | betterdisplay, openclaw, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13symbolVariantyQrAA14SymbolVariantsVF` | 3 | betterdisplay, cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13symbolVariantyQrAA14SymbolVariantsVFQOMQ` | 3 | betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15ignoresSafeArea_5edgesQrAA0eF7RegionsV_AA4EdgeO3SetVtF` | 3 | cmux, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15monospacedDigitQryF` | 3 | clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15monospacedDigitQryFQOMQ` | 3 | clipy, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16listRowSeparator_5edgesQrAA10VisibilityO_AA12VerticalEdgeO3SetVtF` | 3 | 1password, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16listRowSeparator_5edgesQrAA10VisibilityO_AA12VerticalEdgeO3SetVtFQOMQ` | 3 | 1password, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18accessibilityValueyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGqd__SyRd__lF` | 3 | 1password, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actions7messageQrqd___AA7BindingVySbGAA0I0Oqd_0_yXEqd_1_yXEtSyRd__AaBRd_0_AaBRd_1_r1_lF` | 3 | cmux, orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actions7messageQrqd___AA7BindingVySbGAA0I0Oqd_0_yXEqd_1_yXEtSyRd__AaBRd_0_AaBRd_1_r1_lFQOMQ` | 3 | cmux, orbstack, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14alignmentGuide_12computeValueQrAA19HorizontalAlignmentV_12CoreGraphics7CGFloatVAA0C10DimensionsVctF` | 3 | linearmouse, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14scrollDisabledyQrSbF` | 3 | jordanbaird-ice, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14scrollDisabledyQrSbFQOMQ` | 3 | jordanbaird-ice, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15dropDestination3for6action10isTargetedQrqd__m_SbSayqd__G_So7CGPointVtcySbct16CoreTransferable0L0Rd__lF` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15dropDestination3for6action10isTargetedQrqd__m_SbSayqd__G_So7CGPointVtcySbct16CoreTransferable0L0Rd__lFQOMQ` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17onContinuousHover15coordinateSpace7performQrqd___yAA0F5PhaseOctAA010CoordinateH8ProtocolRd__lF` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17onContinuousHover15coordinateSpace7performQrqd___yAA0F5PhaseOctAA010CoordinateH8ProtocolRd__lFQOMQ` | 3 | cmux, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actions7messageQrAA18LocalizedStringKeyV_AA7BindingVySbGAA0I0Oqd__yXEqd_0_yXEtAaBRd__AaBRd_0_r0_lF` | 3 | openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actions7messageQrAA18LocalizedStringKeyV_AA7BindingVySbGAA0I0Oqd__yXEqd_0_yXEtAaBRd__AaBRd_0_r0_lFQOMQ` | 3 | openclaw, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actionsQrqd___AA7BindingVySbGAA0I0Oqd_0_yXEtSyRd__AaBRd_0_r0_lF` | 3 | cmux, swiftbar, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actionsQrqd___AA7BindingVySbGAA0I0Oqd_0_yXEtSyRd__AaBRd_0_r0_lFQOMQ` | 3 | cmux, swiftbar, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18onPreferenceChange_7performQrqd__m_y5ValueQyd__ctAA0E3KeyRd__SQAGRQlF` | 3 | 1password, cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE23accessibilityIdentifieryAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGSSF` | 3 | cmux, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19highPriorityGesture_9includingQrqd___AA0F4MaskVtAA0F0Rd__lF` | 3 | cmux, ghostty, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19highPriorityGesture_9includingQrqd___AA0F4MaskVtAA0F0Rd__lFQOMQ` | 3 | cmux, ghostty, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20scrollBounceBehavior_4axesQrAA06ScrolleF0V_AA4AxisO3SetVtF` | 3 | 1password, coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20scrollBounceBehavior_4axesQrAA06ScrolleF0V_AA4AxisO3SetVtFQOMQ` | 3 | 1password, coteditor, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4task8priority_QrScP_yyYaYbctF` | 3 | betterdisplay, jordanbaird-ice, raycast |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actions7messageQrqd___AA7BindingVySbGqd_0_yXEqd_1_yXEtSyRd__AaBRd_0_AaBRd_1_r1_lF` | 3 | cmux, sequel-ace, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actions7messageQrqd___AA7BindingVySbGqd_0_yXEqd_1_yXEtSyRd__AaBRd_0_AaBRd_1_r1_lFQOMQ` | 3 | cmux, sequel-ace, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrag_7previewQrSo14NSItemProviderCyc_qd__yXEtAaBRd__lF` | 3 | cmux, maccy, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrag_7previewQrSo14NSItemProviderCyc_qd__yXEtAaBRd__lFQOMQ` | 3 | cmux, maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert4item7contentQrAA7BindingVyqd__SgG_AA5AlertVqd__XEts12IdentifiableRd__lF` | 3 | openclaw, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert4item7contentQrAA7BindingVyqd__SgG_AA5AlertVqd__XEts12IdentifiableRd__lFQOMQ` | 3 | openclaw, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented10presenting7actions7messageQrqd___AA7BindingVySbGqd_2_Sgqd_0_qd_2_XEqd_1_qd_2_XEtSyRd__AaBRd_0_AaBRd_1_r2_lF` | 3 | 1password, sequel-ace, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented10presenting7actions7messageQrqd___AA7BindingVySbGqd_2_Sgqd_0_qd_2_XEqd_1_qd_2_XEtSyRd__AaBRd_0_AaBRd_1_r2_lFQOMQ` | 3 | 1password, sequel-ace, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actionsQrAA18LocalizedStringKeyV_AA7BindingVySbGqd__yXEtAaBRd__lF` | 3 | betterdisplay, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actionsQrAA18LocalizedStringKeyV_AA7BindingVySbGqd__yXEtAaBRd__lFQOMQ` | 3 | betterdisplay, jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actionsQrqd___AA7BindingVySbGqd_0_yXEtSyRd__AaBRd_0_r0_lF` | 3 | betterdisplay, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actionsQrqd___AA7BindingVySbGqd_0_yXEtSyRd__AaBRd_0_r0_lFQOMQ` | 3 | betterdisplay, openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5badgeyQrSiF` | 3 | coteditor, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5badgeyQrSiFQOMQ` | 3 | coteditor, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDragyQrSo14NSItemProviderCycF` | 3 | cmux, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDragyQrSo14NSItemProviderCycFQOMQ` | 3 | cmux, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6zIndexyQrSdF` | 3 | maccy, pearcleaner, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8redacted6reasonQrAA16RedactionReasonsV_tF` | 3 | cmux, raycast, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8redacted6reasonQrAA16RedactionReasonsV_tFQOMQ` | 3 | cmux, raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI5AlertV5title7message13primaryButton09secondaryG0AcA4TextV_AISgAC0G0VALtcfC` | 3 | linearmouse, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI5AlertV6ButtonV11destructive_6actionAeA4TextV_yycSgtFZ` | 3 | linearmouse, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI5AlertV6ButtonV6cancelyAEyycSgFZ` | 3 | linearmouse, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI5ColorV02cgC0ACSo10CGColorRefa_tcfC` | 3 | jordanbaird-ice, maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5ColorV02cgC0So10CGColorRefaSgvg` | 3 | maccy, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI5ColorV3hue10saturation10brightness7opacityACSd_S3dtcfC` | 3 | coteditor, ghostty, raycast |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9lineLimityQrSNySiGF` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9lineLimityQrSNySiGFQOMQ` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9onOpenURL7performQry10Foundation0F0Vc_tF` | 3 | orbstack, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9onOpenURL7performQry10Foundation0F0Vc_tFQOMQ` | 3 | orbstack, pearcleaner, utm |
 | SwiftUI.framework | `_$s7SwiftUI5ColorV4hash4intoys6HasherVz_tF` | 3 | 1password, betterdisplay, cmux |
-| SwiftUI.framework | `_$s7SwiftUI5ColorV5brownACvgZ` | 3 | betterdisplay, clipy, cmux |
-| SwiftUI.framework | `_$s7SwiftUI5ImageV5ScaleO5largeyA2EmFWC` | 3 | cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI5ImageV5ScaleO6mediumyA2EmFWC` | 3 | betterdisplay, cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV10decorative5scale11orientationACSo10CGImageRefa_12CoreGraphics7CGFloatVAC11OrientationOtcfC` | 3 | cmux, openclaw, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5ImageVyAC21DeveloperToolsSupport0C8ResourceVcfC` | 3 | 1password, coteditor, jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI5SceneP05_makeC05scene6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZTq` | 3 | clipy, jordanbaird-ice, utm |
 | SwiftUI.framework | `_$s7SwiftUI5SceneP4BodyAC_AaBTn` | 3 | clipy, jordanbaird-ice, utm |
 | SwiftUI.framework | `_$s7SwiftUI5SceneP4body4BodyQzvgTq` | 3 | clipy, jordanbaird-ice, utm |
 | SwiftUI.framework | `_$s7SwiftUI5ScenePAAE05_makeC05scene6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZ` | 3 | clipy, jordanbaird-ice, utm |
-| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE11windowStyleyQrqd__AA06WindowE0Rd__lF` | 3 | cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE11windowStyleyQrqd__AA06WindowE0Rd__lFQOMQ` | 3 | cmux, jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE8commands7contentQrqd__yXE_tAA8CommandsRd__lF` | 3 | cmux, orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE8commands7contentQrqd__yXE_tAA8CommandsRd__lFQOMQ` | 3 | cmux, orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE18windowResizabilityyQrAA06WindowE0VF` | 3 | jordanbaird-ice, orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE18windowResizabilityyQrAA06WindowE0VFQOMQ` | 3 | jordanbaird-ice, orbstack, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI5ShapeP4path2inAA4PathVSo6CGRectV_tFTj` | 3 | 1password, jordanbaird-ice, raycast |
 | SwiftUI.framework | `_$s7SwiftUI5TableV_9selection7columnsACyxAA0C14ForEachContentVyqd__Gq0_Gqd___AA7BindingVy2IDQzSgGq0_yXEtcAHRs_SkRd__7ElementQyd__0C8RowValueRt0_lufC` | 3 | sequel-ace, tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI6PickerVA2A4TextVRszrlE_9selection7contentACyAEq_q0_Gqd___AA7BindingVyq_Gq0_yXEtcSyRd__lufC` | 3 | cmux, linearmouse, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI6PickerVMa` | 3 | cmux, jordanbaird-ice, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI6SliderVA2A9EmptyViewVRszAERs_rlE5value2in16onEditingChangedACyA2EGAA7BindingVyqd__G_SNyqd__GySbctcSBRd__SB6StrideRpd__lufC` | 3 | betterdisplay, linearmouse, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI6SliderVyxq_GAA4ViewAAMc` | 3 | betterdisplay, cmux, linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI5TableV_9selection9sortOrder7columnsACyxAA0C14ForEachContentVyqd__Gq0_Gqd___AA7BindingVyShy2IDQzGGALySayqd_0_GGq0_yXEtcAIRs_SkRd__10Foundation14SortComparatorRd_0_7ElementQyd__0C8RowValueRt0_8ComparedQyd_0_AVRSr0_lufC` | 3 | coteditor, pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutMp` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutP05_makeC4View4root6inputs4bodyAA01_E7OutputsVAA11_GraphValueVyxG_AA01_E6InputsVAA01_e4ListI0VAA01_J0V_ANtXEtFZTq` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutP11updateCache_8subviewsy0E0Qzz_AA0C8SubviewsVtFTq` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutP12sizeThatFits8proposal8subviews5cacheSo6CGSizeVAA16ProposedViewSizeV_AA0C8SubviewsV5CacheQzztFTq` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutP13placeSubviews2in8proposal8subviews5cacheySo6CGRectV_AA16ProposedViewSizeVAA0cE0V5CacheQzztFTq` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutP16layoutPropertiesAA0cE0VvgZTq` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutP17explicitAlignment2of2in8proposal8subviews5cache12CoreGraphics7CGFloatVSgAA010HorizontalE0V_So6CGRectVAA16ProposedViewSizeVAA0C8SubviewsV5CacheQzztFTq` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutP17explicitAlignment2of2in8proposal8subviews5cache12CoreGraphics7CGFloatVSgAA08VerticalE0V_So6CGRectVAA16ProposedViewSizeVAA0C8SubviewsV5CacheQzztFTq` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutP7spacing8subviews5cacheAA11ViewSpacingVAA0C8SubviewsV_5CacheQzztFTq` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutP9makeCache8subviews0E0QzAA0C8SubviewsV_tFTq` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutPAA10AnimatableTb` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE05_makeC4View4root6inputs4bodyAA01_E7OutputsVAA11_GraphValueVyxG_AA01_E6InputsVAA01_e4ListI0VAA01_J0V_ANtXEtFZ` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE11updateCache_8subviewsy0E0Qzz_AA0C8SubviewsVtF` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE16layoutPropertiesAA0cE0VvgZ` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE17explicitAlignment2of2in8proposal8subviews5cache12CoreGraphics7CGFloatVSgAA010HorizontalE0V_So6CGRectVAA16ProposedViewSizeVAA0C8SubviewsV5CacheQzztF` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE17explicitAlignment2of2in8proposal8subviews5cache12CoreGraphics7CGFloatVSgAA08VerticalE0V_So6CGRectVAA16ProposedViewSizeVAA0C8SubviewsV5CacheQzztF` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE7spacing8subviews5cacheAA11ViewSpacingVAA0C8SubviewsV_5CacheQzztF` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAyt5CacheRtzrlE04makeD08subviewsyAA0C8SubviewsV_tF` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6SliderV5value2in4step16onEditingChanged17minimumValueLabel07maximumkL05labelACyxq_GAA7BindingVyqd__G_SNyqd__G6StrideQyd__ySbcq_q_xyXEtcSBRd__SBAQRQlufC` | 3 | linearmouse, orbstack, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6SliderVA2A9EmptyViewVRs_rlE5value2in4step16onEditingChanged5labelACyxAEGAA7BindingVyqd__G_SNyqd__G6StrideQyd__ySbcxyXEtcSBRd__SBAQRQlufC` | 3 | openclaw, utm, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI6WindowVMn` | 3 | cmux, jordanbaird-ice, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI7BindingVAAs12IdentifiableRzlE2id2IDQzvg` | 3 | betterdisplay, coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI8BindableV14projectedValueACyxGvg` | 3 | cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI8BindableVAARlzClE13dynamicMemberAA7BindingVyqd__Gs24ReferenceWritableKeyPathCyxqd__G_tcluig` | 3 | cmux, coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI7ForEachVAASnySiGRszSiRs_AA4ViewR0_rlE_7contentACyADSiq0_GAD_q0_SictcfC` | 3 | pearcleaner, raycast, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI7GridRowVyxGAA4ViewAAMc` | 3 | cmux, coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7SectionVA2A4TextVRszAA4ViewR_AA05EmptyE0VRs0_rlE_7contentACyAEq_AHGqd___q_yXEtcSyRd__lufC` | 3 | cmux, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7SectionVA2A4ViewRzAaDR_AaDR0_rlE6header6footer7contentACyxq_q0_Gx_q0_q_yXEtcfC` | 3 | linearmouse, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7SectionVA2A9EmptyViewVRszAA0E0R_AERs0_rlE7contentACyAEq_AEGq_yXE_tcfC` | 3 | linearmouse, tailscale-app, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI8DropInfoV18hasItemsConforming2toSbSay22UniformTypeIdentifiers6UTTypeVG_tF` | 3 | cmux, ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI8GridItemV4SizeO8adaptiveyAE12CoreGraphics7CGFloatV_AItcAEmFWC` | 3 | betterdisplay, cmux, utm |
-| SwiftUI.framework | `_$s7SwiftUI8GridItemV4SizeO8flexibleyAE12CoreGraphics7CGFloatV_AItcAEmFWC` | 3 | cmux, orbstack, stats |
-| SwiftUI.framework | `_$s7SwiftUI8GroupBoxVA2A9EmptyViewVRszrlE7contentACyAEq_Gq_yXE_tcfC` | 3 | cmux, coteditor, iina |
-| SwiftUI.framework | `_$s7SwiftUI8GroupBoxVMn` | 3 | cmux, coteditor, iina |
-| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6ResultO7ignoredyA2EmFWC` | 3 | cmux, coteditor, maccy |
-| SwiftUI.framework | `_$s7SwiftUI8MaterialVAA10ShapeStyleAAMc` | 3 | cmux, orbstack, raycast |
-| SwiftUI.framework | `_$s7SwiftUI9AlignmentVMn` | 3 | betterdisplay, cmux, raycast |
+| SwiftUI.framework | `_$s7SwiftUI8GroupBoxVyxq_GAA4ViewAAMc` | 3 | cmux, karabiner-elements, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6PhasesV4downAEvgZ` | 3 | cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6PhasesV6repeatAEvgZ` | 3 | cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6PhasesVMa` | 3 | cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6PhasesVMn` | 3 | cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6PhasesVs10SetAlgebraAAMc` | 3 | cmux, maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8MaterialV10ultraThickACvgZ` | 3 | orbstack, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI8MaterialV3barACvgZ` | 3 | jordanbaird-ice, openclaw, swiftbar |
 | SwiftUI.framework | `_$s7SwiftUI9AnimationV9easeInOutACvgZ` | 3 | clipy, raycast, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI9AnimationVMn` | 3 | clipy, cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI9NamespaceV12wrappedValueAC2IDVvg` | 3 | betterdisplay, cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_5value6format6promptACyAEGAA18LocalizedStringKeyV_AA7BindingVy11FormatInputQyd__Gqd__AESgtc10Foundation09ParseableL5StyleRd__SS0L6OutputRtd__lufC` | 3 | cmux, orbstack, rectangle |
-| SwiftUI.framework | `_$sSM7SwiftUIE4move11fromOffsets8toOffsety10Foundation8IndexSetV_SitF` | 3 | coteditor, jordanbaird-ice, utm |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_4text6promptACyAEGqd___AA7BindingVySSGAESgtcSyRd__lufC` | 3 | cmux, tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_5value9formatter16onEditingChanged0G6CommitACyAEGAA18LocalizedStringKeyV_AA7BindingVyqd__GSo11NSFormatterCySbcyyctclufC` | 3 | maccy, rectangle, vorssaint |
 | WidgetKit.framework | `_$s9WidgetKit0A6CenterC15reloadTimelines6ofKindySS_tFTj` | 3 | stats, tailscale-app, whatsapp |
 | WidgetKit.framework | `_$s9WidgetKit0A6CenterC6sharedACvgZ` | 3 | stats, tailscale-app, whatsapp |
 | WidgetKit.framework | `_$s9WidgetKit0A6CenterCMa` | 3 | stats, tailscale-app, whatsapp |
 | WidgetKit.framework | `_$s9WidgetKit0A6FamilyO11systemSmallyA2CmFWC` | 3 | stats, tailscale-app, whatsapp |
 | WidgetKit.framework | `_$s9WidgetKit0A6FamilyOMa` | 3 | stats, tailscale-app, whatsapp |
-| Charts.framework | `_$s6Charts12ChartContentPAAE15foregroundStyleyQrqd__7SwiftUI05ShapeE0Rd__lF` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts12ChartContentPAAE15foregroundStyleyQrqd__7SwiftUI05ShapeE0Rd__lFQOMQ` | 2 | iterm2, tailscale-app |
+| Charts.framework | `_$s6Charts12AxisGridLineV8centered6strokeACSbSg_7SwiftUI11StrokeStyleVSgtcfC` | 2 | iterm2, openclaw |
+| Charts.framework | `_$s6Charts12AxisGridLineVAA0B4MarkAAWP` | 2 | iterm2, openclaw |
+| Charts.framework | `_$s6Charts12AxisGridLineVMa` | 2 | iterm2, openclaw |
+| Charts.framework | `_$s6Charts12AxisGridLineVMn` | 2 | iterm2, openclaw |
 | Charts.framework | `_$s6Charts12ChartContentPAAE9lineStyleyQr7SwiftUI06StrokeE0VF` | 2 | iterm2, tailscale-app |
 | Charts.framework | `_$s6Charts12ChartContentPAAE9lineStyleyQr7SwiftUI06StrokeE0VFQOMQ` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts14AxisMarkPresetVMa` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts14AxisMarkValuesV9automaticACvgZ` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts14AxisMarkValuesVMa` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts14AxisValueLabelVMn` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts14AxisValueLabelVyxGAA0B4MarkAAMc` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts14PlottableValueVMn` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts16AxisMarkPositionV9automaticACvgZ` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts16AxisMarkPositionVMa` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts25AxisValueLabelOrientationV9automaticACvgZ` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts25AxisValueLabelOrientationVMa` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts33AxisValueLabelCollisionResolutionV9automaticACvgZ` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts33AxisValueLabelCollisionResolutionVMa` | 2 | iterm2, tailscale-app |
+| Charts.framework | `_$s6Charts14AxisMarkPresetV9automaticACvgZ` | 2 | iterm2, openclaw |
+| Charts.framework | `_$s6Charts14PlottableValueV5valueyACyxG7SwiftUI18LocalizedStringKeyV_xtFZ` | 2 | openclaw, tailscale-app |
 | Charts.framework | `_$s6Charts5ChartV7contentACyxGxyXE_tcfC` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts5ChartVMn` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts5ChartVyxG7SwiftUI4ViewAAMc` | 2 | iterm2, tailscale-app |
 | Charts.framework | `_$s6Charts9AxisMarksV6preset8position6values7contentACyxGAA0B10MarkPresetV_AA0bH8PositionVAA0bH6ValuesVxAA0B5ValueVctcfC` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts9AxisMarksVMn` | 2 | iterm2, tailscale-app |
-| Charts.framework | `_$s6Charts9AxisMarksVyxGAA0B7ContentAAMc` | 2 | iterm2, tailscale-app |
 | Charts.framework | `_$s6Charts9AxisValueV2asyxSgxmAA9PlottableRzlF` | 2 | iterm2, tailscale-app |
+| Charts.framework | `_$s7SwiftUI4ViewP6ChartsE10chartXAxis7contentQrqd__yXE_tAD11AxisContentRd__lF` | 2 | iterm2, openclaw |
+| Charts.framework | `_$s7SwiftUI4ViewP6ChartsE10chartXAxis7contentQrqd__yXE_tAD11AxisContentRd__lFQOMQ` | 2 | iterm2, openclaw |
+| Charts.framework | `_$s7SwiftUI4ViewP6ChartsE10chartYAxis7contentQrqd__yXE_tAD11AxisContentRd__lF` | 2 | openclaw, tailscale-app |
+| Charts.framework | `_$s7SwiftUI4ViewP6ChartsE10chartYAxis7contentQrqd__yXE_tAD11AxisContentRd__lFQOMQ` | 2 | openclaw, tailscale-app |
 | Charts.framework | `_$s7SwiftUI7ForEachVyxq_q0_G6Charts12ChartContentA2eFR0_rlMc` | 2 | iterm2, tailscale-app |
+| Charts.framework | `_$sSd6Charts9PlottableAAWP` | 2 | iterm2, openclaw |
 | Charts.framework | `_$sSi6Charts9PlottableAAWP` | 2 | iterm2, tailscale-app |
 | Combine.framework | `_$s7Combine06CustomA21IdentifierConvertibleP07combineC0AA0aC0VvgTj` | 2 | clipy, raycast |
 | Combine.framework | `_$s7Combine10PublishersO0A6LatestVMa` | 2 | raycast, whatsapp |
-| Combine.framework | `_$s7Combine10PublishersO10CompactMapV3mapyAEy_xqd__Gqd__q_clF` | 2 | raycast, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO11AutoconnectCMa` | 2 | linearmouse, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO12HandleEventsVMa` | 2 | linearmouse, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO12ReplaceErrorVMn` | 2 | ghostty, whatsapp |
@@ -818,11 +1132,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Combine.framework | `_$s7Combine10PublishersO6Merge4VMn` | 2 | jordanbaird-ice, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO6Merge4VyAEy_xq_q0_q1_Gx_q_q0_q1_tcfC` | 2 | jordanbaird-ice, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO6Merge4Vy_xq_q0_q1_GAA9PublisherAAMc` | 2 | jordanbaird-ice, whatsapp |
+| Combine.framework | `_$s7Combine10PublishersO6TryMapVMn` | 2 | swiftbar, whatsapp |
+| Combine.framework | `_$s7Combine10PublishersO6TryMapVy_xq_GAA9PublisherAAMc` | 2 | swiftbar, whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO7TimeoutVMn` | 2 | ghostty, raycast |
 | Combine.framework | `_$s7Combine10PublishersO7TimeoutVy_xq_GAA9PublisherAAMc` | 2 | ghostty, raycast |
 | Combine.framework | `_$s7Combine10PublishersO9MergeManyVMa` | 2 | linearmouse, whatsapp |
 | Combine.framework | `_$s7Combine10SubscriberPAAyt5InputRtzrlE7receiveAA11SubscribersO6DemandVyF` | 2 | clipy, whatsapp |
-| Combine.framework | `_$s7Combine11SubscribersO6DemandVN` | 2 | clipy, raycast |
 | Combine.framework | `_$s7Combine13AnySubscriberVyxq_GAA0C0AAMc` | 2 | clipy, whatsapp |
 | Combine.framework | `_$s7Combine14AnyCancellableC5store2inyxz_tSmRzAC7ElementRtzlF` | 2 | cmux, tailscale-app |
 | Combine.framework | `_$s7Combine16AnySubscriberBoxCMa` | 2 | clipy, raycast |
@@ -830,77 +1145,68 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Combine.framework | `_$s7Combine17AnySubscriberBaseC7receiveyAA11SubscribersO6DemandVxFTj` | 2 | clipy, raycast |
 | Combine.framework | `_$s7Combine19CurrentValueSubjectC5valuexvM` | 2 | tailscale-app, whatsapp |
 | Combine.framework | `_$s7Combine4FailV5errorACyxq_Gq__tcfC` | 2 | drawio, whatsapp |
+| Combine.framework | `_$s7Combine4JustV6tryMapys6ResultOAAE9PublisherVyqd__s5Error_p_Gqd__xKXElF` | 2 | swiftbar, whatsapp |
 | Combine.framework | `_$s7Combine6FutureCMa` | 2 | raycast, whatsapp |
 | Combine.framework | `_$s7Combine8DeferredV15createPublisherACyxGxyc_tcfC` | 2 | raycast, whatsapp |
 | Combine.framework | `_$s7Combine8DeferredVMa` | 2 | raycast, whatsapp |
 | Combine.framework | `_$s7Combine8DeferredVyxGAA9PublisherAAMc` | 2 | raycast, whatsapp |
 | Combine.framework | `_$s7Combine9PublishedV9PublisherVMa` | 2 | linearmouse, whatsapp |
-| Combine.framework | `_$s7Combine9PublisherP7receive10subscriberyqd___tAA10SubscriberRd__7FailureQyd__AGRtz5InputQyd__6OutputRtzlFTj` | 2 | clipy, raycast |
 | Combine.framework | `_$s7Combine9PublisherPAAE12replaceError4withAA10PublishersO07ReplaceD0Vy_xG6OutputQz_tF` | 2 | ghostty, whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE5shareAA10PublishersO5ShareCy_xGyF` | 2 | raycast, whatsapp |
+| Combine.framework | `_$s7Combine9PublisherPAAE6tryMapyAA10PublishersO03TryD0Vy_xqd__Gqd__6OutputQzKclF` | 2 | swiftbar, whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE7collectyAA10PublishersO14CollectByCountVy_xGSiF` | 2 | utm, whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE7timeout_9scheduler7options11customErrorAA10PublishersO7TimeoutVy_xqd__G17SchedulerTimeType_6StrideQYd___qd__0J7OptionsQyd__Sg7FailureQzycSgtAA0J0Rd__lF` | 2 | ghostty, raycast |
 | Combine.framework | `_$s7Combine9PublisherPAAE9subscribeyAA14AnyCancellableCqd__AA7SubjectRd__7FailureQyd__AHRtz6OutputQyd__AKRtzlF` | 2 | clipy, whatsapp |
-| Combine.framework | `_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE6assign2to2onAA14AnyCancellableCs24ReferenceWritableKeyPathCyqd__6OutputQzG_qd__tlF` | 2 | coteditor, whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE7flatMap13maxPublishers_AA0H0O04FlatF0Vy_qd__AK03SetD4TypeVy_xAFQyd__GGAA11SubscribersO6DemandV_qd__6OutputQzctAaBRd__lF` | 2 | raycast, whatsapp |
 | Combine.framework | `_$s7Combine9SchedulerP0B8TimeTypeAC_6StrideSxAA0bC19IntervalConvertibleTn` | 2 | clipy, whatsapp |
 | Combine.framework | `_$s7Combine9SchedulerP3now0B8TimeTypeQzvgTj` | 2 | clipy, cmux |
-| Combine.framework | `_$s7Combine9SchedulerP8schedule7options_y0B7OptionsQzSg_yyctFTj` | 2 | clipy, raycast |
 | Combine.framework | `_$ss6ResultO7CombineE9PublisherVMa` | 2 | sequel-ace, whatsapp |
 | Combine.framework | `_$ss6ResultO7CombineE9publisherAbCE9PublisherVyxq__Gvg` | 2 | drawio, sequel-ace |
-| CoreTransferable.framework | `_$s10Foundation3URLV16CoreTransferable0D0ADMc` | 2 | cmux, coteditor |
-| CoreTransferable.framework | `_$s16CoreTransferable21CodableRepresentationV3for11contentTypeACyx10Foundation11JSONEncoderCAF11JSONDecoderCGxm_07UniformG11Identifiers6UTTypeVtcAHRs_AJRs0_rlufC` | 2 | cmux, coteditor |
-| CoreTransferable.framework | `_$s16CoreTransferable21CodableRepresentationVMn` | 2 | cmux, coteditor |
-| CoreTransferable.framework | `_$s16CoreTransferable21CodableRepresentationVyxq_q0_GAA08TransferD0AAMc` | 2 | cmux, coteditor |
-| CoreTransferable.framework | `_$s16CoreTransferable29TransferRepresentationBuilderV15buildExpressionyAA07CodableD0Vyxqd__qd_0_GAGSeRzSERz7Combine15TopLevelEncoderRd__AH0jK7DecoderRd_0_10Foundation4DataV6OutputRtd__AM5InputRtd_0_r0_lFZ` | 2 | cmux, coteditor |
 | CoreTransferable.framework | `_$sSS16CoreTransferable0B0AAMc` | 2 | cmux, coteditor |
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport13ImageResourceVMn` | 2 | coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s10InsetShape7SwiftUI010InsettableB0PTl` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s4Body7SwiftUI10LabelStylePTl` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s4Body7SwiftUI11ToggleStylePTl` | 2 | 1password, jordanbaird-ice |
+| SwiftUI.framework | `_$s12CoreGraphics7CGFloatV7SwiftUI16VectorArithmeticADMc` | 2 | raycast, vorssaint |
 | SwiftUI.framework | `_$s4Body7SwiftUI12WidgetBundlePTl` | 2 | stats, tailscale-app |
-| SwiftUI.framework | `_$s4Body7SwiftUI14ToolbarContentPTl` | 2 | clipy, utm |
+| SwiftUI.framework | `_$s4Body7SwiftUI17ProgressViewStylePTl` | 2 | 1password, pearcleaner |
 | SwiftUI.framework | `_$s4Body7SwiftUI20PrimitiveButtonStylePTl` | 2 | jordanbaird-ice, utm |
 | SwiftUI.framework | `_$s4Body7SwiftUI6WidgetPTl` | 2 | stats, tailscale-app |
-| SwiftUI.framework | `_$s4Body7SwiftUI8CommandsPTl` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s5Cache7SwiftUI6LayoutPTl` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI10AnimatablePAAE05_makeC05value6inputsyAA11_GraphValueVyxGz_AA01_G6InputsVtFZ` | 2 | betterdisplay, raycast |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACy10Foundation4DataVGAH_SSSo14NSUserDefaultsCSgtcAHRszlufC` | 2 | tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageV12wrappedValue_5storeACyxGx_SSSo14NSUserDefaultsCSgtcSYRzSi03RawF0RtzlufC` | 2 | coteditor, utm |
+| SwiftUI.framework | `_$s7SwiftUI10AppStorageVAAs23ExpressibleByNilLiteralRzlE_5storeACySbSgGSS_So14NSUserDefaultsCSgtcAFRszrlufC` | 2 | betterdisplay, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI10AppStorageVAAs23ExpressibleByNilLiteralRzlE_5storeACySdSgGSS_So14NSUserDefaultsCSgtcAFRszrlufC` | 2 | betterdisplay, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI10AsyncImageVMn` | 2 | orbstack, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI10DatePickerVMn` | 2 | pearcleaner, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI10HSplitViewV7contentACyxGxyXE_tcfC` | 2 | cmux, sequel-ace |
 | SwiftUI.framework | `_$s7SwiftUI10HSplitViewVMn` | 2 | cmux, sequel-ace |
 | SwiftUI.framework | `_$s7SwiftUI10HSplitViewVyxGAA0D0AAMc` | 2 | cmux, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI10LabelStyleMp` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI10LabelStyleP4BodyAC_AA4ViewTn` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI10LabelStyleP8makeBody13configuration0F0QzAA0cD13ConfigurationV_tFTq` | 2 | orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI10LazyHStackV9alignment7spacing11pinnedViews7contentACyxGAA17VerticalAlignmentV_12CoreGraphics7CGFloatVSgAA016PinnedScrollableH0VxyXEtcfC` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10LazyHStackVMn` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10LazyHStackVyxGAA4ViewAAMc` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseO10backgroundyA2CmFWC` | 2 | maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseO2eeoiySbAC_ACtFZ` | 2 | maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseO6activeyA2CmFWC` | 2 | maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseOMa` | 2 | maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseOMn` | 2 | maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseOSQAAMc` | 2 | maccy, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI10ShapeStyleMp` | 2 | 1password, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI10TabContentP15_identifiedView011_IdentifiedF0QzvgTj` | 2 | coteditor, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI10TransitionPAAE9animationyQrAA9AnimationVSgF` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI10TransitionPAAE9animationyQrAA9AnimationVSgFQOMQ` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11AnyGradientVMn` | 2 | jordanbaird-ice, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI11ColorPickerV9selection15supportsOpacity5labelACyxGAA7BindingVyAA0C0VG_SbxyXEtcfC` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11ColorPickerVA2A4TextVRszrlE_9selection15supportsOpacityACyAEGAA18LocalizedStringKeyV_AA7BindingVyAA0C0VGSbtcfC` | 2 | cmux, utm |
-| SwiftUI.framework | `_$s7SwiftUI11CommandMenuVMn` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI11SecureFieldV4text6prompt5labelACyxGAA7BindingVySSG_AA4TextVSgxyXEtcfC` | 2 | 1password, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI11SecureFieldVyxGAA4ViewAAMc` | 2 | 1password, cmux |
+| SwiftUI.framework | `_$s7SwiftUI11ColorPickerVyxGAA4ViewAAMc` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ColorSchemeOSQAAMc` | 2 | cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI11CommandMenuV_7contentACyxGAA18LocalizedStringKeyV_xyXEtcfC` | 2 | openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI11SecureFieldVA2A4TextVRszrlE_4text8onCommitACyAEGAA18LocalizedStringKeyV_AA7BindingVySSGyyctcfC` | 2 | 1password, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI11SecureFieldVA2A4TextVRszrlE_4text8onCommitACyAEGqd___AA7BindingVySSGyyctcSyRd__lufC` | 2 | cmux, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI11ShadowStyleV5inner5color6radius1x1yAcA5ColorV_12CoreGraphics7CGFloatVA2MtFZ` | 2 | jordanbaird-ice, raycast |
 | SwiftUI.framework | `_$s7SwiftUI11StateObjectV12wrappedValueACyxGxyXA_tcfC` | 2 | clipy, maccy |
-| SwiftUI.framework | `_$s7SwiftUI11TableColumnV5widthyACyxq_q0_q1_G12CoreGraphics7CGFloatVSgF` | 2 | coteditor, utm |
-| SwiftUI.framework | `_$s7SwiftUI11ToggleStyleMp` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI11ToggleStyleP4BodyAC_AA4ViewTn` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI11ToggleStyleP8makeBody13configuration0F0QzAA0cD13ConfigurationV_tFTq` | 2 | 1password, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI11TableColumnVAA10Foundation17KeyPathComparatorVyxGRs_AA4TextVRs1_rlE_5value7contentACyxAGq0_AIGAA015LocalizedStringF0V_s0fG0Cyxqd__Gq0_xctcSLRd__lufC` | 2 | pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI11TableColumnVAAs5NeverORs_AA4TextVRs1_rlE_7contentACyxAEq0_AGGqd___q0_xctcSyRd__lufC` | 2 | swiftbar, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI11TransactionV9animationAA9AnimationVSgvg` | 2 | orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI11TransactionV9animationAcA9AnimationVSg_tcfC` | 2 | cmux, raycast |
-| SwiftUI.framework | `_$s7SwiftUI11WindowGroupV7contentACyxGxyXE_tcfC` | 2 | cmux, utm |
-| SwiftUI.framework | `_$s7SwiftUI11_ClipEffectVMa` | 2 | linearmouse, raycast |
 | SwiftUI.framework | `_$s7SwiftUI11_LayoutRootVMa` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI11_LayoutRootVMn` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11_LayoutRootVyACyxGxcfC` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11_LayoutRootVyxGAA014_VariadicView_D0AAMc` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI11_LayoutRootVyxGAA014_VariadicView_fD0AAMc` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI12CommandGroupV5after8additionACyxGAA0cD9PlacementV_xyXEtcfC` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI12DropDelegatePAAE10dropExited4infoyAA0C4InfoV_tF` | 2 | maccy, utm |
+| SwiftUI.framework | `_$s7SwiftUI12DropDelegatePAAE08validateC04infoSbAA0C4InfoV_tF` | 2 | tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12DropDelegatePAAE11dropEntered4infoyAA0C4InfoV_tF` | 2 | utm, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI12DropDelegatePAAE11dropUpdated4infoAA0C8ProposalVSgAA0C4InfoV_tF` | 2 | cmux, utm |
 | SwiftUI.framework | `_$s7SwiftUI12FileDocumentMp` | 2 | betterdisplay, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI12FileDocumentP11fileWrapper13configurationSo06NSFileF0CAA0cD18WriteConfigurationV_tKFTq` | 2 | betterdisplay, coteditor |
@@ -908,56 +1214,49 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI12FileDocumentP20readableContentTypesSay22UniformTypeIdentifiers6UTTypeVGvgZTq` | 2 | betterdisplay, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI12FileDocumentP20writableContentTypesSay22UniformTypeIdentifiers6UTTypeVGvgZTq` | 2 | betterdisplay, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI12FileDocumentPAAE20writableContentTypesSay22UniformTypeIdentifiers6UTTypeVGvgZ` | 2 | betterdisplay, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI12HStackLayoutVAA0D0AAMc` | 2 | openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12HStackLayoutVN` | 2 | openclaw, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI12MenuBarExtraVMn` | 2 | clipy, maccy |
 | SwiftUI.framework | `_$s7SwiftUI12MenuBarExtraVyxq_GAA5SceneAAMc` | 2 | clipy, maccy |
-| SwiftUI.framework | `_$s7SwiftUI12ViewThatFitsVMn` | 2 | cmux, raycast |
+| SwiftUI.framework | `_$s7SwiftUI12ProgressViewV5value5total5label17currentValueLabelACyxq_Gqd__Sg_qd__xyXEq_yXEtcSBRd__lufC` | 2 | coteditor, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI12VStackLayoutVAA0D0AAMc` | 2 | openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12VStackLayoutVN` | 2 | openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewThatFitsVyxGAA0C0AAMc` | 2 | cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI12WidgetBundleMp` | 2 | stats, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI12WidgetBundleP4BodyAC_AA0C0Tn` | 2 | stats, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI12WidgetBundleP4body4BodyQzvgTq` | 2 | stats, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI12WidgetBundlePxycfCTq` | 2 | stats, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI13AnyShapeStyleVAA0dE0AAMc` | 2 | 1password, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV6offset1x1yAC12CoreGraphics7CGFloatV_AItFZ` | 2 | cmux, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV8modifier6active8identityACx_xtAA12ViewModifierRzlFZ` | 2 | raycast, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13DropOperationO4copyyA2CmFWC` | 2 | cmux, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI13DropOperationO9forbiddenyA2CmFWC` | 2 | ghostty, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV13deleteForwardACvgZ` | 2 | ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV3endACvgZ` | 2 | ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV4homeACvgZ` | 2 | ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV6pageUpACvgZ` | 2 | ghostty, maccy |
-| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV8pageDownACvgZ` | 2 | ghostty, maccy |
 | SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV9characterSJvg` | 2 | cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI13LayoutSubviewV12sizeThatFitsySo6CGSizeVAA16ProposedViewSizeVF` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI13LayoutSubviewV5place2at6anchor8proposalySo7CGPointV_AA9UnitPointVAA16ProposedViewSizeVtF` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI13LayoutSubviewVMa` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI13LayoutSubviewVMn` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC13sizingOptionsAA0c6SizingF0VvsTj` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC15safeAreaRegionsAA04SafefG0VvsTj` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC20sceneBridgingOptionsAA0c5ScenefG0VvsTj` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI13_StrokedShapeVMa` | 2 | 1password, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI13_StrokedShapeVyxGAA0D0AAMc` | 2 | 1password, linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC5coder04rootD0ACyxGSgSo7NSCoderC_xtcfCTq` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC5coder04rootD0ACyxGSgSo7NSCoderC_xtcfc` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13OpenURLActionV7handlerA2C6ResultV10Foundation3URLVc_tcfC` | 2 | openclaw, raycast |
+| SwiftUI.framework | `_$s7SwiftUI13_ShadowEffectVN` | 2 | orbstack, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI13_StrokedShapeVyxGAA4ViewAAMc` | 2 | 1password, cmux |
-| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV8capsLockACvgZ` | 2 | ghostty, maccy |
+| SwiftUI.framework | `_$s7SwiftUI14AnimatablePairVMn` | 2 | betterdisplay, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14AnimatablePairVyxq_GAA16VectorArithmeticAAMc` | 2 | betterdisplay, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV10numericPadACvgZ` | 2 | maccy, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI14FillShapeStyleVMn` | 2 | coteditor, maccy |
+| SwiftUI.framework | `_$s7SwiftUI14HorizontalEdgeOMn` | 2 | jordanbaird-ice, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14InsetListStyleVAA0dE0AAWP` | 2 | clipy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14InsetListStyleVACycfC` | 2 | clipy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14InsetListStyleVMa` | 2 | clipy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14InsetListStyleVMn` | 2 | clipy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14LabeledContentVA2A4TextVRszAA4ViewR_rlE_7contentACyAEq_Gqd___q_yXEtcSyRd__lufC` | 2 | cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI14LabeledContentVMa` | 2 | jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI14LayoutSubviewsVMa` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI14LayoutSubviewsVMn` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI14LayoutSubviewsVSTAAMc` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI14LayoutSubviewsVSlAAMc` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI14LinearGradientVAA10ShapeStyleAAMc` | 2 | cmux, linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI14NavigationLinkV11destination3tag9selection5labelACyxq_Gq__qd__AA7BindingVyqd__SgGxyXEtcSHRd__lufC` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI14NavigationLinkVyxq_GAA4ViewAAMc` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI14OnMoveTraitKeyVMn` | 2 | coteditor, utm |
 | SwiftUI.framework | `_$s7SwiftUI14SidebarRowSizeO6mediumyA2CmFWC` | 2 | coteditor, jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI14SidebarRowSizeOMa` | 2 | coteditor, jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI14SidebarRowSizeOMn` | 2 | coteditor, jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI14SymbolVariantsV4noneACvgZ` | 2 | betterdisplay, cmux |
 | SwiftUI.framework | `_$s7SwiftUI14SymbolVariantsV6circleACvgZ` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI14TintShapeStyleVACycfC` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI14TintShapeStyleVMn` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentMp` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentP05_makeD07content6inputs8resolvedyAA11_GraphValueVyxG_AA01_I6InputsVAA01_C8ItemListVztFZTq` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentP4BodyAC_AaBTn` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentP4body4BodyQzvgTq` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentPAAE05_makeD07content6inputs8resolvedyAA11_GraphValueVyxG_AA01_I6InputsVAA01_C8ItemListVztFZ` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI14ViewDimensionsVy12CoreGraphics7CGFloatVAA17VerticalAlignmentVcig` | 2 | cmux, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI14TintShapeStyleVAA0dE0AAMc` | 2 | coteditor, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15AsyncImagePhaseO5emptyyA2CmFWC` | 2 | orbstack, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI15AsyncImagePhaseO5imageAA0D0VSgvg` | 2 | orbstack, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI15AsyncImagePhaseO7failureyACs5Error_pcACmFWC` | 2 | orbstack, tailscale-app |
@@ -965,278 +1264,256 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI15AsyncImagePhaseOMa` | 2 | orbstack, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI15AsyncImagePhaseOMn` | 2 | orbstack, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI15BackgroundStyleVAA05ShapeD0AAMc` | 2 | ghostty, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupV7content5labelACyxq_Gq_yc_xyXEtcfC` | 2 | cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupVA2A4TextVRszrlE_7contentACyAEq_Gqd___q_yctcSyRd__lufC` | 2 | coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15DynamicTypeSizeOMa` | 2 | 1password, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15DynamicTypeSizeOMn` | 2 | 1password, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI15ForegroundStyleVAA05ShapeD0AAMc` | 2 | 1password, raycast |
 | SwiftUI.framework | `_$s7SwiftUI15ForegroundStyleVN` | 2 | 1password, raycast |
-| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV6stroke_4with9lineWidthyAA4PathV_AC7ShadingV04CoreC07CGFloatVtF` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV7ShadingV5coloryAeA5ColorVFZ` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI15InsettableShapeMp` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI15InsettableShapeP05InsetD0AC_AaBTn` | 2 | 1password, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV6stroke_4with5styleyAA4PathV_AC7ShadingVAA11StrokeStyleVtF` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15InsetTableStyleVAA0dE0AAMc` | 2 | tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15InsetTableStyleVMa` | 2 | tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15InsetTableStyleVMn` | 2 | tailscale-app, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15InsettableShapeP5inset2by05InsetD0Qz12CoreGraphics7CGFloatV_tFTj` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI15InsettableShapeP5inset2by05InsetD0Qz12CoreGraphics7CGFloatV_tFTq` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI15InsettableShapePAA0D0Tb` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI15InsettableShapeTL` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE17accessibilityHintyACyxAEGAA18LocalizedStringKeyVF` | 2 | ghostty, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE18accessibilityLabelyACyxAEGAA4TextVF` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE18accessibilityLabelyACyxAEGqd__SyRd__lF` | 2 | cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE18accessibilityValueyACyxAEGAA4TextVF` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE18accessibilityValueyACyxAEGqd__SyRd__lF` | 2 | cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE19accessibilityAction5named_ACyxAEGAA4TextV_yyctF` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE29accessibilityAdjustableActionyACyxAEGyAA0E19AdjustmentDirectionOcF` | 2 | cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI15NavigationStackV4rootACyAA0C4PathVq_Gq_yXE_tcAFRszrlufC` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI15SidebarCommandsVACycfC` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI15SidebarCommandsVMa` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI15SidebarCommandsVMn` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI15StrokeShapeViewVyxq_q0_GAA0E0AAMc` | 2 | 1password, cmux |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE25accessibilityRemoveTraitsyACyxAEGAA0eJ0VF` | 2 | 1password, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15ToolbarCommandsVACycfC` | 2 | orbstack, utm |
 | SwiftUI.framework | `_$s7SwiftUI15ToolbarCommandsVMa` | 2 | orbstack, utm |
 | SwiftUI.framework | `_$s7SwiftUI15ToolbarCommandsVMn` | 2 | orbstack, utm |
 | SwiftUI.framework | `_$s7SwiftUI15_ContrastEffectVAA12ViewModifierAAWP` | 2 | betterdisplay, cmux |
 | SwiftUI.framework | `_$s7SwiftUI15_ContrastEffectVMn` | 2 | betterdisplay, cmux |
+| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV12LocalizationV6customAEvgZ` | 2 | maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV12LocalizationVMa` | 2 | maccy, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV3keyAA13KeyEquivalentVvg` | 2 | cmux, ghostty |
 | SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV9modifiersAA14EventModifiersVvg` | 2 | cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV_9modifiers12localizationAcA13KeyEquivalentV_AA14EventModifiersVAC12LocalizationVtcfC` | 2 | maccy, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI16OnDeleteTraitKeyVMn` | 2 | tailscale-app, utm |
 | SwiftUI.framework | `_$s7SwiftUI16OpenWindowActionV14callAsFunction2idySS_tF` | 2 | jordanbaird-ice, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI16OpenWindowActionVMa` | 2 | jordanbaird-ice, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI16OpenWindowActionVMn` | 2 | jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI16PresentationModeV7dismissyyF` | 2 | tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI16PresentationModeVMa` | 2 | tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI16PresentationModeVMn` | 2 | tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI16ProposedViewSizeV11unspecifiedACvgZ` | 2 | cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI16RedactionReasonsVMn` | 2 | pearcleaner, raycast |
+| SwiftUI.framework | `_$s7SwiftUI16RedactionReasonsVs10SetAlgebraAAMc` | 2 | pearcleaner, raycast |
 | SwiftUI.framework | `_$s7SwiftUI16TagValueTraitKeyV0D0OMn` | 2 | coteditor, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI16ToolbarItemGroupVyxGAA0C7ContentAAMc` | 2 | pearcleaner, utm |
 | SwiftUI.framework | `_$s7SwiftUI16_GrayscaleEffectVAA12ViewModifierAAWP` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI16_SizeFittingRootVMn` | 2 | cmux, raycast |
+| SwiftUI.framework | `_$s7SwiftUI16_TupleTabContentVMn` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI16_TupleTabContentVyxq_GAA0dE0AAMc` | 2 | coteditor, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI17BorderedListStyleV24alternatesRowBackgroundsACSb_tcfC` | 2 | coteditor, utm |
 | SwiftUI.framework | `_$s7SwiftUI17BorderedListStyleVAA0dE0AAWP` | 2 | coteditor, utm |
 | SwiftUI.framework | `_$s7SwiftUI17BorderedListStyleVMa` | 2 | coteditor, utm |
 | SwiftUI.framework | `_$s7SwiftUI17BorderedListStyleVMn` | 2 | coteditor, utm |
 | SwiftUI.framework | `_$s7SwiftUI17ButtonBorderShapeV16roundedRectangleACvgZ` | 2 | tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI17ButtonBorderShapeV7capsuleACvgZ` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI17ButtonToggleStyleVAA0dE0AAMc` | 2 | coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI17ButtonToggleStyleVACycfC` | 2 | coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI17ButtonToggleStyleVMa` | 2 | coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI17ButtonToggleStyleVMn` | 2 | coteditor, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI17ContentTransitionV11interpolateACvgZ` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI17ContentTransitionV7opacityACvgZ` | 2 | betterdisplay, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI17ContentTransitionV12symbolEffect_7optionsACx_7Symbols06SymbolF7OptionsVtAF0cdiF0RzAF0iF0RzlFZ` | 2 | openclaw, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10openWindowAA04OpenF6ActionVvg` | 2 | jordanbaird-ice, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10openWindowAA04OpenF6ActionVvpMV` | 2 | jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV12displayScale12CoreGraphics7CGFloatVvg` | 2 | cmux, raycast |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV12displayScale12CoreGraphics7CGFloatVvpMV` | 2 | cmux, raycast |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV12displayScale12CoreGraphics7CGFloatVvs` | 2 | cmux, raycast |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10scenePhaseAA05SceneF0Ovg` | 2 | maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10scenePhaseAA05SceneF0OvpMV` | 2 | maccy, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10scenePhaseAA05SceneF0Ovs` | 2 | maccy, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV14sidebarRowSizeAA07SidebarfG0Ovg` | 2 | coteditor, jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV14sidebarRowSizeAA07SidebarfG0OvpMV` | 2 | coteditor, jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV14sidebarRowSizeAA07SidebarfG0Ovs` | 2 | coteditor, jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15dynamicTypeSizeAA07DynamicfG0Ovg` | 2 | 1password, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15dynamicTypeSizeAA07DynamicfG0OvpMV` | 2 | 1password, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15dynamicTypeSizeAA07DynamicfG0Ovs` | 2 | 1password, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15textContentTypeSSSgvg` | 2 | coteditor, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15textContentTypeSSSgvpMV` | 2 | coteditor, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15textContentTypeSSSgvs` | 2 | coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16presentationModeAA7BindingVyAA012PresentationF0VGvg` | 2 | tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16presentationModeAA7BindingVyAA012PresentationF0VGvpMV` | 2 | tailscale-app, utm |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV19colorSchemeContrastAA05ColorfG0Ovg` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV19colorSchemeContrastAA05ColorfG0OvpMV` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV38accessibilityDifferentiateWithoutColorSbvg` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV38accessibilityDifferentiateWithoutColorSbvpMV` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI17_BrightnessEffectVAA12ViewModifierAAWP` | 2 | betterdisplay, cmux |
-| SwiftUI.framework | `_$s7SwiftUI17_SaturationEffectVAA12ViewModifierAAWP` | 2 | betterdisplay, cmux |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVy5ValueQzxmcAA0C3KeyRzluiM` | 2 | 1password, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17ProgressViewStyleMp` | 2 | 1password, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17ProgressViewStyleP4BodyAC_AA0D0Tn` | 2 | 1password, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17ProgressViewStyleP8makeBody13configuration0G0QzAA0cdE13ConfigurationV_tFTq` | 2 | 1password, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17SpatialTapGestureV5ValueV8locationSo7CGPointVvg` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17SpatialTapGestureV5count15coordinateSpaceACSi_xtcAA010CoordinateH8ProtocolRzlufC` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17SpatialTapGestureVAA0E0AAMc` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17SpatialTapGestureVMa` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17SpatialTapGestureVMn` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17TabContentBuilderV0D0VMn` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17_Rotation3DEffectVMn` | 2 | openclaw, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI17_SaturationEffectVN` | 2 | betterdisplay, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI18IdentityTransitionVAA0D0AAMc` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI18IdentityTransitionVACycfC` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI18IdentityTransitionVMa` | 2 | cmux, maccy |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0yyAA4TextVF` | 2 | coteditor, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0yyAA5ImageVF` | 2 | betterdisplay, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV14FormatArgumentVMn` | 2 | betterdisplay, utm |
 | SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV2eeoiySbAC_ACtFZ` | 2 | betterdisplay, linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI18PresentationSizingPA2A06FittedcD0VRszrlE6fittedAEvgZ` | 2 | coteditor, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI18TableColumnContentP0C8RowValueAC_s12IdentifiableTn` | 2 | clipy, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI18TableColumnContentTL` | 2 | clipy, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI18WindowResizabilityV11contentSizeACvgZ` | 2 | jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI18WindowResizabilityVMa` | 2 | jordanbaird-ice, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI18_ColorInvertEffectVMn` | 2 | 1password, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI18_OpacityShapeStyleVyxGAA0dE0AAMc` | 2 | cmux, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV13isSearchFieldACvgZ` | 2 | 1password, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV17updatesFrequentlyACvgZ` | 2 | coteditor, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI19ColorSchemeContrastO2eeoiySbAC_ACtFZ` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI19ColorSchemeContrastOMa` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI19ColorSchemeContrastOMn` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC5coder8rootViewACyxGSgSo7NSCoderC_xtcfc` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC8rootViewxvMTj` | 2 | coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI19SymbolRenderingModeV10monochromeACvgZ` | 2 | betterdisplay, cmux |
+| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC8rootViewxvgTj` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NavigationSplitViewV7sidebar6detailACyxAA05EmptyE0Vq0_GxyXE_q0_yXEtcAGRs_rlufC` | 2 | jordanbaird-ice, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI19WidgetConfigurationMp` | 2 | stats, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI19_GridAnchorModifierVAA04ViewE0AAMc` | 2 | coteditor, rectangle |
 | SwiftUI.framework | `_$s7SwiftUI19_GridAnchorModifierVMn` | 2 | coteditor, rectangle |
 | SwiftUI.framework | `_$s7SwiftUI19_GridAnchorModifierVN` | 2 | coteditor, rectangle |
+| SwiftUI.framework | `_$s7SwiftUI20DatePickerComponentsVMa` | 2 | pearcleaner, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionO4leftyA2CmFWC` | 2 | 1password, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionO5rightyA2CmFWC` | 2 | 1password, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI20NamedCoordinateSpaceVAA0dE8ProtocolAAWP` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20NamedCoordinateSpaceVMa` | 2 | cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI20PrimitiveButtonStyleMp` | 2 | jordanbaird-ice, utm |
 | SwiftUI.framework | `_$s7SwiftUI20PrimitiveButtonStyleP4BodyAC_AA4ViewTn` | 2 | jordanbaird-ice, utm |
 | SwiftUI.framework | `_$s7SwiftUI20PrimitiveButtonStyleP8makeBody13configuration0G0QzAA0cdE13ConfigurationV_tFTq` | 2 | jordanbaird-ice, utm |
-| SwiftUI.framework | `_$s7SwiftUI20ScrollBounceBehaviorV11basedOnSizeACvgZ` | 2 | 1password, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI20ScrollBounceBehaviorVMa` | 2 | 1password, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementV10navigationACvgZ` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementV18confirmationActionACvgZ` | 2 | cmux, utm |
-| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementV9automaticACvgZ` | 2 | orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementV13primaryActionACvgZ` | 2 | openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementVMn` | 2 | pearcleaner, utm |
 | SwiftUI.framework | `_$s7SwiftUI20_TransactionModifierVN` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV7appInfoACvgZ` | 2 | cmux, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV11appSettingsACvgZ` | 2 | cmux, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV7toolbarACvgZ` | 2 | cmux, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI21PinnedScrollableViewsVMn` | 2 | cmux, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI21PinnedScrollableViewsVs10SetAlgebraAAMc` | 2 | cmux, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI21ToolbarContentBuilderV11buildEither5firstAA012_ConditionalD0Vyxq_Gx_tAA0cD0RzAaIR_r0_lFZ` | 2 | openclaw, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI21ToolbarContentBuilderV11buildEither6secondAA012_ConditionalD0Vyxq_Gq__tAA0cD0RzAaIR_r0_lFZ` | 2 | openclaw, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI21_ContentShapeModifierVMa` | 2 | 1password, linearmouse |
 | SwiftUI.framework | `_$s7SwiftUI21_GridCellSizeModifierVMn` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI22ContentMarginPlacementV16scrollIndicatorsACvgZ` | 2 | jordanbaird-ice, maccy |
 | SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleV7quinaryACvgZ` | 2 | jordanbaird-ice, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleVAA0dE0AAWP` | 2 | openclaw, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI22NSHostingSizingOptionsV20intrinsicContentSizeACvgZ` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI22NSHostingSizingOptionsVMn` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI22NSHostingSizingOptionsVs10SetAlgebraAAMc` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI22_AnchorWritingModifierVMn` | 2 | betterdisplay, cmux |
-| SwiftUI.framework | `_$s7SwiftUI22_GridAlignmentModifierVAA04ViewE0AAMc` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI22_GridAlignmentModifierVMn` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI22_GridAlignmentModifierVN` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV4IconVMn` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV4iconAC4IconVvg` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV5TitleVMn` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV5titleAC5TitleVvg` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI23_SafeAreaIgnoringLayoutVMn` | 2 | betterdisplay, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI22ToolbarDefaultItemKindV13sidebarToggleACvgZ` | 2 | jordanbaird-ice, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22ToolbarDefaultItemKindVMa` | 2 | jordanbaird-ice, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22ToolbarDefaultItemKindVMn` | 2 | jordanbaird-ice, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22_AnchorWritingModifierVyxq_GAA04ViewE0AAMc` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23BorderedButtonMenuStyleVAA0eF0AAMc` | 2 | pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI23BorderedButtonMenuStyleVACycfC` | 2 | pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI23BorderedButtonMenuStyleVMa` | 2 | pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI23BorderedButtonMenuStyleVMn` | 2 | pearcleaner, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI23CoordinateSpaceProtocolPA2A05NamedcD0VRszrlE5namedyAEqd__SHRd__lFZ` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV5TitleVMa` | 2 | utm, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23_SafeAreaIgnoringLayoutVAA12ViewModifierAAWP` | 2 | pearcleaner, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI24ButtonStyleConfigurationVMa` | 2 | cmux, utm |
 | SwiftUI.framework | `_$s7SwiftUI24ButtonStyleConfigurationVMn` | 2 | cmux, utm |
-| SwiftUI.framework | `_$s7SwiftUI24PeriodicTimelineScheduleV4from2byAC10Foundation4DateV_SdtcfC` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI24PeriodicTimelineScheduleVAA0dE0AAMc` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI24PeriodicTimelineScheduleVMa` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI24PeriodicTimelineScheduleVMn` | 2 | cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI24ExplicitTimelineScheduleVMn` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24ExplicitTimelineScheduleVyACyxGxcfC` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24ExplicitTimelineScheduleVyxGAA0dE0AAMc` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24FittedPresentationSizingVAA0dE0AAWP` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI24FittedPresentationSizingVMa` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI24FittedPresentationSizingVMn` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI24NavigationSplitViewStylePA2A08BalancedcdeF0VRszrlE8balancedAEvgZ` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV4isOnSbvM` | 2 | 1password, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV4isOnSbvg` | 2 | 1password, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV5$isOnAA7BindingVySbGvg` | 2 | jordanbaird-ice, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV5LabelVAA4ViewAAMc` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV5LabelVMa` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV5LabelVMn` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV5labelAC5LabelVvg` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI25DisabledTextSelectabilityVAA0dE0AAWP` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI25ScrollIndicatorVisibilityV5neverACvgZ` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI25ScrollIndicatorVisibilityV6hiddenACvgZ` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI25ScrollIndicatorVisibilityVMa` | 2 | cmux, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationVMa` | 2 | 1password, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationVMn` | 2 | 1password, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI24_TagTraitWritingModifierVMa` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI24_TagTraitWritingModifierVyxGAA04ViewF0AAMc` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI25ScrollIndicatorVisibilityV7visibleACvgZ` | 2 | cmux, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI25_AllowsHitTestingModifierVAA04ViewF0AAMc` | 2 | coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI25_ForegroundStyleModifier2Vyxq_GAA12ViewModifierAAMc` | 2 | 1password, betterdisplay |
+| SwiftUI.framework | `_$s7SwiftUI26IsSelectionEnabledTraitKeyVMn` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI26_OverlayPreferenceModifierVMn` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI26_OverlayPreferenceModifierVyxq_GAA04ViewE0AAMc` | 2 | cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI26_PreferenceWritingModifierVMa` | 2 | 1password, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI28ContainerBackgroundPlacementVMa` | 2 | stats, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI28_PreferenceTransformModifierVMn` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI28_PreferenceTransformModifierVyxGAA04ViewE0AAMc` | 2 | cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI29FileDocumentReadConfigurationV4fileSo13NSFileWrapperCvg` | 2 | betterdisplay, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI29FileDocumentReadConfigurationVMa` | 2 | betterdisplay, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI29NSHostingSceneBridgingOptionsVMa` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI29NSHostingSceneBridgingOptionsVMn` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI29NSHostingSceneBridgingOptionsVs10SetAlgebraAAMc` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI30_SafeAreaRegionsIgnoringLayoutVN` | 2 | maccy, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI31_IndefiniteSymbolEffectModifierVAA04ViewF0AAMc` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI31_IndefiniteSymbolEffectModifierVMa` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI31_IndefiniteSymbolEffectModifierVMn` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI32AccessibilityAdjustmentDirectionO9decrementyA2CmFWC` | 2 | cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI32AccessibilityAdjustmentDirectionO9incrementyA2CmFWC` | 2 | cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI32AccessibilityAdjustmentDirectionOMa` | 2 | cmux, ghostty |
+| SwiftUI.framework | `_$s7SwiftUI29NavigationSplitViewVisibilityV10detailOnlyACvgZ` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI30ProgressViewStyleConfigurationV17fractionCompletedSdSgvg` | 2 | 1password, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI32BalancedNavigationSplitViewStyleVAA0defG0AAMc` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI32BalancedNavigationSplitViewStyleVMa` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI32BalancedNavigationSplitViewStyleVMn` | 2 | cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI36NSViewControllerRepresentableContextV11coordinator11CoordinatorQzvg` | 2 | cmux, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI36NSViewControllerRepresentableContextVMn` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4AxisO3SetVMn` | 2 | betterdisplay, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetVMn` | 2 | betterdisplay, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4EdgeOMn` | 2 | coteditor, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI3TabVAASHRzAA4ViewR_AaDR0_rlE011_identifiedD0QrvpQOMQ` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI3TabVMn` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI3TabVyxq_q0_GAA0C7ContentAASHRzAA4ViewR_AaFR0_rlMc` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4AxisOMn` | 2 | 1password, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4FontV6DesignO5serifyA2EmFWC` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4FontV6custom_4sizeACSS_12CoreGraphics7CGFloatVtFZ` | 2 | coteditor, raycast |
-| SwiftUI.framework | `_$s7SwiftUI4FontV6italicACyF` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO8footnoteyA2EmFWC` | 2 | betterdisplay, cmux |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO6title2yA2EmFWC` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO6title3yA2EmFWC` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO8caption2yA2EmFWC` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO8headlineyA2EmFWC` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleOMn` | 2 | cmux, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4FormVMa` | 2 | linearmouse, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4LinkVA2A4TextVRszrlE_11destinationACyAEGAA18LocalizedStringKeyV_10Foundation3URLVtcfC` | 2 | openclaw, sequel-ace |
 | SwiftUI.framework | `_$s7SwiftUI4ListVMa` | 2 | linearmouse, utm |
 | SwiftUI.framework | `_$s7SwiftUI4MenuVMa` | 2 | coteditor, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4MenuV_7contentACyAA4TextVq_Gqd___q_yXEtcAFRszSyRd__lufC` | 2 | cmux, utm |
-| SwiftUI.framework | `_$s7SwiftUI4PathV02cgC0So9CGPathRefavg` | 2 | 1password, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4PathV12addQuadCurve2to7controlySo7CGPointV_AHtF` | 2 | cmux, raycast |
+| SwiftUI.framework | `_$s7SwiftUI4PathV03addC0_9transformyAC_So17CGAffineTransformVtF` | 2 | raycast, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathV12boundingRectSo6CGRectVvg` | 2 | openclaw, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4PathV14addRoundedRect2in10cornerSize5style9transformySo6CGRectV_So6CGSizeVAA0E11CornerStyleOSo17CGAffineTransformVtF` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4PathV6addArc6center6radius10startAngle03endI09clockwise9transformySo7CGPointV_12CoreGraphics7CGFloatVAA0I0VAQSbSo17CGAffineTransformVtF` | 2 | cmux, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI4PathV7addRect_9transformySo6CGRectV_So17CGAffineTransformVtF` | 2 | orbstack, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4PathV9ellipseInACSo6CGRectV_tcfC` | 2 | jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4PathVyACSo6CGRectVcfC` | 2 | cmux, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4PathVyACSo9CGPathRefacfC` | 2 | 1password, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4TextV10fontDesignyAcA4FontV0E0OSgF` | 2 | coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4TextV18accessibilityLabelyACxSyRzlF` | 2 | 1password, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4PathV8applyingyACSo17CGAffineTransformVF` | 2 | openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV10monospacedyACSbF` | 2 | openclaw, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4TextV14baselineOffsetyAC12CoreGraphics7CGFloatVF` | 2 | jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4TextV18accessibilityLabelyA2CF` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4TextV6italicyACSbF` | 2 | coteditor, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4TextV7StorageON` | 2 | jordanbaird-ice, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI4TextV9DateStyleV4timeAEvgZ` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4TextV9LineStyleV7PatternV5solidAGvgZ` | 2 | 1password, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4TextV9LineStyleV7PatternVMa` | 2 | 1password, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC5StyleyQrqd__AA010NavigationecF0Rd__lF` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC5StyleyQrqd__AA010NavigationecF0Rd__lFQOMQ` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10monospacedyQrSbF` | 2 | cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10monospacedyQrSbFQOMQ` | 2 | cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress6phases6actionQrAA0eF0V6PhasesV_AH6ResultOAHctF` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress6phases6actionQrAA0eF0V6PhasesV_AH6ResultOAHctFQOMQ` | 2 | cmux, maccy |
+| SwiftUI.framework | `_$s7SwiftUI4TextV9DateStyleV8relativeAEvgZ` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextVyAcA5ImageVcfC` | 2 | cmux, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10searchable4text9placement6promptQrAA7BindingVySSG_AA20SearchFieldPlacementVAA4TextVSgtF` | 2 | cmux, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10searchable4text9placement6promptQrAA7BindingVySSG_AA20SearchFieldPlacementVAA4TextVSgtFQOMQ` | 2 | cmux, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10tableStyleyQrqd__AA05TableE0Rd__lF` | 2 | coteditor, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10tableStyleyQrqd__AA05TableE0Rd__lFQOMQ` | 2 | coteditor, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11controlSizeyQrAA07ControlE0OF` | 2 | cmux, utm |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11lineSpacingyQr12CoreGraphics7CGFloatVF` | 2 | 1password, cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11popoverCore11isPresented16attachmentAnchor10arrowEdges0F10Detachable7contentQrAA7BindingVySbG_AA017PopoverAttachmentI0OAA4EdgeO3SetVSgSbqd__yctAaBRd__lF` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11popoverCore11isPresented16attachmentAnchor10arrowEdges0F10Detachable7contentQrAA7BindingVySbG_AA017PopoverAttachmentI0OAA4EdgeO3SetVSgSbqd__yctAaBRd__lFQOMQ` | 2 | coteditor, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11scaleEffect_6anchorQr12CoreGraphics7CGFloatV_AA9UnitPointVtF` | 2 | 1password, maccy |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11transactionyQryAA11TransactionVzcF` | 2 | cmux, maccy |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12swipeActions4edge15allowsFullSwipe7contentQrAA14HorizontalEdgeO_Sbqd__yXEtAaBRd__lF` | 2 | openclaw, utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12swipeActions4edge15allowsFullSwipe7contentQrAA14HorizontalEdgeO_Sbqd__yXEtAaBRd__lFQOMQ` | 2 | openclaw, utm |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13accessibility5labelAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA4TextV_tF` | 2 | linearmouse, utm |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13safeAreaInset4edge9alignment7spacing7contentQrAA12VerticalEdgeO_AA19HorizontalAlignmentV12CoreGraphics7CGFloatVSgqd__yXEtAaBRd__lF` | 2 | betterdisplay, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14alignmentGuide_12computeValueQrAA19HorizontalAlignmentV_12CoreGraphics7CGFloatVAA0C10DimensionsVctF` | 2 | linearmouse, maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14layoutPriorityyQrSdF` | 2 | cmux, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14scrollDisabledyQrSbF` | 2 | jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14scrollDisabledyQrSbFQOMQ` | 2 | jordanbaird-ice, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16scrollIndicators_4axesQrAA25ScrollIndicatorVisibilityV_AA4AxisO3SetVtF` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16scrollIndicators_4axesQrAA25ScrollIndicatorVisibilityV_AA4AxisO3SetVtFQOMQ` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17accessibilityHintyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGqd__SyRd__lF` | 2 | cmux, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13strikethrough_7pattern5colorQrSb_AA4TextV9LineStyleV7PatternVAA5ColorVSgtF` | 2 | cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13strikethrough_7pattern5colorQrSb_AA4TextV9LineStyleV7PatternVAA5ColorVSgtFQOMQ` | 2 | cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15coordinateSpaceyQrAA015NamedCoordinateE0VF` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15coordinateSpaceyQrAA015NamedCoordinateE0VFQOMQ` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15navigationTitleyQrAA4TextVF` | 2 | openclaw, utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15navigationTitleyQrAA4TextVFQOMQ` | 2 | openclaw, utm |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17environmentObjectyQrqd__7Combine010ObservableE0Rd__lF` | 2 | betterdisplay, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18accessibilityValueyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA4TextVF` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18navigationSubtitleyQrqd__SyRd__lF` | 2 | orbstack, utm |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18navigationSubtitleyQrqd__SyRd__lFQOMQ` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19focusEffectDisabledyQrSbF` | 2 | 1password, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19focusEffectDisabledyQrSbFQOMQ` | 2 | 1password, cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19highPriorityGesture_9includingQrqd___AA0F4MaskVtAA0F0Rd__lF` | 2 | cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19highPriorityGesture_9includingQrqd___AA0F4MaskVtAA0F0Rd__lFQOMQ` | 2 | cmux, ghostty |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20scrollBounceBehavior_4axesQrAA06ScrolleF0V_AA4AxisO3SetVtF` | 2 | 1password, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20scrollBounceBehavior_4axesQrAA06ScrolleF0V_AA4AxisO3SetVtFQOMQ` | 2 | 1password, coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18presentationSizingyQrqd__AA012PresentationE0Rd__lF` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18presentationSizingyQrqd__AA012PresentationE0Rd__lFQOMQ` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19accessibilityAction5named_AA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA4TextV_yyctF` | 2 | maccy, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19accessibilityActionyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA0hE4KindV_yyctF` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19defaultScrollAnchoryQrAA9UnitPointVSgF` | 2 | jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19defaultScrollAnchoryQrAA9UnitPointVSgFQOMQ` | 2 | jordanbaird-ice, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19transformPreferenceyQrqd__m_y5ValueQyd__zctAA0E3KeyRd__lF` | 2 | cmux, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20accessibilityActionsyQrqd__yXEAaBRd__lF` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20accessibilityActionsyQrqd__yXEAaBRd__lFQOMQ` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21handlesExternalEvents10preferring8allowingQrShySSG_AGtF` | 2 | pearcleaner, utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21handlesExternalEvents10preferring8allowingQrShySSG_AGtFQOMQ` | 2 | pearcleaner, utm |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE26fileDialogDefaultDirectoryyQr10Foundation3URLVSgF` | 2 | coteditor, maccy |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE26fileDialogDefaultDirectoryyQr10Foundation3URLVSgFQOMQ` | 2 | coteditor, maccy |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE26horizontalRadioGroupLayoutQryF` | 2 | coteditor, rectangle |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE26horizontalRadioGroupLayoutQryFQOMQ` | 2 | coteditor, rectangle |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert4item7contentQrAA7BindingVyqd__SgG_AA5AlertVqd__XEts12IdentifiableRd__lF` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert4item7contentQrAA7BindingVyqd__SgG_AA5AlertVqd__XEts12IdentifiableRd__lFQOMQ` | 2 | orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE27accessibilityRepresentation14representationQrqd__yXE_tAaBRd__lF` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE27accessibilityRepresentation14representationQrqd__yXE_tAaBRd__lFQOMQ` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4boldyQrSbF` | 2 | cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4boldyQrSbFQOMQ` | 2 | cmux, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented10presenting7actions7messageQrAA4TextV_AA7BindingVySbGqd_1_Sgqd__qd_1_XEqd_0_qd_1_XEtAaBRd__AaBRd_0_r1_lF` | 2 | cmux, coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented10presenting7actions7messageQrAA4TextV_AA7BindingVySbGqd_1_Sgqd__qd_1_XEqd_0_qd_1_XEtAaBRd__AaBRd_0_r1_lFQOMQ` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented10presenting7actions7messageQrqd___AA7BindingVySbGqd_2_Sgqd_0_qd_2_XEqd_1_qd_2_XEtSyRd__AaBRd_0_AaBRd_1_r2_lF` | 2 | 1password, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented10presenting7actions7messageQrqd___AA7BindingVySbGqd_2_Sgqd_0_qd_2_XEqd_1_qd_2_XEtSyRd__AaBRd_0_AaBRd_1_r2_lFQOMQ` | 2 | 1password, sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actionsQrAA18LocalizedStringKeyV_AA7BindingVySbGqd__yXEtAaBRd__lF` | 2 | betterdisplay, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actionsQrAA18LocalizedStringKeyV_AA7BindingVySbGqd__yXEtAaBRd__lFQOMQ` | 2 | betterdisplay, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5badgeyQrSiF` | 2 | coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5badgeyQrSiFQOMQ` | 2 | coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDragyQrSo14NSItemProviderCycF` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDragyQrSo14NSItemProviderCycFQOMQ` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6zIndexyQrSdF` | 2 | maccy, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6italicyQrSbF` | 2 | cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6italicyQrSbFQOMQ` | 2 | cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6shadow5color6radius1x1yQrAA5ColorV_12CoreGraphics7CGFloatVA2MtF` | 2 | orbstack, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7kerningyQr12CoreGraphics7CGFloatVF` | 2 | raycast, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7kerningyQr12CoreGraphics7CGFloatVFQOMQ` | 2 | raycast, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7paddingyQrAA10EdgeInsetsVF` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9lineLimityQrSNySiGF` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9lineLimityQrSNySiGFQOMQ` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9onOpenURL7performQry10Foundation0F0Vc_tF` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9onOpenURL7performQry10Foundation0F0Vc_tFQOMQ` | 2 | orbstack, utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7toolbar8removingQrAA22ToolbarDefaultItemKindVSg_tF` | 2 | jordanbaird-ice, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7toolbar8removingQrAA22ToolbarDefaultItemKindVSg_tFQOMQ` | 2 | jordanbaird-ice, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9draggableyQrqd__yXA16CoreTransferable0F0Rd__lF` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9draggableyQrqd__yXA16CoreTransferable0F0Rd__lFQOMQ` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9underline_7pattern5colorQrSb_AA4TextV9LineStyleV7PatternVAA5ColorVSgtF` | 2 | cmux, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9underline_7pattern5colorQrSb_AA4TextV9LineStyleV7PatternVAA5ColorVSgtFQOMQ` | 2 | cmux, pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI5ColorV8gradientAA11AnyGradientVvg` | 2 | jordanbaird-ice, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI5ColorVAA10ShapeStyleAAWP` | 2 | openclaw, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI5ColorVSQAAMc` | 2 | 1password, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5ColorV_6bundleACSS_So8NSBundleCSgtcfC` | 2 | 1password, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI5ColorVyAC21DeveloperToolsSupport0C8ResourceVcfC` | 2 | 1password, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI5GroupVA2A4ViewRzlE7contentACyxGxyXE_tcfC` | 2 | cmux, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV10decorative6bundleACSS_So8NSBundleCSgtcfC` | 2 | 1password, karabiner-elements |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV13InterpolationO4noneyA2EmFWC` | 2 | cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5ImageV_5scale11orientation5labelACSo10CGImageRefa_12CoreGraphics7CGFloatVAC11OrientationOAA4TextVtcfC` | 2 | cmux, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI5ScenePAAE11defaultSize5width6heightQr12CoreGraphics7CGFloatV_AItF` | 2 | jordanbaird-ice, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI5ScenePAAE11defaultSize5width6heightQr12CoreGraphics7CGFloatV_AItFQOMQ` | 2 | jordanbaird-ice, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI5ScenePAAE15commandsRemovedQryF` | 2 | jordanbaird-ice, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI5ScenePAAE15commandsRemovedQryFQOMQ` | 2 | jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE18windowResizabilityyQrAA06WindowE0VF` | 2 | jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE18windowResizabilityyQrAA06WindowE0VFQOMQ` | 2 | jordanbaird-ice, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI5TableV_9selection7columnsACyxAA0C14ForEachContentVyqd__Gq0_Gqd___AA7BindingVyShy2IDQzGGq0_yXEtcAHRs_SkRd__7ElementQyd__0C8RowValueRt0_lufC` | 2 | coteditor, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5TableV_9selection9sortOrder7columnsACyxAA0C14ForEachContentVyqd__Gq0_Gqd___AA7BindingVyShy2IDQzGGALySayqd_0_GGq0_yXEtcAIRs_SkRd__10Foundation14SortComparatorRd_0_7ElementQyd__0C8RowValueRt0_8ComparedQyd_0_AVRSr0_lufC` | 2 | coteditor, utm |
-| SwiftUI.framework | `_$s7SwiftUI6CanvasVA2A9EmptyViewVRszrlE6opaque9colorMode21rendersAsynchronously8rendererACyAEGSb_AA014ColorRenderingH0OSbyAA15GraphicsContextVz_So6CGSizeVtctcfC` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI6CanvasVMn` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI6CanvasVyxGAA4ViewAAMc` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutMp` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutP05_makeC4View4root6inputs4bodyAA01_E7OutputsVAA11_GraphValueVyxG_AA01_E6InputsVAA01_e4ListI0VAA01_J0V_ANtXEtFZTq` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutP11updateCache_8subviewsy0E0Qzz_AA0C8SubviewsVtFTq` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutP12sizeThatFits8proposal8subviews5cacheSo6CGSizeVAA16ProposedViewSizeV_AA0C8SubviewsV5CacheQzztFTq` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutP13placeSubviews2in8proposal8subviews5cacheySo6CGRectV_AA16ProposedViewSizeVAA0cE0V5CacheQzztFTq` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutP16layoutPropertiesAA0cE0VvgZTq` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutP17explicitAlignment2of2in8proposal8subviews5cache12CoreGraphics7CGFloatVSgAA010HorizontalE0V_So6CGRectVAA16ProposedViewSizeVAA0C8SubviewsV5CacheQzztFTq` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutP17explicitAlignment2of2in8proposal8subviews5cache12CoreGraphics7CGFloatVSgAA08VerticalE0V_So6CGRectVAA16ProposedViewSizeVAA0C8SubviewsV5CacheQzztFTq` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutP7spacing8subviews5cacheAA11ViewSpacingVAA0C8SubviewsV_5CacheQzztFTq` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutP9makeCache8subviews0E0QzAA0C8SubviewsV_tFTq` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutPAA10AnimatableTb` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE05_makeC4View4root6inputs4bodyAA01_E7OutputsVAA11_GraphValueVyxG_AA01_E6InputsVAA01_e4ListI0VAA01_J0V_ANtXEtFZ` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE11updateCache_8subviewsy0E0Qzz_AA0C8SubviewsVtF` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE16layoutPropertiesAA0cE0VvgZ` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE17explicitAlignment2of2in8proposal8subviews5cache12CoreGraphics7CGFloatVSgAA010HorizontalE0V_So6CGRectVAA16ProposedViewSizeVAA0C8SubviewsV5CacheQzztF` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE17explicitAlignment2of2in8proposal8subviews5cache12CoreGraphics7CGFloatVSgAA08VerticalE0V_So6CGRectVAA16ProposedViewSizeVAA0C8SubviewsV5CacheQzztF` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAE7spacing8subviews5cacheAA11ViewSpacingVAA0C8SubviewsV_5CacheQzztF` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6LayoutPAAyt5CacheRtzrlE04makeD08subviewsyAA0C8SubviewsV_tF` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6SliderV5value2in4step16onEditingChanged17minimumValueLabel07maximumkL05labelACyxq_GAA7BindingVyqd__G_SNyqd__G6StrideQyd__ySbcq_q_xyXEtcSBRd__SBAQRQlufC` | 2 | linearmouse, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI5TableV_9selection9sortOrder7columnsACyxAA0C14ForEachContentVyqd__Gq0_Gqd___AA7BindingVy2IDQzSgGALySayqd_0_GGq0_yXEtcAIRs_SkRd__10Foundation14SortComparatorRd_0_7ElementQyd__0C8RowValueRt0_8ComparedQyd_0_AVRSr0_lufC` | 2 | coteditor, swiftbar |
+| SwiftUI.framework | `_$s7SwiftUI6AnchorVMn` | 2 | cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI6WidgetMp` | 2 | stats, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI6WidgetP4BodyAC_AA0C13ConfigurationTn` | 2 | stats, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI6WidgetP4body4BodyQzvgTq` | 2 | stats, tailscale-app |
@@ -1246,43 +1523,42 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI7BindingVAASMRzlEyACy7ElementQzG5IndexQzcig` | 2 | coteditor, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI7BindingVAAs12IdentifiableRzlE2id2IDQzvpMV` | 2 | betterdisplay, tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI7CapsuleVAA15InsettableShapeAAMc` | 2 | cmux, jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI7ForEachVAASnySiGRszSiRs_AA4ViewR0_rlE_7contentACyADSiq0_GAD_q0_SictcfC` | 2 | raycast, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI7GridRowVyxGAA4ViewAAMc` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI7SectionVA2A4TextVRszAA4ViewR_AA05EmptyE0VRs0_rlE_7contentACyAEq_AHGqd___q_yXEtcSyRd__lufC` | 2 | cmux, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI7ForEachVAA7Element_2IDQZRs_s12IdentifiableADRpzrlE6create_7contentACyxq_q0_Gx_q0_AHctFZ` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI7ForEachVAAE6create_2id7contentACyxq_q0_Gx_s7KeyPathCy7ElementQzq_Gq0_AKctFZ` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI7SectionV6create10isExpanded7content6header6footerACyxq_q0_GAA7BindingVySbGSg_q_xq0_tFZ` | 2 | coteditor, openclaw |
 | SwiftUI.framework | `_$s7SwiftUI7SectionVA2A4ViewRzAaDR_AaDR0_rlE11collapsibleyQrSbF` | 2 | jordanbaird-ice, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI7SectionVA2A4ViewRzAaDR_AaDR0_rlE11collapsibleyQrSbFQOMQ` | 2 | jordanbaird-ice, orbstack |
-| SwiftUI.framework | `_$s7SwiftUI7SectionVA2A4ViewRzAaDR_AaDR0_rlE6header6footer7contentACyxq_q0_Gx_q0_q_yXEtcfC` | 2 | linearmouse, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI7SectionVA2A9EmptyViewVRszAA0E0R_AERs0_rlE7contentACyAEq_AEGq_yXE_tcfC` | 2 | linearmouse, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI8CommandsMp` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI8CommandsP05_makeC07content6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZTq` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI8CommandsP4BodyAC_AaBTn` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI8CommandsP4body4BodyQzvgTq` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI8CommandsP8_resolve4intoyAA09_ResolvedC0Vz_tFTq` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI8CommandsPAAE05_makeC07content6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZ` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI8CommandsPAAE8_resolve4intoyAA09_ResolvedC0Vz_tF` | 2 | clipy, utm |
-| SwiftUI.framework | `_$s7SwiftUI8GridItemV4SizeO5fixedyAE12CoreGraphics7CGFloatVcAEmFWC` | 2 | raycast, utm |
-| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6PhasesV4downAEvgZ` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6PhasesV6repeatAEvgZ` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6PhasesVMa` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6PhasesVMn` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI8KeyPressV6PhasesVs10SetAlgebraAAMc` | 2 | cmux, maccy |
-| SwiftUI.framework | `_$s7SwiftUI8MaterialV10ultraThickACvgZ` | 2 | orbstack, tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI7SectionVA2A9EmptyViewVRszAA0E0R_AaFR0_rlE6footer7contentACyAEq_q0_Gq0__q_yXEtcfC` | 2 | tailscale-app, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI8GroupBoxV5label7contentACyxq_Gx_q_yXEtcfC` | 2 | cmux, karabiner-elements |
+| SwiftUI.framework | `_$s7SwiftUI8KeyPressV10charactersSSvg` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8KeyPressV9modifiersAA14EventModifiersVvg` | 2 | cmux, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8SettingsV7contentACyxGxyXE_tcfC` | 2 | openclaw, utm |
+| SwiftUI.framework | `_$s7SwiftUI8SettingsVMn` | 2 | openclaw, utm |
 | SwiftUI.framework | `_$s7SwiftUI9AlignmentV2eeoiySbAC_ACtFZ` | 2 | betterdisplay, raycast |
 | SwiftUI.framework | `_$s7SwiftUI9AnimationV5speedyACSdF` | 2 | maccy, orbstack |
+| SwiftUI.framework | `_$s7SwiftUI9AnimationV6easeInACvgZ` | 2 | clipy, pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI9AnyLayoutVMn` | 2 | openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AnyLayoutVyACxcAA0D0RzlufC` | 2 | openclaw, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9BlendModeO6screenyA2CmFWC` | 2 | raycast, vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9BlendModeO8multiplyyA2CmFWC` | 2 | pearcleaner, utm |
 | SwiftUI.framework | `_$s7SwiftUI9BlendModeO9hardLightyA2CmFWC` | 2 | raycast, utm |
 | SwiftUI.framework | `_$s7SwiftUI9NamespaceV2IDVMn` | 2 | betterdisplay, cmux |
 | SwiftUI.framework | `_$s7SwiftUI9ShareLinkVMn` | 2 | cmux, coteditor |
-| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_4text6promptACyAEGAA18LocalizedStringKeyV_AA7BindingVySSGAESgtcfC` | 2 | orbstack, utm |
-| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_4text6promptACyAEGqd___AA7BindingVySSGAESgtcSyRd__lufC` | 2 | cmux, tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_5value9formatter16onEditingChanged0G6CommitACyAEGAA18LocalizedStringKeyV_AA7BindingVyqd__GSo11NSFormatterCySbcyyctclufC` | 2 | maccy, rectangle |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldV4text6prompt4axis5labelACyxGAA7BindingVySSG_AA0C0VSgAA4AxisOxyXEtcfC` | 2 | coteditor, openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_4text4axisACyAEGqd___AA7BindingVySSGAA4AxisOtcSyRd__lufC` | 2 | cmux, vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI9TextFieldVMa` | 2 | linearmouse, orbstack |
 | SwiftUI.framework | `_$s7SwiftUI9UnitPointV11topTrailingACvgZ` | 2 | betterdisplay, cmux |
 | SwiftUI.framework | `_$s7SwiftUI9UnitPointV13bottomLeadingACvgZ` | 2 | betterdisplay, cmux |
+| SwiftUI.framework | `_$s7SwiftUI9UnitPointV2eeoiySbAC_ACtFZ` | 2 | cmux, openclaw |
 | SwiftUI.framework | `_$sSd7SwiftUI18_FormatSpecifiableAAWP` | 2 | betterdisplay, iterm2 |
 | SwiftUI.framework | `_$sSu7SwiftUI18_FormatSpecifiableAAWP` | 2 | cmux, ghostty |
-| Symbols.framework | `_$s7Symbols12SymbolEffectP13configurationAA0bC13ConfigurationVvgTj` | 2 | cmux, coteditor |
-| Symbols.framework | `_$s7Symbols19SymbolEffectOptionsV7defaultACvgZ` | 2 | cmux, coteditor |
-| Symbols.framework | `_$s7Symbols19SymbolEffectOptionsVMa` | 2 | cmux, coteditor |
+| SwiftUI.framework | `_$ss5Int32V7SwiftUI18_FormatSpecifiableACWP` | 2 | karabiner-elements, orbstack |
+| Symbols.framework | `_$s7Symbols17PulseSymbolEffectVAA0cD0AAMc` | 2 | cmux, openclaw |
+| Symbols.framework | `_$s7Symbols17PulseSymbolEffectVACycfC` | 2 | cmux, openclaw |
+| Symbols.framework | `_$s7Symbols17PulseSymbolEffectVMa` | 2 | cmux, openclaw |
+| Symbols.framework | `_$s7Symbols19ReplaceSymbolEffectVAA0cD0AAMc` | 2 | openclaw, vorssaint |
+| Symbols.framework | `_$s7Symbols19ReplaceSymbolEffectVACycfC` | 2 | openclaw, vorssaint |
+| Symbols.framework | `_$s7Symbols19ReplaceSymbolEffectVMa` | 2 | openclaw, vorssaint |
 | WidgetKit.framework | `_$s7SwiftUI12WidgetBundleP0C3KitE4mainyyFZ` | 2 | stats, tailscale-app |
 | WidgetKit.framework | `_$s7SwiftUI19WidgetConfigurationP0C3KitE11descriptionyQrAA18LocalizedStringKeyVF` | 2 | stats, tailscale-app |
 | WidgetKit.framework | `_$s7SwiftUI19WidgetConfigurationP0C3KitE11descriptionyQrAA18LocalizedStringKeyVFQOMQ` | 2 | stats, tailscale-app |
@@ -1302,17 +1578,18 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | WidgetKit.framework | `_$s9WidgetKit13TimelineEntryPAAE9relevanceAA0cD9RelevanceVSgvg` | 2 | stats, tailscale-app |
 | WidgetKit.framework | `_$s9WidgetKit20TimelineReloadPolicyVMa` | 2 | stats, tailscale-app |
 | WidgetKit.framework | `_$s9WidgetKit8TimelineV7entries6policyACyxGSayxG_AA0C12ReloadPolicyVtcfC` | 2 | stats, tailscale-app |
+| Charts.framework | `_$s10Foundation4DateV6Charts9PlottableADWP` | 1 | openclaw |
 | Charts.framework | `_$s6Charts10ChartProxyV8position4forX12CoreGraphics7CGFloatVSgx_tAA9PlottableRzlF` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts10ChartProxyVMa` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts10ChartProxyVMn` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts11BuilderPairVMn` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts11BuilderPairVyxq_GAA12ChartContentA2aERzAaER_rlMc` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts11BuilderPairVyxq_GAA8AxisMarkA2aERzAaER_rlMc` | 1 | iterm2 |
-| Charts.framework | `_$s6Charts12AxisGridLineV8centered6strokeACSbSg_7SwiftUI11StrokeStyleVSgtcfC` | 1 | iterm2 |
-| Charts.framework | `_$s6Charts12AxisGridLineVAA0B4MarkAAWP` | 1 | iterm2 |
-| Charts.framework | `_$s6Charts12AxisGridLineVMa` | 1 | iterm2 |
-| Charts.framework | `_$s6Charts12AxisGridLineVMn` | 1 | iterm2 |
+| Charts.framework | `_$s6Charts12BuilderTupleVMn` | 1 | openclaw |
+| Charts.framework | `_$s6Charts12BuilderTupleVyxxQp_QPGAA8AxisMarkAARvzAaERzlMc` | 1 | openclaw |
 | Charts.framework | `_$s6Charts12ChartContentPAAE013conformanceTobC0SVvgZ` | 1 | iterm2 |
+| Charts.framework | `_$s6Charts12ChartContentPAAE12cornerRadius_5styleQr12CoreGraphics7CGFloatV_7SwiftUI18RoundedCornerStyleOtF` | 1 | openclaw |
+| Charts.framework | `_$s6Charts12ChartContentPAAE12cornerRadius_5styleQr12CoreGraphics7CGFloatV_7SwiftUI18RoundedCornerStyleOtFQOMQ` | 1 | openclaw |
 | Charts.framework | `_$s6Charts12ChartContentPAAE19interpolationMethodyQrAA013InterpolationE0VF` | 1 | tailscale-app |
 | Charts.framework | `_$s6Charts12ChartContentPAAE19interpolationMethodyQrAA013InterpolationE0VFQOMQ` | 1 | tailscale-app |
 | Charts.framework | `_$s6Charts13RectangleMarkV6xStart4xEnd01yD001yE0AcA14PlottableValueVyxG_AjIyq_GAKtcAA0F0RzAaLR_r0_lufC` | 1 | iterm2 |
@@ -1320,12 +1597,21 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Charts.framework | `_$s6Charts13RectangleMarkVMa` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts13RectangleMarkVMn` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts14AxisMarkPresetV8extendedACvgZ` | 1 | tailscale-app |
-| Charts.framework | `_$s6Charts14AxisMarkPresetV9automaticACvgZ` | 1 | iterm2 |
+| Charts.framework | `_$s6Charts14AxisMarkValuesV6stride2by5count15roundLowerBound0h5UpperJ08calendarAC10Foundation8CalendarV9ComponentO_SiSbSgAoLSgtFZ` | 1 | openclaw |
+| Charts.framework | `_$s6Charts14AxisValueLabelV6format8centered6anchor05multiD9Alignment19collisionResolution12offsetsMarks11orientation17horizontalSpacing08verticalP0ACys5NeverOGqd___SbSg7SwiftUI9UnitPointVSgAQ0I0VSgAA0bcd9CollisionK0VApA0bcD11OrientationV12CoreGraphics7CGFloatVSgA3_tcANRsz10Foundation11FormatStyleRd__AA9Plottable11FormatInputRpd__SS12FormatOutputRtd__lufC` | 1 | openclaw |
 | Charts.framework | `_$s6Charts14AxisValueLabelV8centered6anchor05multiD9Alignment19collisionResolution12offsetsMarks11orientation17horizontalSpacing08verticalO07contentACyxGSbSg_7SwiftUI9UnitPointVSgAO0H0VSgAA0bcd9CollisionJ0VAnA0bcD11OrientationV12CoreGraphics7CGFloatVSgA1_xyXEtcfC` | 1 | iterm2 |
+| Charts.framework | `_$s6Charts14AxisValueLabelV8centered6anchor05multiD9Alignment19collisionResolution12offsetsMarks11orientation17horizontalSpacing08verticalO0ACys5NeverOGSbSg_7SwiftUI9UnitPointVSgAP0H0VSgAA0bcd9CollisionJ0VAoA0bcD11OrientationV12CoreGraphics7CGFloatVSgA2_tcAMRszrlufC` | 1 | openclaw |
 | Charts.framework | `_$s6Charts14AxisValueLabelV_8centered6anchor05multiD9Alignment19collisionResolution12offsetsMarks11orientation17horizontalSpacing08verticalO0ACy7SwiftUI4TextVGAL18LocalizedStringKeyV_SbSgAL9UnitPointVSgAL0H0VSgAA0bcd9CollisionJ0VArA0bcD11OrientationV12CoreGraphics7CGFloatVSgA4_tcANRszrlufC` | 1 | tailscale-app |
-| Charts.framework | `_$s6Charts14PlottableValueV5valueyACyxG7SwiftUI18LocalizedStringKeyV_xtFZ` | 1 | tailscale-app |
 | Charts.framework | `_$s6Charts14PlottableValueV5valueyACyxGqd___xtSyRd__lFZ` | 1 | iterm2 |
+| Charts.framework | `_$s6Charts16AxisMarkPositionV7leadingACvgZ` | 1 | openclaw |
+| Charts.framework | `_$s6Charts5ChartV_2id7contentACy7SwiftUI7ForEachVyqd__qd_0_qd_1_GGqd___s7KeyPathCy7ElementQyd__qd_0_Gqd_1_ANctcAIRszSkRd__SHRd_0_AA0B7ContentRd_1_r1_lufC` | 1 | openclaw |
+| Charts.framework | `_$s6Charts7BarMarkV1x1y5width6height8stackingAcA14PlottableValueVyxG_AJyq_GAA0C9DimensionVAnA0C14StackingMethodVtcAA0G0RzAaQR_r0_lufC` | 1 | openclaw |
+| Charts.framework | `_$s6Charts7BarMarkVAA12ChartContentAAWP` | 1 | openclaw |
+| Charts.framework | `_$s6Charts7BarMarkVMa` | 1 | openclaw |
+| Charts.framework | `_$s6Charts7BarMarkVMn` | 1 | openclaw |
 | Charts.framework | `_$s6Charts8AxisMarkPAAE013conformanceTobC0SVvgZ` | 1 | iterm2 |
+| Charts.framework | `_$s6Charts8AxisMarkPAAE15foregroundStyleyQrqd__7SwiftUI05ShapeE0Rd__lF` | 1 | openclaw |
+| Charts.framework | `_$s6Charts8AxisMarkPAAE15foregroundStyleyQrqd__7SwiftUI05ShapeE0Rd__lFQOMQ` | 1 | openclaw |
 | Charts.framework | `_$s6Charts8AxisTickV6LengthV9automaticAEvgZ` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts8AxisTickV6LengthVMa` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts8AxisTickV8centered6length6strokeACSbSg_AC6LengthV7SwiftUI11StrokeStyleVSgtcfC` | 1 | iterm2 |
@@ -1340,17 +1626,14 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Charts.framework | `_$s6Charts8RuleMarkVAA12ChartContentAAWP` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts8RuleMarkVMa` | 1 | iterm2 |
 | Charts.framework | `_$s6Charts8RuleMarkVMn` | 1 | iterm2 |
-| Charts.framework | `_$s7SwiftUI4ViewP6ChartsE10chartXAxis7contentQrqd__yXE_tAD11AxisContentRd__lF` | 1 | iterm2 |
-| Charts.framework | `_$s7SwiftUI4ViewP6ChartsE10chartXAxis7contentQrqd__yXE_tAD11AxisContentRd__lFQOMQ` | 1 | iterm2 |
+| Charts.framework | `_$s6Charts9AxisMarksV6preset8position6values7contentACyxGAA0B10MarkPresetV_AA0bH8PositionVAA0bH6ValuesVxyctcfC` | 1 | openclaw |
 | Charts.framework | `_$s7SwiftUI4ViewP6ChartsE10chartXAxisyQrAA10VisibilityOF` | 1 | tailscale-app |
 | Charts.framework | `_$s7SwiftUI4ViewP6ChartsE10chartXAxisyQrAA10VisibilityOFQOMQ` | 1 | tailscale-app |
-| Charts.framework | `_$s7SwiftUI4ViewP6ChartsE10chartYAxis7contentQrqd__yXE_tAD11AxisContentRd__lF` | 1 | tailscale-app |
-| Charts.framework | `_$s7SwiftUI4ViewP6ChartsE10chartYAxis7contentQrqd__yXE_tAD11AxisContentRd__lFQOMQ` | 1 | tailscale-app |
 | Charts.framework | `_$s7SwiftUI4ViewP6ChartsE12chartOverlay9alignment7contentQrAA9AlignmentV_qd__AD10ChartProxyVctAaBRd__lF` | 1 | iterm2 |
 | Charts.framework | `_$s7SwiftUI4ViewP6ChartsE12chartOverlay9alignment7contentQrAA9AlignmentV_qd__AD10ChartProxyVctAaBRd__lFQOMQ` | 1 | iterm2 |
 | Charts.framework | `_$s7SwiftUI7ForEachV6Charts7Element_2IDQZRs_AD12ChartContentR0_s12IdentifiableAERpzrlE_7contentACyxq_q0_Gx_q0_AJctcfC` | 1 | tailscale-app |
-| Charts.framework | `_$sSd6Charts9PlottableAAWP` | 1 | iterm2 |
 | Charts.framework | `_$sSf6Charts9PlottableAAWP` | 1 | tailscale-app |
+| Combine.framework | `_$s25ObjectWillChangePublisher7Combine010ObservableA0PTl` | 1 | vorssaint |
 | Combine.framework | `_$s6Output7Combine15TopLevelEncoderPTl` | 1 | utm |
 | Combine.framework | `_$s7Combine0A10IdentifierVACycfC` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine0A10IdentifierVMa` | 1 | raycast |
@@ -1361,12 +1644,16 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Combine.framework | `_$s7Combine10PublishersO0A7Latest3VMa` | 1 | raycast |
 | Combine.framework | `_$s7Combine10PublishersO0A7Latest4VMa` | 1 | raycast |
 | Combine.framework | `_$s7Combine10PublishersO10CompactMapV7receive10subscriberyqd___t5InputQyd__Rs_AA10SubscriberRd__7FailureQyd__AKRtzlF` | 1 | clipy |
+| Combine.framework | `_$s7Combine10PublishersO10CompactMapVMn` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine10PublishersO10CompactMapVy_xq_GAA9PublisherAAMc` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine10PublishersO10FirstWhereVMn` | 1 | orbstack |
 | Combine.framework | `_$s7Combine10PublishersO10FirstWhereVy_xGAA9PublisherAAMc` | 1 | orbstack |
 | Combine.framework | `_$s7Combine10PublishersO12ReplaceErrorVMa` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO14SwitchToLatestVMa` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO16PrefetchStrategyO9byRequestyA2EmFWC` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO16PrefetchStrategyOMa` | 1 | whatsapp |
+| Combine.framework | `_$s7Combine10PublishersO16RemoveDuplicatesVMn` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine10PublishersO16RemoveDuplicatesVy_xGAA9PublisherAAMc` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine10PublishersO17BufferingStrategyO10dropOldestyAEy_xGAGms5ErrorRzlFWC` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO17BufferingStrategyOMa` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO17PrefixUntilOutputVMn` | 1 | betterdisplay |
@@ -1375,6 +1662,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Combine.framework | `_$s7Combine10PublishersO3ZipVMn` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO3ZipVyAEy_xq_Gx_q_tcfC` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO3ZipVy_xq_GAA9PublisherAAMc` | 1 | whatsapp |
+| Combine.framework | `_$s7Combine10PublishersO4DropVMn` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine10PublishersO4DropVy_xGAA9PublisherAAMc` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine10PublishersO4Zip3VMn` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO4Zip3VyAEy_xq_q0_Gx_q_q0_tcfC` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO4Zip3Vy_xq_q0_GAA9PublisherAAMc` | 1 | whatsapp |
@@ -1391,6 +1680,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Combine.framework | `_$s7Combine10PublishersO6EncodeVy_xq_GAA9PublisherAAMc` | 1 | jordanbaird-ice |
 | Combine.framework | `_$s7Combine10PublishersO6FilterV6filteryAEy_xGSb6OutputQzcF` | 1 | coteditor |
 | Combine.framework | `_$s7Combine10PublishersO6FilterVMa` | 1 | whatsapp |
+| Combine.framework | `_$s7Combine10PublishersO6FilterVMn` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine10PublishersO6FilterVy_xGAA9PublisherAAMc` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine10PublishersO6Merge5VMn` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO6Merge5Vy_xq_q0_q1_q2_GAA9PublisherAAMc` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO6Merge7VMn` | 1 | coteditor |
@@ -1400,8 +1691,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Combine.framework | `_$s7Combine10PublishersO6OutputVy_xGAA9PublisherAAMc` | 1 | utm |
 | Combine.framework | `_$s7Combine10PublishersO6TryMapV03tryD0yAEy_xqd__Gqd__q_KclF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO6TryMapVMa` | 1 | whatsapp |
-| Combine.framework | `_$s7Combine10PublishersO6TryMapVMn` | 1 | whatsapp |
-| Combine.framework | `_$s7Combine10PublishersO6TryMapVy_xq_GAA9PublisherAAMc` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO7CollectVMn` | 1 | raycast |
 | Combine.framework | `_$s7Combine10PublishersO7CollectVy_xGAA9PublisherAAMc` | 1 | raycast |
 | Combine.framework | `_$s7Combine10PublishersO8DebounceVMa` | 1 | linearmouse |
@@ -1416,18 +1705,30 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Combine.framework | `_$s7Combine10PublishersO9MulticastCMa` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO9MulticastCMn` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine10PublishersO9MulticastCy_xq_GAA20ConnectablePublisherAAMc` | 1 | whatsapp |
+| Combine.framework | `_$s7Combine10PublishersO9ReceiveOnVMn` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine10PublishersO9ReceiveOnVy_xq_GAA9PublisherAAMc` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine10PublishersOMn` | 1 | clipy |
 | Combine.framework | `_$s7Combine13AnySubscriberVMa` | 1 | clipy |
+| Combine.framework | `_$s7Combine14AnyCancellableC5store2inyShyACGz_tF` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine14AnyCancellableC6cancelyyF` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine14AnyCancellableCMn` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine14AnyCancellableCyACyyccfCTj` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine14AsyncPublisherV8IteratorVyx_GScIAAMc` | 1 | ghostty |
 | Combine.framework | `_$s7Combine14AsyncPublisherVyxGSciAAMc` | 1 | ghostty |
 | Combine.framework | `_$s7Combine15TopLevelEncoderMp` | 1 | utm |
 | Combine.framework | `_$s7Combine15TopLevelEncoderP6encodey6OutputQzqd__KSERd__lFTq` | 1 | utm |
+| Combine.framework | `_$s7Combine16ObservableObjectMp` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine16ObservableObjectP0C19WillChangePublisherAC_AA0F0Tn` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine16ObservableObjectP16objectWillChange0ceF9PublisherQzvgTq` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine16ObservableObjectPA2A0bC9PublisherC0c10WillChangeD0RtzrlE06objecteF0AEvg` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine17AnySubscriberBaseC7receive10completionyAA11SubscribersO10CompletionOy_q_G_tFTj` | 1 | clipy |
 | Combine.framework | `_$s7Combine17AnySubscriberBaseC7receive12subscriptionyAA12Subscription_p_tFTj` | 1 | clipy |
 | Combine.framework | `_$s7Combine18PassthroughSubjectC4send10completionyAA11SubscribersO10CompletionOy_q_G_tF` | 1 | raycast |
+| Combine.framework | `_$s7Combine18PassthroughSubjectC4sendyyxF` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine18PassthroughSubjectCACyxq_GycfC` | 1 | whatsapp |
+| Combine.framework | `_$s7Combine18PassthroughSubjectCACyxq_Gycfc` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine18PassthroughSubjectCMa` | 1 | raycast |
+| Combine.framework | `_$s7Combine18PassthroughSubjectCMn` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine19CurrentValueSubjectC5valuexvpMV` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine19CurrentValueSubjectC7receive10subscriberyqd___t5InputQyd__Rsz7FailureQyd__Rs_AA10SubscriberRd__lF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine19CurrentValueSubjectCMa` | 1 | whatsapp |
@@ -1439,12 +1740,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Combine.framework | `_$s7Combine20ConnectablePublisherPAA0C0Tb` | 1 | clipy |
 | Combine.framework | `_$s7Combine25ClosureBasedAnySubscriberCMn` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine25ClosureBasedAnySubscriberCyACyxq_GyAA12Subscription_pc_AA11SubscribersO6DemandVxcyAG10CompletionOy_q_GctcfC` | 1 | whatsapp |
+| Combine.framework | `_$s7Combine25ObservableObjectPublisherCAA0D0AAWP` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine25ObservableObjectPublisherCMn` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine32SchedulerTimeIntervalConvertibleMp` | 1 | clipy |
 | Combine.framework | `_$s7Combine32SchedulerTimeIntervalConvertibleP7secondsyxSdFZTj` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine4FailV10outputType7failureACyxq_Gxm_q_tcfC` | 1 | raycast |
 | Combine.framework | `_$s7Combine4FailVMa` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine4JustV3mapyACyqd__Gqd__xXElF` | 1 | cmux |
-| Combine.framework | `_$s7Combine4JustV6tryMapys6ResultOAAE9PublisherVyqd__s5Error_p_Gqd__xKXElF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine4JustV8mapErrorys6ResultOAAE9PublisherVyxqd___Gqd__s5NeverOXEs0D0Rd__lF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine4JustVMa` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine6FutureCMo` | 1 | whatsapp |
@@ -1457,28 +1759,44 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Combine.framework | `_$s7Combine7SubjectP4sendyy6OutputQzFTq` | 1 | clipy |
 | Combine.framework | `_$s7Combine7SubjectPAA9PublisherTb` | 1 | clipy |
 | Combine.framework | `_$s7Combine8DeferredVMn` | 1 | raycast |
+| Combine.framework | `_$s7Combine9PublishedV12initialValueACyxGx_tcfC` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine9PublishedV14projectedValueAC9PublisherVyx_Gvg` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine9PublishedV14projectedValueAC9PublisherVyx_Gvs` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine9PublishedV18_enclosingInstance7wrapped7storagexqd___s24ReferenceWritableKeyPathCyqd__xGAHyqd__ACyxGGtcRld__CluiMZ` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine9PublishedV18_enclosingInstance7wrapped7storagexqd___s24ReferenceWritableKeyPathCyqd__xGAHyqd__ACyxGGtcRld__CluigZ` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine9PublishedV18_enclosingInstance7wrapped7storagexqd___s24ReferenceWritableKeyPathCyqd__xGAHyqd__ACyxGGtcRld__CluisZ` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine9PublishedV9PublisherVMn` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine9PublishedV9PublisherVyx_GAadAMc` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine9PublishedVMa` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine9PublishedVMn` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine9PublisherPAA6Output_7FailureQZAERtzAabDRpzrlE14switchToLatestAA10PublishersO06SwitchfG0Vy_AHxGyF` | 1 | whatsapp |
+| Combine.framework | `_$s7Combine9PublisherPAAE10compactMapyAA10PublishersO07CompactD0Vy_xqd__Gqd__Sg6OutputQzclF` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine9PublisherPAAE10replaceNil4withAA10PublishersO3MapVy_xqd__Gqd___tqd__Sg6OutputRtzlF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE13combineLatestyAA10PublishersO3MapVy_AF0A7Latest4Vy_xqd__qd_0_qd_1_Gqd_2_Gqd___qd_0_qd_1_qd_2_6OutputQz_AMQyd__AMQyd_0_AMQyd_1_tctAaBRd__AaBRd_0_AaBRd_1_7FailureQyd__ARRtzARQyd_0_ASRSARQyd_1_AURSr2_lF` | 1 | orbstack |
 | Combine.framework | `_$s7Combine9PublisherPAAE13combineLatestyAA10PublishersO3MapVy_AF0aD0Vy_xqd__Gqd_0_Gqd___qd_0_6OutputQz_AMQyd__tctAaBRd__7FailureQyd__APRtzr0_lF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE4drop5whileAA10PublishersO9DropWhileVy_xGSb6OutputQzc_tF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE5catchyAA10PublishersO5CatchVy_xqd__Gqd__7FailureQzcAaBRd__6OutputQyd__ALRtzlF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE5first5whereAA10PublishersO10FirstWhereVy_xGSb6OutputQzc_tF` | 1 | orbstack |
+| Combine.framework | `_$s7Combine9PublisherPAAE5merge4with_AA10PublishersO6Merge3Vy_xqd__qd_0_Gqd___qd_0_tAaBRd__AaBRd_0_7FailureQyd__AKRtz6OutputQyd__ANRtzAKQyd_0_ALRSANQyd_0_AORSr0_lF` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine9PublisherPAAE5merge4with___AA10PublishersO6Merge5Vy_xqd__qd_0_qd_1_qd_2_Gqd___qd_0_qd_1_qd_2_tAaBRd__AaBRd_0_AaBRd_1_AaBRd_2_7FailureQyd__AKRtz6OutputQyd__ANRtzAKQyd_0_ALRSANQyd_0_AORSAKQyd_1_AQRSANQyd_1_ARRSAKQyd_2_ASRSANQyd_2_ATRSr2_lF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE5retryyAA10PublishersO5RetryVy_xGSiF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE6appendyAA10PublishersO11ConcatenateVy_xqd__Gqd__AaBRd__7FailureQyd__AJRtz6OutputQyd__AMRtzlF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE6buffer4size8prefetch8whenFullAA10PublishersO6BufferVy_xGSi_AI16PrefetchStrategyOAI09BufferingK0Oy_7FailureQzGtF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE6decode4type7decoderAA10PublishersO6DecodeVy_xqd__qd_0_Gqd__m_qd_0_tSeRd__AA15TopLevelDecoderRd_0_5InputQyd_0_6OutputRtzr0_lF` | 1 | whatsapp |
+| Combine.framework | `_$s7Combine9PublisherPAAE6filteryAA10PublishersO6FilterVy_xGSb6OutputQzcF` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine9PublisherPAAE6prefix15untilOutputFromAA10PublishersO011PrefixUntilE0Vy_xqd__Gqd___tAaBRd__lF` | 1 | betterdisplay |
 | Combine.framework | `_$s7Combine9PublisherPAAE6prefixyAA10PublishersO6OutputVy_xGSiF` | 1 | utm |
-| Combine.framework | `_$s7Combine9PublisherPAAE6tryMapyAA10PublishersO03TryD0Vy_xqd__Gqd__6OutputQzKclF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE7collectAA10PublishersO7CollectVy_xGyF` | 1 | raycast |
 | Combine.framework | `_$s7Combine9PublisherPAAE7flatMap13maxPublishers_AA0F0O04FlatD0Vy_AG14SetFailureTypeVy_qd__0I0QzGxGAA11SubscribersO6DemandV_qd__6OutputQzctAaBRd__s5NeverOALRtd__lF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE7prependyAA10PublishersO11ConcatenateVy_AF8SequenceVy_qd__7FailureQzGxGqd__STRd__7ElementQyd__6OutputRtzlF` | 1 | whatsapp |
+| Combine.framework | `_$s7Combine9PublisherPAAE7receive2on7optionsAA10PublishersO9ReceiveOnVy_xqd__Gqd___16SchedulerOptionsQyd__SgtAA0I0Rd__lF` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine9PublisherPAAE8tryCatchyAA10PublishersO03TryD0Vy_xqd__Gqd__7FailureQzKcAaBRd__6OutputQyd__ALRtzlF` | 1 | raycast |
+| Combine.framework | `_$s7Combine9PublisherPAAE9dropFirstyAA10PublishersO4DropVy_xGSiF` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine9PublisherPAAE9multicast7subjectAA10PublishersO9MulticastCy_xqd__Gqd___tAA7SubjectRd__7FailureQyd__ALRtz6OutputQyd__AORtzlF` | 1 | whatsapp |
 | Combine.framework | `_$s7Combine9PublisherPAAE9subscribeyyqd__AA10SubscriberRd__7FailureQyd__AFRtz5InputQyd__6OutputRtzlF` | 1 | cmux |
 | Combine.framework | `_$s7Combine9PublisherPAASE6OutputRpzrlE6encode7encoderAA10PublishersO6EncodeVy_xqd__Gqd___tAA15TopLevelEncoderRd__lF` | 1 | jordanbaird-ice |
+| Combine.framework | `_$s7Combine9PublisherPAASQ6OutputRpzrlE16removeDuplicatesAA10PublishersO06RemoveE0Vy_xGyF` | 1 | vorssaint |
+| Combine.framework | `_$s7Combine9PublisherPAAs5NeverO7FailureRtzrlE4sink12receiveValueAA14AnyCancellableCy6OutputQzc_tF` | 1 | vorssaint |
 | Combine.framework | `_$s7Combine9SchedulerP16minimumTolerance0B8TimeType_6StrideQZvgTj` | 1 | clipy |
 | Combine.framework | `_$s7Combine9SchedulerP16minimumTolerance0B8TimeType_6StrideQZvgTq` | 1 | clipy |
 | Combine.framework | `_$s7Combine9SchedulerP3now0B8TimeTypeQzvgTq` | 1 | clipy |
@@ -1519,27 +1837,38 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport13ImageResourceVSHAAMc` | 1 | jordanbaird-ice |
 | PhotosUI.framework | `_OBJC_CLASS_$_PHLivePhotoView` | 1 | whatsapp |
 | PhotosUI.framework | `_OBJC_CLASS_$_PHPickerViewController` | 1 | whatsapp |
+| SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV015ForegroundColorB0OAA19AttributedStringKeyADMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV015ForegroundColorB0ON` | 1 | vorssaint |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV018StrikethroughStyleB0OAA19AttributedStringKeyADMc` | 1 | cmux |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV018StrikethroughStyleB0ON` | 1 | cmux |
+| SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV04FontB0OAA19AttributedStringKeyADMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV04FontB0ON` | 1 | vorssaint |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV07KerningB0OAA19AttributedStringKeyADMc` | 1 | cmux |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV07KerningB0ON` | 1 | cmux |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV08TrackingB0OAA19AttributedStringKeyADMc` | 1 | cmux |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV08TrackingB0ON` | 1 | cmux |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesVMa` | 1 | cmux |
-| SwiftUI.framework | `_$s12CoreGraphics7CGFloatV7SwiftUI16VectorArithmeticADMc` | 1 | raycast |
+| SwiftUI.framework | `_$s10NSViewType7SwiftUI0A13RepresentablePTl` | 1 | vorssaint |
+| SwiftUI.framework | `_$s11Coordinator7SwiftUI19NSViewRepresentablePTl` | 1 | vorssaint |
+| SwiftUI.framework | `_$s12CoreGraphics7CGFloatV7SwiftUI10AnimatableADMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s12TableRowBody7SwiftUI0aB7ContentPTl` | 1 | clipy |
 | SwiftUI.framework | `_$s13TableRowValue7SwiftUI0A13ColumnContentPTl` | 1 | clipy |
 | SwiftUI.framework | `_$s13TableRowValue7SwiftUI0aB7ContentPTl` | 1 | clipy |
+| SwiftUI.framework | `_$s14AnimatableData7SwiftUI0A0PTl` | 1 | vorssaint |
 | SwiftUI.framework | `_$s15TableColumnBody7SwiftUI0aB7ContentPTl` | 1 | clipy |
 | SwiftUI.framework | `_$s25TableColumnSortComparator7SwiftUI0aB7ContentPTl` | 1 | clipy |
 | SwiftUI.framework | `_$s4Body7SwiftUI014_VariadicView_E4RootPTl` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s4Body7SwiftUI17ProgressViewStylePTl` | 1 | 1password |
+| SwiftUI.framework | `_$s4Body7SwiftUI11ButtonStylePTl` | 1 | vorssaint |
+| SwiftUI.framework | `_$s4Body7SwiftUI12ViewModifierPTl` | 1 | vorssaint |
+| SwiftUI.framework | `_$s4Body7SwiftUI13GroupBoxStylePTl` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s4Body7SwiftUI19LabeledContentStylePTl` | 1 | coteditor |
 | SwiftUI.framework | `_$s4Body7SwiftUI20DisclosureGroupStylePTl` | 1 | coteditor |
 | SwiftUI.framework | `_$s4Body7SwiftUI25AccessibilityRotorContentPTl` | 1 | clipy |
+| SwiftUI.framework | `_$s4Body7SwiftUI4ViewPTl` | 1 | vorssaint |
 | SwiftUI.framework | `_$s4Data7SwiftUI18DynamicViewContentPTl` | 1 | maccy |
 | SwiftUI.framework | `_$s5Value7SwiftUI06LayoutA3KeyPTl` | 1 | cmux |
 | SwiftUI.framework | `_$s5Value7SwiftUI07FocusedA3KeyPTl` | 1 | ghostty |
+| SwiftUI.framework | `_$s5_Body7SwiftUI14TextFieldStylePTl` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7Entries7SwiftUI16TimelineSchedulePTl` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI010TabBarOnlyC9ViewStyleVAA0cfG0AAWP` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI010TabBarOnlyC9ViewStyleVACycfC` | 1 | coteditor |
@@ -1557,24 +1886,35 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI019_VariadicView_UnaryD4RootPAA01_cd1_dF0Tb` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI019_VariadicView_UnaryD4RootPAAE05_makeD4List4root6inputs4bodyAA01_dH7OutputsVAA11_GraphValueVyxG_AA01_dH6InputsVAiA01_M0V_ANtctFZ` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI019_VariadicView_UnaryD4RootPAAE14_viewListCount6inputs4bodySiSgAA01_dhI6InputsV_AgIXEtFZ` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI10AnimatableMp` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10AnimatableP05_makeC05value6inputsyAA11_GraphValueVyxGz_AA01_G6InputsVtFZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10AnimatableP0C4DataAC_AA16VectorArithmeticTn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10AnimatableP14animatableData0cE0QzvMTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10AnimatableP14animatableData0cE0QzvgTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10AnimatableP14animatableData0cE0QzvsTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10AnimatablePA2A05EmptyC4DataV0cE0RtzrlE010animatableE0AEvM` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10AnimatablePA2A05EmptyC4DataV0cE0RtzrlE05_makeC05value6inputsyAA11_GraphValueVyxGz_AA01_I6InputsVtFZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI10AppStorageVAAs23ExpressibleByNilLiteralRzlE_5storeACy10Foundation4DataVSgGSS_So14NSUserDefaultsCSgtcAIRszrlufC` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI10AppStorageVAAs23ExpressibleByNilLiteralRzlE_5storeACySbSgGSS_So14NSUserDefaultsCSgtcAFRszrlufC` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI10AppStorageVAAs23ExpressibleByNilLiteralRzlE_5storeACySiSgGSS_So14NSUserDefaultsCSgtcAFRszrlufC` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI10AppStorageV_5storeACyqd__SgGSS_So14NSUserDefaultsCSgtcAERszSYRd__SS8RawValueRtd__lufC` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI10ButtonRoleV5closeACvgZ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI10DatePickerVA2A4TextVRszrlE_9selection19displayedComponentsACyAEGAA18LocalizedStringKeyV_AA7BindingVy10Foundation0C0VGAA0cdH0VtcfC` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI10DatePickerVA2A4TextVRszrlE_9selection19displayedComponentsACyAEGqd___AA7BindingVy10Foundation0C0VGAA0cdH0VtcSyRd__lufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10DatePickerVyxGAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10EdgeInsetsV4_allAC12CoreGraphics7CGFloatV_tcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI10EdgeInsetsVSQAAMc` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI10FocusStateV12wrappedValuexvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10FocusStateV12wrappedValuexvs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10FocusStateV14projectedValueAC7BindingVyx_Gvg` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI10FocusStateV7BindingV12wrappedValuexvg` | 1 | maccy |
 | SwiftUI.framework | `_$s7SwiftUI10FocusStateV7BindingV12wrappedValuexvs` | 1 | maccy |
 | SwiftUI.framework | `_$s7SwiftUI10FocusStateV7BindingV14projectedValueAEyx_Gvg` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI10LazyHStackV9alignment7spacing11pinnedViews7contentACyxGAA17VerticalAlignmentV_12CoreGraphics7CGFloatVSgAA016PinnedScrollableH0VxyXEtcfC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI10LazyHStackVMn` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI10LazyHStackVyxGAA4ViewAAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseO10backgroundyA2CmFWC` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseO2eeoiySbAC_ACtFZ` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseO6activeyA2CmFWC` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseOMa` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseOMn` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI10ScenePhaseOSQAAMc` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI10FocusStateVACySbGycSbRszrlufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10FocusStateVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10LazyHStackVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10ScrollViewVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10ScrollViewV_15showsIndicators7contentACyxGAA4AxisO3SetV_SbxyXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10ScrollViewVyxGAA0D0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI10ShapeStyleP6_apply2toyAA01_cd1_C0Vz_tFTq` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI10ShapeStyleP6_apply2toyAA01_cd1_C4TypeVz_tFZTq` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI10ShapeStyleP9_makeView4view6inputsAA01_F7OutputsVAA11_GraphValueVyAA01_cF0Vyqd__xGG_AA01_F6InputsVtAA0C0Rd__lFZTq` | 1 | 1password |
@@ -1584,18 +1924,46 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI10SliderTickVMn` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI10SliderTickVyACyxGxcfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI10SliderTickVyxGAA0cD7ContentAAMc` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI10TabContentP15_identifiedView011_IdentifiedF0QzvgTj` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI10TapGestureVAA0D0AAMc` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI10TextEditorV4textAcA7BindingVySSG_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10TextEditorVAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10TextEditorVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10TextEditorVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10_ShapeViewV5shape5style9fillStyleACyxq_Gx_q_AA04FillH0VtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10_ShapeViewVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI10_ShapeViewVyxq_GAA0D0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11AnyGradientVAA10ShapeStyleAAMc` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI11AnyGradientVN` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI11AnyLocationCMa` | 1 | clipy |
-| SwiftUI.framework | `_$s7SwiftUI11ColorPickerVyxGAA4ViewAAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI11ColorSchemeOSQAAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI11CommandMenuV_7contentACyxGAA18LocalizedStringKeyV_xyXEtcfC` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI11AnyLocationCMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ButtonStyleMp` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ButtonStyleP4BodyAC_AA4ViewTn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ButtonStyleP8makeBody13configuration0F0QzAA0cD13ConfigurationV_tFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ColorPickerVA2A4TextVRszrlE_9selection15supportsOpacityACyAEGqd___AA7BindingVyAA0C0VGSbtcSyRd__lufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ColorSchemeO2eeoiySbAC_ACtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ColorSchemeO4darkyA2CmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ColorSchemeO5lightyA2CmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ColorSchemeOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ColorSchemeOMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11CommandMenuV_7contentACyxGAA4TextV_xyXEtcfC` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI11CommandMenuV_7contentACyxGqd___xyXEtcSyRd__lufC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI11CommandMenuVyxGAA8CommandsAAMc` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI11ContentModeOMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ContextMenuV9menuItemsACyxGxyXE_tcfC` | 1 | swiftbar |
+| SwiftUI.framework | `_$s7SwiftUI11ContextMenuVMn` | 1 | swiftbar |
 | SwiftUI.framework | `_$s7SwiftUI11ControlSizeO10extraLargeyA2CmFWC` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI11ControlSizeO5smallyA2CmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ControlSizeOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ControlSizeOMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11DragGestureV5ValueV13startLocationSo7CGPointVvg` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11DragGestureV5ValueV20predictedEndLocationSo7CGPointVvg` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI11DragGestureV5ValueV8locationSo7CGPointVvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11DragGestureV5ValueVMa` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11DragGestureV5ValueVMn` | 1 | tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI11DragGestureV5ValueVSQAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11DragGestureVAA0D0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11DragGestureVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11DragGestureVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11DragSessionV14draggedItemIDs3forSayxGxm_tSHRzlF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11DragSessionV5PhaseO5endedyAeA13DropOperationOcAEmFWC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11DragSessionV5PhaseOMa` | 1 | coteditor |
@@ -1603,53 +1971,75 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI11DropSessionV05LocalD0VMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11DropSessionV05LocalD0VMn` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11DropSessionV05localD0AC05LocalD0VSgvg` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI11EnvironmentV7ContentOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11EnvironmentV7ContentOMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11EnvironmentVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11EnvironmentVyACyqd__SgGqd__mcADRszRld__C11Observation10ObservableRd__lufC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI11GestureMaskV3allACvgZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11GestureMaskV8subviewsACvgZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI11OffsetShapeVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11ScaledShapeVMn` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI11SecureFieldVA2A4TextVRszrlE_4text8onCommitACyAEGAA18LocalizedStringKeyV_AA7BindingVySSGyyctcfC` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI11SecureFieldVA2A4TextVRszrlE_4text8onCommitACyAEGqd___AA7BindingVySSGyyctcSyRd__lufC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI11ScrollPhaseO2eeoiySbAC_ACtFZ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI11ShadowStyleV4drop5color6radius1x1yAcA5ColorV_12CoreGraphics7CGFloatVA2MtFZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11ShadowStyleVMa` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI11StateObjectV12wrappedValuexvg` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11StateObjectVMa` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI11StateObjectVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11StateObjectVyxGAA15DynamicPropertyAAMc` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI11StrokeStyleV9lineWidth0E3Cap0E4Join10miterLimit4dash0K5PhaseAC12CoreGraphics7CGFloatV_So06CGLineG0VSo0pH0VALSayALGALtcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11StrokeStyleVMn` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI11TableColumnVAA10Foundation17KeyPathComparatorVyxGRs_AA4TextVRs1_rlE_5value10comparator7contentACyxAGq0_AIGAI_s0fG0Cyxqd__Gqd_0_q0_xctc8ComparedQyd_0_Rsd__AD04SortH0Rd_0_r0_lufC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11TableColumnVAA10Foundation17KeyPathComparatorVyxGRs_AA4TextVRs1_rlE_5value10comparatorACyxAg2IGAA015LocalizedStringF0V_s0fG0CyxSSGSSADE08StandardH0VtcAIRs0_rlufC` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI11TableColumnVAA10Foundation17KeyPathComparatorVyxGRs_AA4TextVRs1_rlE_5value10comparatorACyxAg2IGAI_s0fG0CyxSSGSSADE08StandardH0VtcAIRs0_rlufC` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI11TableColumnVAA10Foundation17KeyPathComparatorVyxGRs_AA4TextVRs1_rlE_5value7contentACyxAGq0_AIGAA015LocalizedStringF0V_s0fG0Cyxqd__Gq0_xctcSLRd__lufC` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI11TableColumnVAA10Foundation17KeyPathComparatorVyxGRs_AA4TextVRs1_rlE_5value7contentACyxAGq0_AIGAI_s0fG0Cyxqd__Gq0_xctcSLRd__lufC` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI11TableColumnVAA10Foundation17KeyPathComparatorVyxGRs_AA4TextVRs1_rlE_5value7contentACyxAGq0_AIGqd___s0fG0Cyxqd_0_Gq0_xctcSyRd__SLRd_0_r0_lufC` | 1 | swiftbar |
 | SwiftUI.framework | `_$s7SwiftUI11TableColumnVAA8ComparedQy_RszAA4TextVRs1_rlE_9sortUsing7contentACyxq_q0_AGGAG_q_q0_xctcfC` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI11TableColumnVAA8ComparedQy_RszAA4TextVRs1_rlE_9sortUsing7contentACyxq_q0_AGGqd___q_q0_xctcSyRd__lufC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11TableColumnVAAs5NeverORs_AA4TextVRs1_rlE_7contentACyxAEq0_AGGAG_q0_xctcfC` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI11TableColumnVAAs5NeverORs_AA4TextVRs1_rlE_7contentACyxAEq0_AGGqd___q0_xctcSyRd__lufC` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI11TableColumnVMa` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI11ToolbarItemVAASSRszrlE2id9placement14showsByDefault7contentACySSq_GSS_AA0cD9PlacementVSbq_yXEtcfC` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI11ToolbarItemVAAytRszrlE9placement7contentACyytq_GAA0cD9PlacementV_q_yXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ToolbarItemVMa` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI11ToolbarItemVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11ToolbarItemVyxq_GAA012CustomizableC7ContentAASSRszrlMc` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI11TransactionV18disablesAnimationsSbvs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11TransactionV9animationAA9AnimationVSgvs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11TransactionVN` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11TupleWidgetVMn` | 1 | stats |
 | SwiftUI.framework | `_$s7SwiftUI11TupleWidgetVyACyxGxcfC` | 1 | stats |
 | SwiftUI.framework | `_$s7SwiftUI11TupleWidgetVyxGAA0D0AAMc` | 1 | stats |
 | SwiftUI.framework | `_$s7SwiftUI11ViewSpacingV8distance2to5along12CoreGraphics7CGFloatVAC_AA4AxisOtF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11ViewSpacingVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI11WindowGroupV_2id7contentACyxGAA4TextV_SSxyXEtcfC` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI11_BlurEffectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11_ClipEffectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11_ClipEffectVyxGAA12ViewModifierAAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI11_GraphValueVMa` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI11_GraphValueVyACyqd__Gs7KeyPathCyxqd__Gcluig` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI11_MaskEffectVMa` | 1 | raycast |
+| SwiftUI.framework | `_$s7SwiftUI11_MaskEffectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI11_MaskEffectVyxGAA12ViewModifierAAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI12ButtonSizingV8flexibleACvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI12ButtonSizingVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI12CommandGroupV6before8additionACyxGAA0cD9PlacementV_xyXEtcfC` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI12CommandGroupVyxGAA8CommandsAAMc` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI12ControlGroupV7content5labelACyAA07LabeledcD7ContentVyqd__qd_0_GGqd__yXE_qd_0_yXEtcAHRszAA4ViewRd__AaJRd_0_r0_lufC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI12DropDelegatePAAE08validateC04infoSbAA0C4InfoV_tF` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI12DropDelegatePAAE11dropEntered4infoyAA0C4InfoV_tF` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI12FocusedValueV7contentAC7ContentOyx_Gvg` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI12FocusedValueVMa` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI12FocusedValueVMn` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI12FocusedValueVyACyxGs7KeyPathCyAA0C6ValuesVxSgGcfC` | 1 | ghostty |
+| SwiftUI.framework | `_$s7SwiftUI12ListItemTintV10monochromeACvgZ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI12ListItemTintVMa` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI12MenuBarExtraVA2A4TextVRszrlE_10isInserted7contentACyAEq_GAA18LocalizedStringKeyV_AA7BindingVySbGq_yXEtcfC` | 1 | maccy |
 | SwiftUI.framework | `_$s7SwiftUI12MenuBarExtraVA2A4TextVRszrlE_10isInserted7contentACyAEq_Gqd___AA7BindingVySbGq_yXEtcSyRd__lufC` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI12OutlineGroupVAA7Element_2IDQZRs_AA4ViewR0_q1_Rs0_AA010DisclosureD0Vyq0_AA0C16SubgroupChildrenVGRs2_s12IdentifiableADRpzrlE_8children7contentACyxq_q0_q0_ALGqd___s7KeyPathCyqd__xSgGq0_qd__ctcAEQyd__Rs_sAMRd__ANRsd__lufC` | 1 | sequel-ace |
 | SwiftUI.framework | `_$s7SwiftUI12OutlineGroupVMn` | 1 | sequel-ace |
 | SwiftUI.framework | `_$s7SwiftUI12OutlineGroupVyxq_q0_q1_q2_GAA4ViewA2aER0_AaER1_AaER2_rlMc` | 1 | sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI12ProgressViewV5value5total5label17currentValueLabelACyxq_Gqd__Sg_qd__xyXEq_yXEtcSBRd__lufC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI12ProgressViewV5value5total5labelACyxAA05EmptyD0VGqd__Sg_qd__xyXEtcAHRs_SBRd__lufC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI12ProgressViewVA2A05EmptyD0VRs_rlEyACyAA4TextVAEGqd__cAGRszSyRd__lufC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI12ProgressViewV5value5totalACyAA05EmptyD0VAGGqd__Sg_qd__tcAGRszAGRs_SBRd__lufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ProgressViewVA2A05EmptyD0VRs_rlEACyA2EGycAERszrlufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ProgressViewVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ProgressViewVyxq_GAA0D0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI12PropertyListV7ElementCMn` | 1 | raycast |
 | SwiftUI.framework | `_$s7SwiftUI12RotatedShapeVMn` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI12ScaledMetricV12wrappedValueACyxGx_tcfC` | 1 | 1password |
@@ -1658,16 +2048,50 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI12SceneStorageV12wrappedValuexvs` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI12SceneStorageVAAs23ExpressibleByNilLiteralRzlEyACySSSgGSScAERszrlufC` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI12SceneStorageVMn` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI12TimelineViewV7ContextVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12TimelineViewV7ContextVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12TimelineViewVA2A0D0R_rlE_7contentACyxq_Gx_q_AC7ContextVyxq__GctcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12TimelineViewVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12TimelineViewVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12TimelineViewVyxq_GAA0D0A2aER_rlMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierMp` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierP05_makeC08modifier6inputs4bodyAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVAiA01_J0V_ANtctFZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierP05_makeC4List8modifier6inputs4bodyAA01_cF7OutputsVAA11_GraphValueVyxG_AA01_cF6InputsVAiA01_K0V_ANtctFZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierP14_viewListCount6inputs4bodySiSgAA01_cfG6InputsV_AgIXEtFZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierP4BodyAC_AA0C0Tn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierP4body7content4BodyQzAA01_cD8_ContentVyxG_tFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierPA2A10AnimatableRzrlE05_makeC08modifier6inputs4bodyAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVAjA01_K0V_AOtctFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierPA2A10AnimatableRzrlE05_makeC4List8modifier6inputs4bodyAA01_cG7OutputsVAA11_GraphValueVyxG_AA01_cG6InputsVAjA01_L0V_AOtctFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierPAAE05_makeC08modifier6inputs4bodyAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVAiA01_J0V_ANtctFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierPAAE05_makeC4List8modifier6inputs4bodyAA01_cF7OutputsVAA11_GraphValueVyxG_AA01_cF6InputsVAiA01_K0V_ANtctFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewModifierPAAE14_viewListCount6inputs4bodySiSgAA01_cfG6InputsV_AgIXEtFZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI12ViewModifierPAAs5NeverO4BodyRtzrlE4body7contentAeA01_cD8_ContentVyxG_tF` | 1 | raycast |
-| SwiftUI.framework | `_$s7SwiftUI12ViewThatFitsVyxGAA0C0AAMc` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI12ViewThatFitsV2in7contentACyxGAA4AxisO3SetV_xyXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12ViewThatFitsVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12_FrameLayoutV5width6height9alignmentAC12CoreGraphics7CGFloatVSg_AjA9AlignmentVtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12_FrameLayoutVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12_FrameLayoutVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12_FrameLayoutVN` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI12_LayoutTraitVMn` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI12_ScaleEffectVAA12ViewModifierAAMc` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI13AnyShapeStyleVAA0dE0AAMc` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI12_ScaleEffectVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI12_ScaleEffectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13AnyShapeStyleVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV4push4fromAcA4EdgeO_tFZ` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV5scaleACvgZ` | 1 | betterdisplay |
-| SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV8modifier6active8identityACx_xtAA12ViewModifierRzlFZ` | 1 | raycast |
+| SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV5scaleAD6anchorAC12CoreGraphics7CGFloatV_AA9UnitPointVtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV5slideACvgZ` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV7opacityACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13AnyTransitionV8combined4withA2C_tF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13AnyTransitionVMn` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI13AnyTransitionVN` | 1 | utm |
+| SwiftUI.framework | `_$s7SwiftUI13AnyTransitionVyACxcAA0D0RzlufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13CubicKeyframeVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13CubicKeyframeV_8duration13startVelocity03endG0ACyxGx_SdxSgAHtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13CubicKeyframeVyxGAA0D12TrackContentAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13DismissActionV14callAsFunctionyyF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13DismissActionVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13DismissActionVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13DropOperationO6cancelyA2CmFWC` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI13DropOperationO6deleteyA2CmFWC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI13FillShapeViewVMn` | 1 | coteditor |
@@ -1675,22 +2099,54 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI13FocusedValuesVMn` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI13FocusedValuesVy5ValueQzSgxmcAA0cE3KeyRzluig` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI13FocusedValuesVy5ValueQzSgxmcAA0cE3KeyRzluis` | 1 | ghostty |
+| SwiftUI.framework | `_$s7SwiftUI13GeometryProxyV4sizeSo6CGSizeVvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13GeometryProxyV6bounds2ofSo6CGRectVSgAA20NamedCoordinateSpaceV_tF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13GeometryProxyVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13GeometryProxyVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13GeometryProxyVyxAA6AnchorVyxGcluig` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13GroupBoxStyleMp` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI13GroupBoxStyleP4BodyAC_AA4ViewTn` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI13GroupBoxStyleP8makeBody13configuration0G0QzAA0cdE13ConfigurationV_tFTq` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV2eeoiySbAC_ACtFZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentV6returnACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentVSHAAMc` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyEquivalentVSQAAMc` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13KeyframeTrackVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13KeyframeTrackVyxq_q0_GAA9KeyframesAAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13LayoutSubviewV10dimensions2inAA14ViewDimensionsVAA08ProposedG4SizeV_tF` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI13LayoutSubviewV7spacingAA11ViewSpacingVvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI13LayoutSubviewVy5ValueQzxmcAA0cE3KeyRzluig` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC5coder04rootD0ACyxGSgSo7NSCoderC_xtcfCTq` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC5coder04rootD0ACyxGSgSo7NSCoderC_xtcfc` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC04rootD0ACyxGx_tcfCTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC04rootD0ACyxGx_tcfc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC04rootD0xvsTj` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13NSHostingViewC9isFlippedSbvg` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI13NSHostingViewCMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13OpenURLActionV14callAsFunction_10completiony10Foundation3URLV_ySbctF` | 1 | clipy |
+| SwiftUI.framework | `_$s7SwiftUI13OpenURLActionV6ResultV12systemActionAEvgZ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI13OpenURLActionV6ResultV7handledAEvgZ` | 1 | raycast |
-| SwiftUI.framework | `_$s7SwiftUI13OpenURLActionV7handlerA2C6ResultV10Foundation3URLVc_tcfC` | 1 | raycast |
+| SwiftUI.framework | `_$s7SwiftUI13OpenURLActionV6ResultV9discardedAEvgZ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI13TextAlignmentOMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13TextAlignmentON` | 1 | linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI13_ShadowEffectVN` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI13_EndedGestureVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_EndedGestureVyxGAA0D0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_HStackLayoutVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_OffsetEffectVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_OffsetEffectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_ShadowEffectVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_ShadowEffectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_StrokedShapeVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_TaskModifierVAA04ViewD0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_TaskModifierVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_TaskModifierVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI13_TrimmedShapeVyxGAA0D0AAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI14AnimatablePairVMn` | 1 | betterdisplay |
-| SwiftUI.framework | `_$s7SwiftUI14AnimatablePairVyxq_GAA16VectorArithmeticAAMc` | 1 | betterdisplay |
-| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV10numericPadACvgZ` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI13_VStackLayoutVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_VariadicViewO4TreeVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13_ZStackLayoutVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13withAnimation_18completionCriteria_0E0xAA0D0VSg_AA0d10CompletionF0VxyKXEyyctKlF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI13withAnimationyxAA0D0VSg_xyKXEtKlF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV7commandACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14EventModifiersV8rawValueACSi_tcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI14GeometryEffectMp` | 1 | raycast |
 | SwiftUI.framework | `_$s7SwiftUI14GeometryEffectP11effectValue4sizeAA19ProjectionTransformVSo6CGSizeV_tFTq` | 1 | raycast |
 | SwiftUI.framework | `_$s7SwiftUI14GeometryEffectP14_affectsLayoutSbvgZTq` | 1 | raycast |
@@ -1700,19 +2156,21 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI14GeometryEffectPAAE14_affectsLayoutSbvgZ` | 1 | raycast |
 | SwiftUI.framework | `_$s7SwiftUI14GeometryEffectPAAE14_viewListCount6inputs4bodySiSgAA05_ViewfG6InputsV_AgIXEtFZ` | 1 | raycast |
 | SwiftUI.framework | `_$s7SwiftUI14GeometryEffectPAAE9_makeView8modifier6inputs4bodyAA01_F7OutputsVAA11_GraphValueVyxG_AA01_F6InputsVAiA01_K0V_ANtctFZ` | 1 | raycast |
-| SwiftUI.framework | `_$s7SwiftUI14HorizontalEdgeOMn` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI14InsetListStyleVAA0dE0AAWP` | 1 | clipy |
-| SwiftUI.framework | `_$s7SwiftUI14InsetListStyleVACycfC` | 1 | clipy |
-| SwiftUI.framework | `_$s7SwiftUI14InsetListStyleVMa` | 1 | clipy |
-| SwiftUI.framework | `_$s7SwiftUI14InsetListStyleVMn` | 1 | clipy |
+| SwiftUI.framework | `_$s7SwiftUI14GeometryReaderVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14GeometryReaderVyxGAA4ViewAAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI14LabeledContentVA2A4TextVRszAA4ViewR_rlE_7contentACyAEq_G10Foundation23LocalizedStringResourceV_q_yXEtcfC` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI14LabeledContentVA2A4TextVRszAA4ViewR_rlE_7contentACyAEq_Gqd___q_yXEtcSyRd__lufC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI14LabeledContentVA2A4TextVRszAA4ViewR_rlE_7contentACyAEq_GAA18LocalizedStringKeyV_q_yXEtcfC` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI14LabeledContentVA2A4TextVRszAERs_rlE_5value6formatACyA2EG10Foundation23LocalizedStringResourceV_11FormatInputQyd__qd__tcAI0L5StyleRd__SQAMRQSS0L6OutputRtd__lufC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI14LabeledContentVA2A4TextVRszAERs_rlE_5valueACyA2EG10Foundation23LocalizedStringResourceV_qd__tcSyRd__lufC` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI14LabeledContentVA2A4TextVRszAERs_rlE_5valueACyA2EGAA18LocalizedStringKeyV_qd__tcSyRd__lufC` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI14LabeledContentVA2A4TextVRszAERs_rlE_5valueACyA2EGqd___qd_0_tcSyRd__SyRd_0_r0_lufC` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI14LayoutSubviewsVyAA0C7SubviewVSicig` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI14LayoutValueKeyMp` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI14LayoutValueKeyP07defaultD00D0QzvgZTq` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI14LinearGradientV8gradient10startPoint03endG0AcA0D0V_AA04UnitG0VAJtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14LinearGradientVAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14LinearGradientVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14LinearGradientVN` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI14LinkShapeStyleVACycfC` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI14LinkShapeStyleVMn` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI14NavigationLinkV11destination8isActive5labelACyxq_Gq__AA7BindingVySbGxyXEtcfC` | 1 | utm |
@@ -1720,24 +2178,47 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI14NavigationPathV6appendyyxSHRzlF` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI14NavigationPathVACycfC` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI14NavigationPathVMa` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI14ObservedObjectV12wrappedValueACyxGx_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14ObservedObjectV14projectedValueAC7WrapperVyx_Gvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14ObservedObjectV7WrapperV13dynamicMemberAA7BindingVyqd__Gs24ReferenceWritableKeyPathCyxqd__G_tcluig` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14ObservedObjectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14RadialGradientV8gradient6center11startRadius03endH0AcA0D0V_AA9UnitPointV12CoreGraphics7CGFloatVANtcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI14RadialGradientVAA4ViewAAMc` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI14RadialGradientVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI14RadialGradientVN` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI14ScrollGeometryV11contentSizeSo6CGSizeVvg` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI14ScrollGeometryV11visibleRectSo6CGRectVvg` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI14ScrollPositionV6idType4edgeACxm_AA4EdgeOtcSHRzs8SendableRzlufC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI14ScrollPositionV8scrollTo2id6anchoryx_AA9UnitPointVSgtSHRzs8SendableRzlF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI14ScrollPositionVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI14ScrollPositionVMn` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI14SidebarRowSizeO5largeyA2CmFWC` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI14SidebarRowSizeO5smallyA2CmFWC` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI14SpringKeyframeVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14SpringKeyframeV_8duration6spring13startVelocityACyxGx_SdSgAA0C0VxSgtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14SpringKeyframeVyxGAA0D12TrackContentAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14SubmitTriggersV4textACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14SubmitTriggersVMa` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI14SymbolVariantsV4fillACvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI14SymbolVariantsV5slashACvgZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI14SymbolVariantsV6squareACvgZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI14SymbolVariantsVMn` | 1 | betterdisplay |
-| SwiftUI.framework | `_$s7SwiftUI14TintShapeStyleVAA0dE0AAMc` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI14TintShapeStyleVMa` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI14TextFieldStyleMp` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI14TextFieldStyleP5_BodyAC_AA4ViewTn` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI14TextFieldStyleP5_body13configuration5_BodyQzAA0cD0VyAA01_cdE5LabelVG_tFTq` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI14TintShapeStyleVAA0dE0AAWP` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentP05_makeC07content6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZTq` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI14ToolbarContentPAAE05_makeC07content6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZ` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI14ViewDimensionsV6height12CoreGraphics7CGFloatVvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI14ViewDimensionsVMa` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI14_AnimationViewVMn` | 1 | raycast |
 | SwiftUI.framework | `_$s7SwiftUI14_AnimationViewVyxGAA0D0AAMc` | 1 | raycast |
+| SwiftUI.framework | `_$s7SwiftUI14_OpacityEffectVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14_OpacityEffectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14_OpacityEffectVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14_PaddingLayoutVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14_PaddingLayoutVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI14_PaddingLayoutVN` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15AngularGradientVAA4ViewAAMc` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI15AngularGradientVN` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI15BackgroundStyleVAA05ShapeD0AAWP` | 1 | tailscale-app |
@@ -1745,43 +2226,65 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI15BadgeProminenceVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI15BadgeProminenceVMn` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI15CoordinateSpaceOMn` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupVA2A4TextVRszrlE_7contentACyAEq_Gqd___q_yctcSyRd__lufC` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupVMa` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI15DefaultTabLabelVAA4ViewAAMc` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15DefaultTabLabelVMa` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15DefaultTabLabelVMn` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupVA2A4TextVRszrlE_10isExpanded7contentACyAEq_Gqd___AA7BindingVySbGq_yctcSyRd__lufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15DisclosureGroupVA2A4TextVRszrlE_7contentACyAEq_GAA18LocalizedStringKeyV_q_yctcfC` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15DynamicTypeSizeO015isAccessibilityE0Sbvg` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicTypeSizeO14accessibility5yA2CmFWC` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicTypeSizeO5largeyA2CmFWC` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicTypeSizeO7xxLargeyA2CmFWC` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI15DynamicTypeSizeOMa` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI15DynamicTypeSizeOMn` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicTypeSizeOSLAAMc` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI15DynamicTypeSizeOSQAAMc` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI15FocusedValueKeyMp` | 1 | ghostty |
+| SwiftUI.framework | `_$s7SwiftUI15ForegroundStyleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV11translateBy1x1yy04CoreC07CGFloatV_AItF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV12ResolvedTextV7shadingAC7ShadingVvs` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV12ResolvedTextVMa` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV13withCGContext7contentyySo0F3RefaKXE_tKF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV16clipBoundingRectSo6CGRectVvg` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV4draw_2at6anchoryAC12ResolvedTextV_So7CGPointVAA9UnitPointVtF` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV4draw_2in5styleyAA5ImageV_So6CGRectVAA9FillStyleVtF` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV6FilterV6shadow5color6radius1x1y9blendMode7optionsAeA5ColorV_04CoreC07CGFloatVA2qC05BlendJ0VAC13ShadowOptionsVtFZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV6FilterVMa` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV6stroke_4with5styleyAA4PathV_AC7ShadingVAA11StrokeStyleVtF` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV6rotate2byyAA5AngleV_tF` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV7ShadingV10foregroundAEvgZ` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV7ShadingV14linearGradient_10startPoint03endI07optionsAeA0G0V_So7CGPointVAmC0G7OptionsVtFZ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV7opacitySdvs` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV7resolveyAC12ResolvedTextVAA0G0VF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV7scaleBy1x1yy04CoreC07CGFloatV_AItF` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV9addFilter_7optionsyAC0F0V_AC0F7OptionsVtF` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI15GraphicsContextV9blendModeAC05BlendF0Vvs` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI15InsetTableStyleV24alternatesRowBackgroundsACSb_tcfC` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI15InsetTableStyleVAA0dE0AAMc` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI15InsetTableStyleVMa` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI15InsetTableStyleVMn` | 1 | tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI15InsetTableStyleVACycfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15InsettableShapePAAE12strokeBorder9lineWidth11antialiasedQr12CoreGraphics7CGFloatV_SbtF` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI15MenuPickerStyleVAA0dE0AAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15MenuPickerStyleVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15MenuPickerStyleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15MenuPickerStyleVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE13accessibility4hintACyxAEGAA4TextV_tF` | 1 | linearmouse |
 | SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE17accessibilityHintyACyxAEGAA4TextVF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE18accessibilityValueyACyxAEGAA18LocalizedStringKeyVF` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE19accessibilityAction5named_ACyxAEGAA18LocalizedStringKeyV_yyctF` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE19accessibilityHiddenyACyxAEGSbF` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE19accessibilityAction5named_ACyxAEGqd___yyctSyRd__lF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE20accessibilityHeadingyACyxAEGAA0eI5LevelOF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE23accessibilityIdentifieryACyxAEGSSF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE25accessibilityRemoveTraitsyACyxAEGAA0eJ0VF` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVA2A31AccessibilityAttachmentModifierVRs_rlE22accessibilityAddTraitsyACyxAEGAA0eJ0VF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVyxq_GAA08TableRowD0A2aERzAA01_efD8ModifierR_rlMc` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVyxq_GAA4ViewA2aERzAA0E8ModifierR_rlMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15ModifiedContentVyxq_GAA5SceneA2aERzAA01_E8ModifierR_rlMc` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI15NavigationStackV4path4rootACyAA0C4PathVq_GAA7BindingVyAGG_q_yXEtcAGRszrlufC` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI15SafeAreaRegionsV3allACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ScaleTransitionVAA0D0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ScaleTransitionVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ScaleTransitionVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15ScaleTransitionV_6anchorACSd_AA9UnitPointVtcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15SequenceGestureV5ValueOMn` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI15SequenceGestureV5ValueOyxq__GSQAASQADRpzSQADRp_rlMc` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI15SequenceGestureVMn` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI15SequenceGestureVyxq_GAA0D0AAMc` | 1 | tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI15StrokeShapeViewVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15TableRowContentMp` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI15TableRowContentP05tableD4Body0cdG0QzvgTq` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI15TableRowContentP06_tableD5Count6inputsSiSgAA01_cD6InputsV_tFZTq` | 1 | clipy |
@@ -1793,94 +2296,196 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI15TableRowContentPAAE9draggableyQrqd__yXA16CoreTransferable0H0Rd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI15TableRowContentPAAE9draggableyQrqd__yXA16CoreTransferable0H0Rd__lFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI15TableRowContentTL` | 1 | clipy |
+| SwiftUI.framework | `_$s7SwiftUI15_ChangedGestureVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15_ChangedGestureVyxGAA0D0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15_HiddenModifierVAA04ViewD0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15_HiddenModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15_HiddenModifierVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15_PositionLayoutVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15_PositionLayoutVN` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI15_RotationEffectVAA12ViewModifierAAMc` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI15_RotationEffectVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI15_RotationEffectVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI15_RotationEffectVN` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV12LocalizationV6customAEvgZ` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV12LocalizationVMa` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI15withTransactionyxAA0D0V_xyKXEtKlF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16ColumnsFormStyleVAA0dE0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16ColumnsFormStyleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16ColumnsFormStyleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV13defaultActionACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutVSQAAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI16KeyboardShortcutV_9modifiers12localizationAcA13KeyEquivalentV_AA14EventModifiersVAC12LocalizationVtcfC` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI16KeyframesBuilderV15buildExpressionyqd__qd__5ValueQyd__RszAA20KeyframeTrackContentRd__lFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16KeyframesBuilderV16buildFinalResultyAA13KeyframeTrackVyxxqd__Gqd__5ValueQyd__RszAA0hI7ContentRd__lFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16KeyframesBuilderV17buildPartialBlock11accumulated4nextQrqd___qd_0_t5ValueQyd__RszAA20KeyframeTrackContentRd__AaIRd_0_AGQyd_0_AHRSr0_lFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16KeyframesBuilderV17buildPartialBlock11accumulated4nextQrqd___qd_0_t5ValueQyd__RszAA20KeyframeTrackContentRd__AaIRd_0_AGQyd_0_AHRSr0_lFZQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16KeyframesBuilderV17buildPartialBlock5firstqd__qd___t5ValueQyd__RszAA20KeyframeTrackContentRd__lFZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI16LegibilityWeightO4boldyA2CmFWC` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI16LegibilityWeightOMa` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI16LegibilityWeightOMn` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI16LegibilityWeightOSQAAMc` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI16LongPressGestureV15minimumDuration15maximumDistanceACSd_12CoreGraphics7CGFloatVtcfC` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI16LongPressGestureVMn` | 1 | tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI16OffsetTransitionVAA0D0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16OffsetTransitionVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16OffsetTransitionVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16OffsetTransitionVyACSo6CGSizeVcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16PlainButtonStyleVAA09PrimitivedE0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16PlainButtonStyleVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16PlainButtonStyleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16PlainButtonStyleVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI16RedactionReasonsV11invalidatedACvgZ` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI16RedactionReasonsVMn` | 1 | raycast |
-| SwiftUI.framework | `_$s7SwiftUI16RedactionReasonsVs10SetAlgebraAAMc` | 1 | raycast |
+| SwiftUI.framework | `_$s7SwiftUI16RedactionReasonsVSQAAMc` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI16ResetFocusActionV14callAsFunction2inyAA9NamespaceV2IDV_tF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI16ResetFocusActionVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI16ResetFocusActionVMn` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI16RoundedRectangleV6_InsetV4path2inAA4PathVSo6CGRectV_tF` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI16RoundedRectangleV6_InsetVAA5ShapeAAMc` | 1 | linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI16RoundedRectangleV6_InsetVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16RoundedRectangleV6_InsetVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16RoundedRectangleVAA5ShapeAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16RoundedRectangleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16RoundedRectangleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16SubscriptionViewVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16SubscriptionViewVyxq_GAA0D0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16TagValueTraitKeyVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16TagValueTraitKeyVyxGAA05_VieweF0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI16TimelineScheduleMp` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI16TimelineScheduleP7EntriesAC_STTn` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI16TimelineScheduleP7entries4from4mode7EntriesQz10Foundation4DateV_AA0cD4ModeOtFTq` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI16ToolbarItemGroupV9placement7contentACyxGAA0cD9PlacementV_xyXEtcfC` | 1 | utm |
-| SwiftUI.framework | `_$s7SwiftUI16ToolbarItemGroupVMn` | 1 | utm |
-| SwiftUI.framework | `_$s7SwiftUI16ToolbarItemGroupVyxGAA0C7ContentAAMc` | 1 | utm |
+| SwiftUI.framework | `_$s7SwiftUI16ToolbarItemGroupVMa` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI16ToolbarPlacementV06windowC0ACvgZ` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI16ToolbarPlacementVMa` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI16ToolbarPlacementVMn` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI16_BlendModeEffectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_FixedSizeLayoutVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_FixedSizeLayoutVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_FixedSizeLayoutVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_FlexFrameLayoutV8minWidth05idealG003maxG00F6Height0hJ00iJ09alignmentAC12CoreGraphics7CGFloatVSg_A5nA9AlignmentVtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_FlexFrameLayoutVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_FlexFrameLayoutVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_FlexFrameLayoutVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_OverlayModifierVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_OverlayModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI16_OverlayModifierVyxGAA04ViewD0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI16_PreferenceValueVMn` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI16_TupleTabContentVMn` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI16_TupleTabContentVyxq_GAA0dE0AAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17ButtonBorderShapeV16roundedRectangle6radiusAC12CoreGraphics7CGFloatV_tFZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI17ContentShapeKindsV13accessibilityACvgZ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17ContentShapeKindsVMa` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI17ContentTransitionV8identityACvgZ` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI17DragConfigurationV9allowMove0E6DeleteACSb_SbtcfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17DragConfigurationVMa` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10imageScaleAA5ImageV0F0Ovg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10imageScaleAA5ImageV0F0OvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10imageScaleAA5ImageV0F0Ovs` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10resetFocusAA05ResetF6ActionVvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10resetFocusAA05ResetF6ActionVvpMV` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10scenePhaseAA05SceneF0Ovg` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10scenePhaseAA05SceneF0OvpMV` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV10scenePhaseAA05SceneF0Ovs` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11colorSchemeAA05ColorF0Ovg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11colorSchemeAA05ColorF0OvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11colorSchemeAA05ColorF0Ovs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11controlSizeAA07ControlF0Ovg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11controlSizeAA07ControlF0OvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11controlSizeAA07ControlF0Ovs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11lineSpacing12CoreGraphics7CGFloatVvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11lineSpacing12CoreGraphics7CGFloatVvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11lineSpacing12CoreGraphics7CGFloatVvs` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11undoManagerSo06NSUndoF0CSgvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV11undoManagerSo06NSUndoF0CSgvpMV` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV12openSettingsAA04OpenF6ActionVvg` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV12openSettingsAA04OpenF6ActionVvpMV` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV13appearsActiveSbvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV13appearsActiveSbvpMV` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV13appearsActiveSbvs` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV13dismissWindowAA07DismissF6ActionVvg` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV14truncationModeAA4TextV010TruncationF0Ovg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV14truncationModeAA4TextV010TruncationF0OvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV14truncationModeAA4TextV010TruncationF0Ovs` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15badgeProminenceAA05BadgeF0Vvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15badgeProminenceAA05BadgeF0VvpMV` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15badgeProminenceAA05BadgeF0Vvs` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15dynamicTypeSizeAA07DynamicfG0Ovg` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15dynamicTypeSizeAA07DynamicfG0OvpMV` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15dynamicTypeSizeAA07DynamicfG0Ovs` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15isScrollEnabledSbvg` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15isScrollEnabledSbvpMV` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV15isScrollEnabledSbvs` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16allowsTighteningSbvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16allowsTighteningSbvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16allowsTighteningSbvs` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16legibilityWeightAA010LegibilityF0OSgvg` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16legibilityWeightAA010LegibilityF0OSgvpMV` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16legibilityWeightAA010LegibilityF0OSgvs` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16redactionReasonsAA09RedactionF0Vvg` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16redactionReasonsAA09RedactionF0VvpMV` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV16redactionReasonsAA09RedactionF0Vvs` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18controlActiveStateAA07ControlfG0Ovg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18controlActiveStateAA07ControlfG0OvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV18controlActiveStateAA07ControlfG0Ovs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV19symbolRenderingModeAA06SymbolfG0VSgvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV19symbolRenderingModeAA06SymbolfG0VSgvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV19symbolRenderingModeAA06SymbolfG0VSgvs` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV21disableAutocorrectionSbSgvg` | 1 | utm |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV22multilineTextAlignmentAA0fG0Ovg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV22multilineTextAlignmentAA0fG0OvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV22multilineTextAlignmentAA0fG0Ovs` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV23defaultMinListRowHeight12CoreGraphics7CGFloatVvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV23defaultMinListRowHeight12CoreGraphics7CGFloatVvpMV` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV23defaultMinListRowHeight12CoreGraphics7CGFloatVvs` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV25accessibilityReduceMotionSbvg` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV25accessibilityReduceMotionSbvpMV` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV6locale10Foundation6LocaleVvg` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV6locale10Foundation6LocaleVvpMV` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV6locale10Foundation6LocaleVvs` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV29accessibilityVoiceOverEnabledSbvg` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV29accessibilityVoiceOverEnabledSbvpMV` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV31accessibilityReduceTransparencySbvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV31accessibilityReduceTransparencySbvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV4fontAA4FontVSgvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV4fontAA4FontVSgvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV4fontAA4FontVSgvs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV7dismissAA13DismissActionVvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV7dismissAA13DismissActionVvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV8textCaseAA4TextV0F0OSgvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV8textCaseAA4TextV0F0OSgvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV8textCaseAA4TextV0F0OSgvs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV8timeZone10Foundation04TimeF0Vvg` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV8timeZone10Foundation04TimeF0VvpMV` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV8timeZone10Foundation04TimeF0Vvs` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9isEnabledSbvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9isEnabledSbvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9isEnabledSbvs` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9isFocusedSbvg` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9isFocusedSbvpMV` | 1 | tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9lineLimitSiSgvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9lineLimitSiSgvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9lineLimitSiSgvs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9tintColorAA0F0VSgvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9tintColorAA0F0VSgvpMV` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesV9tintColorAA0F0VSgvs` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVAAE24symbolColorRenderingModeAA06SymbolfgH0VSgvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVAAE24symbolColorRenderingModeAA06SymbolfgH0VSgvpMV` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVAAE24symbolColorRenderingModeAA06SymbolfgH0VSgvs` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVy5ValueQzxmcAA0C3KeyRzluiM` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI17ProgressViewStyleMp` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI17ProgressViewStyleP4BodyAC_AA0D0Tn` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI17ProgressViewStyleP8makeBody13configuration0G0QzAA0cdE13ConfigurationV_tFTq` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI17SpatialTapGestureV5ValueV8locationSo7CGPointVvg` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI17SpatialTapGestureV5count15coordinateSpaceACSi_xtcAA010CoordinateH8ProtocolRzlufC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI17SpatialTapGestureVAA0E0AAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI17SpatialTapGestureVMa` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI17SpatialTapGestureVMn` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI17TabContentBuilderV0D0VMn` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17EnvironmentValuesVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17FocusInteractionsV4editACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17FocusInteractionsVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17InlinePickerStyleVAA0dE0AAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17InlinePickerStyleVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17InlinePickerStyleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17InlinePickerStyleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17OpacityTransitionVAA0D0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17OpacityTransitionVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17OpacityTransitionVMa` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17TextSelectabilityMp` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI17VerticalAlignmentV16lastTextBaselineACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17VerticalAlignmentV17firstTextBaselineACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17VerticalAlignmentV6bottomACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI17VerticalAlignmentV6centerACvgZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI17VerticalAlignmentVyAcA0D2ID_pXpcfC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI17_Rotation3DEffectVAA12ViewModifierAAWP` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI17_SaturationEffectVAA12ViewModifierAAMc` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI17_SaturationEffectVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI18BorderedTableStyleVAA0dE0AAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18BorderedTableStyleVACycfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18BorderedTableStyleVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18BorderedTableStyleVMn` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI18ControlActiveStateO2eeoiySbAC_ACtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18ControlActiveStateO3keyyA2CmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18ControlActiveStateO8inactiveyA2CmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18ControlActiveStateOMa` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI18DefaultButtonLabelVMn` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18DefaultButtonStyleV8makeBody13configurationQrAA09PrimitivedE13ConfigurationV_tF` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI18DefaultButtonStyleV8makeBody13configurationQrAA09PrimitivedE13ConfigurationV_tFQOMQ` | 1 | utm |
@@ -1896,16 +2501,31 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0_6formaty11FormatInputQz_xt10Foundation0I5StyleRzSQAIRQSS0I6OutputRtzlF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0_9formatteryx_So11NSFormatterCSgt10Foundation20ReferenceConvertibleRzlF` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0_9formatteryx_So11NSFormatterCSgtSo8NSObjectCRbzlF` | 1 | iina |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0_9specifieryx_SStAA18_FormatSpecifiableRzlF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0yy10Foundation0cD8ResourceVF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0yyAA4TextVF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0yyAA5ImageVF` | 1 | betterdisplay |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV06appendF0yySSF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV13appendLiteralyySSF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationV15literalCapacity18interpolationCountAESi_SitcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV0D13InterpolationVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV13stringLiteralACSS_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18LocalizedStringKeyV19stringInterpolationA2C0dG0V_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18OpenSettingsActionV14callAsFunctionyyF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18OpenSettingsActionVMa` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18OpenSettingsActionVMn` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18PresentationDetentV6heightyAC12CoreGraphics7CGFloatVFZ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18PresentationDetentVMa` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18PresentationDetentVMn` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18PresentationDetentVSHAAMc` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI18PresentationDetentVSQAAMc` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI18PresentationSizingMp` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18PresentationSizingP12proposedSize3for7contextAA012ProposedViewF0VAA0cD4RootV_AA0cD7ContextVtFTq` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI18PresentationSizingPA2A06FittedcD0VRszrlE6fittedAEvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18PresentationSizingPAAE6fitted10horizontal8verticalQrSb_SbtF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18PresentationSizingPAAE6fitted10horizontal8verticalQrSb_SbtFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18PresentationSizingPAAE6sticky10horizontal8verticalQrSb_SbtF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18PresentationSizingPAAE6sticky10horizontal8verticalQrSb_SbtFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI18RoundedCornerStyleO10continuousyA2CmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18RoundedCornerStyleO8circularyA2CmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18RoundedCornerStyleOMa` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI18TableColumnContentMp` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI18TableColumnContentP05_makeE07content6inputsAA01_cD7OutputsVAA11_GraphValueVyxG_AA01_cD6InputsVtFZTj` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI18TableColumnContentP05_makeE07content6inputsAA01_cD7OutputsVAA11_GraphValueVyxG_AA01_cD6InputsVtFZTq` | 1 | clipy |
@@ -1916,86 +2536,192 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI18TableColumnContentPAAE9alignmentyQrAA0cD9AlignmentVFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI18TransitionTraitKeyVAA05_ViewdE0AAWP` | 1 | linearmouse |
 | SwiftUI.framework | `_$s7SwiftUI18TransitionTraitKeyVMa` | 1 | linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI18TransitionTraitKeyVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18WindowResizabilityV14contentMinSizeACvgZ` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI18_AnimationModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18_AnimationModifierVyxGAA04ViewD0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18_AspectRatioLayoutVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18_AspectRatioLayoutVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI18_ColorInvertEffectVAA12ViewModifierAAWP` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI18_HueRotationEffectVMn` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI18_InsetViewModifierVMa` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI18_TaskValueModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI18_TaskValueModifierVyxGAA04ViewE0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI18_VariadicView_RootMp` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI18_VariadicView_RootP16_viewListOptionsSivgZTq` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI18_VariadicView_RootPAAE16_viewListOptionsSivgZ` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV12isStaticTextACvgZ` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV23allowsDirectInteractionACvgZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV6isLinkACvgZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV7isImageACvgZ` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsV8isButtonACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19AccessibilityTraitsVMa` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI19ColorSchemeContrastO8standardyA2CmFWC` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI19ColorSchemeContrastO9increasedyA2CmFWC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI19ColorSchemeContrastOSQAAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI19DismissWindowActionV14callAsFunction2idySS_tF` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI19DismissWindowActionVMa` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI19EmptyAnimatableDataVAA16VectorArithmeticAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19EmptyAnimatableDataVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19EmptyAnimatableDataVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19HorizontalAlignmentV6centerACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19HorizontalAlignmentV7leadingACvgZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI19LabeledContentStyleMp` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI19LabeledContentStyleP4BodyAC_AA4ViewTn` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI19LabeledContentStyleP8makeBody13configuration0G0QzAA0cdE13ConfigurationV_tFTq` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC12sizeThatFits2inSo6CGSizeVAG_tFTj` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC15safeAreaRegionsAA04SafefG0VvsTj` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC8rootViewxvgTj` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI19NavigationSplitViewV7sidebar6detailACyxAA05EmptyE0Vq0_GxyXE_q0_yXEtcAGRs_rlufC` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC20sceneBridgingOptionsAA0c5ScenefG0VvsTj` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerC8rootViewACyxGx_tcfc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSHostingControllerCMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableMp` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP04makeC07context0C4TypeQzAA0cD7ContextVyxG_tFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP06updateC0_7contexty0C4TypeQz_AA0cD7ContextVyxGtFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP09dismantleC0_11coordinatory0C4TypeQz_11CoordinatorQztFZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP12sizeThatFits_6nsView7contextSo6CGSizeVSgAA08ProposedI4SizeV_0C4TypeQzAA0cD7ContextVyxGtFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP14_layoutOptionsyAA013_PlatformViewd6LayoutF0V0C4TypeQzFZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP15makeCoordinator0F0QzyFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP19_identifiedViewTree2inAA011_IdentifiedfG0O0C4TypeQz_tFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP21_overrideLayoutTraits_3foryAA01_fG0Vz_0C4TypeQztFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP21_overrideSizeThatFits_2in6nsViewySo6CGSizeVz_AA09_ProposedF0V0C4TypeQztFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP24_modifyBridgedViewInputsyyAA01_gH0VzFZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentableP35_invalidatesSizeOnConstraintChangesSbvgZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAA4ViewTb` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE09dismantleC0_11coordinatory0C4TypeQz_11CoordinatorQztFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE12sizeThatFits_6nsView7contextSo6CGSizeVSgAA08ProposedI4SizeV_0C4TypeQzAA0cD7ContextVyxGtF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE13_makeViewList4view6inputsAA01_fG7OutputsVAA11_GraphValueVyxG_AA01_fG6InputsVtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE14_layoutOptionsyAA013_PlatformViewd6LayoutF0V0C4TypeQzFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE19_identifiedViewTree2inAA011_IdentifiedfG0O0C4TypeQz_tF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE21_overrideLayoutTraits_3foryAA01_fG0Vz_0C4TypeQztF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE21_overrideSizeThatFits_2in6nsViewySo6CGSizeVz_AA09_ProposedF0V0C4TypeQztF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE24_modifyBridgedViewInputsyyAA01_gH0VzFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE35_invalidatesSizeOnConstraintChangesSbvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE4bodys5NeverOvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAE9_makeView4view6inputsAA01_F7OutputsVAA11_GraphValueVyxG_AA01_F6InputsVtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19NSViewRepresentablePAAyt11CoordinatorRtzrlE04makeE0yyF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19PlainTextFieldStyleVAA0deF0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19PlainTextFieldStyleVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19PlainTextFieldStyleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19PlainTextFieldStyleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19SelectionShapeStyleVAA0dE0AAMc` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19SelectionShapeStyleVACycfC` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19SelectionShapeStyleVMa` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI19SymbolRenderingModeV12hierarchicalACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19SymbolRenderingModeVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19SymbolRenderingModeVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI19TableForEachContentVyxGAA0c3RowF0AAMc` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI19TextEditingCommandsVACycfC` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI19TextEditingCommandsVMa` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI19TextEditingCommandsVMn` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI19WidgetBundleBuilderV10buildBlockyQrxAA0C0RzlFZ` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI19WidgetBundleBuilderV10buildBlockyQrxAA0C0RzlFZQOMQ` | 1 | tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI19_BackgroundModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19_BackgroundModifierVyxGAA04ViewD0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19_ConditionalContentV7StorageOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19_ConditionalContentV7StorageOMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19_ConditionalContentVA2A4ViewRzAaDR_rlE7storageACyxq_GAC7StorageOyxq__G_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19_ConditionalContentVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19_ConditionalContentVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI19_ConditionalContentVyxq_GAA07ToolbarD0A2aERzAaER_rlMc` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI19_ConditionalContentVyxq_GAA4ViewA2aERzAaER_rlMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI19_ImplicitShapeStyleVMn` | 1 | raycast |
+| SwiftUI.framework | `_$s7SwiftUI20DatePickerComponentsV13hourAndMinuteACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20DatePickerComponentsV4dateACvgZ` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI20DatePickerComponentsVMn` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI20DatePickerComponentsVs10SetAlgebraAAMc` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI20DisclosureGroupStyleMp` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI20DisclosureGroupStyleP4BodyAC_AA4ViewTn` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI20DisclosureGroupStyleP8makeBody13configuration0G0QzAA0cdE13ConfigurationV_tFTq` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI20LocalCoordinateSpaceVMn` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionO4leftyA2CmFWC` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionO5rightyA2CmFWC` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI20FieldDatePickerStyleVAA0deF0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20FieldDatePickerStyleVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20FieldDatePickerStyleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20FieldDatePickerStyleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20ListItemTintTraitKeyVMn` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI20MagnificationGestureV17minimumScaleDeltaAC12CoreGraphics7CGFloatV_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20MagnificationGestureVAA0D0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20MagnificationGestureVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20MagnificationGestureVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI20MoveCommandDirectionOMn` | 1 | ghostty |
-| SwiftUI.framework | `_$s7SwiftUI20NamedCoordinateSpaceVAA0dE8ProtocolAAWP` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI20NamedCoordinateSpaceVMa` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI20PrimitiveButtonStylePA2A012AccessoryBardE0VRszrlE09accessoryG0AEvgZ` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI20SearchFieldPlacementV7sidebarACvgZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI20SearchFieldPlacementVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20SegmentedPickerStyleVAA0dE0AAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20SegmentedPickerStyleVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20SegmentedPickerStyleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20SegmentedPickerStyleVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI20TableColumnAlignmentV6centerACvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI20TableColumnAlignmentV8trailingACvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI20TableColumnAlignmentVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI20TimelineScheduleModeO12lowFrequencyyA2CmFWC` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI20TimelineScheduleModeO2eeoiySbAC_ACtFZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI20TimelineScheduleModeOMa` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementV13primaryActionACvgZ` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementV17destructiveActionACvgZ` | 1 | utm |
-| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementVMn` | 1 | utm |
+| SwiftUI.framework | `_$s7SwiftUI20ToolbarItemPlacementVMa` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI20_BlendModeShapeStyleVMn` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI20_ColorMultiplyEffectVAA12ViewModifierAAWP` | 1 | swiftbar |
+| SwiftUI.framework | `_$s7SwiftUI20_ColorMultiplyEffectVMn` | 1 | swiftbar |
+| SwiftUI.framework | `_$s7SwiftUI20_HoverRegionModifierVAA04ViewE0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20_HoverRegionModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20_HoverRegionModifierVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20_MaskAlignmentEffectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20_MaskAlignmentEffectVyxGAA12ViewModifierAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI20_TextFieldStyleLabelVMn` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI21BlurReplaceTransitionV13ConfigurationV6downUpAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21BlurReplaceTransitionV13ConfigurationVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21BlurReplaceTransitionV13configurationA2C13ConfigurationV_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21BlurReplaceTransitionVAA0E0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21BlurReplaceTransitionVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21BorderlessButtonStyleVAA09PrimitivedE0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21BorderlessButtonStyleVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21BorderlessButtonStyleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21BorderlessButtonStyleVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV10pasteboardACvgZ` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV11appSettingsACvgZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV11textEditingACvgZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV12importExportACvgZ` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV14appTerminationACvgZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV14systemServicesACvgZ` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV16singleWindowListACvgZ` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV17windowArrangementACvgZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV7sidebarACvgZ` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI21CommandGroupPlacementV8undoRedoACvgZ` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI21DefaultShareLinkLabelVMn` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI21ListRowInsetsTraitKeyVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI21PinnedScrollableViewsV14sectionHeadersACvgZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI21ScrollEdgeEffectStyleV4hardACvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI21ScrollEdgeEffectStyleV4softACvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI21ScrollEdgeEffectStyleVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI21ScrollEdgeEffectStyleVMn` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI21ToolbarContentBuilderV10buildBlockyQrxAA0cD0RzlFZ` | 1 | utm |
-| SwiftUI.framework | `_$s7SwiftUI21ToolbarContentBuilderV10buildBlockyQrxAA0cD0RzlFZQOMQ` | 1 | utm |
+| SwiftUI.framework | `_$s7SwiftUI21StrokeBorderShapeViewVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21ToolbarContentBuilderV10buildBlockyQrxAA012CustomizablecD0RzlFZ` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI21ToolbarContentBuilderV10buildBlockyQrxAA012CustomizablecD0RzlFZQOMQ` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI21ToolbarContentBuilderV7buildIfyxSgAeA0cD0RzlFZ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI21_ContentShapeModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21_ContentShapeModifierVyxGAA04ViewE0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI21_GridCellSizeModifierVAA04ViewF0AAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI21_GridCellSizeModifierVN` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI22ContentUnavailableViewVA2A5LabelVyAA4TextVAA5ImageVGRszAGSgRs_AA05EmptyE0VRs0_rlE_06systemH011descriptionACyAjkMGqd___SSAKtcSyRd__lufC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI21_OverlayStyleModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21_TraitWritingModifierVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21_TraitWritingModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21_TraitWritingModifierVyxGAA04ViewE0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21_ViewModifier_ContentVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI21_ViewModifier_ContentVyxGAA0C0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI22ContentUnavailableViewVMa` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI22DynamicTableRowContentPAAE15dropDestination3for6actionAA08ModifiedF0VyxAA08OnInsertdE8ModifierVGqd__m_ySi_Sayqd__Gtct16CoreTransferable0P0Rd__lF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleVAA0dE0AAWP` | 1 | tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleV7primaryACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleV9secondaryACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleVAA0dE0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22HierarchicalShapeStyleVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22IsMoveDisabledTraitKeyVMn` | 1 | karabiner-elements |
+| SwiftUI.framework | `_$s7SwiftUI22NSHostingSizingOptionsV7minSizeACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22PlaceholderContentViewVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22PlaceholderContentViewVyxGAA0E0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI22PresentationSizingRootV12sizeThatFitsySo6CGSizeVAA16ProposedViewSizeVF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI22ToolbarDefaultItemKindV13sidebarToggleACvgZ` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI22ToolbarDefaultItemKindVMa` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI22ToolbarDefaultItemKindVMn` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI22UnevenRoundedRectangleV4path2inAA4PathVSo6CGRectV_tF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI22UnevenRoundedRectangleV6_InsetVMa` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI22UnevenRoundedRectangleV6_InsetVMn` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI22UnevenRoundedRectangleVAA4ViewAAMc` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI22UnevenRoundedRectangleVAA5ShapeAAMc` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI22_AnchorWritingModifierVyxq_GAA04ViewE0AAMc` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI22_DelayedPreferenceViewVMn` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI22_DelayedPreferenceViewVyxq_GAA0E0AAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI22_MatchedGeometryEffectVMn` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI22_MatchedGeometryEffectVyxGAA12ViewModifierAAMc` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI22_PreferenceReadingViewVMn` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI22_VariadicView_ChildrenV7ElementV2id2asxSgxm_tSHRzlF` | 1 | jordanbaird-ice |
@@ -2019,31 +2745,33 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI23AccessoryBarButtonStyleVAA09PrimitiveeF0AAMc` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI23AccessoryBarButtonStyleVMa` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI23AccessoryBarButtonStyleVMn` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI23BorderedButtonMenuStyleVAA0eF0AAMc` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI23BorderedButtonMenuStyleVACycfC` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI23BorderedButtonMenuStyleVMa` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI23BorderedButtonMenuStyleVMn` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI23CoordinateSpaceProtocolPA2A05NamedcD0VRszrlE5namedyAEqd__SHRd__lFZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI23DefaultGlassEffectShapeVAA0F0AAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI23DefaultGlassEffectShapeVACycfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI23DefaultGlassEffectShapeVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI23DefaultGlassEffectShapeVMn` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV5TitleVAA4ViewAAMc` | 1 | utm |
-| SwiftUI.framework | `_$s7SwiftUI23LabelStyleConfigurationV5TitleVMa` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI23LinearProgressViewStyleV4tintAcA5ColorV_tcfC` | 1 | tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI23LinearProgressViewStyleVAA0deF0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23LinearProgressViewStyleVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23LinearProgressViewStyleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23LinearProgressViewStyleVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI23OutlineSubgroupChildrenVMn` | 1 | sequel-ace |
+| SwiftUI.framework | `_$s7SwiftUI23PopoverAttachmentAnchorO4rectyAcA0E0V6SourceVySo6CGRectV_GcACmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23PopoverAttachmentAnchorOMa` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI23TupleTableColumnContentVMa` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI23TupleTableColumnContentV_9valueType04sortH0ACyxq_q0_Gq0__xmq_mtcfC` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI23_SafeAreaIgnoringLayoutVAA12ViewModifierAAWP` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI24ExplicitTimelineScheduleVMn` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI24ExplicitTimelineScheduleVyACyxGxcfC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI24ExplicitTimelineScheduleVyxGAA0dE0AAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI24FittedPresentationSizingVAA0dE0AAWP` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI24FittedPresentationSizingVMa` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI24FittedPresentationSizingVMn` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI23_CompositingGroupEffectVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI23_CompositingGroupEffectVN` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI23_ContainerShapeModifierVMa` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI23_ContainerShapeModifierVMn` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI23_ContainerShapeModifierVyxGAA04ViewE0AAMc` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI24ButtonStyleConfigurationV5LabelVAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24ButtonStyleConfigurationV5LabelVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24ButtonStyleConfigurationV5LabelVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24ButtonStyleConfigurationV5labelAC5LabelVvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24ButtonStyleConfigurationV9isPressedSbvg` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI24IsDeleteDisabledTraitKeyVMn` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI24NavigationSplitViewStylePA2A015ProminentDetailcdeF0VRszrlE09prominentH0AEvgZ` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI24NavigationSplitViewStylePA2A08BalancedcdeF0VRszrlE8balancedAEvgZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI24OnInsertTableRowModifierVAA01_ef7ContentG0AAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI24OnInsertTableRowModifierVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI24OnInsertTableRowModifierVMn` | 1 | coteditor |
@@ -2053,19 +2781,17 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI24SymbolColorRenderingModeV8gradientACvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI24SymbolColorRenderingModeVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI24SymbolColorRenderingModeVMn` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV4isOnSbvM` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV4isOnSbvg` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationV5$isOnAA7BindingVySbGvg` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationVMa` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI24ToggleStyleConfigurationVMn` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI24_BackgroundShapeModifierVMn` | 1 | maccy |
 | SwiftUI.framework | `_$s7SwiftUI24_BackgroundShapeModifierVyxq_GAA04ViewE0AAMc` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI24_BackgroundStyleModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24_BackgroundStyleModifierVyxGAA04ViewE0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24_CoordinateSpaceModifierVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI24_ForegroundStyleModifierVMa` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI24_ForegroundStyleModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI24_ForegroundStyleModifierVyxGAA04ViewE0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI24_GridUnsizedAxesModifierVAA04ViewF0AAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI24_GridUnsizedAxesModifierVN` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI24_TagTraitWritingModifierVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI24_TagTraitWritingModifierVMn` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI24_TagTraitWritingModifierVyxGAA04ViewF0AAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI25AccessibilityRotorContentMp` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI25AccessibilityRotorContentP11_entryCount6inputsSiSgAA01_cD11EntryInputsV_tFZTq` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI25AccessibilityRotorContentP12_makeEntries7content6inputsAA01_cD12EntryOutputsVAA11_GraphValueVyxG_AA01_cdJ6InputsVtFZTq` | 1 | clipy |
@@ -2075,42 +2801,82 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI25AccessibilityRotorContentPAAE12_makeEntries7content6inputsAA01_cD12EntryOutputsVAA11_GraphValueVyxG_AA01_cdJ6InputsVtFZ` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI25AccessibilityTechnologiesVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI25AccessibilityTechnologiesVMn` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI25AnimationTimelineScheduleV15minimumInterval6pausedACSdSg_SbtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25AnimationTimelineScheduleVAA0dE0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25AnimationTimelineScheduleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25AnimationTimelineScheduleVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI25DragDropPreviewsFormationV4listACvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI25DragDropPreviewsFormationVMa` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI25MatchedGeometryPropertiesV5frameACvgZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI25PlaceholderTextShapeStyleVAA0eF0AAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI25PlaceholderTextShapeStyleVN` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI25ScrollIndicatorVisibilityV7visibleACvgZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI25UnifiedWindowToolbarStyleVAA0deF0AAWP` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25UnifiedWindowToolbarStyleVACycfC` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25UnifiedWindowToolbarStyleVMa` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI25UnifiedWindowToolbarStyleVMn` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI25_AlignmentWritingModifierVAA04ViewE0AAMc` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI25_AllowsHitTestingModifierVAA04ViewF0AAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25_AllowsHitTestingModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25_AllowsHitTestingModifierVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25_AppearanceActionModifierVAA04ViewE0AAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25_AppearanceActionModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25_AppearanceActionModifierVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25_ContentShapeKindModifierVMn` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI25_ContentShapeKindModifierVyxGAA04ViewF0AAMc` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI25_ForegroundStyleModifier3VMn` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI25_ForegroundStyleModifier3Vyxq_q0_GAA12ViewModifierAAMc` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI25_PreferenceActionModifierVMa` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI25_ValueTransactionModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI25_ValueTransactionModifierVyxGAA04ViewE0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI26AccessibilityChildBehaviorV6ignoreACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI26AccessibilityChildBehaviorVMa` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI26CustomizableToolbarContentMp` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI26CustomizableToolbarContentP4BodyAA0dE0P_AaBTn` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI26CustomizableToolbarContentPAA0dE0Tb` | 1 | clipy |
-| SwiftUI.framework | `_$s7SwiftUI26IsSelectionEnabledTraitKeyVMn` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI26GroupBoxStyleConfigurationV7ContentVMa` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI26GroupBoxStyleConfigurationV7ContentVMn` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI26GroupBoxStyleConfigurationV7contentAC7ContentVvg` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI26LabeledControlGroupContentVMn` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI26WindowBackgroundShapeStyleVACycfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI26WindowBackgroundShapeStyleVMn` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI26_OverlayPreferenceModifierVMn` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI26_OverlayPreferenceModifierVyxq_GAA04ViewE0AAMc` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI27AnimationCompletionCriteriaV17logicallyCompleteACvgZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI27AnimationCompletionCriteriaV7removedACvgZ` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI27AnimationCompletionCriteriaVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI27EveryMinuteTimelineScheduleVAA0eF0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI27EveryMinuteTimelineScheduleVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI27EveryMinuteTimelineScheduleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI27EveryMinuteTimelineScheduleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI27RoundedBorderTextFieldStyleVAA0efG0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI27RoundedBorderTextFieldStyleVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI27RoundedBorderTextFieldStyleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI27RoundedBorderTextFieldStyleVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI28AccessibilityTextContentTypeV10sourceCodeACvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI28AccessibilityTextContentTypeVMa` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI28_PreferenceTransformModifierVMn` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI28_PreferenceTransformModifierVyxGAA04ViewE0AAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI29NavigationSplitViewVisibilityV10detailOnlyACvgZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI29NSHostingSceneBridgingOptionsV8toolbarsACvgZ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI29NavigationSplitViewVisibilityV2eeoiySbAC_ACtFZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI29NavigationSplitViewVisibilityVSQAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI29_DiscreteSymbolEffectModifierVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI30DefaultFocusEvaluationPriorityV9automaticACvgZ` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI30DefaultFocusEvaluationPriorityVMa` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI30ProgressViewStyleConfigurationV17fractionCompletedSdSgvg` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI30ProgressViewStyleConfigurationV17CurrentValueLabelVMa` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI30ProgressViewStyleConfigurationV17CurrentValueLabelVMn` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI30ProgressViewStyleConfigurationV17currentValueLabelAC07CurrenthI0VSgvg` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI30ProgressViewStyleConfigurationV5LabelVMn` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI30ProgressViewStyleConfigurationV5labelAC5LabelVSgvg` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI30ProgressViewStyleConfigurationVMa` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI30ProgressViewStyleConfigurationVMn` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI30_EnvironmentKeyWritingModifierV7keyPath5valueACyxGs08WritabledH0CyAA0C6ValuesVxG_xtcfC` | 1 | clipy |
+| SwiftUI.framework | `_$s7SwiftUI30_EnvironmentKeyWritingModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI30_EnvironmentKeyWritingModifierVyxGAA04ViewF0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI30_EnvironmentKeyWritingModifierVyxGAA06_SceneF0AAMc` | 1 | clipy |
+| SwiftUI.framework | `_$s7SwiftUI30_SafeAreaRegionsIgnoringLayoutVAA12ViewModifierAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI30_SafeAreaRegionsIgnoringLayoutVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI31AccessibilityAttachmentModifierVAA04ViewE0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI31AccessibilityAttachmentModifierVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI31AccessibilityAttachmentModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI31_IndefiniteSymbolEffectModifierVAA04ViewF0AAWP` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI32AccessibilityAdjustmentDirectionO2eeoiySbAC_ACtFZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI32AlternatingRowBackgroundBehaviorV7enabledACvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI32AlternatingRowBackgroundBehaviorVMa` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI32BalancedNavigationSplitViewStyleVAA0defG0AAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI32BalancedNavigationSplitViewStyleVMa` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI32BalancedNavigationSplitViewStyleVMn` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI32LabeledContentStyleConfigurationV0D0VAA4ViewAAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI32LabeledContentStyleConfigurationV0D0VMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI32LabeledContentStyleConfigurationV0D0VMn` | 1 | coteditor |
@@ -2120,6 +2886,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI32LabeledContentStyleConfigurationV5labelAC5LabelVvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI32LabeledContentStyleConfigurationV7contentAC0D0Vvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI32_EnvironmentKeyTransformModifierVMa` | 1 | linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI32_EnvironmentKeyTransformModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI32_EnvironmentKeyTransformModifierVyxGAA04ViewF0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI33DisclosureGroupStyleConfigurationV11$isExpandedAA7BindingVySbGvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI33DisclosureGroupStyleConfigurationV5LabelVAA4ViewAAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI33DisclosureGroupStyleConfigurationV5LabelVMa` | 1 | coteditor |
@@ -2131,98 +2899,188 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI33DisclosureGroupStyleConfigurationV7contentAC7ContentVvg` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI33DisclosureGroupStyleConfigurationVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI33DisclosureGroupStyleConfigurationVMn` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI33LimitedAvailabilityToolbarContentV7erasingACx_tcAA0eF0RzlufC` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI33LimitedAvailabilityToolbarContentVAA0eF0AAWP` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI33LimitedAvailabilityToolbarContentVN` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI33PrimitiveButtonStyleConfigurationV5LabelVMa` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI33PrimitiveButtonStyleConfigurationV5LabelVMn` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI33PrimitiveButtonStyleConfigurationV5labelAC5LabelVvg` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI33PrimitiveButtonStyleConfigurationV7triggeryyF` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI33PrimitiveButtonStyleConfigurationVMa` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI33PrimitiveButtonStyleConfigurationVMn` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI34_InsettableBackgroundShapeModifierVMa` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI34_InsettableBackgroundShapeModifierVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI34_InsettableBackgroundShapeModifierVyxq_GAA04ViewF0AAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI36NSViewControllerRepresentableContextVMa` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI39ProminentDetailNavigationSplitViewStyleVAA0efgH0AAMc` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI39ProminentDetailNavigationSplitViewStyleVMa` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI39ProminentDetailNavigationSplitViewStyleVMn` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI3TabVAASHRzAA4ViewR_AaDR0_rlE011_identifiedD0QrvpQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI3LogO013runtimeIssuesC0So9OS_os_logCvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI3TabVAASHRzAA4ViewR_AaDR0_rlE_11systemImage5value7contentACyxq_AA07DefaultC5LabelVGAA18LocalizedStringKeyV_SSxq_yXEtcAIRs0_rlufC` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI3TabVAAs5NeverORszAA4ViewR_AaFR0_rlE7content5labelACyAEq_q0_Gq_yXE_q0_yXEtcfC` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI3TabVMn` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI3TabVyxq_q0_GAA0C7ContentAASHRzAA4ViewR_AaFR0_rlMc` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4AxisOMn` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI4AxisO3SetV10horizontalAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4AxisO3SetV8verticalAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetV10horizontalAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetV3allAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetV3topAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetV6bottomAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetV7leadingAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetV8trailingAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetV8verticalAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4EdgeO3SetVyAeCcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV11subheadlineACvgZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4FontV18lowercaseSmallCapsACyF` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4FontV18uppercaseSmallCapsACyF` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4FontV4bodyACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV4boldACyF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4FontV5WidthV10compressedAEvgZ` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI4FontV5WidthV9condensedAEvgZ` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI4FontV5WidthVMa` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI4FontV5WidthVMn` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI4FontV5widthyA2C5WidthVF` | 1 | betterdisplay |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6DesignO10monospacedyA2EmFWC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4FontV6DesignO2eeoiySbAE_AEtFZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6DesignOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6DesignOMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4FontV6DesignOSHAAMc` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6WeightV2eeoiySbAE_AEtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6WeightV4boldAEvgZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4FontV6WeightV4hash4intoys6HasherVz_tF` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6WeightV4thinAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6WeightV5heavyAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6WeightV5lightAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6WeightV6mediumAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6WeightV7regularAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6WeightV8semiboldAEvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6custom_4size10relativeToACSS_12CoreGraphics7CGFloatVAC9TextStyleOtFZ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4FontV6custom_9fixedSizeACSS_12CoreGraphics7CGFloatVtFZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6system4size6weight6designAC12CoreGraphics7CGFloatV_AC6WeightVSgAC6DesignOSgtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV6weightyA2C6WeightVF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV7calloutACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV7captionACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV8caption2ACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4FontV8headlineACvgZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO10largeTitleyA2EmFWC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO11subheadlineyA2EmFWC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO2eeoiySbAE_AEtFZ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO4bodyyA2EmFWC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO5titleyA2EmFWC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO6title2yA2EmFWC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO6title3yA2EmFWC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO7calloutyA2EmFWC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO7captionyA2EmFWC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO8caption2yA2EmFWC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleO8headlineyA2EmFWC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleOMn` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4FontV9TextStyleOMa` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4FontV9smallCapsACyF` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4FontVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4FontVN` | 1 | linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI4LinkVA2A4TextVRszrlE_11destinationACyAEGAA18LocalizedStringKeyV_10Foundation3URLVtcfC` | 1 | sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI4MenuV7content5label13primaryActionACyxq_Gq_yXE_xyXEyyctcfC` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4MenuV_7contentACyAA4TextVq_GAA18LocalizedStringKeyV_q_yXEtcAFRszrlufC` | 1 | betterdisplay |
-| SwiftUI.framework | `_$s7SwiftUI4PathV03addC0_9transformyAC_So17CGAffineTransformVtF` | 1 | raycast |
+| SwiftUI.framework | `_$s7SwiftUI4FontVyACSo9CTFontRefacfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ListV9selection7contentACyxq_GAA7BindingVyxSgGSg_q_yXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ListVAAs5NeverORszrlE7contentACyAEq_Gq_yXE_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ListVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ListVyxq_GAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4MenuV7content5labelACyxq_Gq_yXE_xyXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4MenuVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4MenuVyxq_GAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathV10addEllipse2in9transformySo6CGRectV_So17CGAffineTransformVtF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4PathV11roundedRect12cornerRadius5styleACSo6CGRectV_12CoreGraphics7CGFloatVAA18RoundedCornerStyleOtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathV12closeSubpathyyF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathV2eeoiySbAC_ACtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathV4move2toySo7CGPointV_tF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4PathV5union_6eoFillA2C_SbtF` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI4PathV7StorageON` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathV7addLine2toySo7CGPointV_tF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathV7isEmptySbvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathV8addCurve2to8control18control2ySo7CGPointV_A2ItF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathV8addLinesyySaySo7CGPointVGF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4PathV8offsetBy2dx2dyAC12CoreGraphics7CGFloatV_AItF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4PathVAA5ShapeAAMc` | 1 | linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI4PathVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4PathVyACyACzXEcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4TextV013accessibilityC11ContentTypeyAcA013AccessibilityceF0VF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4TextV10monospacedyACSbF` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4TextV10fontWeightyAcA4FontV0E0VSgF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4TextV13strikethrough_5colorACSb_AA5ColorVSgtF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4TextV14baselineOffsetyAC12CoreGraphics7CGFloatVF` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4TextV18accessibilityLabelyA2CF` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4TextV14TruncationModeO4headyA2EmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV14TruncationModeO4tailyA2EmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV14TruncationModeO6middleyA2EmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV14TruncationModeOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV14TruncationModeOMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV15foregroundStyleyACxAA05ShapeE0RzlF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4TextV18accessibilityLabelyAcA18LocalizedStringKeyVF` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4TextV1poiyA2C_ACtFZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4TextV20accessibilityHeadingyAcA013AccessibilityE5LevelOF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4TextV25speechSpellsOutCharactersyACSbF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4TextV31speechAlwaysIncludesPunctuationyACSbF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4TextV4CaseO9lowercaseyA2EmFWC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4TextV4CaseO9uppercaseyA2EmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV4CaseOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV4CaseOMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV4fontyAcA4FontVSgF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4TextV5ScaleV9secondaryAEvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4TextV5ScaleVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4TextV6italicACyF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4TextV6italicyACSbF` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4TextV7kerningyAC12CoreGraphics7CGFloatVF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4TextV8ModifierOMn` | 1 | sequel-ace |
-| SwiftUI.framework | `_$s7SwiftUI4TextV8trackingyAC12CoreGraphics7CGFloatVF` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4TextV9DateStyleV4dateAEvgZ` | 1 | maccy |
 | SwiftUI.framework | `_$s7SwiftUI4TextV9DateStyleV5timerAEvgZ` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4TextV9DateStyleV8relativeAEvgZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4TextV9fontWidthyAcA4FontV0E0VSgF` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI4TextV9textScale_9isEnabledA2C0E0V_SbtF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4TextVyAcA5ImageVcfC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC11ColumnWidth3min5ideal3maxQr12CoreGraphics7CGFloatVSg_AjKtF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE015navigationSplitC11ColumnWidth3min5ideal3maxQr12CoreGraphics7CGFloatVSg_AjKtFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4TextVAA4ViewAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV_6formatAC11FormatInputQz_xtc10Foundation0E5StyleRzSQAFRQSS0E6OutputRtzlufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextV_9tableName6bundle7commentAcA18LocalizedStringKeyV_SSSgSo8NSBundleCSgs06StaticI0VSgtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextVyAC10Foundation16AttributedStringVcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4TextVyACxcSyRzlufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewMp` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewP05_makeC04view6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewP05_makeC4List4view6inputsAA01_cE7OutputsVAA11_GraphValueVyxG_AA01_cE6InputsVtFZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewP14_viewListCount6inputsSiSgAA01_ceF6InputsV_tFZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewP4BodyAC_AaBTn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewP4body4BodyQzvgTq` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE03tabC5StyleyQrqd__AA03TabcE0Rd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE03tabC5StyleyQrqd__AA03TabcE0Rd__lFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE05_makeC04view6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE05_makeC4List4view6inputsAA01_cE7OutputsVAA11_GraphValueVyxG_AA01_cE6InputsVtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE08progressC5StyleyQrqd__AA08ProgresscE0Rd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE08progressC5StyleyQrqd__AA08ProgresscE0Rd__lFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10background9alignment7contentQrAA9AlignmentV_qd__yXEtAaBRd__lF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10background_2in9fillStyleQrqd___qd_0_AA04FillG0VtAA05ShapeG0Rd__AA0I0Rd_0_r0_lF` | 1 | maccy |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10background_9alignmentQrqd___AA9AlignmentVtAaBRd__lF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10focusScopeyQrAA9NamespaceV2IDVF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10focusScopeyQrAA9NamespaceV2IDVFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10fontDesignyQrAA4FontV0E0OSgF` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10fontDesignyQrAA4FontV0E0OSgFQOMQ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress10characters6phases6actionQr10Foundation12CharacterSetV_AA0eF0V6PhasesVAL6ResultOALctF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress10characters6phases6actionQr10Foundation12CharacterSetV_AA0eF0V6PhasesVAL6ResultOALctFQOMQ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress4keys6phases6actionQrShyAA0E10EquivalentVG_AA0eF0V6PhasesVAL6ResultOALctF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress4keys6phases6actionQrShyAA0E10EquivalentVG_AA0eF0V6PhasesVAL6ResultOALctFQOMQ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress_6phases6actionQrAA0E10EquivalentV_AA0eF0V6PhasesVAJ6ResultOAJctF` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10onKeyPress_6phases6actionQrAA0E10EquivalentV_AA0eF0V6PhasesVAJ6ResultOAJctFQOMQ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10saturationyQrSdF` | 1 | betterdisplay |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10searchable4text9placement6promptQrAA7BindingVySSG_AA20SearchFieldPlacementVAA18LocalizedStringKeyVtF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10searchable4text9placement6promptQrAA7BindingVySSG_AA20SearchFieldPlacementVAA18LocalizedStringKeyVtFQOMQ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10searchable4text9placement6promptQrAA7BindingVySSG_AA20SearchFieldPlacementVqd__tSyRd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10searchable4text9placement6promptQrAA7BindingVySSG_AA20SearchFieldPlacementVqd__tSyRd__lFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10unredactedQryF` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE10unredactedQryFQOMQ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11aspectRatio_11contentModeQr12CoreGraphics7CGFloatVSg_AA07ContentG0OtF` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11buttonStyleyQrqd__AA015PrimitiveButtonE0Rd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11buttonStyleyQrqd__AA015PrimitiveButtonE0Rd__lFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11buttonStyleyQrqd__AA06ButtonE0Rd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11buttonStyleyQrqd__AA06ButtonE0Rd__lFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenu9menuItems7previewQrqd__yXE_qd_0_yXEtAaBRd__AaBRd_0_r0_lF` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenu9menuItems7previewQrqd__yXE_qd_0_yXEtAaBRd__AaBRd_0_r0_lFQOMQ` | 1 | tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenuyQrAA07ContextE0Vyqd__GSgAaBRd__lF` | 1 | swiftbar |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11contextMenuyQrAA07ContextE0Vyqd__GSgAaBRd__lFQOMQ` | 1 | swiftbar |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11environmentyQrs15WritableKeyPathCyAA17EnvironmentValuesVqd__G_qd__tlF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11glassEffect_2inQrAA5GlassV_qd__tAA5ShapeRd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11glassEffect_2inQrAA5GlassV_qd__tAA5ShapeRd__lFQOMQ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11popoverCore11isPresented16attachmentAnchor10arrowEdges0F10Detachable7contentQrAA7BindingVySbG_AA017PopoverAttachmentI0OAA4EdgeO3SetVSgSbqd__yctAaBRd__lF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11popoverCore11isPresented16attachmentAnchor10arrowEdges0F10Detachable7contentQrAA7BindingVySbG_AA017PopoverAttachmentI0OAA4EdgeO3SetVSgSbqd__yctAaBRd__lFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11pickerStyleyQrqd__AA06PickerE0Rd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11pickerStyleyQrqd__AA06PickerE0Rd__lFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11safeAreaBar4edge9alignment7spacing7contentQrAA12VerticalEdgeO_AA19HorizontalAlignmentV12CoreGraphics7CGFloatVSgqd__yXEtAaBRd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11safeAreaBar4edge9alignment7spacing7contentQrAA12VerticalEdgeO_AA19HorizontalAlignmentV12CoreGraphics7CGFloatVSgqd__yXEtAaBRd__lFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE11scaleEffect_6anchorQrSo6CGSizeV_AA9UnitPointVtF` | 1 | raycast |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12buttonSizingyQrAA06ButtonE0VF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12buttonSizingyQrAA06ButtonE0VFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12contentShape_6eoFillQrqd___SbtAA0E0Rd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12contentShape__6eoFillQrAA07ContentE5KindsV_qd__SbtAA0E0Rd__lF` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12defaultFocus__8priorityQrAA0E5StateV7BindingVyqd___G_qd__AA07DefaultE18EvaluationPriorityVtSHRd__lF` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12defaultFocus__8priorityQrAA0E5StateV7BindingVyqd___G_qd__AA07DefaultE18EvaluationPriorityVtSHRd__lFQOMQ` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12fileExporter11isPresented4item12contentTypes15defaultFilename12onCompletion0M12CancellationQrAA7BindingVySbG_qd__SgSay22UniformTypeIdentifiers6UTTypeVGSSSgys6ResultOy10Foundation3URLVs5Error_pGcyyct16CoreTransferable0Z0Rd__lF` | 1 | coteditor |
@@ -2235,19 +3093,27 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12focusedValueyQrs15WritableKeyPathCyAA13FocusedValuesVqd__SgG_AItlFQOMQ` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12focusedValueyQrs15WritableKeyPathCyAA13FocusedValuesVqd__SgG_qd__tlF` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12focusedValueyQrs15WritableKeyPathCyAA13FocusedValuesVqd__SgG_qd__tlFQOMQ` | 1 | ghostty |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12labelsHiddenQryF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12labelsHiddenQryFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12onTapGesture5count15coordinateSpace7performQrSi_qd__ySo7CGPointVctAA010CoordinateI8ProtocolRd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12onTapGesture5count15coordinateSpace7performQrSi_qd__ySo7CGPointVctAA010CoordinateI8ProtocolRd__lFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12onTapGesture5count7performQrSi_yyctF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12onTapGesture5count7performQrSi_yyctFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12scenePaddingyQrAA4EdgeO3SetVF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12scenePaddingyQrAA4EdgeO3SetVFQOMQ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12swipeActions4edge15allowsFullSwipe7contentQrAA14HorizontalEdgeO_Sbqd__yXEtAaBRd__lF` | 1 | utm |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE12swipeActions4edge15allowsFullSwipe7contentQrAA14HorizontalEdgeO_Sbqd__yXEtAaBRd__lFQOMQ` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13accessibility6hiddenAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGSb_tF` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13dragContainer3for2in_Qrqd__m_AA9NamespaceV2IDVSgqd_0_SayAIs12IdentifiablePQyd__Gct16CoreTransferable0L0Rd__sALRd__7ElementQyd_0_Rsd__SlRd_0_s8SendableANRQr0_lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13dragContainer3for2in_Qrqd__m_AA9NamespaceV2IDVSgqd_0_SayAIs12IdentifiablePQyd__Gct16CoreTransferable0L0Rd__sALRd__7ElementQyd_0_Rsd__SlRd_0_s8SendableANRQr0_lFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13groupBoxStyleyQrqd__AA05GroupeF0Rd__lF` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13groupBoxStyleyQrqd__AA05GroupeF0Rd__lFQOMQ` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13menuIndicatoryQrAA10VisibilityOF` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13onCopyCommand7performQrSaySo14NSItemProviderCGycSg_tF` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13onCopyCommand7performQrSaySo14NSItemProviderCGycSg_tFQOMQ` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13strikethrough_7pattern5colorQrSb_AA4TextV9LineStyleV7PatternVAA5ColorVSgtF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13strikethrough_7pattern5colorQrSb_AA4TextV9LineStyleV7PatternVAA5ColorVSgtFQOMQ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13onExitCommand7performQryycSg_tF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE13onExitCommand7performQryycSg_tFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14_viewListCount6inputsSiSgAA01_ceF6InputsV_tFZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14alignmentGuide_12computeValueQrAA17VerticalAlignmentV_12CoreGraphics7CGFloatVAA0C10DimensionsVctF` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14containerShapeyQrqd__AA010InsettableE0Rd__lF` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14contentMargins_3forQr12CoreGraphics7CGFloatV_AA22ContentMarginPlacementVtF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14contentMargins_3forQr12CoreGraphics7CGFloatV_AA22ContentMarginPlacementVtFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14contentMargins__3forQrAA4EdgeO3SetV_AA0G6InsetsVAA22ContentMarginPlacementVtF` | 1 | jordanbaird-ice |
@@ -2256,66 +3122,76 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14scrollPosition2id6anchorQrAA7BindingVyqd__SgG_AA9UnitPointVSgtSHRd__lFQOMQ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14scrollPosition_6anchorQrAA7BindingVyAA06ScrollE0VG_AA9UnitPointVSgtF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14scrollPosition_6anchorQrAA7BindingVyAA06ScrollE0VG_AA9UnitPointVSgtFQOMQ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15coordinateSpaceyQrAA015NamedCoordinateE0VF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15coordinateSpaceyQrAA015NamedCoordinateE0VFQOMQ` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15dropDestination3for6action10isTargetedQrqd__m_SbSayqd__G_So7CGPointVtcySbct16CoreTransferable0L0Rd__lF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15dropDestination3for6action10isTargetedQrqd__m_SbSayqd__G_So7CGPointVtcySbct16CoreTransferable0L0Rd__lFQOMQ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14textFieldStyleyQrqd__AA04TexteF0Rd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE14textFieldStyleyQrqd__AA04TexteF0Rd__lFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15datePickerStyleyQrqd__AA04DateeF0Rd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15datePickerStyleyQrqd__AA04DateeF0Rd__lFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15dropDestination3for9isEnabled6actionQrqd__m_SbySayqd__G_AA11DropSessionVtct16CoreTransferable0M0Rd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15dropDestination3for9isEnabled6actionQrqd__m_SbySayqd__G_AA11DropSessionVtct16CoreTransferable0M0Rd__lFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15dynamicTypeSizeyQrqd__SXRd__AA07DynamiceF0O5BoundRtd__lF` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15dynamicTypeSizeyQrqd__SXRd__AA07DynamiceF0O5BoundRtd__lFQOMQ` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15foregroundStyleyQrqd__AA05ShapeE0Rd__lF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15foregroundStyleyQrqd___qd_0_qd_1_tAA05ShapeE0Rd__AaERd_0_AaERd_1_r1_lF` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15foregroundStyleyQrqd___qd_0_tAA05ShapeE0Rd__AaERd_0_r0_lF` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15navigationTitleyQrAA4TextVF` | 1 | utm |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE15navigationTitleyQrAA4TextVFQOMQ` | 1 | utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16allowsHitTestingyQrSbF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16compositingGroupQryF` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16keyboardShortcut_9modifiersQrAA13KeyEquivalentV_AA14EventModifiersVtF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16keyboardShortcut_9modifiersQrAA13KeyEquivalentV_AA14EventModifiersVtFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16keyboardShortcutyQrAA08KeyboardE0VSgF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16keyboardShortcutyQrAA08KeyboardE0VSgFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16keyframeAnimator12initialValue7trigger7content9keyframesQrqd___qd_0_qd_1_AA018PlaceholderContentC0VyxG_qd__tYbcqd_2_qd__ct0G0Qyd_2_Rsd__SQRd_0_AaBRd_1_AA9KeyframesRd_2_r2_lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16keyframeAnimator12initialValue7trigger7content9keyframesQrqd___qd_0_qd_1_AA018PlaceholderContentC0VyxG_qd__tYbcqd_2_qd__ct0G0Qyd_2_Rsd__SQRd_0_AaBRd_1_AA9KeyframesRd_2_r2_lFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16labelsVisibilityyQrAA0E0OF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE16labelsVisibilityyQrAA0E0OFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17accessibilityHintyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA18LocalizedStringKeyVF` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17accessibilityHintyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA4TextVF` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17defaultAppStorageyQrSo14NSUserDefaultsCF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17defaultAppStorageyQrSo14NSUserDefaultsCFQOMQ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17dragConfigurationyQrAA04DragE0VF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17dragConfigurationyQrAA04DragE0VFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17fileDialogMessageyQrAA4TextVSgF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17fileDialogMessageyQrAA4TextVSgFQOMQ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17onContinuousHover15coordinateSpace7performQrqd___yAA0F5PhaseOctAA010CoordinateH8ProtocolRd__lF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17onContinuousHover15coordinateSpace7performQrqd___yAA0F5PhaseOctAA010CoordinateH8ProtocolRd__lFQOMQ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17toolbarBackground_3forQrAA10VisibilityO_AA16ToolbarPlacementVdtF` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE17toolbarBackground_3forQrAA10VisibilityO_AA16ToolbarPlacementVdtFQOMQ` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18accessibilityLabelyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA18LocalizedStringKeyVF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18accessibilityLabelyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA4TextVF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18accessibilityLabelyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGqd__SyRd__lF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18accessibilityRotor_7entries7entryID0G5LabelQrAA4TextV_Sayqd__Gs7KeyPathCyqd__qd_0_GALyqd__SSGtSHRd_0_r0_lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18accessibilityRotor_7entries7entryID0G5LabelQrAA4TextV_Sayqd__Gs7KeyPathCyqd__qd_0_GALyqd__SSGtSHRd_0_r0_lFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18accessibilityValueyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA18LocalizedStringKeyVF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility10presenting7actions7messageQrAA18LocalizedStringKeyV_AA7BindingVySbGAA0I0Oqd_1_Sgqd__qd_1_XEqd_0_qd_1_XEtAaBRd__AaBRd_0_r1_lF` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility10presenting7actions7messageQrAA18LocalizedStringKeyV_AA7BindingVySbGAA0I0Oqd_1_Sgqd__qd_1_XEqd_0_qd_1_XEtAaBRd__AaBRd_0_r1_lFQOMQ` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility10presenting7actions7messageQrAA4TextV_AA7BindingVySbGAA0I0Oqd_1_Sgqd__qd_1_XEqd_0_qd_1_XEtAaBRd__AaBRd_0_r1_lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility10presenting7actions7messageQrAA4TextV_AA7BindingVySbGAA0I0Oqd_1_Sgqd__qd_1_XEqd_0_qd_1_XEtAaBRd__AaBRd_0_r1_lFQOMQ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actions7messageQrAA18LocalizedStringKeyV_AA7BindingVySbGAA0I0Oqd__yXEqd_0_yXEtAaBRd__AaBRd_0_r0_lF` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actions7messageQrAA18LocalizedStringKeyV_AA7BindingVySbGAA0I0Oqd__yXEqd_0_yXEtAaBRd__AaBRd_0_r0_lFQOMQ` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility10presenting7actions7messageQrqd___AA7BindingVySbGAA0I0Oqd_2_Sgqd_0_qd_2_XEqd_1_qd_2_XEtSyRd__AaBRd_0_AaBRd_1_r2_lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility10presenting7actions7messageQrqd___AA7BindingVySbGAA0I0Oqd_2_Sgqd_0_qd_2_XEqd_1_qd_2_XEtSyRd__AaBRd_0_AaBRd_1_r2_lFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actions7messageQrAA4TextV_AA7BindingVySbGAA0I0Oqd__yXEqd_0_yXEtAaBRd__AaBRd_0_r0_lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actions7messageQrAA4TextV_AA7BindingVySbGAA0I0Oqd__yXEqd_0_yXEtAaBRd__AaBRd_0_r0_lFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actionsQrAA18LocalizedStringKeyV_AA7BindingVySbGAA0I0Oqd__yXEtAaBRd__lF` | 1 | maccy |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actionsQrAA18LocalizedStringKeyV_AA7BindingVySbGAA0I0Oqd__yXEtAaBRd__lFQOMQ` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actionsQrqd___AA7BindingVySbGAA0I0Oqd_0_yXEtSyRd__AaBRd_0_r0_lF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18confirmationDialog_11isPresented15titleVisibility7actionsQrqd___AA7BindingVySbGAA0I0Oqd_0_yXEtSyRd__AaBRd_0_r0_lFQOMQ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18navigationSubtitleyQrAA18LocalizedStringKeyVF` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18navigationSubtitleyQrAA18LocalizedStringKeyVFQOMQ` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18onLongPressGesture15minimumDuration15maximumDistance8pressing7performQrSd_12CoreGraphics7CGFloatVySbcSgyyctF` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18onLongPressGesture15minimumDuration15maximumDistance8pressing7performQrSd_12CoreGraphics7CGFloatVySbcSgyyctFQOMQ` | 1 | 1password |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18presentationSizingyQrqd__AA012PresentationE0Rd__lF` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18presentationSizingyQrqd__AA012PresentationE0Rd__lFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18scrollTargetLayout9isEnabledQrSb_tF` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE18scrollTargetLayout9isEnabledQrSb_tFQOMQ` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19accessibilityAction5named_AA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA4TextV_yyctF` | 1 | maccy |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19accessibilityActionyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA0hE4KindV_yyctF` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19accessibilityAction5named_AA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGqd___yyctSyRd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19accessibilityHiddenyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGSbF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19containerBackground3for9alignment7contentQrAA09ContainerE9PlacementV_AA9AlignmentVqd__yXEtAaBRd__lF` | 1 | stats |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19containerBackground3for9alignment7contentQrAA09ContainerE9PlacementV_AA9AlignmentVqd__yXEtAaBRd__lFQOMQ` | 1 | stats |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19containerBackground_3forQrqd___AA09ContainerE9PlacementVtAA10ShapeStyleRd__lF` | 1 | tailscale-app |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19containerBackground_3forQrqd___AA09ContainerE9PlacementVtAA10ShapeStyleRd__lFQOMQ` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19defaultScrollAnchoryQrAA9UnitPointVSgF` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19defaultScrollAnchoryQrAA9UnitPointVSgFQOMQ` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19labeledContentStyleyQrqd__AA07LabeledeF0Rd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19labeledContentStyleyQrqd__AA07LabeledeF0Rd__lFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19onScrollPhaseChangeyQryAA0eF0O_AFtcF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19onScrollPhaseChangeyQryAA0eF0O_AFtcFQOMQ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19prefersDefaultFocus_2inQrSb_AA9NamespaceV2IDVtF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19prefersDefaultFocus_2inQrSb_AA9NamespaceV2IDVtFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19presentationDetentsyQrShyAA18PresentationDetentVGF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19presentationDetentsyQrShyAA18PresentationDetentVGFQOMQ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19symbolRenderingModeyQrAA06SymboleF0VSgF` | 1 | betterdisplay |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE19transformPreferenceyQrqd__m_y5ValueQyd__zctAA0E3KeyRd__lF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20accessibilityActionsyQrqd__yXEAaBRd__lF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20accessibilityActionsyQrqd__yXEAaBRd__lFQOMQ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20accessibilityElement8childrenQrAA26AccessibilityChildBehaviorV_tF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20accessibilityElement8childrenQrAA26AccessibilityChildBehaviorV_tFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20accessibilityFocused_6equalsQrAA23AccessibilityFocusStateV7BindingVyqd___G_qd__tSHRd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20accessibilityFocused_6equalsQrAA23AccessibilityFocusStateV7BindingVyqd___G_qd__tSHRd__lFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20disclosureGroupStyleyQrqd__AA010DisclosureeF0Rd__lF` | 1 | coteditor |
@@ -2330,10 +3206,10 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE20transformEnvironment_0D0Qrs15WritableKeyPathCyAA0E6ValuesVqd__G_yqd__zctlF` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21containerCornerOffset_9sizeToFitQrAA4EdgeO3SetV_SbtF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21containerCornerOffset_9sizeToFitQrAA4EdgeO3SetV_SbtFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21disableAutocorrectionyQrSbSgF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21disableAutocorrectionyQrSbSgFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21dragPreviewsFormationyQrAA08DragDropeF0VF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21dragPreviewsFormationyQrAA08DragDropeF0VFQOMQ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21handlesExternalEvents10preferring8allowingQrShySSG_AGtF` | 1 | utm |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21handlesExternalEvents10preferring8allowingQrShySSG_AGtFQOMQ` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21navigationDestination3for11destinationQrqd__m_qd_0_qd__ctSHRd__AaBRd_0_r0_lF` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21navigationDestination3for11destinationQrqd__m_qd_0_qd__ctSHRd__AaBRd_0_r0_lFQOMQ` | 1 | 1password |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE21onModifierKeysChanged4mask7initial_QrAA14EventModifiersV_SbyAH_AHtctF` | 1 | coteditor |
@@ -2346,6 +3222,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE22containerRelativeFrame_9alignmentQrAA4AxisO3SetV_AA9AlignmentVtFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE22labelReservedIconWidthyQr12CoreGraphics7CGFloatVF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE22labelReservedIconWidthyQr12CoreGraphics7CGFloatVFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE22onScrollGeometryChange3for2of6actionQrqd__m_qd__AA0eF0Vcyqd___qd__tctSQRd__lF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE22onScrollGeometryChange3for2of6actionQrqd__m_qd__AA0eF0Vcyqd___qd__tctSQRd__lFQOMQ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE23dialogSuppressionToggle12isSuppressedQrAA7BindingVySbG_tF` | 1 | maccy |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE23dialogSuppressionToggle12isSuppressedQrAA7BindingVySbG_tFQOMQ` | 1 | maccy |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE23labelIconToTitleSpacingyQr12CoreGraphics7CGFloatVF` | 1 | coteditor |
@@ -2353,108 +3231,268 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE24accessibilityLabeledPair4role2id2inQrAA013AccessibilityeF4RoleO_qd__AA9NamespaceV2IDVtSHRd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE24accessibilityLabeledPair4role2id2inQrAA013AccessibilityeF4RoleO_qd__AA9NamespaceV2IDVtSHRd__lFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE25accessibilityRemoveTraitsyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGAA0iF0VF` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE25accessibilityScrollActionyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGyAA4EdgeOcF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE25accessibilitySortPriorityyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGSdF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE25alternatingRowBackgroundsyQrAA011AlternatingE18BackgroundBehaviorVF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE25alternatingRowBackgroundsyQrAA011AlternatingE18BackgroundBehaviorVFQOMQ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE27accessibilityRepresentation14representationQrqd__yXE_tAaBRd__lF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE27accessibilityRepresentation14representationQrqd__yXE_tAaBRd__lFQOMQ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE26interactiveDismissDisabledyQrSbF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE26interactiveDismissDisabledyQrSbFQOMQ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE27fileDialogConfirmationLabelyQrAA4TextVSgF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE27fileDialogConfirmationLabelyQrAA4TextVSgFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE38accessibilityRespondsToUserInteractionyAA15ModifiedContentVyxAA31AccessibilityAttachmentModifierVGSbF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4boldyQrSbF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4boldyQrSbFQOMQ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4helpyQrAA18LocalizedStringKeyVF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4helpyQrAA18LocalizedStringKeyVFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4helpyQrqd__SyRd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4helpyQrqd__SyRd__lFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4task2id8priority_Qrqd___ScPyyYaYbctSQRd__lF` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE4tintyQrAA5ColorVSgF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert11isPresented5error7actions7messageQrAA7BindingVySbG_qd__Sgqd_0_qd__XEqd_1_qd__XEt10Foundation14LocalizedErrorRd__AaBRd_0_AaBRd_1_r1_lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert11isPresented5error7actions7messageQrAA7BindingVySbG_qd__Sgqd_0_qd__XEqd_1_qd__XEt10Foundation14LocalizedErrorRd__AaBRd_0_AaBRd_1_r1_lFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert11isPresented5error7actionsQrAA7BindingVySbG_qd__Sgqd_0_yXEt10Foundation14LocalizedErrorRd__AaBRd_0_r0_lF` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert11isPresented5error7actionsQrAA7BindingVySbG_qd__Sgqd_0_yXEt10Foundation14LocalizedErrorRd__AaBRd_0_r0_lFQOMQ` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actionsQrqd___AA7BindingVySbGqd_0_yXEtSyRd__AaBRd_0_r0_lF` | 1 | betterdisplay |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5alert_11isPresented7actionsQrqd___AA7BindingVySbGqd_0_yXEtSyRd__AaBRd_0_r0_lFQOMQ` | 1 | betterdisplay |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6italicyQrSbF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6italicyQrSbFQOMQ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5frame5width6height9alignmentQr12CoreGraphics7CGFloatVSg_AkA9AlignmentVtF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5frame8minWidth05idealF003maxF00E6Height0gI00hI09alignmentQr12CoreGraphics7CGFloatVSg_A5oA9AlignmentVtF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5sheet11isPresented9onDismiss7contentQrAA7BindingVySbG_yycSgqd__yctAaBRd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE5sheet11isPresented9onDismiss7contentQrAA7BindingVySbG_yycSgqd__yctAaBRd__lFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6border_5widthQrqd___12CoreGraphics7CGFloatVtAA10ShapeStyleRd__lF` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6offsetyQrSo6CGSizeVF` | 1 | raycast |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6shadow5color6radius1x1yQrAA5ColorV_12CoreGraphics7CGFloatVA2MtF` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7kerningyQr12CoreGraphics7CGFloatVF` | 1 | raycast |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7kerningyQr12CoreGraphics7CGFloatVFQOMQ` | 1 | raycast |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of10isTargeted7performQrSaySSG_AA7BindingVySbGSgSbSaySo14NSItemProviderCG_So7CGPointVtctF` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of10isTargeted7performQrSaySSG_AA7BindingVySbGSgSbSaySo14NSItemProviderCG_So7CGPointVtctFQOMQ` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of10isTargeted7performQrSaySSG_AA7BindingVySbGSgSbSaySo14NSItemProviderCGctF` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE6onDrop2of10isTargeted7performQrSaySSG_AA7BindingVySbGSgSbSaySo14NSItemProviderCGctFQOMQ` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7focusedyQrAA10FocusStateV7BindingVySb_GF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7focusedyQrAA10FocusStateV7BindingVySb_GFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7gesture_9includingQrqd___AA11GestureMaskVtAA0F0Rd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7gesture_9includingQrqd___AA11GestureMaskVtAA0F0Rd__lFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7opacityyQrSdF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7overlay9alignment7contentQrAA9AlignmentV_qd__yXEtAaBRd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7overlay_9alignmentQrqd___AA9AlignmentVtAaBRd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7paddingyQr12CoreGraphics7CGFloatVF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7paddingyQrAA4EdgeO3SetV_12CoreGraphics7CGFloatVSgtF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7popover11isPresented16attachmentAnchor9arrowEdge7contentQrAA7BindingVySbG_AA017PopoverAttachmentH0OAA0J0Oqd__yctAaBRd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7popover11isPresented16attachmentAnchor9arrowEdge7contentQrAA7BindingVySbG_AA017PopoverAttachmentH0OAA0J0Oqd__yctAaBRd__lFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7popover4item16attachmentAnchor9arrowEdge7contentQrAA7BindingVyqd__SgG_AA017PopoverAttachmentG0OAA0I0Oqd_0_qd__cts12IdentifiableRd__AaBRd_0_r0_lF` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7popover4item16attachmentAnchor9arrowEdge7contentQrAA7BindingVyqd__SgG_AA017PopoverAttachmentG0OAA0I0Oqd_0_qd__cts12IdentifiableRd__AaBRd_0_r0_lFQOMQ` | 1 | utm |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7toolbar7contentQrqd__yXE_tAA14ToolbarContentRd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7toolbar7contentQrqd__yXE_tAA14ToolbarContentRd__lFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7toolbar7contentQrqd__yXE_tAaBRd__lF` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7toolbar7contentQrqd__yXE_tAaBRd__lFQOMQ` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7toolbar8removingQrAA22ToolbarDefaultItemKindVSg_tF` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE7toolbar8removingQrAA22ToolbarDefaultItemKindVSg_tFQOMQ` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8copyableyQrSayqd__GyXA16CoreTransferable0F0Rd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8copyableyQrSayqd__GyXA16CoreTransferable0F0Rd__lFQOMQ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8modifieryAA15ModifiedContentVyxqd__Gqd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8onAppear7performQryycSg_tF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8onChange2of7initial_Qrqd___Sbyqd___qd__tctSQRd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8onChange2of7initial_Qrqd___Sbyqd___qd__tctSQRd__lFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8onSubmit2of_QrAA0E8TriggersV_yyctF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8onSubmit2of_QrAA0E8TriggersV_yyctFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8positionyQrSo7CGPointVF` | 1 | ghostty |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8trackingyQr12CoreGraphics7CGFloatVF` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE8trackingyQr12CoreGraphics7CGFloatVFQOMQ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9clipShape_5styleQrqd___AA9FillStyleVtAA0E0Rd__lF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9draggable15containerItemID0E9NamespaceQrqd___AA0H0V0G0VSgtSHRd__s8SendableRd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9draggable15containerItemID0E9NamespaceQrqd___AA0H0V0G0VSgtSHRd__s8SendableRd__lFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9draggable_18containerNamespace_Qrqd__m_AA0F0V2IDVSgqd__Sgyct16CoreTransferable0I0Rd__s12IdentifiableRd__s8SendableAHsANPRpd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9draggable_18containerNamespace_Qrqd__m_AA0F0V2IDVSgqd__Sgyct16CoreTransferable0I0Rd__s12IdentifiableRd__s8SendableAHsANPRpd__lFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9draggable_4item18containerNamespaceQrqd__m_qd__SgyXAAA0G0V2IDVSgt16CoreTransferable0J0Rd__s12IdentifiableRd__s8SendableAJsAOPRpd__lF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9draggable_4item18containerNamespaceQrqd__m_qd__SgyXAAA0G0V2IDVSgt16CoreTransferable0J0Rd__s12IdentifiableRd__s8SendableAJsAOPRpd__lFQOMQ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9draggableyQrqd__yXA16CoreTransferable0F0Rd__lF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9draggableyQrqd__yXA16CoreTransferable0F0Rd__lFQOMQ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9fixedSize10horizontal8verticalQrSb_SbtF` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9fixedSizeQryF` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9focusable_12interactionsQrSb_AA17FocusInteractionsVtF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9focusable_12interactionsQrSb_AA17FocusInteractionsVtFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9fontWidthyQrAA4FontV0E0VSgF` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9fontWidthyQrAA4FontV0E0VSgFQOMQ` | 1 | betterdisplay |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9lineLimit_13reservesSpaceQrSi_SbtF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9lineLimit_13reservesSpaceQrSi_SbtFQOMQ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9listStyleyQrqd__AA04ListE0Rd__lF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9listStyleyQrqd__AA04ListE0Rd__lFQOMQ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9onCommand_7performQr10ObjectiveC8SelectorV_yycSgtF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9onCommand_7performQr10ObjectiveC8SelectorV_yycSgtFQOMQ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9textScale_9isEnabledQrAA4TextV0E0V_SbtF` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9textScale_9isEnabledQrAA4TextV0E0V_SbtFQOMQ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9underline_7pattern5colorQrSb_AA4TextV9LineStyleV7PatternVAA5ColorVSgtF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI4ViewPAAE9underline_7pattern5colorQrSb_AA4TextV9LineStyleV7PatternVAA5ColorVSgtFQOMQ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI5AlertV6ButtonV6cancel_6actionAeA4TextV_yycSgtFZ` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI5AngleVN` | 1 | ghostty |
-| SwiftUI.framework | `_$s7SwiftUI5ColorVAA10ShapeStyleAAWP` | 1 | tailscale-app |
-| SwiftUI.framework | `_$s7SwiftUI5ColorVSQAAMc` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV02nsC0ACSo7NSColorC_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV06accentC0ACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV13RGBColorSpaceO4sRGByA2EmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV13RGBColorSpaceOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV2eeoiySbAC_ACtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV3mix4with2by2inA2C_SdAA8GradientV0C5SpaceVtF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV3redACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV4blueACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV4grayACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV5blackACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV5clearACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV5greenACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV5whiteACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV6orangeACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV6purpleACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV6yellowACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV7opacityyACSdF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV7primaryACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV7resolve2inAC8ResolvedVAA17EnvironmentValuesV_tF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV8ResolvedV3redSfvg` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV8ResolvedV4blueSfvg` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV8ResolvedV5greenSfvg` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV9secondaryACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorVAA10ShapeStyleAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorVAA4ViewAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorVSHAAMc` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV_3red5green4blue7opacityA2C13RGBColorSpaceO_S4dtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ColorV_5white7opacityA2C13RGBColorSpaceO_S2dtcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5GaugeV5value2in5labelACyxAA9EmptyViewVA2HGqd___SNyqd__GxyXEtcAHRs_AHRs0_AHRs1_SBRd__lufC` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI5GaugeVMn` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI5GaugeVyxq_q0_q1_GAA4ViewAAMc` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI5GlassV7regularACvgZ` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI5GlassVMa` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI5ImageV10decorative5scale11orientationACSo10CGImageRefa_12CoreGraphics7CGFloatVAC11OrientationOtcfC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI5ImageV10decorative6bundleACSS_So8NSBundleCSgtcfC` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI5GroupVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5GroupVyxGAA4ViewA2aERzlMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV02nsC0ACSo7NSImageC_tcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5ImageV10systemName13variableValueACSS_SdSgtcfC` | 1 | betterdisplay |
-| SwiftUI.framework | `_$s7SwiftUI5ImageV13InterpolationO4noneyA2EmFWC` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI5ImageV21TemplateRenderingModeO8originalyA2EmFWC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV10systemNameACSS_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV11antialiasedyACSbF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV12ResizingModeO7stretchyA2EmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV12ResizingModeOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV13InterpolationO4highyA2EmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV13InterpolationO6mediumyA2EmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV13InterpolationOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV13interpolationyA2C13InterpolationOF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV13renderingModeyA2C017TemplateRenderingE0OSgF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV21TemplateRenderingModeO8templateyA2EmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV21TemplateRenderingModeOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV21TemplateRenderingModeOMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5ImageV2eeoiySbAC_ACtFZ` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI5ImageV4size5label6opaque9colorMode8rendererACSo6CGSizeV_AA4TextVSgSbAA014ColorRenderingH0OyAA15GraphicsContextVzctcfC` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV5ScaleO5smallyA2EmFWC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV5ScaleOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV5ScaleOMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageV9resizable9capInsets12resizingModeAcA04EdgeF0V_AC08ResizingH0OtF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageVAA4ViewAAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ImageVN` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5ImageV_6bundle5labelACSS_So8NSBundleCSgAA4TextVtcfC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI5LabelV5title4iconACyxq_GxyXE_q_yXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5LabelVA2A4TextVRszAA5ImageVRs_rlE_06systemE0ACyAeGGAA18LocalizedStringKeyV_SStcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5LabelVMa` | 1 | utm |
+| SwiftUI.framework | `_$s7SwiftUI5LabelVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5LabelVyxq_GAA4ViewAAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5ScenePAAE17environmentObjectyQrqd__7Combine010ObservableE0Rd__lF` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI5ScenePAAE17environmentObjectyQrqd__7Combine010ObservableE0Rd__lFQOMQ` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE18windowToolbarStyleyQrqd__AA06WindoweF0Rd__lF` | 1 | pearcleaner |
+| SwiftUI.framework | `_$s7SwiftUI5ScenePAAE18windowToolbarStyleyQrqd__AA06WindoweF0Rd__lFQOMQ` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI5ScenePAAE21handlesExternalEvents8matchingQrShySSG_tF` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI5ScenePAAE21handlesExternalEvents8matchingQrShySSG_tFQOMQ` | 1 | orbstack |
 | SwiftUI.framework | `_$s7SwiftUI5ScenePAAE8modifieryAA15ModifiedContentVyxqd__Gqd__lF` | 1 | clipy |
+| SwiftUI.framework | `_$s7SwiftUI5ShapeMp` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ShapeP12sizeThatFitsySo6CGSizeVAA16ProposedViewSizeVFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ShapeP23layoutDirectionBehaviorAA06LayouteF0OvgTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ShapeP4path2inAA4PathVSo6CGRectV_tFTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ShapeP4roleAA0C4RoleOvgZTq` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ShapePAA10AnimatableTb` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ShapePAA4ViewTb` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ShapePAAE12sizeThatFitsySo6CGSizeVAA16ProposedViewSizeVF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ShapePAAE13_makeViewList4view6inputsAA01_eF7OutputsVAA11_GraphValueVyxG_AA01_eF6InputsVtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ShapePAAE23layoutDirectionBehaviorAA06LayouteF0Ovg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5ShapePAAE4bodyAA01_C4ViewVyxAA15ForegroundStyleVGvg` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5ShapePAAE4fill5styleQrAA9FillStyleV_tF` | 1 | raycast |
+| SwiftUI.framework | `_$s7SwiftUI5ShapePAAE4roleAA0C4RoleOvgZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5ShapePAAE6stroke9lineWidthQr12CoreGraphics7CGFloatV_tF` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI5ShapePAAE9_makeView4view6inputsAA01_E7OutputsVAA11_GraphValueVyxG_AA01_E6InputsVtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5StateV12wrappedValueACyxGx_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5StateV12wrappedValuexvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5StateV12wrappedValuexvs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5StateV14projectedValueAA7BindingVyxGvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5StateVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI5StateVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI5TableV9selection7columns4rowsACyxq_q0_GAA7BindingVyShy2IDQzGG_q0_yXEq_yXEtcfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI5TableVMa` | 1 | orbstack |
-| SwiftUI.framework | `_$s7SwiftUI5TableV_9selection9sortOrder7columnsACyxAA0C14ForEachContentVyqd__Gq0_Gqd___AA7BindingVy2IDQzSgGALySayqd_0_GGq0_yXEtcAIRs_SkRd__10Foundation14SortComparatorRd_0_7ElementQyd__0C8RowValueRt0_8ComparedQyd_0_AVRSr0_lufC` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI6AnchorVMn` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI5TableV_9sortOrder7columnsACyxAA0C14ForEachContentVyqd__Gq0_Gqd___AA7BindingVySayqd_0_GGq0_yXEtcAHRs_SkRd__10Foundation14SortComparatorRd_0_7ElementQyd__0C8RowValueRt0_8ComparedQyd_0_AQRSr0_lufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6AnchorV6SourceVAASo6CGRectVRszlE6boundsAEyAG_GvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6ButtonV6action5labelACyxGyyc_xyXEtcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI6ButtonVA2A07DefaultC5LabelVRszrlE4role6actionACyAEGAA0C4RoleV_yyctcfC` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI6ButtonVA2A4TextVRszrlE_6actionACyAEGqd___yyctcSyRd__lufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6ButtonVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6ButtonVyxGAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6CircleVAA5ShapeAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6CircleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6CircleVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6HStackV9alignment7spacing7contentACyxGAA17VerticalAlignmentV_12CoreGraphics7CGFloatVSgxyXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6HStackVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6HStackVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6HStackVyxGAA4ViewAAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI6PickerV9selection7content5label17currentValueLabelACyxq_q0_GAA7BindingVyq_G_q0_yXExyXEqd__yXEtcAA4ViewRd__lufC` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI6PickerVA2A4TextVRszrlE_9selection7contentACyAEq_q0_GAA18LocalizedStringKeyV_AA7BindingVyq_Gq0_yXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6PickerVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6PickerVyxq_q0_GAA4ViewAAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI6SliderV5value2in12neutralValue13enabledBounds5label07currentG5Label07minimumgL007maximumgL05ticks16onEditingChangedACyxq_GAA7BindingVyqd__G_SNyqd__Gqd__SgARSgxyXEqd_0_yXEq_yXEq_yXEqd_1_yXEySbctc0G0Qyd_1_Rsd__AA4ViewRd_0_AA0C11TickContentRd_1_SB6StrideRpd__r1_lufC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI6SliderV5value2in16onEditingChanged17minimumValueLabel07maximumjK05labelACyxq_GAA7BindingVyqd__G_SNyqd__GySbcq_q_xyXEtcSBRd__SB6StrideRpd__lufC` | 1 | linearmouse |
 | SwiftUI.framework | `_$s7SwiftUI6SliderVA2A9EmptyViewVRs_rlE5value2in16onEditingChanged5labelACyxAEGAA7BindingVyqd__G_SNyqd__GySbcxyXEtcSBRd__SB6StrideRpd__lufC` | 1 | linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI6SliderVA2A9EmptyViewVRs_rlE5value2in4step16onEditingChanged5labelACyxAEGAA7BindingVyqd__G_SNyqd__G6StrideQyd__ySbcxyXEtcSBRd__SBAQRQlufC` | 1 | utm |
+| SwiftUI.framework | `_$s7SwiftUI6SliderVA2A9EmptyViewVRszAERs_rlE5value2in4step16onEditingChangedACyA2EGAA7BindingVyqd__G_SNyqd__G6StrideQyd__ySbctcSBRd__SBAPRQlufC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI6SliderVMa` | 1 | linearmouse |
+| SwiftUI.framework | `_$s7SwiftUI6SliderVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6SpacerVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6SpringV8duration6bounceACSd_SdtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6SpringVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6ToggleV4isOn5labelACyxGAA7BindingVySbG_xyXEtcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI6ToggleV7sources4isOn5labelACyxGqd___s7KeyPathCy7ElementQyd__AA7BindingVySbGGxyXEtcSkRd__lufC` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI6ToggleVA2A4TextVRszrlE_4isOnACyAEGAA18LocalizedStringKeyV_AA7BindingVySbGtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6ToggleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6ToggleVyxGAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6VStackV9alignment7spacing7contentACyxGAA19HorizontalAlignmentV_12CoreGraphics7CGFloatVSgxyXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6VStackVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6VStackVyxGAA4ViewAAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI6WindowV_2id7contentACyxGAA18LocalizedStringKeyV_SSxyXEtcfC` | 1 | orbstack |
+| SwiftUI.framework | `_$s7SwiftUI6ZStackV9alignment7contentACyxGAA9AlignmentV_xyXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6ZStackVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6ZStackVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI6ZStackVyxGAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7AnyViewVAA0D0AAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7AnyViewVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7AnyViewVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7AnyViewVyACxcAA0D0RzlufC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI7BindingV11transactionyACyxGAA11TransactionVF` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI7BindingV12wrappedValuexvg` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7BindingV12wrappedValuexvs` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7BindingV13dynamicMemberACyqd__Gs15WritableKeyPathCyxqd__G_tcluig` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI7BindingV13dynamicMemberACyqd__Gs15WritableKeyPathCyxqd__G_tcluipMV` | 1 | 1password |
+| SwiftUI.framework | `_$s7SwiftUI7BindingV14projectedValueACyxGvg` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI7BindingV3get3setACyxGxyc_yx_AA11TransactionVtctcfC` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI7BindingV3get3setACyxGxyc_yxctcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7BindingV8constantyACyxGxFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7BindingVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7BindingVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7CapsuleVAA5ShapeAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7CapsuleVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7CapsuleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7DividerVAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7DividerVACycfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7DividerVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7DividerVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI7EllipseVAA5ShapeAAMc` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI7EllipseVN` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI7ForEachVAA7Element_2IDQZRs_s12IdentifiableADRpzrlE6create_7contentACyxq_q0_Gx_q0_AHctFZ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI7ForEachVAAE6create_2id7contentACyxq_q0_Gx_s7KeyPathCy7ElementQzq_Gq0_AKctFZ` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI7ForEachVA2A4ViewR0_rlE_2id7contentACyxq_q0_Gx_s7KeyPathCy7ElementQzq_Gq0_AKctcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7ForEachVAA7Element_2IDQZRs_AA4ViewR0_s12IdentifiableADRpzrlE_7contentACyxq_q0_Gx_q0_AIctcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7ForEachVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7ForEachVMn` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI7ForEachVyxq_q0_GAA15TableRowContentA2aER0_rlMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI7ForEachVyxq_q0_GAA18DynamicViewContentA2A0F0R0_rlMc` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI7ForEachVyxq_q0_GAA22DynamicTableRowContentA2A0fgH0R0_rlMc` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI7SectionV6create10isExpanded7content6header6footerACyxq_q0_GAA7BindingVySbGSg_q_xq0_tFZ` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI7SectionVA2A9EmptyViewVRszAA0E0R_AaFR0_rlE6footer7contentACyAEq_q0_Gq0__q_yXEtcfC` | 1 | tailscale-app |
+| SwiftUI.framework | `_$s7SwiftUI7ForEachVyxq_q0_GAA4ViewA2aER0_rlMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7GesturePAAE7onEndedyAA01_eC0VyxGy5ValueQzcF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7GesturePAASQ5ValueRpzrlE9onChangedyAA01_fC0VyxGyAEcF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7SectionVA2A4ViewRzAaDR_AA05EmptyD0VRs0_rlE10isExpanded7content6headerACyxq_AFGAA7BindingVySbG_q_yXExyXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7SectionVA2A4ViewRzAaDR_AA05EmptyD0VRs0_rlE6header7contentACyxq_AFGx_q_yXEtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7SectionVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7SectionVyxq_q0_GAA4ViewA2aERzAaER_AaER0_rlMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7StepperV11onIncrement0D9Decrement0D14EditingChanged5labelACyxGyycSg_AIySbcxyXEtcfC` | 1 | pearcleaner |
 | SwiftUI.framework | `_$s7SwiftUI7StepperV5value2in4step6format5label16onEditingChangedACyxGAA7BindingVy11FormatInputQyd__G_SNyANGAM_6StrideQYd__qd__xyXEySbctc10Foundation09ParseableM5StyleRd__SBANRQSS0M6OutputRtd__lufC` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI7StepperVA2A4TextVRszrlE_5value2in4step16onEditingChangedACyAEGAA18LocalizedStringKeyV_AA7BindingVyqd__GSNyqd__G6StrideQyd__ySbctcSxRd__lufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7StepperVA2A4TextVRszrlE_5value2in4step16onEditingChangedACyAEGqd___AA7BindingVyqd_0_GSNyqd_0_G6StrideQyd_0_ySbctcSyRd__SxRd_0_r0_lufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7StepperVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI7StepperVyxGAA4ViewAAMc` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI7TabViewV7contentACys5NeverOAA0C14ContentBuilderV0G0VyAF_qd__GGqd__yXE_tcAFRszAKRs_AA0cG0Rd__lufC` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI7TabViewV9selection7contentACyxAA0C14ContentBuilderV0G0Vyx_qd__GGAA7BindingVyxG_qd__yXEtcAJRs_AA0cG0Rd__lufC` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI7TabViewV9selection7contentACyxq_GAA7BindingVyxGSg_q_yXEtcfC` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI8AnyShapeVAA4ViewAAMc` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI8AnyShapeVMn` | 1 | cmux |
@@ -2462,37 +3500,63 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI8AnyShapeVyACxcAA0D0RzlufC` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI8BindableVAARlzC11Observation10ObservableRzlEyACyxGxcfC` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI8DropInfoV18hasItemsConforming2toSbSaySSG_tF` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI8GroupBoxV5label7contentACyxq_Gx_q_yXEtcfC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI8GradientV10ColorSpaceV6deviceAEvgZ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8GradientV10ColorSpaceVMa` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8GradientV4StopV5color8locationAeA5ColorV_12CoreGraphics7CGFloatVtcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI8GradientV4StopVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI8GradientV4StopVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI8GradientV5stopsACSayAC4StopVG_tcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI8GradientV6colorsACSayAA5ColorVG_tcfC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI8GroupBoxVA2A4TextVRszrlE_7contentACyAEq_GAA18LocalizedStringKeyV_q_yXEtcfC` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI8GroupBoxVA2A4TextVRszrlE_7contentACyAEq_Gqd___q_yXEtcSyRd__lufC` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI8GroupBoxVMa` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI8GroupBoxVyxq_GAA4ViewAAMc` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI8HelpLinkV6actionACyyc_tcfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI8HelpLinkV6anchorACSS_tcfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI8HelpLinkVAA4ViewAAMc` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI8HelpLinkVMa` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI8HelpLinkVMn` | 1 | coteditor |
-| SwiftUI.framework | `_$s7SwiftUI8KeyPressV10charactersSSvg` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI8KeyPressV3keyAA0C10EquivalentVvg` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI8KeyPressV9modifiersAA14EventModifiersVvg` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI8MaterialV3barACvgZ` | 1 | jordanbaird-ice |
-| SwiftUI.framework | `_$s7SwiftUI8SettingsV7contentACyxGxyXE_tcfC` | 1 | utm |
-| SwiftUI.framework | `_$s7SwiftUI8SettingsVMn` | 1 | utm |
+| SwiftUI.framework | `_$s7SwiftUI8MaterialV7regularACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI8MaterialV9ultraThinACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI8MaterialVAA10ShapeStyleAAWP` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI8MaterialVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI8SettingsVyxGAA5SceneAAMc` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI8TableRowVMn` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI8TableRowVyACyxGxcfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI8TableRowVyxGAA0cD7ContentAAMc` | 1 | coteditor |
+| SwiftUI.framework | `_$s7SwiftUI9AlignmentV10topLeadingACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AlignmentV11topTrailingACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AlignmentV13bottomLeadingACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AlignmentV14bottomTrailingACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AlignmentV3topACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AlignmentV6bottomACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AlignmentV6centerACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AlignmentV7leadingACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AlignmentV8trailingACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AnimationV13repeatForever12autoreversesACSb_tF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AnimationV17interactiveSpring8response15dampingFraction13blendDurationACSd_S2dtFZ` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI9AnimationV2eeoiySbAC_ACtFZ` | 1 | clipy |
-| SwiftUI.framework | `_$s7SwiftUI9AnimationV6easeInACvgZ` | 1 | clipy |
+| SwiftUI.framework | `_$s7SwiftUI9AnimationV5delayyACSdF` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AnimationV6easeIn8durationACSd_tFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AnimationV6linear8durationACSd_tFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AnimationV6spring8response15dampingFraction13blendDurationACSd_S2dtFZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AnimationV7defaultACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9AnimationV7easeOut8durationACSd_tFZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI9AnimationV7easeOutACvgZ` | 1 | clipy |
+| SwiftUI.framework | `_$s7SwiftUI9AnimationV9easeInOut8durationACSd_tFZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI9AnimationVN` | 1 | clipy |
 | SwiftUI.framework | `_$s7SwiftUI9BlendModeO10colorDodgeyA2CmFWC` | 1 | raycast |
 | SwiftUI.framework | `_$s7SwiftUI9BlendModeO10differenceyA2CmFWC` | 1 | betterdisplay |
+| SwiftUI.framework | `_$s7SwiftUI9BlendModeO14destinationOutyA2CmFWC` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI9BlendModeO15destinationOveryA2CmFWC` | 1 | jordanbaird-ice |
 | SwiftUI.framework | `_$s7SwiftUI9BlendModeO5coloryA2CmFWC` | 1 | ghostty |
-| SwiftUI.framework | `_$s7SwiftUI9BlendModeO6screenyA2CmFWC` | 1 | raycast |
 | SwiftUI.framework | `_$s7SwiftUI9BlendModeO7lightenyA2CmFWC` | 1 | raycast |
-| SwiftUI.framework | `_$s7SwiftUI9BlendModeO8multiplyyA2CmFWC` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI9BlendModeO9softLightyA2CmFWC` | 1 | jordanbaird-ice |
+| SwiftUI.framework | `_$s7SwiftUI9BlendModeOMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9EmptyViewVAA0D0AAWP` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9EmptyViewVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9EmptyViewVN` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9FormStylePA2A07ColumnscD0VRszrlE7columnsAEvgZ` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI9LazyHGridV4rows9alignment7spacing11pinnedViews7contentACyxGSayAA8GridItemVG_AA17VerticalAlignmentV12CoreGraphics7CGFloatVSgAA016PinnedScrollableI0VxyXEtcfC` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI9LazyHGridVMn` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI9LazyHGridVyxGAA4ViewAAMc` | 1 | cmux |
@@ -2500,30 +3564,59 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftUI.framework | `_$s7SwiftUI9LazyVGridVMa` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI9NamespaceV2IDVN` | 1 | betterdisplay |
 | SwiftUI.framework | `_$s7SwiftUI9NamespaceV2IDVSHAAMc` | 1 | betterdisplay |
+| SwiftUI.framework | `_$s7SwiftUI9RectangleVAA5ShapeAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9RectangleVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9RectangleVN` | 1 | vorssaint |
 | SwiftUI.framework | `_$s7SwiftUI9ShareLinkVAAs5NeverORs_AERs0_AA07DefaultcD5LabelVRs1_rlE4item7subject7messageACys15CollectionOfOneVy10Foundation3URLVGA2eGGAO_AA4TextVSgATtcAPRszrlufC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI9ShareLinkVAAs5NeverORs_AERs0_rlE4item7subject7message5labelACys15CollectionOfOneVySSGA2Eq1_GSS_AA4TextVSgAPq1_yXEtcALRszrlufC` | 1 | cmux |
 | SwiftUI.framework | `_$s7SwiftUI9ShareLinkVyxq_q0_q1_GAA4ViewAAMc` | 1 | cmux |
-| SwiftUI.framework | `_$s7SwiftUI9TextFieldV4text6prompt4axis5labelACyxGAA7BindingVySSG_AA0C0VSgAA4AxisOxyXEtcfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI9TextFieldV5value6format6prompt5labelACyxGAA7BindingVy11FormatInputQyd__G_qd__AA0C0VSgxyXEtc10Foundation09ParseableJ5StyleRd__SS0J6OutputRtd__lufC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI9TextFieldV5value6format6prompt5labelACyxGAA7BindingVy11FormatInputQyd__SgG_qd__AA0C0VSgxyXEtc10Foundation09ParseableJ5StyleRd__SS0J6OutputRtd__lufC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI9TextFieldV5value9formatter6prompt5labelACyxGAA7BindingVyqd__G_So11NSFormatterCAA0C0VSgxyXEtclufC` | 1 | clipy |
-| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_4text4axisACyAEGqd___AA7BindingVySSGAA4AxisOtcSyRd__lufC` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_4text16onEditingChanged0F6CommitACyAEGAA18LocalizedStringKeyV_AA7BindingVySSGySbcyyctcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_4text16onEditingChanged0F6CommitACyAEGqd___AA7BindingVySSGySbcyyctcSyRd__lufC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_4text4axisACyAEGAA18LocalizedStringKeyV_AA7BindingVySSGAA4AxisOtcfC` | 1 | openclaw |
 | SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_4textACyAEG10Foundation23LocalizedStringResourceV_AA7BindingVySSGtcfC` | 1 | coteditor |
 | SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_5value6format6promptACyAEGAA18LocalizedStringKeyV_AA7BindingVy11FormatInputQyd__SgGqd__AESgtc10Foundation09ParseableL5StyleRd__SS0L6OutputRtd__lufC` | 1 | utm |
 | SwiftUI.framework | `_$s7SwiftUI9TextFieldVA2A0C0VRszrlE_5value9formatter16onEditingChanged0G6CommitACyAEGqd___AA7BindingVyqd_0_GSo11NSFormatterCySbcyyctcSyRd__r0_lufC` | 1 | linearmouse |
-| SwiftUI.framework | `_$s7SwiftUI9UnitPointV2eeoiySbAC_ACtFZ` | 1 | cmux |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9TextFieldVyxGAA4ViewAAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9TupleViewVMa` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9TupleViewVMn` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9TupleViewVyACyxGxcfC` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9TupleViewVyxGAA0D0AAMc` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9UnitCurveV5value2atS2d_tF` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9UnitCurveV9easeInOutACvgZ` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9UnitCurveVMa` | 1 | openclaw |
+| SwiftUI.framework | `_$s7SwiftUI9UnitPointV10topLeadingACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9UnitPointV14bottomTrailingACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9UnitPointV3topACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9UnitPointV6bottomACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9UnitPointV6centerACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9UnitPointV7leadingACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$s7SwiftUI9UnitPointV8trailingACvgZ` | 1 | vorssaint |
+| SwiftUI.framework | `_$sSd7SwiftUI16VectorArithmeticAAWP` | 1 | vorssaint |
 | SwiftUI.framework | `_$sSo8NSWindowC7SwiftUIE10beginSheet7content17completionHandlerAbCE07HostingE14RepresentationCy_xGxyXE_yycSgtAC4ViewRzlF` | 1 | coteditor |
-| SwiftUI.framework | `_$ss5Int32V7SwiftUI18_FormatSpecifiableACWP` | 1 | orbstack |
 | SwiftUI.framework | `_$ss5NeverO7SwiftUI15TableRowContentACWP` | 1 | clipy |
 | SwiftUI.framework | `_$ss5NeverO7SwiftUI18TableColumnContentACWP` | 1 | clipy |
+| SwiftUI.framework | `_$ss5NeverO7SwiftUI4ViewACWP` | 1 | vorssaint |
 | SwiftUI.framework | `_$ss6UInt32V7SwiftUI18_FormatSpecifiableACWP` | 1 | betterdisplay |
 | SwiftUI.framework | `_$ss6UInt64V7SwiftUI18_FormatSpecifiableACWP` | 1 | orbstack |
-| Symbols.framework | `_$s7Symbols17PulseSymbolEffectVAA0cD0AAMc` | 1 | cmux |
-| Symbols.framework | `_$s7Symbols17PulseSymbolEffectVACycfC` | 1 | cmux |
-| Symbols.framework | `_$s7Symbols17PulseSymbolEffectVMa` | 1 | cmux |
+| SwiftUI.framework | `_$sxSg7SwiftUI14ToolbarContentA2bCRzlMc` | 1 | openclaw |
+| SwiftUI.framework | `_$sxSg7SwiftUI4ViewA2bCRzlMc` | 1 | vorssaint |
+| Symbols.framework | `_$s7Symbols18BounceSymbolEffectVAA0cD0AAMc` | 1 | vorssaint |
+| Symbols.framework | `_$s7Symbols18BounceSymbolEffectVACycfC` | 1 | vorssaint |
+| Symbols.framework | `_$s7Symbols18BounceSymbolEffectVMa` | 1 | vorssaint |
+| Symbols.framework | `_$s7Symbols19SymbolEffectOptionsV5speedyACSdFZ` | 1 | vorssaint |
+| Symbols.framework | `_$s7Symbols19SymbolEffectOptionsV9repeatingACvgZ` | 1 | vorssaint |
 | Symbols.framework | `_$s7Symbols21DisappearSymbolEffectVAA0cD0AAMc` | 1 | coteditor |
 | Symbols.framework | `_$s7Symbols21DisappearSymbolEffectVACycfC` | 1 | coteditor |
 | Symbols.framework | `_$s7Symbols21DisappearSymbolEffectVMa` | 1 | coteditor |
+| Symbols.framework | `_$s7Symbols25VariableColorSymbolEffectV9iterativeACvg` | 1 | vorssaint |
+| Symbols.framework | `_$s7Symbols25VariableColorSymbolEffectV9reversingACvg` | 1 | vorssaint |
+| Symbols.framework | `_$s7Symbols25VariableColorSymbolEffectVAA0dE0AAMc` | 1 | vorssaint |
+| Symbols.framework | `_$s7Symbols25VariableColorSymbolEffectVACycfC` | 1 | vorssaint |
+| Symbols.framework | `_$s7Symbols25VariableColorSymbolEffectVMa` | 1 | vorssaint |
 | UIKit.framework | `_CGRectFromString` | 1 | whatsapp |
 | UIKit.framework | `_NSDirectionalEdgeInsetsZero` | 1 | whatsapp |
 | UIKit.framework | `_NSStringFromCGAffineTransform` | 1 | whatsapp |
