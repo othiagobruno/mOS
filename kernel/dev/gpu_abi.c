@@ -1,5 +1,6 @@
 /* Serviço da ABI em kernel/include/mos_gpu.h. O virtio-gpu 3D e o KMS entram por baixo. */
 #ifdef MOS_GPU_HOST
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
