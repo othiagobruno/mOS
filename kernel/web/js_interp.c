@@ -16,12 +16,19 @@ static int field_init_err;
 
 void js_ictx_save(jsictx *c) {
     c->script = cur_script; c->plabel = pending_label; c->label = J.label; c->srcname = J.srcname;
-    c->calldepth = J.calldepth; c->line = J.line;
+    c->calldepth = J.calldepth; c->line = J.line; c->realm = J.realm;
 }
 
 void js_ictx_restore(jsictx *c) {
     cur_script = c->script; pending_label = c->plabel; J.label = c->label; J.srcname = c->srcname;
     J.calldepth = c->calldepth; J.line = c->line;
+    if (c->realm && js_realm_alive(c->realm)) J.realm = c->realm;
+}
+
+/* reino ainda existe (a página pode ter fechado com funções dela guardadas em outra janela) */
+bool js_realm_alive(jsrealm *r) {
+    for (jsrealm *q = J.realms; q; q = q->next) if (q == r) return true;
+    return false;
 }
 
 /* ============================================================ ambientes */
@@ -201,6 +208,9 @@ jsv js_call_body(jsobj *f, jsv thisv, int argc, jsv *argv, jsv newtarget) {
     jsscript *saved_script = cur_script;
     int saved_line = J.line;
     cur_script = f->u.f.script;
+    /* a função roda no reino em que foi criada: globais e this padrão são os da janela dela */
+    jsrealm *saved_realm = J.realm;
+    if (cur_script && cur_script->realm && cur_script->realm != J.realm && js_realm_alive(cur_script->realm)) J.realm = cur_script->realm;
     J.calldepth++;
     jsv result = JS_UNDEF;
     jsenv *env = js_newenv(f->u.f.env, fi ? fi->nparams + fi->nvars + 2 : 2);
@@ -272,6 +282,7 @@ jsv js_call_body(jsobj *f, jsv thisv, int argc, jsv *argv, jsv newtarget) {
 done:
     J.calldepth--;
     cur_script = saved_script;
+    J.realm = saved_realm;
     if (result != JS_EXC) J.line = saved_line;
     if (newtarget != JS_UNDEF && result != JS_EXC) {
         if (jv_isobj(result)) return result;

@@ -33,10 +33,22 @@ const char *js_page_take_nav(js_page_t *p, bool *reload);
 /* History API: com anfitrião (WebView), pushState/replaceState/go viram operações para o histórico dele
  * (op 1 push, 2 replace — arg = id do estado; 3 go — arg = delta); voltar a uma entrada do mesmo documento chama
  * js_page_hist_restore (popstate/hashchange, sem recarregar) */
+typedef void (*js_init_fn)(js_page_t *p, int phase, void *ctx);
+js_page_t *js_cur_page(void);   /* página do reino que está rodando (quem chamou o nativo) */
 void js_page_set_history_host(js_page_t *p, bool host);
 void js_page_set_hist_len(js_page_t *p, int n);
 bool js_page_take_hist_op(js_page_t *p, int *op, int *arg, char *url, int cap);
 void js_page_hist_restore(js_page_t *p, const char *url, int sid);
+/* iframes: sandbox (antes dos scripts), janelas dos filhos em ordem (window[i], length), window.open pedido */
+enum { JS_SB_ON = 1, JS_SB_SCRIPTS = 2, JS_SB_SAME_ORIGIN = 4, JS_SB_FORMS = 8, JS_SB_POPUPS = 16, JS_SB_TOP_NAV = 32,
+       JS_SB_MODALS = 64, JS_SB_TOP_NAV_USER = 128, JS_SB_DOWNLOADS = 256 };
+void js_page_set_sandbox(js_page_t *p, int flags);
+int  js_page_sandbox(js_page_t *p);
+void js_page_set_frames(js_page_t *p, js_page_t **kids, int n);
+const char *js_page_take_popup(js_page_t *p);
+/* o anfitrião prepara as páginas dos iframes (a de cima guarda o gancho; frame.c chama nas fases 0 e 1) */
+void js_page_set_frame_init(js_page_t *p, js_init_fn fn, void *ctx);
+void js_page_run_frame_init(js_page_t *c, int phase);
 /* rolagem pedida por window.scrollTo (-1 = nenhuma) */
 int  js_page_take_scroll(js_page_t *p);
 /* formulário cujo envio foi pedido por form.submit() (NULL = nenhum) */
@@ -54,7 +66,7 @@ usize js_heap_bytes(void);
 /* ---------- WKWebView (kernel/web/webview.c, SYS_WEB) */
 /* js_page_new sem olhar js_enabled; init(p, 0, ctx) roda antes dos scripts da página e init(p, 1, ctx) depois dos
  * inline, antes do evento load (WKUserScript AtDocumentStart/AtDocumentEnd, messageHandlers) */
-js_page_t *js_page_new2(doc_t *d, const char *url, int vw, int vh, void (*init)(js_page_t *p, int phase, void *ctx), void *ctx);
+js_page_t *js_page_new2(doc_t *d, const char *url, int vw, int vh, js_init_fn init, void *ctx);
 /* tipos de valor (os mesmos números de MOS_WEB_T_* em syscall.h) */
 enum { JS_WK_UNDEFINED = 0, JS_WK_NULL, JS_WK_BOOL, JS_WK_NUMBER, JS_WK_STRING, JS_WK_JSON, JS_WK_DATE,
        JS_WK_EXCEPTION = -1, JS_WK_UNSUPPORTED = -2 };

@@ -2083,6 +2083,7 @@ jsscript *js_parse(const char *src, int len, const char *name, int line0, jsstr 
 jsscript *js_parse_ex(const char *src, int len, const char *name, int line0, bool module, jsstr **err) {
     jsscript *sc = gc_alloc(GT_SCRIPT, sizeof(jsscript));
     sc->is_module = module;
+    sc->realm = J.realm;
     parser *P = kcalloc(1, sizeof(parser));
     if (!P) { if (err) *err = js_strz("memória insuficiente"); return NULL; }
     __asm__ volatile("movq %%rsp, %0" : "=r"(P->stack_top));
