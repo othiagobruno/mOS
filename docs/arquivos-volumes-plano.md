@@ -17,7 +17,7 @@ de host passando (o build do projeto fica para o fim, pela fila `build-final.sh`
 | HFS+ | `fs/hfsplus.c`, `hfsplus_wr.c` | leitura; escrita com journal (`docs/volumes-graveis.md`). Falta criar xattr, hard links, links simbólicos, gravar modo/dono/flags/datas. |
 | APFS | `fs/apfs.c` | só leitura, sem snapshots/clones/criptografia; sem escrita. |
 | .dmg | `fs/dmg.c` | UDIF só leitura (raw, zero, ADC, zlib, bzip2, LZFSE, LZMA). Sem UDRW gravável, sparseimage/sparsebundle, criptografia, `hdiutil create/convert`. |
-| .pkg | `apps/pkgextract.c`, `tools/pkgtest.c` | xar + Payload (cpio gzip/pbzx) + Bom; scripts NÃO rodam; sem recibos, `pkgutil`, `installer`. |
+| .pkg | `apps/pkgextract.c` (removido na fase 8), `tools/pkgtest.c` | xar + Payload (cpio gzip/pbzx) + Bom; scripts NÃO rodam; sem recibos, `pkgutil`, `installer`. |
 | Bookmarks/alias | `libsystem/sys_zerados.c` | símbolos zerados. |
 | Quarentena | `libsystem/darwin.c`, `chrome.c` | só as constantes CF. |
 
@@ -68,4 +68,5 @@ de host passando (o build do projeto fica para o fim, pela fila `build-final.sh`
 | 3 FSEvents | ✅ journal no kernel (`vfsevents.c`) + FSEventStream sobre ele (`docs/fsevents.md`); testes 130 + 23 + 42. EVFILT_VNODE: o journal está pronto, o `kevent` é da Renata. |
 | 4 getattrlist e operações | ✅ `attrlist.c` + `vfsops.c`; testes 147 + 50. Hard links ficam com a fase 10. |
 | 9 Bookmarks, alias e quarentena | ✅ `bookmark.c`, `quarantine.c`, `/usr/bin/xattr` (`docs/bookmarks-quarentena.md`); teste 71. |
-| 5–8, 10, 11 | a fazer |
+| 8 Instalador .pkg | ✅ `/usr/sbin/installer`, `/usr/sbin/pkgutil`, motor `userland/pkg/pkgengine.c` (`docs/pkg-instalador.md`); teste 30 + pacote real. |
+| 5–7, 10, 11 | a fazer |
