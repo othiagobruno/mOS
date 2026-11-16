@@ -2322,6 +2322,7 @@ void cx_avfaudio_init(void) {
     M(AVAssetReaderTrackOutput, "copyNextSampleBuffer", output_copy);
     { extern void cx_avwriter_init(void); cx_avwriter_init(); }   /* AVAssetWriter: avwriter.c */
     { extern void cx_avexport_init(void); cx_avexport_init(); }   /* AVAssetExportSession: avexport_objc.c */
+    { extern void cx_avmetadata_init(void); cx_avmetadata_init(); }   /* AVMetadataItem: avmetadata.c */
     K(&AVPlayerItem_c, &AVPlayerItem_m, "AVPlayerItem", obj, sizeof(avitem_t) - 8);
     CM(AVPlayerItem, "playerItemWithURL:", item_with_url); CM(AVPlayerItem, "playerItemWithAsset:", item_with_asset);
     M(AVPlayerItem, "initWithURL:", item_init_url); M(AVPlayerItem, "initWithAsset:", item_init_asset);
