@@ -315,7 +315,9 @@ static void macos_run(const char *path, const char *name, const char *args) {
     kfree(all);
 }
 
+bool gatekeeper_allow(const char *path, const char *name, const char *args, void (*run)(const char *, const char *, const char *));   /* compat/gatekeeper.c */
 static void macos_run_args(const char *path, const char *name, const char *args) {
+    if (!gatekeeper_allow(path, name, args, macos_run_args)) return;   /* app baixado: o aviso pergunta antes */
     usize pl = strlen(path);
     bool gui = pl > 4 && !strcasecmp(path + pl - 4, ".app");   /* bundle: o app abre as próprias janelas */
     char *rep = kmalloc(8192);
