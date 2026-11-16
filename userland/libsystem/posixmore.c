@@ -956,7 +956,7 @@ int vm_region_recurse_64(unsigned task, unsigned long long *addr, unsigned long 
 }
 long __syscall(long n, ...) { (void)n; cx_errno = 78; return -1; }   /* ENOSYS */
 const void *_NSGetMachExecuteHeader(void) { return _dyld_get_image_header(0); }
-void CFStringNormalize(void *s, long form) { (void)s; (void)form; }   /* só NFC/ASCII no mOS: nada a fazer */
+/* CFStringNormalize: fdn_cfstring.c */
 
 /* getattrlist, setattrlist, getattrlistbulk: attrlist.c */
 /* ============================================================ sed 4.10, grep 3.12, tar 1.35, xz, curl 8.21, git 2.55 */

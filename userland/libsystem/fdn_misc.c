@@ -336,34 +336,6 @@ int CFStringGetIntValue(id s) {
     return v > 2147483647L ? 2147483647 : v < -2147483647L - 1 ? (int)(-2147483647L - 1) : (int)v;
 }
 double CFStringGetDoubleValue(id s) { return s ? strtod(cx_cstr(s), 0) : 0; }
-long CFStringCompareWithOptionsAndLocale(id a, id b, cf_range_t r, unsigned long opts, id locale) {
-    if (!a || !b) return a == b ? 0 : a ? 1 : -1;
-    /* kCFCompareLocalized (32) sem locale usa o atual, como o CF */
-    if (!locale && (opts & 32)) locale = MSG0(id, cls("NSLocale"), "currentLocale");
-    return MSG(long, a, "compare:options:range:locale:", b, opts & ~32UL, r, locale);
-}
-cf_range_t CFStringGetRangeOfComposedCharactersAtIndex(id s, long i) {
-    cf_range_t r = {i, 1};
-    if (!s) return r;
-    u64 n = MSG0(u64, s, "length");
-    if ((u64)i >= n) return r;
-    /* par substituto e marcas combinantes depois da base */
-    u16 c = MSG(u16, s, "characterAtIndex:", (u64)i);
-    long st = i;
-    if (c >= 0xDC00 && c <= 0xDFFF && i > 0) { u16 p = MSG(u16, s, "characterAtIndex:", (u64)(i - 1)); if (p >= 0xD800 && p <= 0xDBFF) st = i - 1; }
-    long e = st + 1;
-    u16 h = MSG(u16, s, "characterAtIndex:", (u64)st);
-    if (h >= 0xD800 && h <= 0xDBFF && (u64)e < n) { u16 l = MSG(u16, s, "characterAtIndex:", (u64)e); if (l >= 0xDC00 && l <= 0xDFFF) e++; }
-    while ((u64)e < n) {
-        u16 m = MSG(u16, s, "characterAtIndex:", (u64)e);
-        int comb = (m >= 0x0300 && m <= 0x036F) || (m >= 0x1AB0 && m <= 0x1AFF) || (m >= 0x1DC0 && m <= 0x1DFF) ||
-                   (m >= 0x20D0 && m <= 0x20FF) || (m >= 0xFE20 && m <= 0xFE2F) || (m >= 0xFE00 && m <= 0xFE0F) || m == 0x200D;
-        if (!comb) break;
-        e++;
-    }
-    r.location = st; r.length = e - st;
-    return r;
-}
 id CFStringCreateMutableWithExternalCharactersNoCopy(void *alloc, const u16 *chars, long n, long cap, void *ext) {
     (void)alloc; (void)cap; (void)ext;
     id m = MSG0(id, cls("NSMutableString"), "alloc");

@@ -35,38 +35,7 @@ void CFStringAppendFormat(id m, void *opts, id fmt, ...) {
     va_end(ap);
     if (s) MSG(void, m, "appendString:", s);
 }
-void CFStringLowercase(id m, void *locale) {
-    (void)locale;
-    if (!m) return;
-    id l = MSG0(id, m, "lowercaseString");
-    if (l) MSG(void, m, "setString:", l);
-}
-void CFStringUppercase(id m, void *locale) {
-    (void)locale;
-    if (!m) return;
-    id u = MSG0(id, m, "uppercaseString");
-    if (u) MSG(void, m, "setString:", u);
-}
 /* tira as repetições de `trim` do começo e do fim */
-void CFStringTrim(id m, id trim) {
-    if (!m || !trim) return;
-    const char *s = cx_cstr(m), *t = cx_cstr(trim);
-    if (!s || !t || !*t) return;
-    size_t n = strlen(s), k = strlen(t), a = 0, b = n;
-    while (b - a >= k && !strncmp(s + a, t, k)) a += k;
-    while (b - a >= k && !strncmp(s + b - k, t, k)) b -= k;
-    if (a == 0 && b == n) return;
-    MSG(void, m, "setString:", cx_str_n(s + a, b - a));
-}
-void CFStringTrimWhitespace(id m) {
-    if (!m) return;
-    const char *s = cx_cstr(m);
-    if (!s) return;
-    size_t n = strlen(s), a = 0, b = n;
-    while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\n' || s[a] == '\r')) a++;
-    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\n' || s[b - 1] == '\r')) b--;
-    MSG(void, m, "setString:", cx_str_n(s + a, b - a));
-}
 
 /* ---- CFArraySortValues: CFComparatorFunction(a, b, ctx) -> -1/0/1 */
 typedef struct { long location, length; } cf_range_t;

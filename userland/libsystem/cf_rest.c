@@ -82,36 +82,11 @@ void CFStringAppendCString(id m, const char *s, unsigned enc) {
     CFStringAppend(m, t);
     objc_release(t);
 }
-void CFStringAppendCharacters(id m, const unsigned short *ch, long n) {
-    id t = CFStringCreateWithCharacters(0, ch, n);
-    CFStringAppend(m, t);
-    if (t) objc_release(t);
-}
 id CFStringConvertEncodingToIANACharSetName(unsigned enc) {
     if (enc == 0x08000100u || enc == 0x0600) return S("UTF-8");
     if (enc == 0x14000100u || enc == 0x100) return S("UTF-16");
     if (enc == 1 || enc == 0x0600) return S("US-ASCII");
     return S("UTF-8");
-}
-id CFStringCreateArrayBySeparatingStrings(void *alloc, id s, id sep) {
-    const char *a = C(s), *b = C(sep);
-    id arr = CFArrayCreateMutable(alloc, 0, 0);
-    unsigned long sl = strlen(b);
-    const char *p = a;
-    if (!sl) { id one = S(a); CFArrayAppendValue(arr, one); objc_release(one); return arr; }
-    for (;;) {
-        const char *q = strstr(p, b);
-        id part = CFStringCreateWithCString(0, "", UTF8);
-        char *tmp;
-        unsigned long n = q ? (unsigned long)(q - p) : strlen(p);
-        tmp = malloc(n + 1);
-        if (tmp) { memcpy(tmp, p, n); tmp[n] = 0; objc_release(part); part = S(tmp); free(tmp); }
-        CFArrayAppendValue(arr, part);
-        objc_release(part);
-        if (!q) break;
-        p = q + sl;
-    }
-    return arr;
 }
 id CFStringCreateFromExternalRepresentation(void *alloc, id data, unsigned enc) {
     (void)alloc; (void)enc;
@@ -129,88 +104,7 @@ id CFStringCreateWithFormat(void *alloc, void *opts, id fmt, ...) {
     va_end(ap);
     return r ? objc_retain(r) : 0;
 }
-rng_t CFStringFind(id s, id find, unsigned long opts) {
-    rng_t in = {0, CFStringGetLength(s)}, out = {-1, 0};
-    if (!CFStringFindWithOptions(s, find, in, opts, &out)) return (rng_t){-1, 0};
-    return out;
-}
-long CFStringFindAndReplace(id s, id find, id repl, rng_t r, unsigned long opts) {
-    long n = 0;
-    (void)r; (void)opts;
-    while (CFStringFind(s, find, 0).loc >= 0 && n < 64) {
-        rng_t hit = CFStringFind(s, find, 0);
-        id head, tail, neu;
-        const char *a = C(s);
-        char *buf;
-        unsigned long L = strlen(a), fl = strlen(C(find)), rl = strlen(C(repl));
-        if (hit.loc < 0 || (unsigned long)hit.loc > L) break;
-        buf = malloc(L + rl + 1);
-        if (!buf) break;
-        memcpy(buf, a, (size_t)hit.loc);
-        memcpy(buf + hit.loc, C(repl), rl);
-        memcpy(buf + hit.loc + rl, a + hit.loc + (fl < L - (unsigned long)hit.loc ? fl : L - (unsigned long)hit.loc), L - (unsigned long)hit.loc - (fl < L ? fl : 0));
-        /* reconstitui pelo texto UTF-8 inteiro: loc é UTF-16, então só é exato em ASCII */
-        {
-            const char *src = C(s);
-            char *o = malloc(strlen(src) + rl + 1);
-            unsigned long i = 0, oN = 0, fN = strlen(C(find));
-            if (!o) { free(buf); break; }
-            while (src[i]) {
-                if (!strncmp(src + i, C(find), fN) && fN) {
-                    memcpy(o + oN, C(repl), rl); oN += rl; i += fN; n++;
-                } else o[oN++] = src[i++];
-            }
-            o[oN] = 0;
-            neu = S(o); free(o); free(buf);
-            if (neu && cx_responds(object_getClass(s), sel_registerName("setString:"))) MSG(void, s, "setString:", neu);
-            if (neu) objc_release(neu);
-            (void)head; (void)tail;
-            break;
-        }
-    }
-    return n;
-}
-rng_t CFStringFindCharacterFromSet(id s, id set, rng_t r, unsigned long opts) {
-    long i, n = CFStringGetLength(s);
-    rng_t miss = {-1, 0};
-    (void)opts;
-    if (r.loc < 0) r.loc = 0;
-    for (i = r.loc; i < r.loc + r.len && i < n; i++) {
-        unsigned short ch = 0;
-        rng_t one = {i, 1};
-        CFStringGetCharacters(s, one, &ch);
-        if (CFCharacterSetIsLongCharacterMember(set, ch)) return one;
-    }
-    return miss;
-}
-void CFStringFold(id s, unsigned long opts, id locale) { (void)opts; CFStringLowercase(s, locale); }
-const unsigned short *CFStringGetCharactersPtr(id s) { (void)s; return 0; }
 unsigned CFStringGetFastestEncoding(id s) { (void)s; return UTF8; }
-void CFStringReplace(id s, rng_t r, id repl) {
-    (void)r;
-    if (s && cx_responds(object_getClass(s), sel_registerName("setString:"))) MSG(void, s, "setString:", repl ? repl : cx_str(""));
-}
-unsigned char CFStringTransform(id s, rng_t *r, id transform, unsigned char reverse) {
-    char buf[256], out[256];
-    (void)r; (void)reverse;
-    cf_norm_utf8(C(s), 0, buf, (int)sizeof buf);
-    {
-        int i = 0, o = 0;
-        while (buf[i] && o + 1 < (int)sizeof out) {
-            unsigned char c = (unsigned char)buf[i];
-            if (c == 0xCC) { i += 2; continue; }
-            out[o++] = (char)c; i++;
-        }
-        out[o] = 0;
-    }
-    if (transform && cx_responds(object_getClass(s), sel_registerName("setString:"))) {
-        id n = S(out);
-        MSG(void, s, "setString:", n);
-        objc_release(n);
-        return 1;
-    }
-    return 0;
-}
 
 typedef struct { int k; char *s; int i, n, loc, len; } tok_o;
 static cx_class_t tok_c, tok_m;
