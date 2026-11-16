@@ -357,12 +357,12 @@ static bool gwait(amdgpu_t *a, u32 seq) {
 
 bool amdgpu_gfx_wait(amdgpu_t *a, u32 seq) { return a && a->gfx_ok && gwait(a, seq); }
 
-static u32 gsubmit(amdgpu_t *a, u64 ib_mc, u32 ndw) {
+static u32 gsubmit(amdgpu_t *a, u64 ib_mc, u32 ndw, u32 vmid) {
     if (!ndw || ndw > 0xFFFFFu || (ib_mc & 3) || !gring_room(a, 4 + 8)) return 0;
     gput(a, PM4_TYPE3(PM4_INDIRECT_BUFFER, 2));
     gput(a, (u32)ib_mc);
     gput(a, (u32)(ib_mc >> 32) & 0xFFFFu);
-    gput(a, ndw);                                 /* VMID 0 */
+    gput(a, ndw | vmid << 24);
     u32 seq = gfence(a);
     gcommit(a);
     a->gfx_ibs++;
@@ -371,7 +371,12 @@ static u32 gsubmit(amdgpu_t *a, u64 ib_mc, u32 ndw) {
 
 u32 amdgpu_gfx_submit(amdgpu_t *a, u64 ib_mc, u32 ndw) {
     if (!a || !a->gfx_ok) return 0;
-    return gsubmit(a, ib_mc, ndw);
+    return gsubmit(a, ib_mc, ndw, 0);
+}
+
+u32 amdgpu_gfx_submit_vm(amdgpu_t *a, amd_vm_t *vm, u64 ib_va, u32 ndw) {
+    if (!a || !a->gfx_ok || !vm || !vm->vmid) return 0;
+    return gsubmit(a, ib_va, ndw, vm->vmid);
 }
 
 static bool cp_resume(amdgpu_t *a) {
@@ -383,7 +388,7 @@ static bool cp_resume(amdgpu_t *a) {
     put_ucode(a, R_CP_CE_UCODE_ADDR, R_CP_CE_UCODE_DATA, 0, &ce);
     put_ucode(a, R_CP_ME_RAM_WADDR, R_CP_ME_RAM_DATA, 0, &me);
     a->pfp_fw_version = pfp.ucode_version; a->ce_fw_version = ce.ucode_version; a->me_fw_version = me.ucode_version;
-    WR(a, R_CP_MEC_CNTL, CP_MEC_HALT_BOTH);       /* compute parado até a fila de compute subir */
+    WR(a, R_CP_MEC_CNTL, CP_MEC_RESET_ALL);       /* compute parado até a fila de compute subir (compute.c) */
 
     /* anel 0 */
     WR(a, R_CP_RB_WPTR_DELAY, 0);
@@ -446,7 +451,7 @@ static bool gfx_tests(amdgpu_t *a, u64 ib_phys) {
     ib[3] = (u32)(dst >> 32);
     ib[4] = 0xDEADBEEFu;
     WMB();
-    u32 seq = gsubmit(a, amdgpu_vram_to_mc(a, ib_phys), 5);
+    u32 seq = gsubmit(a, amdgpu_vram_to_mc(a, ib_phys), 5, 0);
     if (!seq || !gwait(a, seq) || a->gwb_cpu[8] != 0xDEADBEEFu) {
         kprintf("amdgpu: o IB de teste não rodou (writeback 0x%x, fence %u de %u)\n", a->gwb_cpu[8], a->gwb_cpu[4], seq);
         return false;
@@ -510,6 +515,8 @@ bool amdgpu_gfx_init(amdgpu_t *a) {
         kprintf("amdgpu: motor 3D desligado; tela e SDMA seguem\n");
         return false;
     }
+    a->gfx_ok = true;
+    if (!amdgpu_compute_init(a)) kprintf("amdgpu: sem fila de compute; o anel GFX segue\n");
     kprintf("amdgpu: GFX 9 no ar: %u CUs (máscara 0x%x), GB_ADDR_CONFIG 0x%x, PFP 0x%x CE 0x%x ME 0x%x RLC 0x%x\n",
             a->cu_count, a->cu_mask, a->gb_addr_config, a->pfp_fw_version, a->ce_fw_version, a->me_fw_version, a->rlc_fw_version);
     return true;

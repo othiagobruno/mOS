@@ -55,5 +55,6 @@ int tls_get_suite(const tls_conn_t *c);
 int  tls_handshake(tls_conn_t *c);
 int  tls_send(tls_conn_t *c, const void *data, int len);
 int  tls_recv(tls_conn_t *c, void *buf, int max);
+int  tls_pending(const tls_conn_t *c);   /* 1: tls_recv entrega sem ler mais do TCP */
 void tls_free(tls_conn_t *c);
 const char *tls_error(tls_conn_t *c);

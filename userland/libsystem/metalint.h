@@ -57,6 +57,10 @@ typedef struct mrpipe {
     msl_fn_t *vfn, *ffn;
     cattach_t ca[8];
     int dfmt, sfmt, raster, samples, a2c, has_vd;
+    int a2one;                /* alphaToOneEnabled */
+    int fmask;                /* índice do campo [[sample_mask]] em fout (-1) */
+    int per_sample;           /* o fragmento lê [[sample_id]] ou tem entrada sample_*: roda por amostra */
+    u32 centroid;             /* entradas do fragmento com centroid_* (bit por campo de fin) */
     vattr_t attr[31];
     vlayout_t lay[31];
     /* ligações calculadas na criação */
@@ -96,6 +100,7 @@ typedef struct cstate {
 typedef struct {
     mtex_t *tex, *resolve;
     int level, slice, plane, load, store, rlevel, rslice, rplane;
+    int rfilter;              /* depthResolveFilter / stencilResolveFilter */
     mtl_cc_t cc;
     double cd;
     u32 cs;

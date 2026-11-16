@@ -63,5 +63,8 @@ done
 # AUGraph e AUMultiChannelMixer (o mesmo coreaudio.c)
 gcc -O1 -w -c "$R/tools/augraph_test.c" -o "$T/agt.o" && g++ "$T/agt.o" "$T/ca.o" "$T/stubs.o" "$T"/o/*.o -lm -lpthread -o "$T/agt" || exit 1
 n=$((n+1)); "$T/agt" && ok=$((ok+1))
+# CoreMIDI (fontes/destinos virtuais, UMP 1.0/2.0)
+gcc -O1 -w -I"$R/userland/libsystem" "$R/tools/coremidi_test.c" "$R/userland/libsystem/coremidi.c" -lpthread -o "$T/cmt" || exit 1
+n=$((n+1)); "$T/cmt" && ok=$((ok+1))
 echo "midia-audio: $ok/$n ok"
 [ "$ok" = "$n" ]

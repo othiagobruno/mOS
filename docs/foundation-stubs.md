@@ -1,26 +1,25 @@
 # Stubs restantes da frente Foundation/CoreFoundation
 
-Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**.
+Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **146**.
 
 | Grupo | Quantidade |
 |---|---:|
 | extensões | 23 |
-| NSURLSession | 15 |
-| NSNotificationCenter | 13 |
+| NSURLSession | 14 |
+| NSNotificationCenter | 12 |
 | PredicateExpressions | 9 |
 | FloatingPointFormatStyle | 9 |
-| NSRunLoop | 8 |
+| NSRunLoop | 7 |
 | NSURLSessionWebSocketTask | 6 |
 | AsyncLineSequence | 5 |
 | KeyPathComparator | 5 |
 | NumberFormatStyleConfiguration | 5 |
 | NSProgress | 5 |
-| NSTimer | 5 |
 | AttributedString | 4 |
 | URL | 4 |
 | NSFileHandle | 4 |
 | NSKeyedUnarchiver | 4 |
-| NSObject | 3 |
+| NSTimer | 3 |
 | ListFormatStyle | 2 |
 | URLResourceValues | 2 |
 | _AsyncBytesBuffer | 2 |
@@ -29,6 +28,7 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
 | NSOrderedSet | 2 |
 | NSData | 2 |
 | NSCoder | 2 |
+| NSObject | 2 |
 | FormatStyle | 1 |
 | StringStyle | 1 |
 | DateInterval | 1 |
@@ -36,11 +36,8 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
 | IntegerFormatStyle | 1 |
 | _KeyValueCodingAndObservingPublishing | 1 |
 | Data | 1 |
-| Date | 1 |
 | NSPredicate | 1 |
 | NSKeyedArchiver | 1 |
-| CKFetchRecordZoneChangesOperation | 1 |
-| NSScanner | 1 |
 
 ## extensões (23)
 
@@ -91,7 +88,7 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
 - `$ss8DurationV10FoundationE9formattedy12FormatOutputQzxAC0D5StyleRzAB0D5InputRtzlF`  
   (extension in Foundation):Swift.Duration.formatted<A where A: Foundation.FormatStyle, A.FormatInput == Swift.Duration>(A) -> A.FormatOutput
 
-## NSURLSession (15)
+## NSURLSession (14)
 
 - `$sSo12NSURLSessionC10FoundationE10AsyncBytesV04makeC8IteratorAE0F0VyF`  
   (extension in Foundation):__C.NSURLSession.AsyncBytes.makeAsyncIterator() -> (extension in Foundation):__C.NSURLSession.AsyncBytes.Iterator
@@ -101,8 +98,6 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
   type metadata accessor for (extension in Foundation):__C.NSURLSession.AsyncBytes
 - `$sSo12NSURLSessionC10FoundationE10AsyncBytesVMn`  
   nominal type descriptor for (extension in Foundation):__C.NSURLSession.AsyncBytes
-- `$sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc`  
-  protocol conformance descriptor for (extension in Foundation):__C.NSURLSession.DataTaskPublisher : Combine.Publisher in Foundation
 - `$sSo12NSURLSessionC10FoundationE17DataTaskPublisherVMa`  
   type metadata accessor for (extension in Foundation):__C.NSURLSession.DataTaskPublisher
 - `$sSo12NSURLSessionC10FoundationE17DataTaskPublisherVMn`  
@@ -124,7 +119,7 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
 - `$sSo12NSURLSessionC10FoundationE8download4from8delegateAC3URLV_So13NSURLResponseCtAH_So0A12TaskDelegate_pSgtYaKFTu`  
   async function pointer to (extension in Foundation):__C.NSURLSession.download(from: Foundation.URL, delegate: __C.NSURLSessionTaskDelegate?) async throws -> (Foundation.URL, __C.NSURLResponse)
 
-## NSNotificationCenter (13)
+## NSNotificationCenter (12)
 
 - `$sSo20NSNotificationCenterC10FoundationE13NotificationsC17makeAsyncIteratorAE0G0VyF`  
   (extension in Foundation):__C.NSNotificationCenter.Notifications.makeAsyncIterator() -> (extension in Foundation):__C.NSNotificationCenter.Notifications.Iterator
@@ -144,8 +139,6 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
   protocol conformance descriptor for (extension in Foundation):__C.NSNotificationCenter.Notifications : Swift.AsyncSequence in Foundation
 - `$sSo20NSNotificationCenterC10FoundationE13notifications5named6objectAbCE13NotificationsCSo0A4Namea_yXlSgtF`  
   (extension in Foundation):__C.NSNotificationCenter.notifications(named: __C.NSNotificationName, object: Swift.AnyObject?) -> (extension in Foundation):__C.NSNotificationCenter.Notifications
-- `$sSo20NSNotificationCenterC10FoundationE9PublisherV7CombineAdCMc`  
-  protocol conformance descriptor for (extension in Foundation):__C.NSNotificationCenter.Publisher : Combine.Publisher in Foundation
 - `$sSo20NSNotificationCenterC10FoundationE9PublisherVMa`  
   type metadata accessor for (extension in Foundation):__C.NSNotificationCenter.Publisher
 - `$sSo20NSNotificationCenterC10FoundationE9PublisherVMn`  
@@ -195,7 +188,7 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
 - `$s10Foundation24FloatingPointFormatStyleVyxGAA0dE0AAMc`  
   protocol conformance descriptor for Foundation.FloatingPointFormatStyle<A> : Foundation.FormatStyle in Foundation
 
-## NSRunLoop (8)
+## NSRunLoop (7)
 
 - `$sSo9NSRunLoopC10FoundationE16SchedulerOptionsVMa`  
   type metadata accessor for (extension in Foundation):__C.NSRunLoop.SchedulerOptions
@@ -211,8 +204,6 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
   type metadata accessor for (extension in Foundation):__C.NSRunLoop.SchedulerTimeType.Stride
 - `$sSo9NSRunLoopC10FoundationE17SchedulerTimeTypeV6StrideVMn`  
   nominal type descriptor for (extension in Foundation):__C.NSRunLoop.SchedulerTimeType.Stride
-- `$sSo9NSRunLoopC7Combine9Scheduler10FoundationMc`  
-  protocol conformance descriptor for __C.NSRunLoop : Combine.Scheduler in Foundation
 
 ## NSURLSessionWebSocketTask (6)
 
@@ -281,19 +272,6 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
 - `$sSo10NSProgressC10FoundationE22estimatedTimeRemainingSdSgvs`  
   (extension in Foundation):__C.NSProgress.estimatedTimeRemaining.setter : Swift.Double?
 
-## NSTimer (5)
-
-- `$sSo7NSTimerC10FoundationE14TimerPublisherC7Combine011ConnectableD0ACMc`  
-  protocol conformance descriptor for (extension in Foundation):__C.NSTimer.TimerPublisher : Combine.ConnectablePublisher in Foundation
-- `$sSo7NSTimerC10FoundationE14TimerPublisherC7connect7Combine11Cancellable_pyF`  
-  (extension in Foundation):__C.NSTimer.TimerPublisher.connect() -> Combine.Cancellable
-- `$sSo7NSTimerC10FoundationE14TimerPublisherCMa`  
-  type metadata accessor for (extension in Foundation):__C.NSTimer.TimerPublisher
-- `$sSo7NSTimerC10FoundationE14TimerPublisherCMn`  
-  nominal type descriptor for (extension in Foundation):__C.NSTimer.TimerPublisher
-- `$sSo7NSTimerC10FoundationE7publish5every9tolerance2on2in7optionsAbCE14TimerPublisherCSd_SdSgSo9NSRunLoopCSo0kL4ModeaAnCE16SchedulerOptionsVSgtFZ`  
-  static (extension in Foundation):__C.NSTimer.publish(every: Swift.Double, tolerance: Swift.Double?, on: __C.NSRunLoop, in: __C.NSRunLoopMode, options: (extension in Foundation):__C.NSRunLoop.SchedulerOptions?) -> (extension in Foundation):__C.NSTimer.TimerPublisher
-
 ## AttributedString (4)
 
 - `$s10Foundation16AttributedStringV17FormattingOptionsVMa`  
@@ -338,14 +316,14 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
 - `$sSo17NSKeyedUnarchiverC10FoundationE31unarchiveTopLevelObjectWithDatayypSgAC0I0VKFZ`  
   static (extension in Foundation):__C.NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(Foundation.Data) throws -> Any?
 
-## NSObject (3)
+## NSTimer (3)
 
-- `$sSo8NSObjectC10FoundationE26KeyValueObservingPublisherVMn`  
-  nominal type descriptor for (extension in Foundation):__C.NSObject.KeyValueObservingPublisher
-- `$sSo8NSObjectC10FoundationE26KeyValueObservingPublisherVy_xq_G7Combine0F0ACMc`  
-  protocol conformance descriptor for (extension in Foundation):__C.NSObject.KeyValueObservingPublisher<A, B> : Combine.Publisher in Foundation
-- `$sSo8NSObjectCs23CustomStringConvertible10FoundationMc`  
-  protocol conformance descriptor for __C.NSObject : Swift.CustomStringConvertible in Foundation
+- `$sSo7NSTimerC10FoundationE14TimerPublisherCMa`  
+  type metadata accessor for (extension in Foundation):__C.NSTimer.TimerPublisher
+- `$sSo7NSTimerC10FoundationE14TimerPublisherCMn`  
+  nominal type descriptor for (extension in Foundation):__C.NSTimer.TimerPublisher
+- `$sSo7NSTimerC10FoundationE7publish5every9tolerance2on2in7optionsAbCE14TimerPublisherCSd_SdSgSo9NSRunLoopCSo0kL4ModeaAnCE16SchedulerOptionsVSgtFZ`  
+  static (extension in Foundation):__C.NSTimer.publish(every: Swift.Double, tolerance: Swift.Double?, on: __C.NSRunLoop, in: __C.NSRunLoopMode, options: (extension in Foundation):__C.NSRunLoop.SchedulerOptions?) -> (extension in Foundation):__C.NSTimer.TimerPublisher
 
 ## ListFormatStyle (2)
 
@@ -403,6 +381,13 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
 - `$sSo7NSCoderC10FoundationE20decodeArrayOfObjects7ofClass6forKeySayxGSgxm_SStSo8NSObjectCRbzSo14NSSecureCodingRzlF`  
   (extension in Foundation):__C.NSCoder.decodeArrayOfObjects<A where A: __C.NSObject, A: __C.NSSecureCoding>(ofClass: A.Type, forKey: Swift.String) -> [A]?
 
+## NSObject (2)
+
+- `$sSo8NSObjectC10FoundationE26KeyValueObservingPublisherVMn`  
+  nominal type descriptor for (extension in Foundation):__C.NSObject.KeyValueObservingPublisher
+- `$sSo8NSObjectCs23CustomStringConvertible10FoundationMc`  
+  protocol conformance descriptor for __C.NSObject : Swift.CustomStringConvertible in Foundation
+
 ## FormatStyle (1)
 
 - `$s10Foundation11FormatStylePAAs8DurationVAAE04TimebC0VRszrlE4time7patternA2G7PatternV_tFZ`  
@@ -438,11 +423,6 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
 - `$s10Foundation4DataV6append10contentsOfySays5UInt8VG_tF`  
   Foundation.Data.append(contentsOf: [Swift.UInt8]) -> ()
 
-## Date (1)
-
-- `$s10Foundation4DateV8CloudKit21CKRecordValueProtocolADWP`  
-  protocol witness table for Foundation.Date : CloudKit.CKRecordValueProtocol in CloudKit
-
 ## NSPredicate (1)
 
 - `$sSo11NSPredicateC10FoundationE6format_ABSSh_s7CVarArg_pdtcfC`  
@@ -452,13 +432,3 @@ Gerado por `tools/fdn-inventario.py` a partir de `sys_zerados.c`. Total: **155**
 
 - `$sSo15NSKeyedArchiverC10FoundationE15encodeEncodable_6forKeyyx_SStKSERzlF`  
   (extension in Foundation):__C.NSKeyedArchiver.encodeEncodable<A where A: Swift.Encodable>(_: A, forKey: Swift.String) throws -> ()
-
-## CKFetchRecordZoneChangesOperation (1)
-
-- `$sSo33CKFetchRecordZoneChangesOperationC8CloudKitE06recordC16FetchResultBlockySo08CKRecordC2IDC_s0J0OySo19CKServerChangeTokenC06serveroP0_10Foundation4DataVSg06clientopS0Sb10moreComingts5Error_pGtcSgvs`  
-  (extension in CloudKit):__C.CKFetchRecordZoneChangesOperation.recordZoneFetchResultBlock.setter : ((__C.CKRecordZoneID, Swift.Result<(serverChangeToken: __C.CKServerChangeToken, clientChangeTokenData: Foundation.Data?, moreComing: Swift.Bool), Swift.Error>) -> ())?
-
-## NSScanner (1)
-
-- `$sSo9NSScannerC10FoundationE9scanInt3214representations0D0VSgAbCE20NumberRepresentationO_tF`  
-  (extension in Foundation):__C.NSScanner.scanInt32(representation: (extension in Foundation):__C.NSScanner.NumberRepresentation) -> Swift.Int32?

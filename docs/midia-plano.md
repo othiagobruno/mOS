@@ -13,7 +13,7 @@ Licenças de terceiros em [midia-licencas.md](midia-licencas.md). Build completo
 | AAC | só reconhecido (ADTS, `mp4a`) | decodificar AAC-LC, HE-AAC v1/v2 (SBR/PS), xHE; codificar (AudioConverter, AVAssetWriter) |
 | Opus | só reconhecido (Ogg, CAF) | decodificar e codificar (libopus) |
 | Contêiner | `walk_mp4` mínimo (só stsz/ALAC) | demuxer ISO BMFF completo (MP4/MOV/M4A/fMP4), Matroska/WebM, Ogg, ADTS |
-| H.264 | decodificador Baseline (h264bsd), codificador só I_PCM | Main/High (CABAC, B, 8x8, entrelaçado), codificador real (intra+P, CAVLC) |
+| H.264 | decodificador Baseline/Main/High (OpenH264 corrigido, bit-exato), codificador só I_PCM | entrelaçado (PAFF/MBAFF), High 10/4:2:2, codificador real (intra+P, CAVLC) |
 | HEVC | stub (-12906/-12908) | decodificador Main/Main10 |
 | VP9 / AV1 | nada | libvpx (BSD) e dav1d (BSD-2) |
 | AVPlayer vídeo | AVPlayer só áudio | demux + decodificação em linha de tempo, AVPlayerItemVideoOutput, AVPlayerLayer, AVSampleBufferDisplayLayer, sincronismo A/V |
@@ -54,18 +54,19 @@ não tem teste (o ffmpeg daqui não tem codificador HE-AAC; entra junto do codif
 (Windows) e o libSystem arm64 ainda não ligam `audiodec.c` nem os codecs. A decodificação ainda é do arquivo inteiro
 ao abrir; a leitura em fluxo entra com o AVPlayer de vídeo.
 
-## H.264 Main/High: avaliação do OpenH264 2.6.0 (BSD-2)
+## H.264 Main/High: OpenH264 2.6.0 (BSD-2) corrigido
 
 Critério: decodificação H.264 é determinística, então o decodificador tem de sair **bit-exato** ao ffmpeg.
-Harness de avaliação fora do repositório (Annex B → I420 → `cmp` contra `ffmpeg -f rawvideo`), 352x288, x264:
+O OpenH264 original errava em quadros B (Main/High). Corrigido e vendorizado em `userland/third_party/openh264`
+(só o decodificador, sem assembly; alterações e motivo de cada uma em `README.mos.md`, patch em `mos.patch`):
+16x8/8x16 bipreditos, sub-blocos 8x4/4x8/4x4, bS interno de B_Skip/B_Direct, L1 do colocalizado num quadro B,
+pool de quadros pelo DPB do nível e saída em ordem de decodificação (para o VideoToolbox).
 
-| Fluxo x264 | Resultado |
+| Teste | Resultado |
 |---|---|
-| Baseline | bit-exato |
-| Main / High (padrão do x264, com B-frames) | **difere** só nos quadros B; I e P bit-exatos |
-| B sem subpartições (`partitions=none`), CAVLC ou CABAC, i4x4, i8x8 | bit-exato |
-| B com `b8x8` (direto espacial, temporal ou nenhum) ou com `p8x8` | **difere** |
+| `tools/h264_test.sh`: 20 fluxos do x264 (Baseline, Main, High, CAVLC e CABAC, b-pyramid normal/strict, direto espacial e temporal, ponderada P e B, 6 referências, b-adapt 2 com 8 B, slices, sem deblocking, QP 10 e 45, recorte 426x238, 720p) | **20/20 bit-exatos** ao ffmpeg; na ordem de decodificação saem os mesmos quadros |
+| Fora do repo (harness em Agents/isabela/h264-harness): os mesmos + 1080p e conteúdo `life`/`mandelbrot` | 24/24 bit-exatos |
+| Entrelaçado (PAFF/MBAFF) | o OpenH264 não decodifica: falha limpa (0 quadros); item separado |
 
-Conclusão: o OpenH264 tem defeito na predição/reconstrução de macroblocos B com subpartições 8x8. Próximo passo:
-corrigir no fonte vendido (com teste bit-exato) ou usar outro decodificador permissivo. Entrelaçado (PAFF/MBAFF)
-o OpenH264 não decodifica; isso fica como item separado.
+Próximo: compilar freestanding no `tools/build-midia.sh` (x86_64 e arm64), casca C `cx_h264_*` e trocar o h264bsd do
+`VTDecompressionSession` por ela, com pts, ordem de decodificação/exibição e os formatos de pixel pedidos.

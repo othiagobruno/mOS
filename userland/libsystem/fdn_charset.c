@@ -137,6 +137,16 @@ static void read_any(crs_t *d, id o) {
     if (b) crs_from_bitmap(d, MSG0(const u8 *, b, "bytes"), (u32)MSG0(u64, b, "length"));
 }
 
+/* pertinência de um escalar em qualquer NSCharacterSet (o NSScanner usa): direto nas faixas quando é nosso,
+ * senão pela subclasse (o CharacterSet do Swift vem assim): -characterIsMember: no plano básico, que é o método
+ * que toda subclasse precisa ter, e -longCharacterIsMember: fora dele */
+int cx_charset_has(id set, u32 ch) {
+    if (!set) return 0;
+    if (ours(set)) return crs_has(&C(set)->s, ch);
+    if (ch <= 0xFFFF) return MSG(BOOL, set, "characterIsMember:", (u16)ch) != 0;
+    return MSG(BOOL, set, "longCharacterIsMember:", ch) != 0;
+}
+
 /* ---------------------------------------------------------------- construtores */
 static id k_alloc(id k, SEL c) { (void)c; return mk((cx_class_t *)k); }
 static id k_range(id k, SEL c, rng_t r) {

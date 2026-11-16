@@ -1,0 +1,345 @@
+Somente em codec/api: meson.build
+Somente em codec/api/wels: meson.build
+Somente em codec: build
+Somente em codec/common: arm
+Somente em codec/common: arm64
+Somente em codec/common: generate_version.sh
+Somente em codec/common/inc: .gitignore
+Somente em codec/common/inc: version_gen.h.template
+Somente em codec/common: loongarch
+Somente em codec/common: meson.build
+Somente em codec/common: mips
+Somente em codec/common: targets.mk
+Somente em codec/common: x86
+Somente em codec: console
+Somente em codec/decoder/core: arm
+Somente em codec/decoder/core: arm64
+Somente em codec/decoder/core: loongarch
+Somente em codec/decoder/core: mips
+diff -ru codec/decoder/core/src/deblocking.cpp codec/decoder/core/src/deblocking.cpp
+--- codec/decoder/core/src/deblocking.cpp	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/core/src/deblocking.cpp	2026-11-16 11:59:07.118770597 -0300
+@@ -1181,7 +1181,10 @@
+       * (uint32_t*)nBS[1][0] = 0;
+     }
+     //SKIP MB_16x16 or others
+-    if (IS_SKIP (iCurMbType)) {
++    if (bBSlice && IS_DIRECT (iCurMbType)) {
++      /* B_Skip e B_Direct_16x16: os vetores do direto mudam por 8x8 (ou 4x4), as arestas internas dependem deles */
++      DeblockingBSliceBSInsideMBNormal (pFilter, pCurDqLayer, nBS, GetPNzc (pCurDqLayer, iMbXyIndex), iMbXyIndex);
++    } else if (IS_SKIP (iCurMbType)) {
+       * (uint32_t*)nBS[0][1] = * (uint32_t*)nBS[0][2] = * (uint32_t*)nBS[0][3] =
+                                  * (uint32_t*)nBS[1][1] = * (uint32_t*)nBS[1][2] = * (uint32_t*)nBS[1][3] = 0;
+     } else {
+diff -ru codec/decoder/core/src/decoder.cpp codec/decoder/core/src/decoder.cpp
+--- codec/decoder/core/src/decoder.cpp	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/core/src/decoder.cpp	2026-11-16 11:59:07.119252092 -0300
+@@ -439,7 +439,27 @@
+   if ((pCtx == NULL) || (pCtx->pSps == NULL)) {
+     iNumRefFrames = MAX_REF_PIC_COUNT + 2;
+   } else {
+-    iNumRefFrames = pCtx->pSps->iNumRefFrames + 2;
++    /* DPB do padrão (A.3.1, Tabela A-1): max_dec_frame_buffering do VUI ou MaxDpbMbs do nível; os quadros B que esperam a
++     * saída ocupam o pool junto com as referências. +2: o quadro em decodificação e a troca da ocultação de erro. */
++    PSps pSps = pCtx->pSps;
++    int32_t iDpb = pSps->iNumRefFrames;
++    if (pSps->bVuiParamPresentFlag && pSps->sVui.bBitstreamRestrictionFlag) {
++      iDpb = WELS_MAX (iDpb, (int32_t)pSps->sVui.uiMaxDecFrameBuffering);
++    } else {
++      static const struct { uint8_t uiLevel; int32_t iMaxDpbMbs; } kLevels[] = {
++        {9, 396}, {10, 396}, {11, 900}, {12, 2376}, {13, 2376}, {20, 2376}, {21, 4752}, {22, 8100}, {30, 8100}, {31, 18000},
++        {32, 20480}, {40, 32768}, {41, 32768}, {42, 34816}, {50, 110400}, {51, 184320}, {52, 184320}, {60, 696320}, {61, 696320},
++        {62, 696320}
++      };
++      int32_t iMaxDpbMbs = 696320;
++      uint8_t uiLevel = (pSps->uiLevelIdc == 11 && pSps->bConstraintSet3Flag) ? 9 : pSps->uiLevelIdc;   /* nível 1b */
++      for (uint32_t k = 0; k < sizeof (kLevels) / sizeof (kLevels[0]); k++)
++        if (kLevels[k].uiLevel == uiLevel) iMaxDpbMbs = kLevels[k].iMaxDpbMbs;
++      const int32_t kiFrameMbs = (int32_t) (pSps->iMbWidth * pSps->iMbHeight);
++      if (kiFrameMbs > 0) iDpb = WELS_MAX (iDpb, iMaxDpbMbs / kiFrameMbs);
++    }
++    iDpb = WELS_MIN (iDpb, MAX_REF_PIC_COUNT);
++    iNumRefFrames = iDpb + 2;
+     int32_t  iThreadCount = GetThreadCount (pCtx);
+     if (iThreadCount > 1) {
+       //due to thread and reordering buffering, it needs more dpb space
+diff -ru codec/decoder/core/src/mv_pred.cpp codec/decoder/core/src/mv_pred.cpp
+--- codec/decoder/core/src/mv_pred.cpp	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/core/src/mv_pred.cpp	2026-11-16 11:59:07.122252114 -0300
+@@ -346,6 +346,9 @@
+     mbType |= MB_TYPE_8x8 | MB_TYPE_L0 | MB_TYPE_L1;
+   }
+ 
++  /* lista 1 do colocalizado: num quadro B um B_8x8 pode usar L1 só em sub-blocos sem a flag no tipo do MB; os refIdx
++   * de lista não usada já valem -1 (REF_NOT_IN_LIST) */
++  const bool bColocL1 = IS_TYPE_L1 (coloc_mbType) || colocPic->eSliceType == B_SLICE;
+   if (IS_INTRA (coloc_mbType)) {
+     SetRectBlock (pCurDqLayer->iColocIntra, 4, 4, 4 * sizeof (int8_t), 1, sizeof (int8_t));
+     return ERR_NONE;
+@@ -354,24 +357,24 @@
+ 
+   if (IS_INTER_16x16 (mbType)) {
+     int16_t iMVZero[2] = { 0 };
+-    int16_t* pMv = IS_TYPE_L1 (coloc_mbType) ? colocPic->pMv[LIST_1][iMbXy][0] : iMVZero;
++    int16_t* pMv = bColocL1 ? colocPic->pMv[LIST_1][iMbXy][0] : iMVZero;
+     ST32 (pCurDqLayer->iColocMv[LIST_0][0], LD32 (colocPic->pMv[LIST_0][iMbXy][0]));
+     ST32 (pCurDqLayer->iColocMv[LIST_1][0], LD32 (pMv));
+     pCurDqLayer->iColocRefIndex[LIST_0][0] = colocPic->pRefIndex[LIST_0][iMbXy][0];
+-    pCurDqLayer->iColocRefIndex[LIST_1][0] = IS_TYPE_L1 (coloc_mbType) ? colocPic->pRefIndex[LIST_1][iMbXy][0] :
++    pCurDqLayer->iColocRefIndex[LIST_1][0] = bColocL1 ? colocPic->pRefIndex[LIST_1][iMbXy][0] :
+         REF_NOT_IN_LIST;
+   } else {
+     if (!pCtx->pSps->bDirect8x8InferenceFlag) {
+       CopyRectBlock4Cols (pCurDqLayer->iColocMv[LIST_0], colocPic->pMv[LIST_0][iMbXy], 16, 16, 4, 4);
+       CopyRectBlock4Cols (pCurDqLayer->iColocRefIndex[LIST_0], colocPic->pRefIndex[LIST_0][iMbXy], 4, 4, 4, 1);
+-      if (IS_TYPE_L1 (coloc_mbType)) {
++      if (bColocL1) {
+         CopyRectBlock4Cols (pCurDqLayer->iColocMv[LIST_1], colocPic->pMv[LIST_1][iMbXy], 16, 16, 4, 4);
+         CopyRectBlock4Cols (pCurDqLayer->iColocRefIndex[LIST_1], colocPic->pRefIndex[LIST_1][iMbXy], 4, 4, 4, 1);
+       } else { // only forward prediction
+         SetRectBlock (pCurDqLayer->iColocRefIndex[LIST_1], 4, 4, 4, (uint8_t)REF_NOT_IN_LIST, 1);
+       }
+     } else {
+-      for (int32_t listIdx = 0; listIdx < 1 + !! (coloc_mbType & MB_TYPE_L1); listIdx++) {
++      for (int32_t listIdx = 0; listIdx < 1 + !!bColocL1; listIdx++) {
+         SetRectBlock (pCurDqLayer->iColocMv[listIdx][0], 2, 2, 16, LD32 (colocPic->pMv[listIdx][iMbXy][0]), 4);
+         SetRectBlock (pCurDqLayer->iColocMv[listIdx][2], 2, 2, 16, LD32 (colocPic->pMv[listIdx][iMbXy][3]), 4);
+         SetRectBlock (pCurDqLayer->iColocMv[listIdx][8], 2, 2, 16, LD32 (colocPic->pMv[listIdx][iMbXy][12]), 4);
+@@ -382,7 +385,7 @@
+         SetRectBlock (&pCurDqLayer->iColocRefIndex[listIdx][8], 2, 2, 4, colocPic->pRefIndex[listIdx][iMbXy][12], 1);
+         SetRectBlock (&pCurDqLayer->iColocRefIndex[listIdx][10], 2, 2, 4, colocPic->pRefIndex[listIdx][iMbXy][15], 1);
+       }
+-      if (! (coloc_mbType & MB_TYPE_L1)) // only forward prediction
++      if (!bColocL1) // only forward prediction
+         SetRectBlock (&pCurDqLayer->iColocRefIndex[1][0], 4, 4, 4, (uint8_t)REF_NOT_IN_LIST, 1);
+     }
+   }
+diff -ru codec/decoder/core/src/rec_mb.cpp codec/decoder/core/src/rec_mb.cpp
+--- codec/decoder/core/src/rec_mb.cpp	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/core/src/rec_mb.cpp	2026-11-16 11:59:07.123252121 -0300
+@@ -704,7 +704,6 @@
+   int8_t iRefIndex = 0;
+ 
+   bool bWeightedBipredIdcIs1 = pCurDqLayer->sLayerInfo.pPps->uiWeightedBipredIdc == 1;
+-
+   if (IS_INTER_16x16 (iMBType)) {
+     if (IS_TYPE_L0 (iMBType) && IS_TYPE_L1 (iMBType)) {
+       iMVs[0] = pCurDqLayer->pDec->pMv[LIST_0][iMBXY][0][0];
+@@ -734,94 +733,45 @@
+         WeightPrediction (pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 16, 16);
+       }
+     }
+-  } else if (IS_INTER_16x8 (iMBType)) {
+-    for (int32_t i = 0; i < 2; ++i) {
+-      int32_t iPartIdx = i << 3;
+-      uint32_t listCount = 0;
+-      int32_t lastListIdx = LIST_0;
+-      for (int32_t listIdx = LIST_0; listIdx < LIST_A; ++listIdx) {
+-        if (IS_DIR (iMBType, i, listIdx)) {
+-          lastListIdx = listIdx;
+-          iMVs[0] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][iPartIdx][0];
+-          iMVs[1] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][iPartIdx][1];
+-          iRefIndex = pCurDqLayer->pDec->pRefIndex[listIdx][iMBXY][iPartIdx];
+-          WELS_B_MB_REC_VERIFY (GetRefPic (&pMCRefMem, pCtx, iRefIndex, listIdx));
+-          if (i) {
+-            pMCRefMem.pDstY += (iDstLineLuma << 3);
+-            pMCRefMem.pDstU += (iDstLineChroma << 2);
+-            pMCRefMem.pDstV += (iDstLineChroma << 2);
+-          }
+-          BaseMC (pCtx, &pMCRefMem, listIdx, iRefIndex, iMBOffsetX, iMBOffsetY + iPartIdx, pMCFunc, 16, 8, iMVs);
+-          if (++listCount == 2) {
+-            iMVs[0] = pCurDqLayer->pDec->pMv[LIST_1][iMBXY][iPartIdx][0];
+-            iMVs[1] = pCurDqLayer->pDec->pMv[LIST_1][iMBXY][iPartIdx][1];
+-            iRefIndex1 = pCurDqLayer->pDec->pRefIndex[LIST_1][iMBXY][iPartIdx];
+-            WELS_B_MB_REC_VERIFY (GetRefPic (&pTempMCRefMem, pCtx, iRefIndex1, LIST_1));
+-            if (i) {
+-              pTempMCRefMem.pDstY += (iDstLineLuma << 3);
+-              pTempMCRefMem.pDstU += (iDstLineChroma << 2);
+-              pTempMCRefMem.pDstV += (iDstLineChroma << 2);
+-            }
+-            BaseMC (pCtx, &pTempMCRefMem, LIST_1, iRefIndex1, iMBOffsetX, iMBOffsetY + iPartIdx, pMCFunc, 16, 8, iMVs);
+-            if (pCurDqLayer->bUseWeightedBiPredIdc) {
+-              iRefIndex0 = pCurDqLayer->pDec->pRefIndex[LIST_0][iMBXY][iPartIdx];
+-              iRefIndex1 = pCurDqLayer->pDec->pRefIndex[LIST_1][iMBXY][iPartIdx];
+-              BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 16, 8);
+-            } else {
+-              BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, 16, 8);
+-            }
+-          }
+-        }
+-      }
+-      if (listCount == 1) {
+-        if (bWeightedBipredIdcIs1) {
+-          iRefIndex = pCurDqLayer->pDec->pRefIndex[lastListIdx][iMBXY][iPartIdx];
+-          WeightPrediction (pCurDqLayer, &pMCRefMem, lastListIdx, iRefIndex, 16, 8);
+-        }
+-      }
+-    }
+-  } else if (IS_INTER_8x16 (iMBType)) {
++  } else if (IS_INTER_16x8 (iMBType) || IS_INTER_8x16 (iMBType)) {
++    /* duas partições; cada uma em L0, L1 ou nas duas (L0 no destino, L1 no temporário, depois a média) */
++    const bool b16x8 = IS_INTER_16x8 (iMBType);
++    const int32_t iW = b16x8 ? 16 : 8, iH = b16x8 ? 8 : 16;
+     for (int32_t i = 0; i < 2; ++i) {
+-      uint32_t listCount = 0;
+-      int32_t lastListIdx = LIST_0;
+-      for (int32_t listIdx = LIST_0; listIdx < LIST_A; ++listIdx) {
+-        if (IS_DIR (iMBType, i, listIdx)) {
+-          lastListIdx = listIdx;
+-          iMVs[0] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][i << 1][0];
+-          iMVs[1] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][i << 1][1];
+-          iRefIndex = pCurDqLayer->pDec->pRefIndex[listIdx][iMBXY][i << 1];
+-          WELS_B_MB_REC_VERIFY (GetRefPic (&pMCRefMem, pCtx, iRefIndex, listIdx));
+-          if (i) {
+-            pMCRefMem.pDstY += 8;
+-            pMCRefMem.pDstU += 4;
+-            pMCRefMem.pDstV += 4;
+-          }
+-          BaseMC (pCtx, &pMCRefMem, listIdx, iRefIndex, iMBOffsetX + (i ? 8 : 0), iMBOffsetY, pMCFunc, 8, 16, iMVs);
+-          if (++listCount == 2) {
+-            iMVs[0] = pCurDqLayer->pDec->pMv[LIST_1][iMBXY][i << 1][0];
+-            iMVs[1] = pCurDqLayer->pDec->pMv[LIST_1][iMBXY][i << 1][1];
+-            iRefIndex1 = pCurDqLayer->pDec->pRefIndex[LIST_1][iMBXY][i << 1];
+-            WELS_B_MB_REC_VERIFY (GetRefPic (&pTempMCRefMem, pCtx, iRefIndex1, LIST_1));
+-            if (i) {
+-              pTempMCRefMem.pDstY += 8;
+-              pTempMCRefMem.pDstU += 4;
+-              pTempMCRefMem.pDstV += 4;
+-            }
+-            BaseMC (pCtx, &pTempMCRefMem, LIST_1, iRefIndex1, iMBOffsetX + (i ? 8 : 0), iMBOffsetY, pMCFunc, 8, 16, iMVs);
+-            if (pCurDqLayer->bUseWeightedBiPredIdc) {
+-              iRefIndex0 = pCurDqLayer->pDec->pRefIndex[LIST_0][iMBXY][i << 1];
+-              iRefIndex1 = pCurDqLayer->pDec->pRefIndex[LIST_1][iMBXY][i << 1];
+-              BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 8, 16);
+-            } else {
+-              BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, 8, 16);
+-            }
+-          }
++      const int32_t iPartIdx = b16x8 ? (i << 3) : (i << 1);
++      const int32_t iOffX = b16x8 ? 0 : (i << 3), iOffY = b16x8 ? (i << 3) : 0;
++      pMCRefMem.pDstY = pPredYCbCr[0] + iOffX + iOffY * iDstLineLuma;
++      pMCRefMem.pDstU = pPredYCbCr[1] + (iOffX >> 1) + (iOffY >> 1) * iDstLineChroma;
++      pMCRefMem.pDstV = pPredYCbCr[2] + (iOffX >> 1) + (iOffY >> 1) * iDstLineChroma;
++      pTempMCRefMem.pDstY = pTempPredYCbCr[0] + iOffX + iOffY * iDstLineLuma;
++      pTempMCRefMem.pDstU = pTempPredYCbCr[1] + (iOffX >> 1) + (iOffY >> 1) * iDstLineChroma;
++      pTempMCRefMem.pDstV = pTempPredYCbCr[2] + (iOffX >> 1) + (iOffY >> 1) * iDstLineChroma;
++      const bool bL0 = IS_DIR (iMBType, i, LIST_0), bL1 = IS_DIR (iMBType, i, LIST_1);
++      if (bL0 && bL1) {
++        iMVs[0] = pCurDqLayer->pDec->pMv[LIST_0][iMBXY][iPartIdx][0];
++        iMVs[1] = pCurDqLayer->pDec->pMv[LIST_0][iMBXY][iPartIdx][1];
++        iRefIndex0 = pCurDqLayer->pDec->pRefIndex[LIST_0][iMBXY][iPartIdx];
++        WELS_B_MB_REC_VERIFY (GetRefPic (&pMCRefMem, pCtx, iRefIndex0, LIST_0));
++        BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex0, iMBOffsetX + iOffX, iMBOffsetY + iOffY, pMCFunc, iW, iH, iMVs);
++        iMVs[0] = pCurDqLayer->pDec->pMv[LIST_1][iMBXY][iPartIdx][0];
++        iMVs[1] = pCurDqLayer->pDec->pMv[LIST_1][iMBXY][iPartIdx][1];
++        iRefIndex1 = pCurDqLayer->pDec->pRefIndex[LIST_1][iMBXY][iPartIdx];
++        WELS_B_MB_REC_VERIFY (GetRefPic (&pTempMCRefMem, pCtx, iRefIndex1, LIST_1));
++        BaseMC (pCtx, &pTempMCRefMem, LIST_1, iRefIndex1, iMBOffsetX + iOffX, iMBOffsetY + iOffY, pMCFunc, iW, iH, iMVs);
++        if (pCurDqLayer->bUseWeightedBiPredIdc) {
++          BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, iW, iH);
++        } else {
++          BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iW, iH);
+         }
+-      }
+-      if (listCount == 1) {
++      } else if (bL0 || bL1) {
++        const int32_t listIdx = bL0 ? LIST_0 : LIST_1;
++        iMVs[0] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][iPartIdx][0];
++        iMVs[1] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][iPartIdx][1];
++        iRefIndex = pCurDqLayer->pDec->pRefIndex[listIdx][iMBXY][iPartIdx];
++        WELS_B_MB_REC_VERIFY (GetRefPic (&pMCRefMem, pCtx, iRefIndex, listIdx));
++        BaseMC (pCtx, &pMCRefMem, listIdx, iRefIndex, iMBOffsetX + iOffX, iMBOffsetY + iOffY, pMCFunc, iW, iH, iMVs);
+         if (bWeightedBipredIdcIs1) {
+-          iRefIndex = pCurDqLayer->pDec->pRefIndex[lastListIdx][iMBXY][i << 1];
+-          WeightPrediction (pCurDqLayer, &pMCRefMem, lastListIdx, iRefIndex, 8, 16);
++          WeightPrediction (pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, iW, iH);
+         }
+       }
+     }
+@@ -933,6 +883,9 @@
+           iMVs[1] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][iIIdx][1];
+           iRefIndex = pCurDqLayer->pDec->pRefIndex[listIdx][iMBXY][iIIdx];
+           BaseMC (pCtx, &pMCRefMem, listIdx, iRefIndex, iXOffset, iYOffset, pMCFunc, 8, 4, iMVs);
++          if (bWeightedBipredIdcIs1) {
++            WeightPrediction (pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 8, 4);
++          }
+           pMCRefMem.pDstY += (iDstLineLuma << 2);
+           pMCRefMem.pDstU += (iDstLineChroma << 1);
+           pMCRefMem.pDstV += (iDstLineChroma << 1);
+@@ -983,6 +936,9 @@
+           iMVs[1] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][iIIdx][1];
+           iRefIndex = pCurDqLayer->pDec->pRefIndex[listIdx][iMBXY][iIIdx];
+           BaseMC (pCtx, &pMCRefMem, listIdx, iRefIndex, iXOffset, iYOffset, pMCFunc, 4, 8, iMVs);
++          if (bWeightedBipredIdcIs1) {
++            WeightPrediction (pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 4, 8);
++          }
+           pMCRefMem.pDstY += 4;
+           pMCRefMem.pDstU += 2;
+           pMCRefMem.pDstV += 2;
+@@ -1011,7 +967,7 @@
+             iMVs[1] = pCurDqLayer->pDec->pMv[LIST_0][iMBXY][iIIdx + iJIdx][1];
+             BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex0, iXOffset + iBlk4X, iYOffset + iBlk4Y, pMCFunc, 4, 4, iMVs);
+ 
+-            pTempMCRefMem.pDstY = pDstY2 + iBlk8X + iBlk8Y * iDstLineLuma;
++            pTempMCRefMem.pDstY = pDstY2 + iBlk4X + iBlk4Y * iDstLineLuma;
+             pTempMCRefMem.pDstU = pDstU2 + iUVLineStride;
+             pTempMCRefMem.pDstV = pDstV2 + iUVLineStride;;
+ 
+Somente em codec/decoder/core: x86
+Somente em codec/decoder: meson.build
+diff -ru codec/decoder/plus/inc/welsDecoderExt.h codec/decoder/plus/inc/welsDecoderExt.h
+--- codec/decoder/plus/inc/welsDecoderExt.h	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/plus/inc/welsDecoderExt.h	2026-11-16 11:59:07.124825187 -0300
+@@ -118,6 +118,11 @@
+   welsCodecTrace*         m_pWelsTrace;
+   uint32_t                m_uiDecodeTimeStamp;
+   bool                    m_bIsBaseline;
++  /* mOS: entrega cada quadro logo depois de decodificado (ordem de decodificação, como o VideoToolbox sem
++   * kVTDecodeFrame_EnableTemporalProcessing); false = ordem de exibição (o padrão do OpenH264) */
++ public:
++  bool                    m_bOutputDecodeOrder;
++ private:
+   int32_t                 m_iCpuCount;
+   int32_t                 m_iThreadCount;
+   int32_t                 m_iCtxCount;
+Somente em codec/decoder/plus/src: wels_dec_export.def
+diff -ru codec/decoder/plus/src/welsDecoderExt.cpp codec/decoder/plus/src/welsDecoderExt.cpp
+--- codec/decoder/plus/src/welsDecoderExt.cpp	2025-02-10 04:27:56.000000000 -0300
++++ codec/decoder/plus/src/welsDecoderExt.cpp	2026-11-16 12:25:52.185595284 -0300
+@@ -134,6 +134,7 @@
+   : m_pWelsTrace (NULL),
+     m_uiDecodeTimeStamp (0),
+     m_bIsBaseline (false),
++    m_bOutputDecodeOrder (false),
+     m_iCpuCount (1),
+     m_iThreadCount (0),
+     m_iCtxCount (1),
+@@ -934,11 +935,14 @@
+     }
+   }
+   if (bEndOfStreamFlag && m_sReoderingStatus.iNumOfPicts > 0) {
++    /* mOS: sem threads o pool é o do contexto (m_pPicBuff só existe com threads); com NULL o refcount do quadro
++     * entregue não voltava e, depois do flush, o pool esgotava (PrefetchPic ERROR) */
++    PWelsDecoderContext pCtx = m_iThreadCount <= 1 ? m_pDecThrCtx[0].pCtx : NULL;
+     if (!m_sReoderingStatus.bHasBSlice) {
+-      ReleaseBufferedReadyPictureNoReorder (NULL, ppDst, pDstInfo);
++      ReleaseBufferedReadyPictureNoReorder (pCtx, ppDst, pDstInfo);
+     }
+     else {
+-      ReleaseBufferedReadyPictureReorder (NULL, ppDst, pDstInfo, true);
++      ReleaseBufferedReadyPictureReorder (pCtx, ppDst, pDstInfo, true);
+     }
+   }
+   return dsErrorFree;
+@@ -1139,6 +1143,7 @@
+ DECODING_STATE CWelsDecoder::ReorderPicturesInDisplay(PWelsDecoderContext pDecContext, unsigned char** ppDst,
+   SBufferInfo* pDstInfo) {
+   DECODING_STATE iRet = dsErrorFree;
++  if (m_bOutputDecodeOrder) return iRet;   /* o quadro decodificado já está em ppDst/pDstInfo */
+   if (pDecContext->pSps != NULL) {
+     m_bIsBaseline = pDecContext->pSps->uiProfileIdc == 66 || pDecContext->pSps->uiProfileIdc == 83;
+     if (!m_bIsBaseline) {
+Somente em codec/decoder: targets.mk
+Somente em codec: encoder
+Somente em codec: meson.build
+Somente em codec: processing

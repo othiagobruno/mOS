@@ -73,6 +73,7 @@ typedef struct node {
     img_t *img;            /* imagem associada (<img>) */
     int ay;                /* posição y (para âncoras), -1 se desconhecida */
     frame_t *frame;        /* <iframe>: documento filho (kernel/web/frame.c) */
+    struct canvas2d *canvas; /* <canvas>: bitmap e estado 2D (kernel/web/canvas.c) */
     int index;             /* ordem no documento */
 } node_t;
 
@@ -135,6 +136,9 @@ struct img {
     char *svg;             /* fonte SVG (kmalloc): redesenhada no tamanho exibido */
     int svglen;
     u32 svgcolor;          /* SVG inline: cor CSS do elemento (currentColor); 0 = preto */
+    /* elementos <img> que usam esta imagem: cada um recebe o seu evento load/error (kernel/web/js_dom.c) */
+    struct { node_t *n; bool fired; } *own;
+    int nown, cown;
     struct img *next;
 };
 surface_t *image_decode(const u8 *d, usize n);
@@ -148,6 +152,11 @@ bool svg_is(const u8 *d, usize n);                                   /* tem um e
 bool svg_intrinsic(const char *src, int len, float *w, float *h);
 surface_t *svg_render(const char *src, int len, int w, int h);       /* w/h 0 = tamanho intrínseco */
 surface_t *svg_render_ex(const char *src, int len, int w, int h, u32 color);   /* color: currentColor herdado */
+/* imagem de um documento por URL (resolvida na base, reaproveitada, carregada pelo pump de imagens) */
+struct doc;
+img_t *doc_image(struct doc *d, const char *src);
+/* <img>: escolhe src/srcset/<picture>, liga node->img e registra o elemento como dono (para os eventos) */
+void   img_update_node(struct doc *d, node_t *n, int viewport_w, float dpr);
 /* põe os bytes baixados numa imagem do documento: decodifica, e guarda a fonte se for SVG */
 void img_set_data(img_t *im, const u8 *d, usize n);
 
@@ -249,7 +258,13 @@ typedef struct doc {
     int frame_depth;            /* 0 = documento principal */
     bool transparent;           /* iframe: sem fundo declarado, a tela fica transparente */
     int ctrl_base;              /* ids dos controles no ui_t (0 = 100000); cada iframe tem a sua faixa */
+    struct canvas2d *canvases;  /* bitmaps dos <canvas> (kernel/web/canvas.c) */
 } doc_t;
+
+/* <canvas> (kernel/web/canvas.c): tamanho intrínseco (atributos width/height) e bitmap atual (NULL se vazio) */
+void       canvas_intrinsic(node_t *n, int *w, int *h);
+surface_t *canvas_surface(node_t *n);
+void       canvas_free_all(doc_t *d);
 
 doc_t *doc_parse(const char *html, usize len, const char *url);
 void   html_parse_fragment(doc_t *d, node_t *parent, const char *html, int len);  /* innerHTML */

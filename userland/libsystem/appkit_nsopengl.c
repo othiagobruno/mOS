@@ -36,6 +36,7 @@ void gl_ctx_swap(gl_ctx_t *C);
 void gl_ctx_read_bgra(gl_ctx_t *C, u8 *dst, u64 dbpr, int w, int h);
 void gl_fb_resize(gl_ctx_t *C, int w, int h);
 void gl_ctx_size(gl_ctx_t *C, int *w, int *h);
+void gl_ctx_set_samples(gl_ctx_t *C, int n);
 int gl_tex_from_surface(gl_ctx_t *C, u32 target, u32 ifmt, int w, int h, u32 fmt, u32 type, const u8 *base, u64 bpr);
 void *IOSurfaceGetBaseAddress(void *s);
 void *IOSurfaceGetBaseAddressOfPlane(void *s, u64 i);
@@ -115,14 +116,23 @@ static cgl_pix_t *pix_new(const u32 *attrs) {
     return p;
 }
 /* o que o renderizador de software tem: cor 32 (24 + alfa 8), profundidade e stencil como pedidos, 1 tela virtual */
+/* multiamostra: kCGLPFASamples > 1 com kCGLPFASampleBuffers (ou kCGLPFAMultisample); 2, 4 ou 8 amostras */
+static int pix_samples(const cgl_pix_t *p) {
+    int n = p->set[PFA_Samples] ? p->val[PFA_Samples] : 0;
+    int sb = (p->set[PFA_SampleBuffers] && p->val[PFA_SampleBuffers] > 0) || p->set[PFA_Multisample];
+    if (!sb || n < 2) return 0;
+    return n <= 2 ? 2 : n <= 4 ? 4 : 8;
+}
 static int pix_value(const cgl_pix_t *p, u32 a) {
     int asked = a < PIX_NATTR && p->set[a], v = asked ? p->val[a] : 0;
     switch (a) {
+    case PFA_Samples: return pix_samples(p);
+    case PFA_SampleBuffers: return pix_samples(p) ? 1 : 0;
     case PFA_ColorSize: return asked && v > 0 ? (v > 32 ? 64 : 32) : 32;
     case PFA_AlphaSize: return asked ? (v > 8 ? 16 : 8) : 8;
     case PFA_DepthSize: return asked ? (v > 24 ? 32 : v > 16 ? 24 : v) : 0;
     case PFA_StencilSize: return asked ? (v > 0 ? 8 : 0) : 0;
-    case PFA_Samples: case PFA_SampleBuffers: case PFA_AuxBuffers: case PFA_AccumSize: return asked ? v : 0;
+    case PFA_AuxBuffers: case PFA_AccumSize: return asked ? v : 0;
     case PFA_RendererID: return GL_RENDERER_SOFT;
     case PFA_ScreenMask: return asked ? v : 1;
     case PFA_OpenGLProfile: return asked ? v : GL_PROFILE_LEGACY;
@@ -238,6 +248,7 @@ int CGLCreateContext(void *pix, void *share, void **ctx) {
     c->gl = gl_ctx_create(share ? ((cgl_ctx_t *)share)->gl : 0, core, core ? 4 : 2, 1, 1, 1, pix_value(p, PFA_DepthSize) > 0,
                           pix_value(p, PFA_StencilSize) > 0, p->set[PFA_DoubleBuffer] || p->set[PFA_TripleBuffer], 1);
     if (!c->gl) { CGLReleasePixelFormat(p); free(c); return kCGLBadAlloc; }
+    if (pix_samples(p)) gl_ctx_set_samples(c->gl, pix_samples(p));
     *ctx = c;
     return kCGLNoError;
 }

@@ -82,20 +82,35 @@ static bool smu_init(amdgpu_t *a) {
 static u32 HV(int hub, u32 r) { return hub ? GFXHUB_VM(r) : r; }
 static u32 HM(int hub, u32 r) { return hub ? GFXHUB_MC(r) : r; }
 
-static void hub_invalidate(amdgpu_t *a, int hub) {
-    /* semáforo do motor 17 só na MMHUB fora da Raven1; pedido para o VMID 0, espera o ACK, solta */
+static void hub_invalidate(amdgpu_t *a, int hub, u32 vmid_mask) {
+    /* semáforo do motor 17 só na MMHUB fora da Raven1; pedido para os VMIDs, espera o ACK, solta */
     bool sem = !hub && a->variant != AMD_RAVEN;
     if (sem) for (u32 n = 0; n < SPIN_MAX && !(RR(a, HV(hub, R_VM_INV_ENG17_SEM)) & 1); n++) CPU_RELAX();
-    WR(a, HV(hub, R_VM_INV_ENG17_REQ), INV_REQ_VMID0 | INV_REQ_L2_PTES | INV_REQ_L2_PDE0 | INV_REQ_L2_PDE1 | INV_REQ_L2_PDE2 | INV_REQ_L1_PTES);
+    WR(a, HV(hub, R_VM_INV_ENG17_REQ), vmid_mask | INV_REQ_ALL_LEVELS);
     u32 n = 0;
-    while (!(RR(a, HV(hub, R_VM_INV_ENG17_ACK)) & INV_REQ_VMID0) && n < SPIN_MAX) { n++; CPU_RELAX(); }
+    while ((RR(a, HV(hub, R_VM_INV_ENG17_ACK)) & vmid_mask) != vmid_mask && n < SPIN_MAX) { n++; CPU_RELAX(); }
     if (sem) WR(a, HV(hub, R_VM_INV_ENG17_SEM), 0);
     if (n >= SPIN_MAX) a->gmc_timeouts++;
 }
 
-static void gmc_invalidate(amdgpu_t *a) {
-    hub_invalidate(a, 0);
-    if (a->gfxhub_ok) hub_invalidate(a, 1);
+void amdgpu_tlb_flush(amdgpu_t *a, u32 vmid_mask) {
+    hub_invalidate(a, 0, vmid_mask);
+    if (a->gfxhub_ok) hub_invalidate(a, 1, vmid_mask);
+}
+static void gmc_invalidate(amdgpu_t *a) { amdgpu_tlb_flush(a, INV_REQ_VMID0); }
+
+/* contextos 1..15 de uma hub: tabelas de 4 níveis, faltas vão para a página de rascunho, sem retry */
+static void hub_setup_vmids(amdgpu_t *a, int hub) {
+    for (u32 n = 1; n < 16; n++) {
+        u32 t = RR(a, HV(hub, R_VM_CTX_CNTL(n))) & ~0x007FFFFFu;
+        WR(a, HV(hub, R_VM_CTX_CNTL(n)), t | CTX0_ENABLE | CTX_DEPTH_4LEVEL | CTX_FAULT_DEFAULTS);
+        WR(a, HV(hub, R_VM_CTX_PT_START_LO(n)), 0);
+        WR(a, HV(hub, R_VM_CTX_PT_START_HI(n)), 0);
+        WR(a, HV(hub, R_VM_CTX_PT_END_LO(n)), (u32)(AMD_VM_MAX_PFN - 1));
+        WR(a, HV(hub, R_VM_CTX_PT_END_HI(n)), (u32)((AMD_VM_MAX_PFN - 1) >> 32));
+        WR(a, HV(hub, R_VM_CTX_PT_BASE_LO(n)), 0);     /* sem tabela até um processo pegar o VMID */
+        WR(a, HV(hub, R_VM_CTX_PT_BASE_HI(n)), 0);
+    }
 }
 
 /* aberturas, TLB L1, cache L2 e contexto 0 (a GART) de uma hub */
@@ -132,7 +147,7 @@ static void hub_setup(amdgpu_t *a, int hub, u64 pt, u64 scratch_phys) {
     t = (t & ~L2_CTX1_IDENT_MODE_MASK) | L2_CTX1_IDENT_MODE_1;
     WR(a, HV(hub, R_VM_L2_CNTL), t);
     WR(a, HV(hub, R_VM_L2_CNTL2), RR(a, HV(hub, R_VM_L2_CNTL2)) | L2_CNTL2_INV_L1_TLBS | L2_CNTL2_INV_L2_CACHE);
-    t = (L2_CNTL3_DEFAULT & ~(L2_CNTL3_BANK_MASK | L2_CNTL3_BIGK_MASK)) | 12u | 9u << L2_CNTL3_BIGK_SHIFT;
+    t = (L2_CNTL3_DEFAULT & ~(L2_CNTL3_BANK_MASK | L2_CNTL3_BIGK_MASK)) | 9u | 6u << L2_CNTL3_BIGK_SHIFT;   /* sem translate_further */
     WR(a, HV(hub, R_VM_L2_CNTL3), t);
     WR(a, HV(hub, R_VM_L2_CNTL4), L2_CNTL4_DEFAULT & ~L2_CNTL4_PHYS_MASK);
 
@@ -147,7 +162,8 @@ static void hub_setup(amdgpu_t *a, int hub, u64 pt, u64 scratch_phys) {
     WR(a, HV(hub, R_VM_L2_CTX1_IDENT_HIGH_HI), 0);
     WR(a, HV(hub, R_VM_L2_CTX_IDENT_PHYS_LO), 0);
     WR(a, HV(hub, R_VM_L2_CTX_IDENT_PHYS_HI), 0);
-    hub_invalidate(a, hub);
+    hub_setup_vmids(a, hub);
+    hub_invalidate(a, hub, 0xFFFFu);
 }
 
 static bool gmc_init(amdgpu_t *a) {
@@ -171,12 +187,13 @@ static bool gmc_init(amdgpu_t *a) {
     memset(a->gart_used, 0, sizeof a->gart_used);
     a->dummy_page = dummy;
 
-    u64 pt = vram_mc(a, tbl);
+    /* a base da tabela é o endereço físico da VRAM com o bit de válido (amdgpu_gmc_pd_addr), não o MC */
+    u64 pt = (a->fb_phys + (tbl - a->bar0)) | AMD_PDE_VALID;
     u64 sp = a->fb_phys + (scratch - a->bar0);
     hub_setup(a, 0, pt, sp);                 /* MMHUB */
     hub_setup(a, 1, pt, sp);                 /* GFXHUB: o CP enxerga a mesma GART */
     a->gfxhub_ok = true;
-    kprintf("amdgpu: GART de %llu MiB em MC 0x%llx (tabela na VRAM MC 0x%llx)\n", a->gart_size >> 20, a->gart_start, pt);
+    kprintf("amdgpu: GART de %llu MiB em MC 0x%llx (tabela na VRAM, física 0x%llx)\n", a->gart_size >> 20, a->gart_start, pt & ~1ull);
     return true;
 }
 

@@ -723,12 +723,14 @@ bool html_sniff_charset(const u8 *d, usize n, char *out, int cap) {
 void doc_free(doc_t *d) {
     if (!d) return;
     frames_free(d);
+    canvas_free_all(d);
     for (img_t *im = d->images, *nx; im; im = nx) {
         nx = im->next;
         if (im->req) http_free(im->req);
         surface_free(im->surf);
         surface_free(im->scaled);
         if (im->svg) kfree(im->svg);
+        if (im->own) kfree(im->own);
         kfree(im);
     }
     for (int i = 0; i < d->nctrls; i++) kfree(d->ctrls[i]->buf);

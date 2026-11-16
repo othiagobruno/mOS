@@ -189,6 +189,42 @@ void msl_tex_store(const msl_tex_t *t, int x, int y, int z, int slice, int lvl, 
     mx_encode(p, mx_texel(t, x, y, z, slice, lvl), in);
 }
 
+/* ================================================================ multiamostra */
+/* posições padrão (as mesmas do D3D e do Metal), em 1/16 de pixel */
+static const u8 g_spos2[2][2] = {{12, 12}, {4, 4}};
+static const u8 g_spos4[4][2] = {{6, 2}, {14, 6}, {2, 10}, {10, 14}};
+static const u8 g_spos8[8][2] = {{9, 5}, {7, 11}, {13, 9}, {5, 3}, {3, 13}, {1, 7}, {11, 15}, {15, 1}};
+void mx_sample_pos(int n, int i, float xy[2]) {
+    const u8 *p = 0;
+    if (n == 2 && i >= 0 && i < 2) p = g_spos2[i];
+    else if (n == 4 && i >= 0 && i < 4) p = g_spos4[i];
+    else if (n == 8 && i >= 0 && i < 8) p = g_spos8[i];
+    if (!p) { xy[0] = xy[1] = 0.5f; return; }
+    xy[0] = p[0] / 16.0f;
+    xy[1] = p[1] / 16.0f;
+}
+int mx_samples_ok(int n) {
+    if (n <= 1) return 1;
+    if (n <= 2) return 2;
+    if (n <= 4) return 4;
+    if (n <= 8) return 8;
+    return 0;
+}
+void mx_resolve_texel(const msl_tex_t *t, int x, int y, int layer, double out[4]) {
+    int n = mx_nsamp(t);
+    const pf_t *p = mx_pf(t->fmt);
+    int one = n == 1 || !p || mx_isdepth(t->fmt) || mx_hasstencil(t->fmt) || p->kind == PK_U8 || p->kind == PK_S8 ||
+              p->kind == PK_U16 || p->kind == PK_S16 || p->kind == PK_U32 || p->kind == PK_S32 || p->kind == PK_RGB10A2U;
+    if (one) { msl_tex_load(t, x, y, 0, layer * n, 0, out); return; }
+    double acc[4] = {0, 0, 0, 0};
+    for (int s = 0; s < n; s++) {
+        double v[4];
+        msl_tex_load(t, x, y, 0, layer * n + s, 0, v);
+        for (int k = 0; k < 4; k++) acc[k] += v[k];
+    }
+    for (int k = 0; k < 4; k++) out[k] = acc[k] / n;
+}
+
 /* ================================================================ amostragem */
 static int addr_i(int mode, int i, int n, int *border) {
     if (n <= 0) return 0;

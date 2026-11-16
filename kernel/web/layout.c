@@ -104,20 +104,49 @@ static bool is_block_level(int d) {
 static bool is_ctrl_tag(int t) { return t == T_INPUT || t == T_BUTTON || t == T_SELECT || t == T_TEXTAREA; }
 
 /* ------------------------------------------------------------ imagens e controles */
-static img_t *get_img(lay_t *L, const char *src) {
-    doc_t *d = L->d;
+img_t *doc_image(doc_t *d, const char *src) {
     char url[512];
-    url_resolve(d->base, src, url, sizeof url);
+    if (*src) url_resolve(d->base, src, url, sizeof url);
+    else strcpy(url, "about:invalid#src-vazio");
     for (img_t *im = d->images; im; im = im->next) if (!strcmp(im->url, url)) return im;
     if (d->nimages >= 400) return NULL;
     img_t *im = kcalloc(1, sizeof(img_t));
     if (!im) return NULL;
     strncpy(im->url, url, sizeof im->url - 1);
-    im->state = IMG_PENDING;
+    /* src="" é uma imagem quebrada (evento error), sem pedido */
+    im->state = *src ? IMG_PENDING : IMG_ERROR;
     im->next = d->images;
     d->images = im;
     d->nimages++;
     return im;
+}
+
+static void img_attach(img_t *im, node_t *n) {
+    for (int i = 0; i < im->nown; i++) if (im->own[i].n == n) { im->own[i].fired = false; return; }
+    if (im->nown == im->cown) {
+        int nc = im->cown ? im->cown * 2 : 2;
+        void *no = krealloc(im->own, sizeof(*im->own) * nc);
+        if (!no) return;
+        im->own = no;
+        im->cown = nc;
+    }
+    im->own[im->nown].n = n;
+    im->own[im->nown].fired = false;
+    im->nown++;
+}
+
+void img_update_node(doc_t *d, node_t *n, int viewport_w, float dpr) {
+    char sb[512];
+    const char *src = img_pick_src(n, viewport_w > 0 ? viewport_w : 1024, dpr > 0 ? dpr : 1.0f, sb, sizeof sb);
+    if (!src) {
+        /* sem src nem srcset: nenhuma imagem; src="" vira imagem quebrada */
+        const char *raw = node_attr(n, "src");
+        if (!raw || *raw) { n->img = NULL; return; }
+        src = "";
+    }
+    img_t *im = doc_image(d, src);
+    n->img = im;
+    if (im) img_attach(im, n);
 }
 
 static void collapse_ws(const char *s, int n, char *out, int cap) {
@@ -258,6 +287,23 @@ static void replaced_size(lay_t *L, box_t *b, int cw, int *w, int *h) {
     int iw = 0, ih = 0;
     img_t *im = n->img;
     if (im && im->state == IMG_OK && im->surf) { iw = (int)(im->surf->w * z); ih = (int)(im->surf->h * z); }
+    if (n->tag == T_CANVAS) {
+        /* tamanho intrínseco = bitmap (atributos width/height, 300×150 por padrão); proporção mantida */
+        int cw0, ch0;
+        canvas_intrinsic(n, &cw0, &ch0);
+        iw = (int)(cw0 * z + 0.5f); ih = (int)(ch0 * z + 0.5f);
+        bool hw2 = st->width.u == U_PX || (st->width.u == U_PCT && cw > 0), hh2 = st->height.u == U_PX;
+        int W = hw2 ? rl(st->width, cw) : iw, H = hh2 ? rl(st->height, 0) : ih;
+        if (hw2 && !hh2) H = iw ? (int)((float)W * ih / iw + 0.5f) : ih;
+        else if (hh2 && !hw2) W = ih ? (int)((float)H * iw / ih + 0.5f) : iw;
+        if (st->max_w.u == U_PX || (st->max_w.u == U_PCT && cw > 0)) {
+            int mx = rl(st->max_w, cw);
+            if (W > mx && mx > 0) { if (!hh2) H = W ? (int)((float)H * mx / W + 0.5f) : H; W = mx; }
+        }
+        *w = MAX(W, 0);
+        *h = MAX(H, 0);
+        return;
+    }
     if (n->tag == T_IFRAME) {
         /* tamanho padrão do HTML: 300x150 */
         int W = st->width.u == U_PX || (st->width.u == U_PCT && cw > 0) ? rl(st->width, cw) : (int)(300 * z);
@@ -442,7 +488,7 @@ static void inline_node(lay_t *L, node_t *c, lst_t *ls) {
     int d = st->display;
     if (c->tag == T_BR) { item_t *it = push_item(L); if (it) { it->kind = IT_BREAK; it->st = st; it->node = c; } return; }
     if (c->tag == T_WBR) { item_t *it = push_item(L); if (it) { it->kind = IT_SPACE; it->w = 0; it->st = st; } return; }
-    if (c->tag == T_IMG || c->tag == T_SVG || c->tag == T_IFRAME || is_ctrl_tag(c->tag) || d == D_INLINE_BLOCK || d == D_INLINE_TABLE) {
+    if (c->tag == T_IMG || c->tag == T_SVG || c->tag == T_IFRAME || c->tag == T_CANVAS || is_ctrl_tag(c->tag) || d == D_INLINE_BLOCK || d == D_INLINE_TABLE) {
         box_t *a = gen_atom(L, c);
         if (!a) return;
         push_anchor(L, c);
@@ -492,13 +538,13 @@ static void gen_children(lay_t *L, box_t *cont, node_t *n, lst_t *ls) {
         }
         if (c->type != N_ELEM || !c->st || c->st->display == D_NONE) continue;
         int d = c->st->display;
-        if (c->tag != T_IMG && c->tag != T_SVG && c->tag != T_IFRAME && !is_ctrl_tag(c->tag) && is_block_level(d)) {
+        if (c->tag != T_IMG && c->tag != T_SVG && c->tag != T_IFRAME && c->tag != T_CANVAS && !is_ctrl_tag(c->tag) && is_block_level(d)) {
             lines_end(L, ls);
             box_t *b = gen_block(L, c);
             if (b) addc(cont, b);
             continue;
         }
-        if ((c->tag == T_IMG || c->tag == T_SVG || c->tag == T_IFRAME || is_ctrl_tag(c->tag)) && is_block_level(d)) {
+        if ((c->tag == T_IMG || c->tag == T_SVG || c->tag == T_IFRAME || c->tag == T_CANVAS || is_ctrl_tag(c->tag)) && is_block_level(d)) {
             lines_end(L, ls);
             box_t *b = gen_atom(L, c);
             if (b) addc(cont, b);
@@ -651,7 +697,7 @@ static void svg_sprites(node_t *root, node_t *self, sbuf_t *out) {
 }
 
 static box_t *gen_atom(lay_t *L, node_t *n) {
-    if (n->tag == T_IFRAME) return nbox(L, B_REPLACED, n, n->st);
+    if (n->tag == T_IFRAME || n->tag == T_CANVAS) return nbox(L, B_REPLACED, n, n->st);   /* conteúdo do <canvas> é só reserva */
     if (n->tag == T_SVG) {
         box_t *b = nbox(L, B_REPLACED, n, n->st);
         if (!b) return NULL;
@@ -692,9 +738,7 @@ static box_t *gen_atom(lay_t *L, node_t *n) {
     if (n->tag == T_IMG) {
         box_t *b = nbox(L, B_REPLACED, n, n->st);
         if (!b) return NULL;
-        char sb[512];
-        const char *src = img_pick_src(n, L->d->vw > 0 ? L->d->vw : L->d->layout_w, L->d->zoom > 0 ? L->d->zoom : 1.0f, sb, sizeof sb);
-        if (!n->img && src) n->img = get_img(L, src);
+        if (!n->img) img_update_node(L->d, n, L->d->vw > 0 ? L->d->vw : L->d->layout_w, L->d->zoom > 0 ? L->d->zoom : 1.0f);
         return b;
     }
     if (is_ctrl_tag(n->tag)) {
@@ -1539,6 +1583,11 @@ static void paint_replaced(pctx_t *P, box_t *b) {
     if (w <= 0 || h <= 0) return;
     if (n->tag == T_IFRAME) {
         if (n->frame && !b->st->hidden) frame_paint(n->frame, P->u, rect_make(x, y, w, h));
+        return;
+    }
+    if (n->tag == T_CANVAS) {
+        surface_t *cs = canvas_surface(n);
+        if (cs && !b->st->hidden) gfx_blit_scaled(P->s, cs, x, y, w, h, 255);
         return;
     }
     img_t *im = n->img;

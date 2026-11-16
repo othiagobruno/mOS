@@ -60,6 +60,10 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu tools/amdgpu_host.c k
     kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_host
 /tmp/amdgpu_host > /tmp/amdgpu_host.log || { cat /tmp/amdgpu_host.log; exit 1; }
 tail -1 /tmp/amdgpu_host.log
+# GPU AMD: validador dos IBs PM4 do userland (ABI revisão 3)
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu tools/amdgpu_pm4_host.c kernel/dev/amdgpu/pm4check.c -o /tmp/amdgpu_pm4_host
+/tmp/amdgpu_pm4_host > /tmp/amdgpu_pm4_host.log || { cat /tmp/amdgpu_pm4_host.log; exit 1; }
+tail -1 /tmp/amdgpu_pm4_host.log
 # sysctl do libSystem (docs/darwin-bsd-mach.md, F1): kernel falso de SYS_DARWIN e o CPUID real do host
 gcc -O1 -Wall -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/sysctl.c -o /tmp/sysctl_ls.o
 gcc -O1 -Wall tools/sysctl_host.c /tmp/sysctl_ls.o -o /tmp/sysctl_host
@@ -97,7 +101,7 @@ gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland
 gcc -O1 -w -pthread tools/osactivity_host.c /tmp/osactivity_ls.o -o /tmp/osactivity_host
 /tmp/osactivity_host | tail -1
 # GPU AMD: display, vsync, troca no vblank, buffer duplo, VRAM, SMU, GART, SDMA e IH contra um Picasso simulado
-gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/amdgpu.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c kernel/dev/amdgpu/gfx.c \
+gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/amdgpu.c kernel/dev/amdgpu/engine.c kernel/dev/amdgpu/irq.c kernel/dev/amdgpu/gfx.c kernel/dev/amdgpu/compute.c kernel/dev/amdgpu/vm.c \
     kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw_host
 /tmp/amdgpu_hw_host > /tmp/amdgpu_hw_host.log || { cat /tmp/amdgpu_hw_host.log; exit 1; }
 tail -1 /tmp/amdgpu_hw_host.log
@@ -276,7 +280,7 @@ bash "$ROOT/tools/swift-rt-grok-teste.sh" "$ZIG" "$OUT/swift-rt-grok"
 echo "==> libSystem.mos"
 # x86_64: _Unwind_* fica em cxx_unwind.c. UnwindLevel1.c repete esses nomes; o resto do libunwind fica.
 LS_SRC=()
-for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S "$ROOT"/userland/third_party/h264bsd/*.c; do
+for f in "$ROOT"/userland/libsystem/*.c "$ROOT"/userland/libsystem/*.S; do
     [ -f "$f" ] || continue
     # sqlite3.c pede assert.h/stdio.h. Compila com o shim, fora do -I do resto.
     case "$f" in
@@ -378,7 +382,7 @@ ZIG="$ZIG" bash "$ROOT/tools/libc_apps_hosttest.sh" "$OUT/libc-apps-hosttest"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
-    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" -I"$ROOT/userland/third_party/h264bsd" \
+    -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" \
     -isystem "$ZIGDIR/lib/include" \
     -Wl,--image-base=0x400000100000 -Wl,-e,cx_start -Wl,--no-gc-sections \
     "${LS_SRC[@]}" "$OUT/audiodec.o" "$OUT/sqlite3_mos.o" "${MIDIA_OBJS[@]}" \

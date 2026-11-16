@@ -4,19 +4,37 @@
  * escolher. Redirect (RFC 9110 §15.4), cookies (mnet_cookie.c), Content-Encoding (mnet_decode.c), proxy HTTP
  * (forma absoluta), túnel CONNECT para HTTPS e SOCKS5 (RFC 1928/1929, nome resolvido pelo proxy).
  *
- * HTTP/2: a conexão sai do pool enquanto um pedido a usa; pedidos simultâneos para a mesma origem abrem outra
- * conexão (como no 1.1). A multiplexação de vários pedidos numa só conexão fica com quem chamar mnet_h2_* direto.
+ * HTTP/2: pedidos simultâneos para a mesma origem dividem uma conexão (um fluxo cada) enquanto o servidor aceitar
+ * fluxos (SETTINGS_MAX_CONCURRENT_STREAMS); acima disso abre outra.
  */
 #include "mnet.h"
+
+#ifdef MNET_HOST
+#include <pthread.h>
+#include <unistd.h>
+typedef pthread_mutex_t mn_mutex_t;
+typedef pthread_cond_t mn_cond_t;
+#else
+typedef struct { _Alignas(8) unsigned char b[64]; } mn_mutex_t;
+typedef struct { _Alignas(8) unsigned char b[48]; } mn_cond_t;
+int pthread_mutex_init(void *m, const void *a);
+int pthread_mutex_lock(void *m);
+int pthread_mutex_unlock(void *m);
+int pthread_mutex_destroy(void *m);
+int pthread_cond_init(void *c, const void *a);
+int pthread_cond_wait(void *c, void *m);
+int pthread_cond_broadcast(void *c);
+int pthread_cond_destroy(void *c);
+int usleep(unsigned us);
+#endif
 
 #define MAX_REDIRECTS 16
 #define IDLE_MAX 32
 #define IDLE_TIMEOUT 90000
 
-struct mnet_pool_ent {
+struct mnet_pool_ent {                 /* conexão HTTP/1.1 ociosa (as h2 ficam em h2live) */
     char key[300];
     void *conn;
-    mnet_h2_t *h2;
     long long last;
     struct mnet_pool_ent *next;
 };
@@ -31,7 +49,6 @@ void mnet_client_init(mnet_client_t *c, const mnet_io_t *io) {
 static void lk(mnet_client_t *c) { if (c->io->lock) c->io->lock(c->io->env); }
 static void ulk(mnet_client_t *c) { if (c->io->unlock) c->io->unlock(c->io->env); }
 static void ent_close(mnet_client_t *c, mnet_pool_ent_t *e) {
-    if (e->h2) { mnet_h2_free(e->h2); free(e->h2); }
     if (e->conn) c->io->close(c->io->env, e->conn);
     free(e);
 }
@@ -41,6 +58,8 @@ void mnet_client_close_idle(mnet_client_t *c) {
     c->idle = 0; c->idle_count = 0;
     ulk(c);
     while (e) { mnet_pool_ent_t *n = e->next; ent_close(c, e); e = n; }
+    void hc_drop_idle(mnet_client_t *c);
+    hc_drop_idle(c);
 }
 static mnet_pool_ent_t *pool_take(mnet_client_t *c, const char *key) {
     long long now = c->io->now_ms(c->io->env);
@@ -90,7 +109,8 @@ typedef struct {
     int dec_err;
     /* h2 */
     mnet_h2_stream_t *st;
-    int h2_done, h2_code, h2_head_ok;
+    int h2_head_ok;
+    void *box;                       /* caixa do pedido na conexão h2 compartilhada */
 } job_t;
 
 #define JAR(j) ((j)->q->jar ? (j)->q->jar : (j)->c->jar)
@@ -430,14 +450,190 @@ static int h1_once(job_t *j, void *conn, const mnet_url_t *u, const mnet_url_t *
 }
 
 /* ---- uma ida HTTP/2 */
-static void h2_head(void *ctx, mnet_h2_stream_t *s, const mnet_hdrs_t *h, int end) {
-    job_t *j = ctx;
-    (void)end;
-    if (s != j->st) return;
+/* ---- HTTP/2 com vários pedidos numa conexão (RFC 9113 §5): a conexão fica em c->h2live enquanto houver fluxo
+ * livre. Não há fio próprio: o pedido que precisa de dados e não acha ninguém lendo vira o leitor da vez, alimenta
+ * o mnet_h2 e põe cabeçalhos, dados e fim na caixa de cada pedido (pelo s->user). Cada pedido chama os callbacks do
+ * app no próprio fio. A janela de cada fluxo só volta quando o pedido consome os dados (manual_win): quem lê devagar
+ * segura só o próprio fluxo. Travas: io_mu serializa E/S no transporte e vem antes de mu, que guarda o estado h2. */
+typedef struct h2conn {
+    char key[300];
+    void *conn;
+    mnet_h2_t h2;
+    mn_mutex_t mu, io_mu;
+    mn_cond_t cv;
+    int users, pumping, dead, priv;                /* priv: no_reuse, ninguém mais entra */
+    long long last;
+    struct h2conn *next;
+} h2conn_t;
+typedef struct {
+    int head;                        /* cabeçalho final chegou, ainda não tratado */
+    mnet_hdrs_t hdrs;
+    mnet_buf_t data;
+    int closed, code;
+} h2box_t;
+#define BOX(j) ((h2box_t *)(j)->box)
+
+static void hc_free(mnet_client_t *c, h2conn_t *hc) {
+    if (hc->conn) c->io->close(c->io->env, hc->conn);
+    mnet_h2_free(&hc->h2);
+    pthread_mutex_destroy(&hc->mu); pthread_mutex_destroy(&hc->io_mu); pthread_cond_destroy(&hc->cv);
+    free(hc);
+}
+/* callbacks do mnet_h2 (com hc->mu presa): só enchem as caixas */
+static void hc_head(void *ctx, mnet_h2_stream_t *s, const mnet_hdrs_t *h, int end) {
+    (void)ctx; (void)end;
+    job_t *j = s->user;
+    if (!j) return;
     const char *st = mnet_hdrs_get(h, ":status");
-    if (!st) return;                                              /* trailers: nada a fazer */
+    if (!st || st[0] < '2') return;                               /* 1xx e trailers */
+    h2box_t *b = BOX(j);
+    mnet_hdrs_free(&b->hdrs);
+    for (int i = 0; i < h->n; i++) mnet_hdrs_add(&b->hdrs, h->v[i].name, strlen(h->v[i].name), h->v[i].value, strlen(h->v[i].value));
+    b->head = 1;
+}
+static int hc_data(void *ctx, mnet_h2_stream_t *s, const uint8_t *d, size_t n, int end) {
+    (void)ctx; (void)end;
+    job_t *j = s->user;
+    if (!j) return 1;                                             /* ninguém quer: RST_STREAM CANCEL */
+    return mnet_buf_put(&BOX(j)->data, d, n) ? 1 : 0;
+}
+static void hc_close(void *ctx, mnet_h2_stream_t *s, int code) {
+    (void)ctx;
+    job_t *j = s->user;
+    if (!j) return;
+    BOX(j)->closed = 1; BOX(j)->code = code;
+    j->st = 0;
+}
+/* escreve tudo na conexão compartilhada, sem olhar o cancelamento de um pedido (os quadros são de todos) */
+static int hc_write(mnet_client_t *c, h2conn_t *hc, const uint8_t *d, size_t n) {
+    size_t off = 0;
+    while (off < n) {
+        long k = c->io->write(c->io->env, hc->conn, d + off, n - off, 30000);
+        if (k <= 0) return -1;
+        off += (size_t)k;
+    }
+    return 0;
+}
+/* manda o que o mnet_h2 enfileirou; chame sem mu */
+static int hc_flush(job_t *j, h2conn_t *hc) {
+    pthread_mutex_lock(&hc->io_mu);
+    pthread_mutex_lock(&hc->mu);
+    mnet_buf_t out = hc->h2.out;
+    memset(&hc->h2.out, 0, sizeof hc->h2.out);
+    pthread_mutex_unlock(&hc->mu);
+    int r = out.n ? hc_write(j->c, hc, out.p, out.n) : 0;
+    pthread_mutex_unlock(&hc->io_mu);
+    mnet_buf_free(&out);
+    if (r) { pthread_mutex_lock(&hc->mu); hc->dead = 1; pthread_cond_broadcast(&hc->cv); pthread_mutex_unlock(&hc->mu); }
+    return r;
+}
+/* uma leitura da conexão (o leitor da vez); chame sem mu. 0 ok/sem dados, -3 cancelado */
+static int hc_pump(job_t *j, h2conn_t *hc) {
+    const mnet_io_t *io = j->c->io;
+    uint8_t buf[32768];
+    long k;
+    if (cancelled(j)) return -3;
+    int w = wait_ms(j);
+    if (w <= 0) w = 1;
+    if (io->wait) {
+        int ready = io->wait(io->env, hc->conn, 1, w);
+        if (ready < 0) { pthread_mutex_lock(&hc->mu); hc->dead = 1; pthread_mutex_unlock(&hc->mu); }
+        if (ready <= 0) return 0;
+        pthread_mutex_lock(&hc->io_mu);
+        k = io->read(io->env, hc->conn, buf, sizeof buf, 0);
+        pthread_mutex_unlock(&hc->io_mu);
+    } else {
+        pthread_mutex_lock(&hc->io_mu);
+        k = io->read(io->env, hc->conn, buf, sizeof buf, 0);
+        pthread_mutex_unlock(&hc->io_mu);
+        if (k == -2) { usleep(10000); return 0; }
+    }
+    if (k == -2) return 0;
+    pthread_mutex_lock(&hc->mu);
+    if (k <= 0) hc->dead = 1;
+    else if (mnet_h2_feed(&hc->h2, buf, (size_t)k) < 0) hc->dead = 1;
+    if (hc->h2.dead) hc->dead = 1;
+    pthread_mutex_unlock(&hc->mu);
+    hc_flush(j, hc);
+    return 0;
+}
+/* espera algo mudar: vira o leitor da vez ou dorme até o leitor avisar. Chame com mu presa; volta com mu presa. */
+static int hc_progress(job_t *j, h2conn_t *hc) {
+    if (!hc->pumping) {
+        hc->pumping = 1;
+        pthread_mutex_unlock(&hc->mu);
+        int r = hc_pump(j, hc);
+        pthread_mutex_lock(&hc->mu);
+        hc->pumping = 0;
+        pthread_cond_broadcast(&hc->cv);
+        return r;
+    }
+    pthread_cond_wait(&hc->cv, &hc->mu);
+    return cancelled(j) ? -3 : 0;
+}
+/* conexão h2 viva da origem com fluxo livre (users++), limpando as ociosas vencidas */
+static h2conn_t *hc_get(mnet_client_t *c, const char *key) {
+    long long now = c->io->now_ms(c->io->env);
+    h2conn_t *got = 0, *stale = 0;
+    lk(c);
+    for (h2conn_t **pp = (h2conn_t **)&c->h2live; *pp;) {
+        h2conn_t *h = *pp;
+        pthread_mutex_lock(&h->mu);
+        int gone = !h->users && (h->dead || h->h2.goaway_recv || now - h->last > c->idle_timeout_ms);
+        int ok = !gone && !got && !h->dead && !h->priv && !h->h2.goaway_recv && !strcmp(h->key, key) &&
+                 (unsigned)h->users < (h->h2.peer_max_concurrent ? h->h2.peer_max_concurrent : 100);   /* um fluxo por usuário */
+        if (ok) h->users++;
+        pthread_mutex_unlock(&h->mu);
+        if (gone) { *pp = h->next; h->next = stale; stale = h; continue; }
+        if (ok) got = h;
+        pp = &h->next;
+    }
+    ulk(c);
+    while (stale) { h2conn_t *n = stale->next; hc_free(c, stale); stale = n; }
+    return got;
+}
+static h2conn_t *hc_add(mnet_client_t *c, const char *key, void *conn, mnet_h2_t *h2, int priv) {
+    h2conn_t *hc = calloc(1, sizeof *hc);
+    if (!hc) return 0;
+    memcpy(hc->key, key, sizeof hc->key);
+    hc->conn = conn;
+    hc->h2 = *h2;                                                 /* passa a ser dono do estado */
+    free(h2);
+    hc->h2.manual_win = 1;
+    hc->h2.ctx = hc; hc->h2.on_headers = hc_head; hc->h2.on_data = hc_data; hc->h2.on_close = hc_close;
+    hc->h2.on_goaway = 0; hc->h2.on_ping_ack = 0;
+    pthread_mutex_init(&hc->mu, 0); pthread_mutex_init(&hc->io_mu, 0); pthread_cond_init(&hc->cv, 0);
+    hc->users = 1;
+    hc->priv = priv;
+    lk(c);
+    hc->next = c->h2live;
+    c->h2live = hc;
+    ulk(c);
+    return hc;
+}
+static void hc_release(mnet_client_t *c, h2conn_t *hc) {
+    pthread_mutex_lock(&hc->mu);
+    hc->users--;
+    hc->last = c->io->now_ms(c->io->env);
+    int drop = !hc->users && (hc->dead || hc->priv || hc->h2.goaway_recv);
+    pthread_mutex_unlock(&hc->mu);
+    if (!drop) return;
+    lk(c);
+    int found = 0;
+    for (h2conn_t **pp = (h2conn_t **)&c->h2live; *pp; pp = &(*pp)->next) if (*pp == hc) { *pp = hc->next; found = 1; break; }
+    ulk(c);
+    if (found) hc_free(c, hc);
+}
+/* trata o que chegou na caixa (sem mu): cabeçalho e dados, chamando o app */
+static void box_take(job_t *j, h2box_t *b, int *have_head, mnet_hdrs_t *hdrs, mnet_buf_t *data) {
+    *have_head = b->head;
+    if (b->head) { *hdrs = b->hdrs; memset(&b->hdrs, 0, sizeof b->hdrs); b->head = 0; }
+    *data = b->data; memset(&b->data, 0, sizeof b->data);
+    (void)j;
+}
+static void box_head(job_t *j, const mnet_hdrs_t *h) {
+    const char *st = mnet_hdrs_get(h, ":status");
     int code = (st[0] - '0') * 100 + (st[1] - '0') * 10 + (st[2] - '0');
-    if (code < 200) return;
     j->r->status = code;
     j->r->version = 20;
     mnet_hdrs_free(&j->r->hdrs);
@@ -446,38 +642,11 @@ static void h2_head(void *ctx, mnet_h2_stream_t *s, const mnet_hdrs_t *h, int en
     j->h2_head_ok = 1;
     if (head_ready(j, j->follow)) j->cancelled = 1;
 }
-static int h2_dat(void *ctx, mnet_h2_stream_t *s, const uint8_t *d, size_t n, int end) {
-    job_t *j = ctx;
-    (void)end;
-    if (s != j->st) return 0;
-    return body_in(j, d, n) ? 1 : 0;
-}
-static void h2_cls(void *ctx, mnet_h2_stream_t *s, int code) {
-    job_t *j = ctx;
-    if (s == j->st) { j->h2_done = 1; j->h2_code = code; j->st = 0; }
-}
-static int h2_flush(job_t *j, void *conn, mnet_h2_t *h) {
-    if (!h->out.n) return 0;
-    int r = wr(j, conn, h->out.p, h->out.n);
-    h->out.n = 0;
-    return r;
-}
-static int h2_pump(job_t *j, void *conn, mnet_h2_t *h) {
-    uint8_t buf[32768];
-    if (h2_flush(j, conn, h)) return MNET_E_LOST;
-    long k = rd(j, conn, buf, sizeof buf);
-    if (k == -3) return MNET_E_CANCELLED;
-    if (k == -2) { setmsg(j, "tempo esgotado"); return MNET_E_TIMEOUT; }
-    if (k <= 0) { setmsg(j, "a conexão HTTP/2 caiu"); return MNET_E_LOST; }
-    if (mnet_h2_feed(h, buf, (size_t)k) < 0) { h2_flush(j, conn, h); setmsg(j, h->err ? h->err : "erro HTTP/2"); return MNET_E_BAD_RESPONSE; }
-    return h2_flush(j, conn, h) ? MNET_E_LOST : 0;
-}
-static int h2_once(job_t *j, void *conn, mnet_h2_t *h, const mnet_url_t *u, const char *method, int has_body,
-                   int *keep, int *retry) {
-    h->ctx = j; h->on_headers = h2_head; h->on_data = h2_dat; h->on_close = h2_cls;
-    h->on_goaway = 0; h->on_ping_ack = 0;
-    j->h2_done = 0; j->h2_code = 0; j->h2_head_ok = 0;
-    if (!mnet_h2_can_open(h)) { *retry = 1; return MNET_E_LOST; }
+static int h2_once(job_t *j, h2conn_t *hc, const mnet_url_t *u, const char *method, int has_body, int *retry) {
+    h2box_t box;
+    memset(&box, 0, sizeof box);
+    j->box = &box;
+    j->h2_head_ok = 0;
     mnet_hdrs_t base = {0}, hh = {0};
     int ae;
     build_headers(j, u, method, &base, &ae);
@@ -488,7 +657,6 @@ static int h2_once(job_t *j, void *conn, mnet_h2_t *h, const mnet_url_t *u, cons
     mnet_hdrs_add(&hh, ":path", 5, u->target, strlen(u->target));
     free(auth);
     long long total = body_total(j->q, has_body);
-    char lenbuf[24];
     for (int i = 0; i < base.n; i++) {
         /* nomes em minúsculas; Cookie dividido em campos (§8.2.3) ajuda a tabela HPACK */
         char *n = base.v[i].name;
@@ -497,52 +665,168 @@ static int h2_once(job_t *j, void *conn, mnet_h2_t *h, const mnet_url_t *u, cons
     }
     if (has_body && total >= 0) {
         mnet_buf_t t = {0}; mnet_buf_putu(&t, (unsigned long long)total);
-        size_t l = t.n < sizeof lenbuf ? t.n : sizeof lenbuf - 1;
-        memcpy(lenbuf, t.p, l); lenbuf[l] = 0; mnet_buf_free(&t);
-        mnet_hdrs_add(&hh, "content-length", 14, lenbuf, strlen(lenbuf));
+        mnet_hdrs_add(&hh, "content-length", 14, (const char *)t.p, t.n);
+        mnet_buf_free(&t);
     }
     mnet_hdrs_free(&base);
-    j->st = mnet_h2_request(h, &hh, !has_body);
-    mnet_hdrs_free(&hh);
-    if (!j->st) { *retry = 1; return MNET_E_LOST; }
     int r = 0;
+    pthread_mutex_lock(&hc->io_mu);                               /* HPACK: a ordem de codificação é a de envio */
+    pthread_mutex_lock(&hc->mu);
+    if (hc->dead || !mnet_h2_can_open(&hc->h2)) { *retry = 1; r = MNET_E_LOST; }
+    else {
+        j->st = mnet_h2_request(&hc->h2, &hh, !has_body);
+        if (!j->st) { *retry = 1; r = MNET_E_LOST; }
+        else j->st->user = j;
+    }
+    mnet_buf_t out = hc->h2.out;
+    memset(&hc->h2.out, 0, sizeof hc->h2.out);
+    pthread_mutex_unlock(&hc->mu);
+    if (out.n && hc_write(j->c, hc, out.p, out.n)) r = r ? r : MNET_E_LOST;
+    pthread_mutex_unlock(&hc->io_mu);
+    mnet_buf_free(&out);
+    mnet_hdrs_free(&hh);
+    if (r) { j->box = 0; mnet_hdrs_free(&box.hdrs); return r; }
+    long long idle_start = j->c->io->now_ms(j->c->io->env);
     if (has_body) {
         body_t b = {j->q, 0, 0};
         uint8_t buf[16384];
         size_t have = 0, off = 0;
         long long sent = 0;
         int ended = 0;
-        while (!r && j->st && !(ended && off == have)) {
+        while (!r && !(ended && off == have)) {
             if (off == have && !ended) {
                 long k = body_next(&b, buf, sizeof buf);
                 if (k < 0) { setmsg(j, "o corpo do pedido falhou"); r = MNET_E_UNKNOWN; break; }
                 have = (size_t)k; off = 0;
                 if (!k) ended = 1;
             }
-            long k = mnet_h2_send_data(h, j->st, buf + off, have - off, ended || (b.ended && !j->q->body_read && b.off == j->q->body_len));
+            pthread_mutex_lock(&hc->mu);
+            if (!j->st || hc->dead) { pthread_mutex_unlock(&hc->mu); break; }   /* o servidor já respondeu ou caiu */
+            long k = mnet_h2_send_data(&hc->h2, j->st, buf + off, have - off,
+                                       ended || (b.ended && !j->q->body_read && b.off == j->q->body_len));
+            int fin = j->st && (j->st->state & 1);
+            if (k == 0 && !fin) {
+                if (hc_progress(j, hc) == -3) r = MNET_E_CANCELLED;  /* janela cheia: espera WINDOW_UPDATE */
+                pthread_mutex_unlock(&hc->mu);
+                continue;
+            }
+            pthread_mutex_unlock(&hc->mu);
             if (k < 0) { r = MNET_E_LOST; break; }
             off += (size_t)k; sent += k;
             if (j->q->on_sent && k) j->q->on_sent(j->q->ctx, sent, total);
-            if (j->st && (j->st->state & 1)) break;                 /* END_STREAM foi */
-            if (!k || off < have) r = h2_pump(j, conn, h);           /* janela cheia: espera WINDOW_UPDATE */
-            else if (h2_flush(j, conn, h)) r = MNET_E_LOST;
+            if (hc_flush(j, hc)) r = MNET_E_LOST;
+            if (fin) break;
         }
-        if (!r && j->st && !(j->st->state & 1)) { mnet_h2_send_data(h, j->st, 0, 0, 1); }
+        pthread_mutex_lock(&hc->mu);
+        if (!r && j->st && !(j->st->state & 1)) mnet_h2_send_data(&hc->h2, j->st, 0, 0, 1);
+        pthread_mutex_unlock(&hc->mu);
+        if (!r) hc_flush(j, hc);
     }
-    while (!r && !j->h2_done) {
-        r = h2_pump(j, conn, h);
-        if (j->cancelled) r = MNET_E_CANCELLED;
+    /* resposta */
+    while (!r) {
+        int have_head; mnet_hdrs_t hdrs = {0}; mnet_buf_t data = {0};
+        pthread_mutex_lock(&hc->mu);
+        while (!box.head && !box.data.n && !box.closed && !hc->dead && !r) {
+            if (hc_progress(j, hc) == -3) r = MNET_E_CANCELLED;
+            if (j->c->io->now_ms(j->c->io->env) - idle_start >= j->idle_ms || (j->deadline && j->c->io->now_ms(j->c->io->env) >= j->deadline)) {
+                if (!box.head && !box.data.n && !box.closed) { setmsg(j, "tempo esgotado"); r = MNET_E_TIMEOUT; }
+            }
+        }
+        box_take(j, &box, &have_head, &hdrs, &data);
+        int closed = box.closed, code = box.code, dead = hc->dead;
+        pthread_mutex_unlock(&hc->mu);
+        if (have_head || data.n) idle_start = j->c->io->now_ms(j->c->io->env);
+        if (have_head) box_head(j, &hdrs);
+        mnet_hdrs_free(&hdrs);
+        if (data.n && !j->cancelled) body_in(j, data.p, data.n);
+        if (data.n) {
+            pthread_mutex_lock(&hc->mu);
+            if (j->st) mnet_h2_consumed(&hc->h2, j->st, data.n);
+            pthread_mutex_unlock(&hc->mu);
+            hc_flush(j, hc);
+        }
+        mnet_buf_free(&data);
+        if (j->cancelled && !r) r = MNET_E_CANCELLED;
+        if (r) break;
+        if (closed) {
+            if (code) {
+                if (code == MNET_H2_REFUSED_STREAM && !j->status_seen) *retry = 1;
+                setmsg(j, "o servidor encerrou o fluxo HTTP/2");
+                r = MNET_E_LOST;
+            }
+            break;
+        }
+        if (dead) {
+            pthread_mutex_lock(&hc->mu);
+            int more = box.head || box.data.n || box.closed;
+            pthread_mutex_unlock(&hc->mu);
+            if (more) continue;
+            if (!j->status_seen) *retry = 1;
+            setmsg(j, hc->h2.err ? hc->h2.err : "a conexão HTTP/2 caiu");
+            r = MNET_E_LOST;
+        }
     }
-    if (r == MNET_E_CANCELLED && j->st) { mnet_h2_reset(h, j->st, MNET_H2_CANCEL); h2_flush(j, conn, h); }
-    if (!r && j->h2_code) {
-        if (j->h2_code == MNET_H2_REFUSED_STREAM && !j->status_seen) *retry = 1;
-        setmsg(j, "o servidor encerrou o fluxo HTTP/2");
-        r = j->cancelled ? MNET_E_CANCELLED : MNET_E_LOST;
+    /* solta o fluxo: se ainda está aberto (cancelado, erro), RST_STREAM */
+    pthread_mutex_lock(&hc->mu);
+    if (j->st) {
+        j->st->user = 0;
+        if (!hc->dead) mnet_h2_reset(&hc->h2, j->st, MNET_H2_CANCEL);
+        j->st = 0;
     }
+    mnet_hdrs_free(&box.hdrs);
+    mnet_buf_free(&box.data);
+    j->box = 0;
+    pthread_cond_broadcast(&hc->cv);
+    pthread_mutex_unlock(&hc->mu);
+    hc_flush(j, hc);
     if (!r && j->dec_err) { setmsg(j, "corpo comprimido inválido"); r = MNET_E_DECODE; }
     if (!r && !j->h2_head_ok) { setmsg(j, "resposta HTTP/2 sem cabeçalho"); r = MNET_E_BAD_RESPONSE; }
-    *keep = !h->dead && !h->goaway_recv && (!r || r == MNET_E_CANCELLED);
     return r;
+}
+
+/* ---- coalescência: uma origem HTTPS sem conexão abre uma só vez; quem chega junto espera o ALPN */
+enum { OR_OPENING = 1, OR_H1 = 2, OR_H2 = 3 };
+typedef struct origin { char key[300]; int state; long long t; struct origin *next; } origin_t;
+static origin_t *or_find(mnet_client_t *c, const char *key) {
+    for (origin_t *o = c->origins; o; o = o->next) if (!strcmp(o->key, key)) return o;
+    return 0;
+}
+/* 1 = este pedido abre (marcou OR_OPENING); 0 = já se sabe que é HTTP/1.1, ou o outro terminou: procure de novo */
+static int or_claim(job_t *j, const char *key) {
+    mnet_client_t *c = j->c;
+    int waited = 0;
+    for (;;) {
+        lk(c);
+        origin_t *o = or_find(c, key);
+        if (o && o->state == OR_OPENING) {
+            ulk(c);
+            if (cancelled(j) || wait_ms(j) <= 0) return 0;
+            usleep(5000);
+            waited = 1;
+            continue;
+        }
+        if (waited || (o && o->state == OR_H1)) { ulk(c); return 0; }
+        if (!o) {
+            int n = 0;
+            origin_t **old = 0;
+            for (origin_t **pp = (origin_t **)&c->origins; *pp; pp = &(*pp)->next) {
+                n++;
+                if ((*pp)->state != OR_OPENING && (!old || (*pp)->t < (*old)->t)) old = pp;
+            }
+            if (n >= 64 && old) { origin_t *d = *old; *old = d->next; free(d); }   /* tira a mais velha */
+            o = calloc(1, sizeof *o);
+            if (o) { memcpy(o->key, key, sizeof o->key); o->next = c->origins; c->origins = o; }
+        }
+        if (o) { o->state = OR_OPENING; o->t = c->io->now_ms(c->io->env); }
+        ulk(c);
+        return o != 0;
+    }
+}
+static void or_done(mnet_client_t *c, const char *key, int state) {
+    lk(c);
+    origin_t *o = or_find(c, key);
+    if (o) { o->state = state; o->t = c->io->now_ms(c->io->env); }
+    ulk(c);
 }
 
 /* ---- pedido inteiro, com redirects */
@@ -585,26 +869,66 @@ int mnet_fetch(mnet_client_t *c, const mnet_req_t *q, mnet_resp_t *r, char *msg,
         }
         int tries = 0;
         for (;;) {
-            mnet_pool_ent_t *e = q->no_reuse ? 0 : pool_take(c, key);
-            int reused = e != 0;
-            if (!e) {
-                e = calloc(1, sizeof *e);
-                if (!e) { ret = MNET_E_UNKNOWN; break; }
-                memcpy(e->key, key, sizeof key);
-                ret = open_conn(&j, &u, have_px ? &px : 0, &e->conn, &e->h2);
-                if (ret) { free(e); break; }
-            } else if (e->h2) memcpy(r->alpn, "h2", 3);
-            else memcpy(r->alpn, !strcmp(u.scheme, "https") ? "http/1.1" : "", 9);
-            r->reused = reused;
-            if (has_body && tries && q->body_read && (!q->body_rewind || q->body_rewind(q->ctx))) {
-                ent_close(c, e); setmsg(&j, "o corpo do pedido não pode ser reenviado"); ret = MNET_E_LOST; break;
-            }
             int keep = 0, retry = 0;
             j.discard = 0; j.status_seen = 0; j.too_many = 0;
             free(j.next_url); j.next_url = 0;
             if (j.dec) { mnet_dec_free(j.dec); j.dec = 0; }
-            ret = e->h2 ? h2_once(&j, e->conn, e->h2, &u, method, has_body, &keep, &retry)
-                        : h1_once(&j, e->conn, &u, have_px ? &px : 0, method, has_body, &keep, &retry);
+            /* HTTP/2 já aberto para a origem: mais um fluxo nele */
+            h2conn_t *hc = q->no_reuse || q->http1_only ? 0 : hc_get(c, key);
+            if (hc) {
+                memcpy(r->alpn, "h2", 3);
+                r->reused = 1;
+                if (has_body && tries && q->body_read && (!q->body_rewind || q->body_rewind(q->ctx))) {
+                    hc_release(c, hc); setmsg(&j, "o corpo do pedido não pode ser reenviado"); ret = MNET_E_LOST; break;
+                }
+                ret = h2_once(&j, hc, &u, method, has_body, &retry);
+                hc_release(c, hc);
+                if (ret && retry && tries == 0 && !j.status_seen) { tries++; if (msg) msg[0] = 0; continue; }
+                break;
+            }
+            mnet_pool_ent_t *e = q->no_reuse ? 0 : pool_take(c, key);
+            int reused = e != 0;
+            int claimed = 0;
+            if (!e && !q->no_reuse && !q->http1_only && !have_px && !strcmp(u.scheme, "https")) {
+                claimed = or_claim(&j, key);
+                if (!claimed && (hc = hc_get(c, key))) {             /* quem abria deu h2: entra nela */
+                    memcpy(r->alpn, "h2", 3);
+                    r->reused = 1;
+                    ret = h2_once(&j, hc, &u, method, has_body, &retry);
+                    hc_release(c, hc);
+                    if (ret && retry && tries == 0 && !j.status_seen) { tries++; if (msg) msg[0] = 0; continue; }
+                    break;
+                }
+                if (!claimed) e = pool_take(c, key);                 /* deu HTTP/1.1: talvez sobre uma ociosa */
+                reused = e != 0;
+            }
+            if (!e) {
+                e = calloc(1, sizeof *e);
+                if (!e) { ret = MNET_E_UNKNOWN; break; }
+                memcpy(e->key, key, sizeof key);
+                mnet_h2_t *h2 = 0;
+                ret = open_conn(&j, &u, have_px ? &px : 0, &e->conn, &h2);
+                if (ret) { if (claimed) or_done(c, key, 0); free(e); break; }
+                if (claimed && !h2) or_done(c, key, OR_H1);
+                if (h2) {                                         /* ALPN h2: a conexão vira compartilhada */
+                    h2conn_t *nh = hc_add(c, key, e->conn, h2, q->no_reuse);
+                    if (claimed) or_done(c, key, OR_H2);           /* depois do hc_add: quem espera já a encontra */
+                    free(e);
+                    if (!nh) { ret = MNET_E_UNKNOWN; break; }
+                    r->reused = 0;
+                    if (has_body && tries && q->body_read && (!q->body_rewind || q->body_rewind(q->ctx))) {
+                        hc_release(c, nh); setmsg(&j, "o corpo do pedido não pode ser reenviado"); ret = MNET_E_LOST; break;
+                    }
+                    ret = h2_once(&j, nh, &u, method, has_body, &retry);
+                    hc_release(c, nh);
+                    break;                                       /* conexão nova: não repete */
+                }
+            } else memcpy(r->alpn, !strcmp(u.scheme, "https") ? "http/1.1" : "", 9);
+            r->reused = reused;
+            if (has_body && tries && q->body_read && (!q->body_rewind || q->body_rewind(q->ctx))) {
+                ent_close(c, e); setmsg(&j, "o corpo do pedido não pode ser reenviado"); ret = MNET_E_LOST; break;
+            }
+            ret = h1_once(&j, e->conn, &u, have_px ? &px : 0, method, has_body, &keep, &retry);
             if (keep && !ret && !q->no_reuse) pool_put(c, e); else ent_close(c, e);
             if (ret && retry && reused && tries == 0 && !j.status_seen) { tries++; if (msg) msg[0] = 0; continue; }
             break;
@@ -748,4 +1072,19 @@ void mnet_wsconn_free(mnet_wsconn_t *w) {
     mnet_ws_free(&w->ws);
     free(w->protocol); w->protocol = 0;
     mnet_resp_free(&w->resp);
+}
+/* fecha as conexões h2 sem pedido em andamento */
+void hc_drop_idle(mnet_client_t *c) {
+    h2conn_t *drop = 0;
+    lk(c);
+    for (h2conn_t **pp = (h2conn_t **)&c->h2live; *pp;) {
+        h2conn_t *h = *pp;
+        pthread_mutex_lock(&h->mu);
+        int idle = !h->users;
+        pthread_mutex_unlock(&h->mu);
+        if (idle) { *pp = h->next; h->next = drop; drop = h; continue; }
+        pp = &h->next;
+    }
+    ulk(c);
+    while (drop) { h2conn_t *n = drop->next; hc_free(c, drop); drop = n; }
 }

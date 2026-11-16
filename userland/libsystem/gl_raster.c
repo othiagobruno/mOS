@@ -31,6 +31,15 @@ typedef struct {
     int sel;                        /* GL_SELECT / GL_FEEDBACK */
     int ls_on, ps_on;               /* GL_LINE_STIPPLE / GL_POLYGON_STIPPLE */
     u32 ls_cnt;                     /* contador do pontilhado de linha */
+    /* multiamostra */
+    int ns;                         /* amostras por pixel do alvo */
+    int ms_on;                      /* ns > 1 e GL_MULTISAMPLE: cobertura por amostra */
+    int a2c, a2one, per_sample;
+    u32 full, cov_fixed;            /* todas as amostras; GL_SAMPLE_COVERAGE e GL_SAMPLE_MASK */
+    float spos[8][2];               /* posições das amostras dentro do pixel */
+    double dzx, dzy;                /* gradiente da profundidade do primitivo (z em cada amostra) */
+    int lq;                         /* linha larga como retângulo (multiamostra): pontilhado pelo eixo maior */
+    int lq_xmajor, lq_dir; double lq_s0; u32 lq_base;
 } rs_t;
 
 /* ================================================================ testes e escrita de pixel */
@@ -46,20 +55,21 @@ static int cmpf(GLenum f, double a, double b) {
     }
     return 1;
 }
-static u8 *stencil_ptr(msl_tex_t *t, int x, int y) {
+/* smp: amostra (fatia) do pixel */
+static u8 *stencil_ptr(msl_tex_t *t, int x, int y, int smp) {
     if (!t) return 0;
-    u8 *q = mx_texel(t, x, y, 0, 0, 0);
+    u8 *q = mx_texel(t, x, y, 0, smp, 0);
     return t->fmt == 260 ? q + 4 : t->fmt == 253 ? q : 0;
 }
-static double depth_get(msl_tex_t *t, int x, int y) {
-    u8 *q = mx_texel(t, x, y, 0, 0, 0);
+static double depth_get(msl_tex_t *t, int x, int y, int smp) {
+    u8 *q = mx_texel(t, x, y, 0, smp, 0);
     if (t->fmt == 250) { u16 v; memcpy(&v, q, 2); return v / 65535.0; }
     float f;
     memcpy(&f, q, 4);
     return f;
 }
-static void depth_put(msl_tex_t *t, int x, int y, double d) {
-    u8 *q = mx_texel(t, x, y, 0, 0, 0);
+static void depth_put(msl_tex_t *t, int x, int y, int smp, double d) {
+    u8 *q = mx_texel(t, x, y, 0, smp, 0);
     if (t->fmt == 250) { u16 v = (u16)(mx_cl01(d) * 65535 + 0.5); memcpy(q, &v, 2); return; }
     float f = (float)d;
     memcpy(q, &f, 4);
@@ -84,19 +94,19 @@ static void stencil_apply(gl_ctx_t *C, u8 *sp, int face, GLenum op) {
     *sp = (u8)((cur & ~m) | (nv & m));
 }
 /* 0: descartado; 1: passou */
-static int ds_test(rs_t *R, int x, int y, double z) {
+static int ds_test(rs_t *R, int x, int y, int smp, double z) {
     gl_ctx_t *C = R->C;
     gl_target_t *T = R->T;
     int face = R->front ? 0 : 1;
-    u8 *sp = R->stencil_on ? stencil_ptr(T->stencil, x, y) : 0;
+    u8 *sp = R->stencil_on ? stencil_ptr(T->stencil, x, y, smp) : 0;
     if (sp) {
         u32 ref = (u32)C->sref[face] & 255, m = C->svmask[face] & 255;
         if (!cmpf(C->sfunc[face], ref & m, *sp & m)) { stencil_apply(C, sp, face, C->sfail[face]); return 0; }
     }
     if (R->depth_on && T->depth) {
-        double cur = depth_get(T->depth, x, y);
+        double cur = depth_get(T->depth, x, y, smp);
         if (!cmpf(C->dfunc, z, cur)) { if (sp) stencil_apply(C, sp, face, C->szfail[face]); return 0; }
-        if (C->dmask) depth_put(T->depth, x, y, z);
+        if (C->dmask) depth_put(T->depth, x, y, smp, z);
     }
     if (sp) stencil_apply(C, sp, face, C->szpass[face]);
     C->samples_passed++;
@@ -169,7 +179,7 @@ static const pf_t *write_pf(int fmt, int srgb_on) {
     }
     return mx_pf(fmt);
 }
-static void color_out(rs_t *R, int x, int y, gl_frag_t *f) {
+static void color_out(rs_t *R, int x, int y, int smp, gl_frag_t *f) {
     gl_ctx_t *C = R->C;
     gl_target_t *T = R->T;
     int logic_on = gl_is_on(C, GL_COLOR_LOGIC_OP);
@@ -180,7 +190,7 @@ static void color_out(rs_t *R, int x, int y, gl_frag_t *f) {
         if (!m[0] && !m[1] && !m[2] && !m[3]) continue;
         const pf_t *p = write_pf(t->fmt, R->srgb_on);
         if (!p) continue;
-        u8 *q = mx_texel(t, x, y, 0, 0, 0);
+        u8 *q = mx_texel(t, x, y, 0, smp, 0);
         double d[4];
         mx_decode(p, q, d);
         double s[4];
@@ -214,34 +224,60 @@ static void color_out(rs_t *R, int x, int y, gl_frag_t *f) {
         mx_encode(p, q, s);
     }
 }
-/* fragmento já com profundidade interpolada em f->coord[2] */
-static void frag(rs_t *R, int x, int y, gl_frag_t *f) {
+/* GL_SAMPLE_ALPHA_TO_COVERAGE: as primeiras round(alfa*N) amostras */
+static u32 a2c_mask(rs_t *R, double alpha) {
+    int k = (int)(mx_cl01(alpha) * R->ns + 0.5);
+    return k >= 32 ? ~0u : (1u << k) - 1;
+}
+/* fragmento já com profundidade interpolada em f->coord[2]. cov: amostras cobertas pelo primitivo (bit por
+ * amostra; sem multiamostra todas). at_sample: f já está na posição da amostra (sombreamento por amostra) */
+static void frag(rs_t *R, int x, int y, gl_frag_t *f, u32 cov, int at_sample) {
     gl_ctx_t *C = R->C;
     gl_stage_t *S = R->S;
+    int dc = gl_is_on(C, GL_DEPTH_CLAMP);
     double z = f->coord[2];
-    if (!gl_is_on(C, GL_DEPTH_CLAMP) && (z < 0 || z > 1)) z = mx_cl01(z);
+    if (!dc && (z < 0 || z > 1)) z = mx_cl01(z);
     f->coord[2] = (float)z;
+    cov &= R->cov_fixed;
+    if (!cov) return;
+    f->mask_in = cov;
+    double zs[8];
+    for (int k = 0; k < R->ns; k++) {
+        zs[k] = z;
+        if (R->ms_on && !at_sample) {
+            zs[k] = z + R->dzx * (R->spos[k][0] - 0.5) + R->dzy * (R->spos[k][1] - 0.5);
+            if (!dc) zs[k] = mx_cl01(zs[k]);
+        }
+    }
     if (R->early) {
-        if (!ds_test(R, x, y, z)) return;
+        u32 pass = 0;
+        for (int k = 0; k < R->ns; k++) if ((cov >> k & 1) && ds_test(R, x, y, k, zs[k])) pass |= 1u << k;
+        if (!pass) return;
         f->discard = 0;
+        f->mask_out = ~0u;
         S->fs(C, f);
         if (f->discard) return;
-        color_out(R, x, y, f);
+        for (int k = 0; k < R->ns; k++) if (pass >> k & 1) color_out(R, x, y, k, f);
         return;
     }
     f->discard = 0;
     f->depth = f->coord[2];
+    f->mask_out = ~0u;
     S->fs(C, f);
     if (f->discard) return;
     if (S->alpha_test && gl_is_on(C, GL_ALPHA_TEST) && !cmpf(C->alpha_func, f->color[0][3], C->alpha_ref)) return;
-    if (gl_is_on(C, GL_SAMPLE_ALPHA_TO_COVERAGE) && f->color[0][3] <= 0) return;
-    z = S->writes_depth ? f->depth : f->coord[2];
-    if (S->writes_depth) z = mx_cl01(z);
-    if (!ds_test(R, x, y, z)) return;
-    color_out(R, x, y, f);
+    if (R->a2c) {
+        if (R->ms_on) cov &= a2c_mask(R, f->color[0][3]);
+        else if (f->color[0][3] <= 0) return;   /* sem amostras: alfa 0 não cobre nada */
+    }
+    if (R->ms_on && S->writes_mask) cov &= f->mask_out;
+    if (!cov) return;
+    if (R->ms_on && R->a2one) for (int i = 0; i < GLX_DRAW; i++) f->color[i][3] = 1;
+    if (S->writes_depth) { double d = mx_cl01(f->depth); for (int k = 0; k < R->ns; k++) zs[k] = d; }
+    for (int k = 0; k < R->ns; k++) if ((cov >> k & 1) && ds_test(R, x, y, k, zs[k])) color_out(R, x, y, k, f);
 }
 void gl_pixel_write(gl_ctx_t *C, gl_target_t *T, int x, int y, gl_frag_t *f) {
-    /* glDrawPixels/glBitmap: fragmento pronto (sem fragment shader) passa pelos mesmos testes */
+    /* glDrawPixels/glBitmap: fragmento pronto (sem fragment shader) passa pelos mesmos testes, em todas as amostras */
     rs_t R = {0};
     R.C = C; R.T = T; R.S = &C->st;
     R.depth_on = gl_is_on(C, GL_DEPTH_TEST) && T->depth;
@@ -251,8 +287,8 @@ void gl_pixel_write(gl_ctx_t *C, gl_target_t *T, int x, int y, gl_frag_t *f) {
     if (x < 0 || y < 0 || x >= T->w || y >= T->h) return;
     if (gl_is_on(C, GL_SCISSOR_TEST) && (x < C->sc[0] || y < C->sc[1] || x >= C->sc[0] + C->sc[2] || y >= C->sc[1] + C->sc[3])) return;
     if (gl_is_on(C, GL_ALPHA_TEST) && !cmpf(C->alpha_func, f->color[0][3], C->alpha_ref)) return;
-    if (!ds_test(&R, x, y, f->coord[2])) return;
-    color_out(&R, x, y, f);
+    int ns = T->samples > 1 ? T->samples : 1;
+    for (int k = 0; k < ns; k++) if (ds_test(&R, x, y, k, f->coord[2])) color_out(&R, x, y, k, f);
 }
 
 /* ================================================================ interpolação */
@@ -285,6 +321,13 @@ static void interp_at(gl_vtx_t *const v[3], double A, const double e[3][3], doub
 /* ================================================================ triângulo */
 static void set_flat(rs_t *R, gl_vtx_t *pv) { for (int s = 0; s < R->S->nvar; s++) for (int k = 0; k < 4; k++) R->flat_v[s][k] = pv->v[s][k]; }
 static int top_left(double ex, double ey) { return ey < 0 || (ey == 0 && ex < 0); }   /* y para cima, sentido anti-horário */
+/* pontilhado da linha larga desenhada como retângulo: bit pela distância no eixo maior */
+static int lq_stipple(rs_t *R, double cx, double cy) {
+    double t = ((R->lq_xmajor ? cx : cy) - R->lq_s0) * R->lq_dir;
+    if (t < 0) t = 0;
+    u32 bit = ((R->lq_base + (u32)t) / (u32)R->C->ls_factor) & 15;
+    return R->C->ls_pattern >> bit & 1;
+}
 static void raster_tri(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, gl_vtx_t *c, double zoff) {
     gl_vtx_t *v[3] = {a, b, c};
     double x[3], y[3];
@@ -311,6 +354,9 @@ static void raster_tri(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, gl_vtx_t *c, double zo
         int j = (i + 1) % 3, k = (i + 2) % 3;
         bias[i] = top_left(x[k] - x[j], y[k] - y[j]) ? 0 : 1;
     }
+    /* gradiente da profundidade: z em cada amostra */
+    R->dzx = R->dzy = 0;
+    if (R->ms_on) for (int i = 0; i < 3; i++) { R->dzx += e[i][0] * v[i]->win[2] / A; R->dzy += e[i][1] * v[i]->win[2] / A; }
     double minx = x[0], maxx = x[0], miny = y[0], maxy = y[0];
     for (int i = 1; i < 3; i++) {
         if (x[i] < minx) minx = x[i];
@@ -329,21 +375,63 @@ static void raster_tri(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, gl_vtx_t *c, double zo
     f.front = R->front;
     f.prim_id = R->prim;
     f.pcoord[0] = f.pcoord[1] = 0;
+    f.sample_id = 0;
+    f.sample_pos[0] = f.sample_pos[1] = 0.5f;
+#define INSIDE(px_, py_) ({ double w0_ = e[0][0] * (px_) + e[0][1] * (py_) + e[0][2], w1_ = e[1][0] * (px_) + e[1][1] * (py_) + e[1][2], \
+                            w2_ = e[2][0] * (px_) + e[2][1] * (py_) + e[2][2]; \
+                            !(w0_ < 0 || w1_ < 0 || w2_ < 0 || (w0_ == 0 && bias[0]) || (w1_ == 0 && bias[1]) || (w2_ == 0 && bias[2])); })
     for (int py = iy0; py < iy1; py++) {
         double cy = py + 0.5;
         for (int px = ix0; px < ix1; px++) {
             double cx = px + 0.5;
-            double w0 = e[0][0] * cx + e[0][1] * cy + e[0][2];
-            double w1 = e[1][0] * cx + e[1][1] * cy + e[1][2];
-            double w2 = e[2][0] * cx + e[2][1] * cy + e[2][2];
-            if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-            if ((w0 == 0 && bias[0]) || (w1 == 0 && bias[1]) || (w2 == 0 && bias[2])) continue;
+            int cin = INSIDE(cx, cy);
+            u32 cov;
+            if (R->ms_on) {
+                cov = 0;
+                for (int k = 0; k < R->ns; k++) if (INSIDE(px + R->spos[k][0], py + R->spos[k][1])) cov |= 1u << k;
+                if (!cov) continue;
+            } else {
+                if (!cin) continue;
+                cov = R->full;
+            }
             if (R->ps_on && !(R->C->pstipple[py & 31] >> (px & 31) & 1)) continue;
-            double b0 = w0 / A, b1 = w1 / A, b2 = w2 / A;
+            if (R->lq && R->ls_on && !lq_stipple(R, cx, cy)) continue;
+            if (R->per_sample && R->ms_on) {
+                /* sombreamento por amostra: o shader roda em cada amostra coberta, na posição dela */
+                for (int k = 0; k < R->ns; k++) {
+                    if (!(cov >> k & 1)) continue;
+                    double sx = px + R->spos[k][0], sy = py + R->spos[k][1];
+                    double b0 = (e[0][0] * sx + e[0][1] * sy + e[0][2]) / A, b1 = (e[1][0] * sx + e[1][1] * sy + e[1][2]) / A, b2 = (e[2][0] * sx + e[2][1] * sy + e[2][2]) / A;
+                    f.coord[0] = (float)sx;
+                    f.coord[1] = (float)sy;
+                    interp_frag(R, &f, v, b0, b1, b2);
+                    f.coord[2] = (float)(f.coord[2] + zoff);
+                    f.sample_id = k;
+                    f.sample_pos[0] = R->spos[k][0];
+                    f.sample_pos[1] = R->spos[k][1];
+                    if (S->dmask) for (int s = 0; s < S->nvar; s++) {
+                        if (!(S->dmask >> s & 1)) continue;
+                        float a1[4], a2[4];
+                        interp_at(v, A, e, sx + 1, sy, s, S->interp[s], a1);
+                        interp_at(v, A, e, sx, sy + 1, s, S->interp[s], a2);
+                        for (int q = 0; q < 4; q++) { f.dx[s][q] = a1[q] - f.v[s][q]; f.dy[s][q] = a2[q] - f.v[s][q]; }
+                    }
+                    frag(R, px, py, &f, 1u << k, 1);
+                }
+                continue;
+            }
+            double b0 = (e[0][0] * cx + e[0][1] * cy + e[0][2]) / A, b1 = (e[1][0] * cx + e[1][1] * cy + e[1][2]) / A, b2 = (e[2][0] * cx + e[2][1] * cy + e[2][2]) / A;
             f.coord[0] = (float)cx;
             f.coord[1] = (float)cy;
             interp_frag(R, &f, v, b0, b1, b2);
             f.coord[2] = (float)(f.coord[2] + zoff);
+            if (S->centroid && R->ms_on && !cin) {
+                /* centroid: o centro está fora do primitivo; usa a primeira amostra coberta */
+                int k = 0;
+                while (!(cov >> k & 1)) k++;
+                double sx = px + R->spos[k][0], sy = py + R->spos[k][1];
+                for (int s = 0; s < S->nvar; s++) if ((S->centroid >> s & 1) && S->interp[s] != MSL_INTERP_FLAT) interp_at(v, A, e, sx, sy, s, S->interp[s], f.v[s]);
+            }
             if (S->dmask) {
                 for (int s = 0; s < S->nvar; s++) {
                     if (!(S->dmask >> s & 1)) continue;
@@ -353,13 +441,39 @@ static void raster_tri(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, gl_vtx_t *c, double zo
                     for (int k = 0; k < 4; k++) { f.dx[s][k] = a1[k] - f.v[s][k]; f.dy[s][k] = a2[k] - f.v[s][k]; }
                 }
             }
-            frag(R, px, py, &f);
+            frag(R, px, py, &f, cov, 0);
         }
     }
+#undef INSIDE
 }
 
 /* ================================================================ linha e ponto */
+/* multiamostra: a linha é o retângulo de largura line_w em volta do segmento (dois triângulos) */
+static void raster_line_ms(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, double zoff) {
+    gl_ctx_t *C = R->C;
+    double x0 = a->win[0], y0 = a->win[1], x1 = b->win[0], y1 = b->win[1];
+    double dx = x1 - x0, dy = y1 - y0, len = sqrt(dx * dx + dy * dy);
+    if (len == 0) return;
+    double hw = (C->line_w > 0 ? C->line_w : 1) * 0.5;
+    double nx = -dy / len * hw, ny = dx / len * hw;
+    gl_vtx_t q[4] = {*a, *a, *b, *b};
+    q[0].win[0] = (float)(x0 + nx); q[0].win[1] = (float)(y0 + ny);
+    q[1].win[0] = (float)(x0 - nx); q[1].win[1] = (float)(y0 - ny);
+    q[2].win[0] = (float)(x1 - nx); q[2].win[1] = (float)(y1 - ny);
+    q[3].win[0] = (float)(x1 + nx); q[3].win[1] = (float)(y1 + ny);
+    int xmajor = fabs(dx) >= fabs(dy);
+    R->lq = 1;
+    R->lq_xmajor = xmajor;
+    R->lq_s0 = xmajor ? x0 : y0;
+    R->lq_dir = (xmajor ? dx : dy) >= 0 ? 1 : -1;
+    R->lq_base = R->ls_cnt;
+    raster_tri(R, &q[0], &q[1], &q[2], zoff);
+    raster_tri(R, &q[0], &q[2], &q[3], zoff);
+    R->lq = 0;
+    R->ls_cnt += (u32)(fabs(xmajor ? dx : dy) + 0.5);
+}
 static void raster_line(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, double zoff, int last_pixel) {
+    if (R->ms_on) { raster_line_ms(R, a, b, zoff); return; }
     gl_ctx_t *C = R->C;
     gl_stage_t *S = R->S;
     double x0 = a->win[0], y0 = a->win[1], x1 = b->win[0], y1 = b->win[1];
@@ -371,7 +485,7 @@ static void raster_line(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, double zoff, int last
     /* pontos de amostra no eixo maior: centros de pixel entre as extremidades (regra do diamante aproximada) */
     double s0 = xmajor ? x0 : y0, s1 = xmajor ? x1 : y1;
     int dir = s1 >= s0 ? 1 : -1;
-    int i0 = (int)floor(s0 + 0.5 * dir * 0 + (dir > 0 ? 0.5 : -0.5) * 0), i1;
+    int i0, i1;
     /* primeiro centro c com c >= s0 (dir > 0) */
     if (dir > 0) { i0 = (int)ceil(s0 - 0.5); i1 = (int)ceil(s1 - 0.5); if (last_pixel) i1++; }
     else { i0 = (int)floor(s0 - 0.5); i1 = (int)floor(s1 - 0.5); if (last_pixel) i1--; }
@@ -379,6 +493,9 @@ static void raster_line(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, double zoff, int last
     f.front = 1;
     f.prim_id = R->prim;
     f.pcoord[0] = f.pcoord[1] = 0;
+    f.sample_id = 0;
+    f.sample_pos[0] = f.sample_pos[1] = 0.5f;
+    R->dzx = R->dzy = 0;
     for (int i = i0; dir > 0 ? i < i1 : i > i1; i += dir) {
         if (R->ls_on) {
             /* bit (s / fator) mod 16 do padrão; s conta os fragmentos ao longo do eixo maior */
@@ -413,7 +530,7 @@ static void raster_line(rs_t *R, gl_vtx_t *a, gl_vtx_t *b, double zoff, int last
             if (px < R->x0 || py < R->y0 || px >= R->x1 || py >= R->y1) continue;
             f.coord[0] = px + 0.5f;
             f.coord[1] = py + 0.5f;
-            frag(R, px, py, &f);
+            frag(R, px, py, &f, R->full, 0);
         }
     }
 }
@@ -424,30 +541,57 @@ static void raster_point(rs_t *R, gl_vtx_t *a, double zoff) {
     if (size < 1) size = 1;
     if (size > 1024) size = 1024;
     double cx = a->win[0], cy = a->win[1];
-    int x0 = (int)floor(cx - size / 2 + 0.5), y0 = (int)floor(cy - size / 2 + 0.5);
-    int n = (int)(size + 0.5);
-    if (n < 1) n = 1;
+    int x0, y0, x1, y1;
+    if (R->ms_on) {
+        /* multiamostra: quadrado de lado size centrado no ponto; cobre as amostras dentro dele */
+        x0 = (int)floor(cx - size / 2); y0 = (int)floor(cy - size / 2);
+        x1 = (int)ceil(cx + size / 2); y1 = (int)ceil(cy + size / 2);
+    } else {
+        int n = (int)(size + 0.5);
+        if (n < 1) n = 1;
+        x0 = (int)floor(cx - size / 2 + 0.5); y0 = (int)floor(cy - size / 2 + 0.5);
+        x1 = x0 + n; y1 = y0 + n;
+    }
     gl_frag_t f;
     f.front = 1;
     f.prim_id = R->prim;
+    f.sample_id = 0;
+    f.sample_pos[0] = f.sample_pos[1] = 0.5f;
+    R->dzx = R->dzy = 0;
     set_flat(R, a);
     for (int s = 0; s < S->nvar; s++) for (int k = 0; k < 4; k++) { f.v[s][k] = a->v[s][k]; f.dx[s][k] = f.dy[s][k] = 0; }
-    for (int py = y0; py < y0 + n; py++)
-        for (int px = x0; px < x0 + n; px++) {
+    double h0x = cx - size / 2, h0y = cy - size / 2, h1x = cx + size / 2, h1y = cy + size / 2;
+    for (int py = y0; py < y1; py++)
+        for (int px = x0; px < x1; px++) {
             if (px < R->x0 || py < R->y0 || px >= R->x1 || py >= R->y1) continue;
-            f.coord[0] = px + 0.5f;
-            f.coord[1] = py + 0.5f;
-            f.coord[2] = (float)(a->win[2] + zoff);
-            f.coord[3] = a->win[3];
-            f.pcoord[0] = (float)(0.5 + (px + 0.5 - cx) / size);
-            double t = (py + 0.5 - cy) / size;
-            f.pcoord[1] = (float)(C->point_origin == GL_UPPER_LEFT ? 0.5 - t : 0.5 + t);
-            if (S->point_sprite) {
-                /* fixed function: GL_COORD_REPLACE troca a coordenada de textura da unidade */
-                for (int u = 0; u < 8; u++) if (C->te[u].coord_replace && 4 + u < S->nvar) { f.v[4 + u][0] = f.pcoord[0]; f.v[4 + u][1] = f.pcoord[1]; f.v[4 + u][2] = 0; f.v[4 + u][3] = 1; }
+            u32 cov = R->full;
+            if (R->ms_on) {
+                cov = 0;
+                for (int k = 0; k < R->ns; k++) {
+                    double sx = px + R->spos[k][0], sy = py + R->spos[k][1];
+                    if (sx >= h0x && sx < h1x && sy >= h0y && sy < h1y) cov |= 1u << k;
+                }
+                if (!cov) continue;
             }
-            for (int s = 0; s < S->nvar; s++) if (S->interp[s] == MSL_INTERP_FLAT) for (int k = 0; k < 4; k++) f.v[s][k] = R->flat_v[s][k];
-            frag(R, px, py, &f);
+            int nrun = R->ms_on && R->per_sample ? R->ns : 1;
+            for (int k = 0; k < nrun; k++) {
+                if (nrun > 1 && !(cov >> k & 1)) continue;
+                double fx = nrun > 1 ? px + R->spos[k][0] : px + 0.5, fy = nrun > 1 ? py + R->spos[k][1] : py + 0.5;
+                f.coord[0] = (float)fx;
+                f.coord[1] = (float)fy;
+                f.coord[2] = (float)(a->win[2] + zoff);
+                f.coord[3] = a->win[3];
+                if (nrun > 1) { f.sample_id = k; f.sample_pos[0] = R->spos[k][0]; f.sample_pos[1] = R->spos[k][1]; }
+                f.pcoord[0] = (float)(0.5 + (fx - cx) / size);
+                double t = (fy - cy) / size;
+                f.pcoord[1] = (float)(C->point_origin == GL_UPPER_LEFT ? 0.5 - t : 0.5 + t);
+                if (S->point_sprite) {
+                    /* fixed function: GL_COORD_REPLACE troca a coordenada de textura da unidade */
+                    for (int u = 0; u < 8; u++) if (C->te[u].coord_replace && 4 + u < S->nvar) { f.v[4 + u][0] = f.pcoord[0]; f.v[4 + u][1] = f.pcoord[1]; f.v[4 + u][2] = 0; f.v[4 + u][3] = 1; }
+                }
+                for (int s = 0; s < S->nvar; s++) if (S->interp[s] == MSL_INTERP_FLAT) for (int q = 0; q < 4; q++) f.v[s][q] = R->flat_v[s][q];
+                frag(R, px, py, &f, nrun > 1 ? 1u << k : cov, nrun > 1);
+            }
         }
 }
 
@@ -869,6 +1013,28 @@ static u32 read_index(const u8 *p, GLenum t, i64 i) {
     return v;
 }
 void gl_query_tick_time(gl_ctx_t *C);
+/* estado de multiamostra do draw: amostras do alvo, máscara fixa (cobertura e GL_SAMPLE_MASK), sombreamento por amostra */
+static void rs_ms_setup(rs_t *R) {
+    gl_ctx_t *C = R->C;
+    R->ns = R->T->samples > 1 ? R->T->samples : 1;
+    R->full = R->ns >= 32 ? ~0u : (1u << R->ns) - 1;
+    R->ms_on = R->ns > 1 && gl_is_on(C, GL_MULTISAMPLE);
+    R->a2c = gl_is_on(C, GL_SAMPLE_ALPHA_TO_COVERAGE);
+    R->a2one = gl_is_on(C, GL_SAMPLE_ALPHA_TO_ONE);
+    for (int k = 0; k < R->ns; k++) mx_sample_pos(R->ns, k, R->spos[k]);
+    R->cov_fixed = R->full;
+    if (!R->ms_on) return;
+    if (gl_is_on(C, GL_SAMPLE_COVERAGE)) {
+        int k = (int)(mx_cl01(C->samp_cov) * R->ns + 0.5);
+        u32 m = k >= 32 ? ~0u : (1u << k) - 1;
+        if (C->samp_inv) m = ~m;
+        R->cov_fixed &= m;
+    }
+    if (gl_is_on(C, GL_SAMPLE_MASK)) R->cov_fixed &= C->samp_mask;
+    /* GL_SAMPLE_SHADING: ceil(min_sample_shading * N) > 1 amostras sombreadas: roda em cada uma */
+    double need = C->min_sample_shading * R->ns;
+    R->per_sample = R->S->per_sample || (gl_is_on(C, GL_SAMPLE_SHADING) && need > 1);
+}
 void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const void *indices, i64 inst, i64 binst, i64 bvert) {
     (void)binst;
     if (!mode_ok(mode)) { gl_err(C, GL_INVALID_ENUM); return; }
@@ -920,7 +1086,9 @@ void gl_draw(gl_ctx_t *C, GLenum mode, i64 first, i64 count, GLenum itype, const
     R.srgb_on = gl_is_on(C, GL_FRAMEBUFFER_SRGB);
     R.nclip = C->st.nclip;
     for (int i = 0; i < GLX_CLIP; i++) if (gl_is_on(C, GL_CLIP_DISTANCE0 + i)) R.clip_mask |= 1u << i;
-    R.early = !C->st.writes_depth && !C->st.discards && !(C->st.alpha_test && gl_is_on(C, GL_ALPHA_TEST)) && !gl_is_on(C, GL_SAMPLE_ALPHA_TO_COVERAGE);
+    R.early = !C->st.writes_depth && !C->st.discards && !(C->st.alpha_test && gl_is_on(C, GL_ALPHA_TEST)) && !gl_is_on(C, GL_SAMPLE_ALPHA_TO_COVERAGE) &&
+              !C->st.writes_mask;
+    rs_ms_setup(&R);
     R.x0 = 0; R.y0 = 0; R.x1 = T->w; R.y1 = T->h;
     if (gl_is_on(C, GL_SCISSOR_TEST)) {
         if (C->sc[0] > R.x0) R.x0 = C->sc[0];

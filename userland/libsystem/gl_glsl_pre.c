@@ -357,7 +357,8 @@ static void builtins(sb_t *b, int stage, int compat) {
                 "void EmitStreamVertex(int s) { EmitVertex(); }\nvoid EndStreamPrimitive(int s) { EndPrimitive(); }\n");
     } else {
         sb_s(b, "float4 gl_FragCoord; bool gl_FrontFacing; float2 gl_PointCoord; float gl_FragDepth; int gl_PrimitiveID;\n"
-                "float4 gl_FragColor; float4 gl_FragData[8]; int gl_SampleID; float2 gl_SamplePosition; float gl_ClipDistance[8];\n");
+                "float4 gl_FragColor; float4 gl_FragData[8]; int gl_SampleID; float2 gl_SamplePosition; float gl_ClipDistance[8];\n"
+                "int gl_SampleMaskIn[1]; int gl_SampleMask[1];\n");
         if (compat) sb_s(b, "float4 gl_Color; float4 gl_SecondaryColor; float4 gl_TexCoord[8]; float gl_FogFragCoord;\n");
     }
     if (!compat) return;

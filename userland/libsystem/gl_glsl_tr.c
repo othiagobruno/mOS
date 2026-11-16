@@ -199,7 +199,8 @@ static int quals(tr_t *R, int i, int e, qual_t *q) {
         if (teq(t, "flat")) { q->interp = MSL_INTERP_FLAT; continue; }
         if (teq(t, "noperspective")) { q->interp = MSL_INTERP_NOPERSP; continue; }
         if (teq(t, "smooth")) { q->interp = MSL_INTERP_PERSP; continue; }
-        if (teq(t, "centroid") || teq(t, "sample")) { q->centroid = 1; continue; }
+        if (teq(t, "centroid")) { if (!q->centroid) q->centroid = 1; continue; }
+        if (teq(t, "sample")) { q->centroid = 2; continue; }
         if (teq(t, "const")) { q->isconst = 1; continue; }
         if (in_list(t, QUALS)) continue;
         break;
@@ -216,6 +217,7 @@ static gl_decl_t *decl_new(tr_t *R, const gt_t *name, const qual_t *q) {
     d->loc = q->loc;
     d->index = q->index;
     d->interp = q->interp;
+    d->aux = q->centroid;
     d->rowmajor = q->rowmajor;
     return d;
 }

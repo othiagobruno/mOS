@@ -158,12 +158,14 @@ typedef struct mnet_h2_stream {
     int state;                         /* 0 aberto, 1 meio fechado (local), 2 meio fechado (remoto), 3 fechado */
     long long send_win, recv_win;
     long long recv_unacked;            /* bytes recebidos ainda sem WINDOW_UPDATE */
+    long long consumed;                /* manual_win: bytes já consumidos pelo dono, ainda sem WINDOW_UPDATE */
     int got_headers;
     void *user;
     struct mnet_h2_stream *next;
 } mnet_h2_stream_t;
 typedef struct mnet_h2 {
     int is_server, dead, goaway_recv, goaway_sent;
+    int manual_win;                    /* 1: a janela do fluxo só volta com mnet_h2_consumed (quem lê devagar segura o par) */
     uint32_t next_id, last_peer_id, goaway_last;
     int err_code;
     const char *err;
@@ -203,6 +205,7 @@ int mnet_h2_ping(mnet_h2_t *c, const uint8_t opaque[8]);
 int mnet_h2_goaway(mnet_h2_t *c, int code);
 mnet_h2_stream_t *mnet_h2_find(mnet_h2_t *c, uint32_t id);
 int mnet_h2_can_open(const mnet_h2_t *c);
+int mnet_h2_consumed(mnet_h2_t *c, mnet_h2_stream_t *s, size_t n);   /* manual_win: o dono consumiu n bytes */
 
 /* ---- Content-Encoding (gzip, deflate, br, em cadeia). NULL = codificação desconhecida ou ausente. */
 typedef struct mnet_dec mnet_dec_t;
@@ -257,6 +260,8 @@ typedef struct {
     int idle_timeout_ms;
     mnet_jar_t *jar;                                /* cookies compartilhados (NSHTTPCookieStorage) ou NULL */
     char user_agent[160];
+    void *h2live;                                   /* conexões HTTP/2 compartilhadas (mnet_client.c) */
+    void *origins;                                  /* origens HTTPS: abrindo, HTTP/1.1 ou h2 (coalescência) */
 } mnet_client_t;
 typedef struct {
     int status, version;                            /* version: 10, 11 ou 20 */
@@ -393,6 +398,8 @@ int mnet_proxy_parse_pac_result(const char *s, mnet_proxy_t *out, int max);
 
 /* ---- autenticação HTTP (RFC 7617 Basic, RFC 7616 Digest MD5/SHA-256/-sess, qop=auth) */
 /* escolhe o melhor desafio dos cabeçalhos (www-authenticate ou proxy-authenticate): 1 Basic, 2 Digest MD5, 3 Digest SHA-256 */
+/* parâmetro de um desafio ("Digest realm=\"x\", nonce=..."): 1 achou */
+int mnet_auth_param(const char *challenge, const char *name, char *out, size_t n);
 const char *mnet_auth_pick(const mnet_hdrs_t *h, const char *field, int *score);
 /* valor de Authorization para o desafio; cnonce de 16 bytes aleatórios (NULL = gerado com rnd) */
 char *mnet_auth_value(const char *challenge, const char *user, const char *pass, const char *method, const char *uri,
@@ -427,6 +434,7 @@ void mnet_stream_close(mnet_stream_t *s);
 void mnet_stream_free(mnet_stream_t *s);
 long mnet_stream_read(mnet_stream_t *s, uint8_t *b, size_t n);               /* bloqueia como o CFReadStreamRead */
 long mnet_stream_write(mnet_stream_t *s, const uint8_t *b, size_t n);
+long mnet_stream_read_wait(mnet_stream_t *s, uint8_t *b, size_t n, int timeout_ms);   /* -2: prazo */
 int mnet_stream_status(mnet_stream_t *s);
 int mnet_stream_has_bytes(mnet_stream_t *s);
 int mnet_stream_has_space(mnet_stream_t *s);
@@ -447,3 +455,30 @@ void *mnet_stream_conn(mnet_stream_t *s);
 int mnet_stream_tls_active(mnet_stream_t *s);
 int mnet_stream_starttls(mnet_stream_t *s);                                  /* TLS depois do open */
 void mnet_stream_fail(mnet_stream_t *s, int domain, long code, const char *msg);
+void mnet_stream_fail_peer(mnet_stream_t *w, int domain, long code, const char *msg);   /* erro no leitor do par */
+int mnet_stream_peer_gone(mnet_stream_t *w);                                 /* leitor do par fechou ou saiu */
+
+/* ---- mensagem HTTP solta (CFHTTPMessage), mnet_msg.c */
+typedef struct {
+    int is_request, ver_major, ver_minor, status;
+    char *method, *target, *reason;          /* target: URL do pedido montado ou o alvo lido da linha */
+    mnet_hdrs_t hdrs;
+    mnet_buf_t body;
+    mnet_buf_t in;                           /* cabeça parcial (AppendBytes) */
+    int head_done, bad;
+} mnet_msg_t;
+int mnet_msg_parse_version(const char *v, int *maj, int *min);
+int mnet_msg_init_request(mnet_msg_t *m, const char *method, const char *url, const char *version);
+int mnet_msg_init_response(mnet_msg_t *m, int status, const char *reason, const char *version);
+void mnet_msg_init_empty(mnet_msg_t *m, int is_request);
+int mnet_msg_copy(mnet_msg_t *dst, const mnet_msg_t *src);
+void mnet_msg_free(mnet_msg_t *m);
+int mnet_msg_append(mnet_msg_t *m, const uint8_t *d, size_t n);             /* -1: mensagem inválida */
+int mnet_msg_version(const mnet_msg_t *m, char out[12]);                     /* "HTTP/1.1" */
+char *mnet_msg_request_target(const mnet_msg_t *m);                          /* malloc */
+int mnet_msg_serialize(const mnet_msg_t *m, mnet_buf_t *out);
+const char *mnet_status_text(int status);
+
+/* ---- DNS reverso (mnet_util.c): nome PTR de um sockaddr do macOS e o primeiro PTR de uma resposta */
+int mnet_dns_ptr_name(const uint8_t *sa, size_t n, char *q, size_t qn);
+int mnet_dns_first_ptr(const uint8_t *msg, size_t len, char *out, size_t on);

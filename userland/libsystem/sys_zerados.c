@@ -505,7 +505,6 @@ void $sSo9NSRunLoopC10FoundationE17SchedulerTimeTypeV6StrideV12millisecondsyAGSi
 void $sSo9NSRunLoopC10FoundationE17SchedulerTimeTypeV6StrideV7secondsyAGSdFZ(void) {}
 void $sSo9NSRunLoopC10FoundationE17SchedulerTimeTypeV6StrideVMa(void) {}
 void $sSo9NSRunLoopC10FoundationE17SchedulerTimeTypeV6StrideVMn(void) {}
-void $sSo9NSScannerC10FoundationE9scanInt3214representations0D0VSgAbCE20NumberRepresentationO_tF(void) {}
 void $sSo9OS_os_logC0B0E16signpostsEnabledSbvg(void) {}
 void $sSo9OS_os_logC0B0E9subsystem8categoryABSS_SStcfC(void) {}
 void $sSo9VNContourC6VisionE16normalizedPointsSays5SIMD2VySfGGvg(void) {}
@@ -520,8 +519,6 @@ void $ss8DurationV10FoundationE15TimeFormatStyleV7PatternVMa(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleVAC0dE0ACMc(void) {}
 void $ss8DurationV10FoundationE15TimeFormatStyleVMa(void) {}
 void $ss8DurationV10FoundationE9formattedy12FormatOutputQzxAC0D5StyleRzAB0D5InputRtzlF(void) {}
-void *OBJC_CLASS_$_NSOutputStream;
-void *OBJC_CLASS_$_NSStream;
 void SecTaskCopyTeamIdentifier(void) {}
 void SecTaskCreateWithAuditToken(void) {}
 void __invert_f3(void) {}
