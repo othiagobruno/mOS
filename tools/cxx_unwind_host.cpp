@@ -73,6 +73,17 @@ static void mid() {
     (void)d;
 }
 
+/* frame com alloca: a CFA deixa de ser rsp+constante (o compilador força rbp ou uma expressão DWARF para a CFA).
+ * O desenrolador tem de recuperar a CFA deste frame mesmo com -O2 -fomit-frame-pointer. volatile impede que o
+ * alloca seja otimizado para fora. */
+__attribute__((noinline)) static void alloca_frame(int n) {
+    D d;
+    volatile char *buf = (char *)__builtin_alloca((unsigned)n);
+    for (int i = 0; i < n; i++) buf[i] = (char)i;
+    if (buf[n - 1] == (char)(n - 1)) throw 21;
+    (void)d;
+}
+
 int main() {
     try {
         mid();
@@ -90,9 +101,17 @@ int main() {
             mid();
         } catch (int) {
             try { throw; }
-            catch (int z) { return (z == 7 && hits == 4) ? 0 : 7; }
+            catch (int z) { if (z != 7 || hits != 4) return 7; }
         }
-        return 8;
+        /* desenrola um frame com alloca (CFA dinâmica) */
+        int before = hits;
+        try {
+            alloca_frame(96);
+            return 9;
+        } catch (int a) {
+            if (a != 21 || hits != before + 1) return 10;
+        }
+        return 0;
     }
     int rr = regs_ok();
     if (rr) return rr;
