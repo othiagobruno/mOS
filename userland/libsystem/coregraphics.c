@@ -200,7 +200,11 @@ CGAffineTransform CGAffineTransformMakeWithComponents(CGAffineTransformComponent
 enum { MOVE, LINE, QUAD, CURVE, CLOSE };
 typedef struct { i32 type; CGPoint *points; } CGPathElement;
 typedef void (*CGPathApplierFunction)(void *info, const CGPathElement *el);
-typedef struct { cx_class_t *isa; u64 cfinfo; u8 *types; CGPoint *pts; u64 n, cap, npts, ptcap; CGPoint start, cur; } cgpath_t;
+/* prim: forma primitiva de onde o caminho nasceu (CGPathCreateWith{Rect,EllipseInRect,RoundedRect}), com o retângulo,
+ * os raios e a transformação; qualquer elemento novo apaga a marca. Serve às SPI CGPathIs*WithTransform (OpenRenderBox). */
+enum { PRIM_NONE, PRIM_RECT, PRIM_ELLIPSE, PRIM_RRECT };
+typedef struct { cx_class_t *isa; u64 cfinfo; u8 *types; CGPoint *pts; u64 n, cap, npts, ptcap; CGPoint start, cur;
+                 int prim; CGRect prect; CGFloat pcw, pch; CGAffineTransform pm; } cgpath_t;
 
 static const int pts_for[5] = {1, 1, 2, 3, 0};
 static cx_class_t *path_cls;
@@ -249,6 +253,7 @@ static CGPoint xf(const CGAffineTransform *m, double x, double y) {
 }
 static void push(cgpath_t *p, int type, const CGPoint *pts) {
     if (!p) return;
+    p->prim = PRIM_NONE;
     int k = pts_for[type];
     if (p->n == p->cap) { p->cap = p->cap ? p->cap * 2 : 16; p->types = realloc(p->types, p->cap); }
     if (p->npts + k > p->ptcap) { while (p->npts + k > p->ptcap) p->ptcap = p->ptcap ? p->ptcap * 2 : 32; p->pts = realloc(p->pts, p->ptcap * sizeof(CGPoint)); }
@@ -355,9 +360,48 @@ void CGPathAddRoundedRect(void *path, const CGAffineTransform *m, CGRect r, CGFl
     arc_segments(path, m, x0 + cw, y0 + ch, cw, ch, PI, PI / 2, 0);
     CGPathCloseSubpath(path);
 }
-void *CGPathCreateWithRect(CGRect r, const CGAffineTransform *m) { void *p = CGPathCreateMutable(); CGPathAddRect(p, m, r); return p; }
-void *CGPathCreateWithEllipseInRect(CGRect r, const CGAffineTransform *m) { void *p = CGPathCreateMutable(); CGPathAddEllipseInRect(p, m, r); return p; }
-void *CGPathCreateWithRoundedRect(CGRect r, CGFloat cw, CGFloat ch, const CGAffineTransform *m) { void *p = CGPathCreateMutable(); CGPathAddRoundedRect(p, m, r, cw, ch); return p; }
+static void *prim_mark(cgpath_t *p, int kind, CGRect r, CGFloat cw, CGFloat ch, const CGAffineTransform *m) {
+    if (!p) return p;
+    p->prim = kind; p->prect = CGRectStandardize(r); p->pcw = cw; p->pch = ch;
+    p->pm = m ? *m : CGAffineTransformIdentity;
+    return p;
+}
+void *CGPathCreateWithRect(CGRect r, const CGAffineTransform *m) { void *p = CGPathCreateMutable(); CGPathAddRect(p, m, r); return prim_mark(p, PRIM_RECT, r, 0, 0, m); }
+void *CGPathCreateWithEllipseInRect(CGRect r, const CGAffineTransform *m) { void *p = CGPathCreateMutable(); CGPathAddEllipseInRect(p, m, r); return prim_mark(p, PRIM_ELLIPSE, r, 0, 0, m); }
+void *CGPathCreateWithRoundedRect(CGRect r, CGFloat cw, CGFloat ch, const CGAffineTransform *m) {
+    void *p = CGPathCreateMutable();
+    CGPathAddRoundedRect(p, m, r, cw, ch);
+    CGRect s = CGRectStandardize(r);                 /* os mesmos limites que CGPathAddRoundedRect aplica */
+    if (cw > s.size.width / 2) cw = s.size.width / 2;
+    if (ch > s.size.height / 2) ch = s.size.height / 2;
+    return cw <= 0 || ch <= 0 ? prim_mark(p, PRIM_RECT, r, 0, 0, m) : prim_mark(p, PRIM_RRECT, r, cw, ch, m);
+}
+/* SPI do CoreGraphics (OpenRenderBox, ORBPath.cpp): a forma primitiva do caminho no espaço dela + a transformação */
+bool CGPathIsPrimitive(const void *path) { const cgpath_t *p = path; return p && p->prim != PRIM_NONE; }
+bool CGPathIsRect(const void *path, CGRect *rect);
+bool CGPathIsRectWithTransform(const void *path, CGRect *rect, CGAffineTransform *t) {
+    const cgpath_t *p = path;
+    if (!p) return false;
+    if (p->prim == PRIM_RECT) { if (rect) *rect = p->prect; if (t) *t = p->pm; return true; }
+    if (p->prim == PRIM_NONE && CGPathIsRect(path, rect)) { if (t) *t = CGAffineTransformIdentity; return true; }
+    return false;
+}
+bool CGPathIsEllipseWithTransform(const void *path, CGRect *rect, CGAffineTransform *t) {
+    const cgpath_t *p = path;
+    if (!p || p->prim != PRIM_ELLIPSE) return false;
+    if (rect) *rect = p->prect;
+    if (t) *t = p->pm;
+    return true;
+}
+bool CGPathIsRoundedRectWithTransform(const void *path, CGRect *rect, CGFloat *cw, CGFloat *ch, CGAffineTransform *t) {
+    const cgpath_t *p = path;
+    if (!p || (p->prim != PRIM_RRECT && p->prim != PRIM_RECT)) return false;
+    if (rect) *rect = p->prect;
+    if (cw) *cw = p->pcw;
+    if (ch) *ch = p->pch;
+    if (t) *t = p->pm;
+    return true;
+}
 
 void CGPathAddPath(void *dst, const CGAffineTransform *m, const void *srcp) {
     const cgpath_t *s = srcp;
@@ -375,6 +419,11 @@ void *CGPathCreateMutableCopyByTransformingPath(const void *src, const CGAffineT
     if (!src) return 0;
     void *p = CGPathCreateMutable();
     CGPathAddPath(p, m, src);
+    const cgpath_t *s = src;                          /* a cópia continua sendo a mesma forma primitiva */
+    if (s->prim != PRIM_NONE) {
+        CGAffineTransform t = m ? CGAffineTransformConcat(s->pm, *m) : s->pm;
+        prim_mark(p, s->prim, s->prect, s->pcw, s->pch, &t);
+    }
     return p;
 }
 void *CGPathCreateMutableCopy(const void *src) { return CGPathCreateMutableCopyByTransformingPath(src, 0); }
