@@ -52,11 +52,23 @@ want = a[10 * fs:20 * fs] + b[5 * fs:15 * fs]
 print('  composição: %d quadros (esperado 20)' % (len(c) // fs))
 sys.exit(0 if c == want else 1)
 P
+# AVMutableComposition pela API (avcomposition.c) exportada: o mesmo A[10..19] + B[5..14]
+K2="-I$R/userland/libsystem/kshim -I$L -I$R/kernel/include"
+gcc -std=gnu11 -O1 -w -fno-builtin $K2 -c "$L/avcomposition.c" -o "$T/acp.o" && \
+    gcc -std=gnu11 -O1 -w -I"$L" "$R/tools/avcomposition_host_test.c" "$T/acp.o" "$L/avexport.c" "$L/avwcore.c" "$L/mp4mux.c" "$L/mp4demux.c" -o "$T/acpt" || exit 1
+r=$("$T/acpt" "$X"); echo "$r" | tail -1; dv "$X/comp2.mp4" "$X/comp2.yuv"
+python3 - "$X" <<'P'; chk "AVMutableComposition (inserir/vazio/partir/remover/escalar) exportada quadro a quadro" $?
+import sys
+d = sys.argv[1]; fs = 64 * 48 * 3 // 2
+a = open(d + '/src.yuv', 'rb').read(); b = open(d + '/src2.yuv', 'rb').read(); c = open(d + '/comp2.yuv', 'rb').read()
+sys.exit(0 if c == a[10 * fs:20 * fs] + b[5 * fs:15 * fs] else 1)
+P
+echo "$r" | grep -q "avcomposition: .*" && ! echo "$r" | grep -q FALHOU; chk "AVMutableComposition: estado dos trechos e erros" $?
 [ -z "$(ffprobe -v error -select_streams v -show_entries stream=index -of csv=p=0 "$X/out3.m4a")" ] && da "$X/out3.m4a" "$X/o3.pcm" && cmp -s "$X/src.pcm" "$X/o3.pcm"; chk "export só áudio (M4A): sem vídeo, áudio idêntico" $?
 # a casca ObjC (avwriter.c) com o runtime, a CoreMedia e o VT substituídos (tools/avwriter_host_test.c)
 K="-I$R/userland/libsystem/kshim -I$L -I$R/kernel/include"
 gcc -std=gnu11 -O1 -w -fno-builtin $K -c "$L/avwriter.c" -o "$T/aw.o" && gcc -std=gnu11 -O1 -w -fno-builtin $K -c "$L/avexport_objc.c" -o "$T/axo.o" && gcc -std=gnu11 -O1 -w -fno-builtin $K -c "$L/avf_core.c" -o "$T/avfc.o" && \
-    gcc -std=gnu11 -O1 -w -I"$L" "$R/tools/avwriter_host_test.c" "$T/aw.o" "$T/axo.o" "$T/avfc.o" "$L/avexport.c" "$L/avwcore.c" "$L/mp4mux.c" "$L/mp4demux.c" -lm -lpthread -Wl,--unresolved-symbols=ignore-all -o "$T/ht" || exit 1
+    gcc -std=gnu11 -O1 -w -I"$L" "$R/tools/avwriter_host_test.c" "$T/aw.o" "$T/axo.o" "$T/acp.o" "$T/avfc.o" "$L/avexport.c" "$L/avwcore.c" "$L/mp4mux.c" "$L/mp4demux.c" -lm -lpthread -Wl,--unresolved-symbols=ignore-all -o "$T/ht" || exit 1
 mkdir -p "$T/h"; r=$("$T/ht" "$T/h" "$T/in.m4a" "$X/src.mp4"); echo "$r"; [ "$r" = "avwriter_host ok" ]; chk "casca ObjC: AVAssetWriter (estado, erros, adaptador, requestMediaData) e AVAssetExportSession (presets, timeRange, thread, erros)" $?
 H="$T/h"
 [ "$(ffprobe -v error -select_streams v -show_entries stream_side_data=rotation -of csv=p=0 "$H/a.mov")" = "-90" ]; chk "a.mov: setTransform: vira rotação -90" $?
