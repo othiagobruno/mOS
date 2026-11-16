@@ -147,6 +147,12 @@ struct tls_conn {
     tls_aead_t rd, wr;
     u8 alpn_offer[128]; u32 alpn_offer_len;   /* lista ALPN no formato do fio (sem o u16 externo); 0 = "http/1.1" */
     char alpn[33];                            /* protocolo que o servidor escolheu ("" = nenhum) */
+    /* certificado de cliente (tls_set_client_identity) */
+    u8 *id_chain; u32 id_n, id_off[10], id_len[10];
+    int id_kind, id_curve;
+    u8 id_ec[66]; u32 id_ec_len;
+    u8 *id_rsa; u32 id_n_len, id_d_len;      /* n || d */
+    u16 cr_algs[32]; int cr_nalgs;           /* signature_algorithms do CertificateRequest */
 };
 
 /* ======================================================================
@@ -227,6 +233,7 @@ static int tls_check_signature(tls_conn_t *c, u16 sigalg, const u8 *sig, u32 sig
  * ====================================================================== */
 static inline u32 be16(const u8 *p) { return (u32)p[0] << 8 | p[1]; }
 static inline u32 be24(const u8 *p) { return (u32)p[0] << 16 | (u32)p[1] << 8 | p[2]; }
+static inline u32 be32(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
 static inline void put16(u8 *p, u32 v) { p[0] = (u8)(v >> 8); p[1] = (u8)v; }
 static inline void put24(u8 *p, u32 v) { p[0] = (u8)(v >> 16); p[1] = (u8)(v >> 8); p[2] = (u8)v; }
 
@@ -985,10 +992,208 @@ static int handle_certificate(tls_conn_t *c, const u8 *body, u32 len) {
     return 0;
 }
 
+/* ======================================================================
+ * certificado de cliente (RFC 8446 §4.4.2-4.4.3, RFC 5246 §7.4.6/7.4.8)
+ * ====================================================================== */
+/* leitor DER mínimo: próximo TLV; 0 ok */
+static int der_tlv(const u8 **p, u32 *n, u8 *tag, const u8 **v, u32 *vl) {
+    if (*n < 2) return -1;
+    const u8 *q = *p;
+    u32 left = *n;
+    *tag = q[0];
+    u32 l = q[1], h = 2;
+    if (l & 0x80) {
+        u32 nb = l & 0x7f;
+        if (!nb || nb > 3 || left < 2 + nb) return -1;
+        l = 0;
+        for (u32 i = 0; i < nb; i++) l = l << 8 | q[2 + i];
+        h += nb;
+    }
+    if (left - h < l) return -1;
+    *v = q + h; *vl = l;
+    *p = q + h + l; *n = left - h - l;
+    return 0;
+}
+static void der_int(const u8 **v, u32 *vl) { while (*vl > 1 && !(*v)[0]) { (*v)++; (*vl)--; } }
+/* RSAPrivateKey (PKCS#1), ECPrivateKey (SEC1) ou PKCS#8 com um dos dois dentro */
+static int parse_private_key(tls_conn_t *c, const u8 *der, u32 len, int depth) {
+    const u8 *p = der, *v; u32 n = len, vl; u8 tag;
+    if (der[0] == 0x04 && (len == 97 || len == 145)) {           /* X9.63 do SecKey: 04 || X || Y || K */
+        u32 b = len == 97 ? 32 : 48;
+        memcpy(c->id_ec, der + 1 + 2 * b, b);
+        c->id_ec_len = b;
+        c->id_kind = X509_KEY_EC;
+        return 0;
+    }
+    if (der_tlv(&p, &n, &tag, &v, &vl) || tag != 0x30) return -1;
+    const u8 *q = v; u32 qn = vl;
+    const u8 *f[9]; u32 fl[9]; u8 ft[9]; int nf = 0;
+    while (qn && nf < 9) { if (der_tlv(&q, &qn, &ft[nf], &f[nf], &fl[nf])) return -1; nf++; }
+    if (nf >= 3 && ft[0] == 0x02 && ft[1] == 0x30 && ft[2] == 0x04 && depth == 0)
+        return parse_private_key(c, f[2], fl[2], 1);                 /* PKCS#8: a chave vem no OCTET STRING */
+    if (nf >= 9 && ft[1] == 0x02 && ft[2] == 0x02 && ft[3] == 0x02) {   /* RSA: versão, n, e, d, ... */
+        const u8 *nn = f[1], *dd = f[3]; u32 nl = fl[1], dl = fl[3];
+        der_int(&nn, &nl); der_int(&dd, &dl);
+        if (nl > 1024 || dl > 1024) return -1;
+        c->id_rsa = kmalloc(nl + dl);
+        if (!c->id_rsa) return -1;
+        memcpy(c->id_rsa, nn, nl); memcpy(c->id_rsa + nl, dd, dl);
+        c->id_n_len = nl; c->id_d_len = dl;
+        c->id_kind = X509_KEY_RSA;
+        return 0;
+    }
+    if (nf >= 2 && ft[0] == 0x02 && ft[1] == 0x04 && fl[1] <= sizeof(c->id_ec)) {   /* EC: versão 1, chave */
+        memcpy(c->id_ec, f[1], fl[1]);
+        c->id_ec_len = fl[1];
+        c->id_kind = X509_KEY_EC;
+        return 0;
+    }
+    return -1;
+}
+/* cadeia no formato de tls_copy_peer_chain (u32 quantidade, u32 tamanho + DER); a folha primeiro */
+int tls_set_client_identity(tls_conn_t *c, const u8 *chain, u32 chain_len, const u8 *key, u32 key_len) {
+    if (!c || c->hs != HS_START || !chain || chain_len < 8 || !key) return -1;
+    u32 cnt = be32(chain);
+    if (!cnt || cnt > 10) return -1;
+    u32 off = 4;
+    for (u32 i = 0; i < cnt; i++) {
+        if (off + 4 > chain_len) return -1;
+        u32 l = be32(chain + off);
+        if (!l || l > chain_len - off - 4) return -1;
+        c->id_off[i] = off + 4; c->id_len[i] = l;
+        off += 4 + l;
+    }
+    x509_cert_t leaf;
+    if (x509_parse(&leaf, chain + c->id_off[0], c->id_len[0]) != X509_OK) return -1;
+    if (parse_private_key(c, key, key_len, 0)) return -1;
+    /* a chave tem de ser a do certificado */
+    int ok = 0;
+    if (c->id_kind == X509_KEY_RSA && leaf.key_type == X509_KEY_RSA) {
+        const u8 *ln = leaf.rsa_n; u32 lnl = leaf.rsa_n_len;
+        der_int(&ln, &lnl);
+        ok = lnl == c->id_n_len && !memcmp(ln, c->id_rsa, lnl);
+    } else if (c->id_kind == X509_KEY_EC && leaf.key_type == X509_KEY_EC &&
+               (leaf.curve == EC_P256 || leaf.curve == EC_P384)) {
+        u32 b = leaf.curve == EC_P256 ? 32 : 48;
+        u8 priv[48], pub[97];
+        if (c->id_ec_len <= b) {
+            memset(priv, 0, sizeof priv);
+            memcpy(priv + b - c->id_ec_len, c->id_ec, c->id_ec_len);
+            ok = ec_public_key(leaf.curve, priv, pub) == 0 && leaf.ec_pub_len == 1 + 2 * b && !memcmp(pub, leaf.ec_pub, 1 + 2 * b);
+            memcpy(c->id_ec, priv, b); c->id_ec_len = b;
+        }
+        secure_zero(priv, sizeof priv);
+        c->id_curve = leaf.curve;
+    }
+    if (!ok) { kfree(c->id_rsa); c->id_rsa = NULL; c->id_kind = 0; secure_zero(c->id_ec, sizeof c->id_ec); return -1; }
+    c->id_chain = kmalloc(chain_len);
+    if (!c->id_chain) return -1;
+    memcpy(c->id_chain, chain, chain_len);
+    c->id_n = cnt;
+    return 0;
+}
+static bool cr_offers(const tls_conn_t *c, u16 alg) {
+    for (int i = 0; i < c->cr_nalgs; i++) if (c->cr_algs[i] == alg) return true;
+    return false;
+}
+/* esquema para a nossa chave entre os que o servidor aceita; 0 = nenhum (mandamos Certificate vazio) */
+static u16 pick_client_sigalg(const tls_conn_t *c) {
+    if (!c->id_kind) return 0;
+    if (c->id_kind == X509_KEY_EC) {
+        u16 a = c->v12 ? (c->halg == HASH_SHA384 ? 0x0503 : 0x0403) : (c->id_curve == EC_P384 ? 0x0503 : 0x0403);
+        return cr_offers(c, a) ? a : 0;
+    }
+    static const u16 v13[] = {0x0804, 0x0805, 0x0806};
+    if (!c->v12) { for (int i = 0; i < 3; i++) if (cr_offers(c, v13[i])) return v13[i]; return 0; }
+    u16 pss = c->halg == HASH_SHA384 ? 0x0805 : 0x0804, pk1 = c->halg == HASH_SHA384 ? 0x0501 : 0x0401;
+    return cr_offers(c, pss) ? pss : cr_offers(c, pk1) ? pk1 : 0;
+}
+static int sigalg_hash(u16 a) { return (a & 0xff) == 0x01 || (a >> 8) == 0x08 ? (a == 0x0805 || a == 0x0501 ? HASH_SHA384 : a == 0x0806 || a == 0x0601 ? HASH_SHA512 : HASH_SHA256)
+                                                                            : (a == 0x0503 ? HASH_SHA384 : HASH_SHA256); }
+/* assina digest (do hash do esquema) e devolve o tamanho; ECDSA sai em DER */
+static int client_sign(tls_conn_t *c, u16 alg, const u8 *digest, u8 *out) {
+    u32 hl = hash_len(sigalg_hash(alg));
+    if (c->id_kind == X509_KEY_EC) {
+        u32 b = c->id_ec_len;
+        u8 r[48], s[48];
+        if (ecdsa_sign(c->id_curve, c->id_ec, digest, hl, r, s)) return -1;
+        u8 *parts[2] = {r, s};
+        u32 k = 2, body = 0;
+        u8 ints[2][52]; u32 il[2];
+        for (int i = 0; i < 2; i++) {
+            u8 *x = parts[i]; u32 xl = b;
+            while (xl > 1 && !x[0]) { x++; xl--; }
+            u32 j = 0;
+            ints[i][j++] = 0x02;
+            ints[i][j++] = (u8)(xl + (x[0] >> 7));
+            if (x[0] & 0x80) ints[i][j++] = 0;
+            memcpy(ints[i] + j, x, xl); j += xl;
+            il[i] = j; body += j;
+        }
+        out[0] = 0x30;
+        if (body < 128) out[1] = (u8)body; else { out[1] = 0x81; out[2] = (u8)body; k = 3; }
+        memcpy(out + k, ints[0], il[0]); memcpy(out + k + il[0], ints[1], il[1]);
+        return (int)(k + body);
+    }
+    u32 sl = 0;
+    int r = (alg >> 8) == 0x08 ? rsa_sign_pss(c->id_rsa, c->id_n_len, c->id_rsa + c->id_n_len, c->id_d_len, sigalg_hash(alg), digest, out, &sl)
+                               : rsa_sign_pkcs1(c->id_rsa, c->id_n_len, c->id_rsa + c->id_n_len, c->id_d_len, sigalg_hash(alg), digest, out, &sl);
+    return r ? -1 : (int)sl;
+}
+/* Certificate com a nossa cadeia (1.3: contexto + extensões vazias por certificado) */
+static int queue_client_certificate(tls_conn_t *c, bool v13) {
+    u32 list = 0;
+    for (u32 i = 0; i < c->id_n; i++) list += 3 + c->id_len[i] + (v13 ? 2 : 0);
+    u32 body = (v13 ? 1 + c->crctx_len : 0) + 3 + list;
+    u8 *m = kmalloc(4 + body);
+    if (!m) return fail(c, AL_INTERNAL, "sem memória");
+    u32 n = 0;
+    m[n++] = HT_CERTIFICATE;
+    put24(m + n, body); n += 3;
+    if (v13) { m[n++] = (u8)c->crctx_len; memcpy(m + n, c->crctx, c->crctx_len); n += c->crctx_len; }
+    put24(m + n, list); n += 3;
+    for (u32 i = 0; i < c->id_n; i++) {
+        put24(m + n, c->id_len[i]); n += 3;
+        memcpy(m + n, c->id_chain + c->id_off[i], c->id_len[i]); n += c->id_len[i];
+        if (v13) { m[n++] = 0; m[n++] = 0; }
+    }
+    int r = queue_handshake(c, m, n, true);
+    kfree(m);
+    return r;
+}
+static int queue_cert_verify(tls_conn_t *c, u16 alg, const u8 *digest) {
+    u8 m[4 + 4 + 1024];
+    int sl = client_sign(c, alg, digest, m + 8);
+    if (sl < 0) return fail(c, AL_INTERNAL, "não consegui assinar com a chave do certificado de cliente");
+    m[0] = HT_CERT_VERIFY;
+    put24(m + 1, 4 + (u32)sl);
+    m[4] = (u8)(alg >> 8); m[5] = (u8)alg;
+    m[6] = (u8)(sl >> 8); m[7] = (u8)sl;
+    return queue_handshake(c, m, 8 + (u32)sl, true);
+}
+/* lista signature_algorithms do CertificateRequest */
+static void take_cr_algs(tls_conn_t *c, const u8 *p, u32 n) {
+    c->cr_nalgs = 0;
+    if (n < 2 || be16(p) + 2u > n) return;
+    u32 l = be16(p);
+    for (u32 i = 0; i + 1 < l && c->cr_nalgs < 32; i += 2) c->cr_algs[c->cr_nalgs++] = be16(p + 2 + i);
+}
+
 static int send_client_flight(tls_conn_t *c) {
     send_ccs(c);   /* compatibilidade com middleboxes */
-    if (c->cert_req) {
-        /* Certificate vazio (não temos certificado de cliente) */
+    u16 calg = c->cert_req ? pick_client_sigalg(c) : 0;
+    if (calg) {
+        if (queue_client_certificate(c, true) < 0) return -1;
+        static const char label[] = "TLS 1.3, client CertificateVerify";
+        u8 th0[HASH_MAX_LEN], content[64 + sizeof(label) + HASH_MAX_LEN], dg[HASH_MAX_LEN];
+        hash_peek(&c->tr, th0);
+        memset(content, 0x20, 64);
+        memcpy(content + 64, label, sizeof(label));
+        memcpy(content + 64 + sizeof(label), th0, c->hl);
+        hash_buf(sigalg_hash(calg), content, 64 + sizeof(label) + c->hl, dg);
+        if (queue_cert_verify(c, calg, dg) < 0) return -1;
+    } else if (c->cert_req) {
+        /* Certificate vazio: sem identidade, ou nenhum esquema dela serve ao servidor */
         u8 m[4 + 1 + 255 + 3];
         u32 n = 0;
         m[n++] = HT_CERTIFICATE;
@@ -1116,7 +1321,10 @@ static int handle_server_key_exchange(tls_conn_t *c, const u8 *body, u32 len) {
 
 /* resposta ao ServerHelloDone: [Certificate vazio] ClientKeyExchange CCS Finished */
 static int send_client_flight12(tls_conn_t *c) {
-    if (c->cert_req) {
+    u16 calg = c->cert_req ? pick_client_sigalg(c) : 0;
+    if (calg) {
+        if (queue_client_certificate(c, false) < 0) return -1;
+    } else if (c->cert_req) {
         static const u8 empty[7] = {HT_CERTIFICATE, 0, 0, 3, 0, 0, 0};
         if (queue_handshake(c, empty, sizeof(empty), true) < 0) return -1;
     }
@@ -1140,6 +1348,11 @@ static int send_client_flight12(tls_conn_t *c) {
         tls12_prf(c->halg, c->pms, c->pms_len, "master secret", seed, 64, c->master, 48);
     }
     secure_zero(c->pms, sizeof(c->pms));
+    if (calg) {                                      /* CertificateVerify: sobre as mensagens até o ClientKeyExchange */
+        u8 dg[HASH_MAX_LEN];
+        hash_peek(&c->tr, dg);                       /* sigalg_hash(calg) == c->halg (pick_client_sigalg) */
+        if (queue_cert_verify(c, calg, dg) < 0) return -1;
+    }
 
     /* key_block = client_key || server_key || client_iv || server_iv (AEAD: sem chaves de MAC) */
     u16 aead = suite12_aead(c->suite);
@@ -1216,7 +1429,8 @@ static int handle_hs_message12(tls_conn_t *c, const u8 *msg, u32 mlen) {
         return 0;
     case HS12_WAIT_SHD:
         if (t == HT_CERT_REQUEST && !c->cert_req) {
-            if (blen < 1) return fail(c, AL_DECODE, "CertificateRequest malformado");
+            if (blen < 1 || 1u + body[0] + 2 > blen) return fail(c, AL_DECODE, "CertificateRequest malformado");
+            take_cr_algs(c, body + 1 + body[0], blen - 1 - body[0]);   /* tipos, depois signature_algorithms */
             c->cert_req = true;
             hash_update(&c->tr, msg, mlen);
             return 0;
@@ -1268,6 +1482,16 @@ static int handle_hs_message(tls_conn_t *c, const u8 *msg, u32 mlen) {
             if (blen < 1 || body[0] + 1u > blen) return fail(c, AL_DECODE, "CertificateRequest malformado");
             c->crctx_len = body[0];
             memcpy(c->crctx, body + 1, c->crctx_len);
+            {   /* extensões: signature_algorithms (13) diz o que podemos usar no CertificateVerify */
+                u32 i = 1 + c->crctx_len;
+                if (i + 2 > blen || be16(body + i) + i + 2 != blen) return fail(c, AL_DECODE, "CertificateRequest malformado");
+                for (i += 2; i + 4 <= blen;) {
+                    u32 et = be16(body + i), el = be16(body + i + 2);
+                    if (i + 4 + el > blen) return fail(c, AL_DECODE, "CertificateRequest malformado");
+                    if (et == 13) take_cr_algs(c, body + i + 4, el);
+                    i += 4 + el;
+                }
+            }
             c->cert_req = true;
             hash_update(&c->tr, msg, mlen);
             c->hs = HS_WAIT_CERT;
@@ -1606,6 +1830,8 @@ void tls_free(tls_conn_t *c) {
     kfree(c->cookie);
     kfree(c->leaf);
     kfree(c->chain);
+    kfree(c->id_chain);
+    if (c->id_rsa) { secure_zero(c->id_rsa, c->id_n_len + c->id_d_len); kfree(c->id_rsa); }
     secure_zero(c, sizeof(*c));
     kfree(c);
 }

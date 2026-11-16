@@ -227,6 +227,68 @@ static void mgf1_xor(int halg, const u8 *seed, u32 slen, u8 *out, u32 olen) {
     }
 }
 
+/* ---- assinatura RSA com a chave privada (certificado de cliente / servidor TLS). sig = EM^d mod n, k bytes.
+ * O expoente privado passa pela mesma exponenciação de Montgomery da verificação. */
+static int rsa_private(const u8 *n, u32 nlen, const u8 *d, u32 dlen, const u8 *em, u32 emlen, u8 *sig, u32 *siglen) {
+    while (nlen && !*n) { n++; nlen--; }
+    u8 out[1024];
+    u32 k = rsa_public(n, nlen, d, dlen, em, emlen, out);
+    if (!k) return -1;
+    memcpy(sig, out, k);
+    *siglen = k;
+    secure_zero(out, sizeof out);
+    return 0;
+}
+static const u8 *digest_info(int halg, u32 *len) {
+    static const u8 di256[] = {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20};
+    static const u8 di384[] = {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30};
+    static const u8 di512[] = {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40};
+    *len = sizeof di256;
+    return halg == HASH_SHA384 ? di384 : halg == HASH_SHA512 ? di512 : di256;
+}
+/* RSASSA-PKCS1-v1_5 (RFC 8017 §8.2.1) */
+int rsa_sign_pkcs1(const u8 *n, u32 nlen, const u8 *d, u32 dlen, int halg, const u8 *digest, u8 *sig, u32 *siglen) {
+    while (nlen && !*n) { n++; nlen--; }
+    u32 dil, hl = hash_len(halg), k = nlen;
+    const u8 *di = digest_info(halg, &dil);
+    if (k < dil + hl + 11 || k > 1024) return -1;
+    u8 em[1024];
+    u32 ps = k - 3 - dil - hl;
+    em[0] = 0; em[1] = 1;
+    memset(em + 2, 0xff, ps);
+    em[2 + ps] = 0;
+    memcpy(em + 3 + ps, di, dil);
+    memcpy(em + 3 + ps + dil, digest, hl);
+    return rsa_private(n, nlen, d, dlen, em, k, sig, siglen);
+}
+/* RSASSA-PSS (RFC 8017 §8.1.1, EMSA-PSS §9.1.1): MGF1 com o mesmo hash, sal do tamanho do hash */
+int rsa_sign_pss(const u8 *n, u32 nlen, const u8 *d, u32 dlen, int halg, const u8 *digest, u8 *sig, u32 *siglen) {
+    while (nlen && !*n) { n++; nlen--; }
+    u32 hl = hash_len(halg), k = nlen;
+    u32 bits = rsa_modulus_bits(n, nlen), embits = bits - 1, emlen = (embits + 7) / 8;
+    if (k > 1024 || emlen < 2 * hl + 2) return -1;
+    u8 salt[HASH_MAX_LEN], h[HASH_MAX_LEN], em[1024], zeros[8] = {0};
+    crypto_random(salt, hl);
+    hash_ctx hc;
+    hash_init(&hc, halg);
+    hash_update(&hc, zeros, 8);
+    hash_update(&hc, digest, hl);
+    hash_update(&hc, salt, hl);
+    hash_final(&hc, h);
+    u32 dbl = emlen - hl - 1;
+    u8 *db = em + (k - emlen);                         /* EM fica alinhado à direita em k bytes */
+    memset(em, 0, k);
+    db[dbl - hl - 1] = 0x01;
+    memcpy(db + dbl - hl, salt, hl);
+    mgf1_xor(halg, h, hl, db, dbl);
+    db[0] &= (u8)(0xff >> (8 * emlen - embits));
+    memcpy(db + dbl, h, hl);
+    db[emlen - 1] = 0xbc;
+    int r = rsa_private(n, nlen, d, dlen, em, k, sig, siglen);
+    secure_zero(salt, sizeof salt);
+    return r;
+}
+
 int rsa_verify_pss(const u8 *n, u32 nlen, const u8 *e, u32 elen, int halg,
                    const u8 *digest, const u8 *sig, u32 siglen, int saltlen) {
     u8 buf[1024];
