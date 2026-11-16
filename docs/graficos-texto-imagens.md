@@ -279,3 +279,42 @@ dá o texto da página com a caixa de cada caractere (espaços e quebras inferid
 Testes: `tools/pdf_write_host.py` 12/12 (cada página regravada = a de origem no poppler; texto CFF e Type3 preservados;
 PDF cifrado destravado sai sem cifra) e o texto de 4 PDFs igual ao do `pdftotext` (no `cgpdf_draw_host.py`).
 
+### Passo 6 — PDFKit (PR de 16 nov. 2026)
+
+`PDFKit.framework` sem dylib cai no libSystem (`kernel/compat/macho.c`); as classes ficam em `pdfkit.c` (modelo) e
+`pdfkit_view.c` (views), registradas por `cx_pdfkit_init` (userspace_services.c).
+- **PDFDocument**: `initWithURL:`/`initWithData:`/`init`, páginas (inserir, remover, trocar, `indexForPage:`), versão,
+  cifra (`isEncrypted`, `isLocked`, `unlockWithPassword:`, as 8 permissões, `permissionsStatus`), `documentAttributes`
+  (Info em UTF-16, Keywords como array, datas como NSDate), `outlineRoot` (do PDF ou novo), `string`, busca
+  (`findString:withOptions:` com caixa, acentos e para trás; `fromSelection:`, `beginFindString(s):` e as notificações),
+  seleções por caractere e por ponto, `dataRepresentation`/`writeTo…` (sem mudança devolve os bytes originais; com
+  mudança, regrava por `pdf_write.c`: ordem, rotação, caixas, anotações, Info e outline).
+- **PDFPage**: `initWithImage:` (PDF de uma página pelo CGPDFContext), caixas, rotação, `label` (/PageLabels: decimal,
+  romano, letras, prefixo), anotações (as do PDF lidas na primeira vez), `drawWithBox:toContext:` (conteúdo + anotações),
+  `transformContext:forBox:`, `thumbnailOfSize:forBox:`, texto (`string`, `numberOfCharacters`,
+  `characterBoundsAtIndex:`, `characterIndexAtPoint:`) e seleção (intervalo, retângulo, dois pontos, palavra, linha).
+- **PDFSelection** (várias páginas e intervalos, `boundsForPage:`, `selectionsByLine`, estender, cor, desenho),
+  **PDFAnnotation** (tipo, caixa, conteúdo, cores, borda, URL/ação/destino, QuadPoints, Ink, chaves `/…`, aparência das
+  novas: Highlight, Underline, StrikeOut, Square, Circle, Line, Ink, Text, FreeText/Widget/Stamp; as de origem sem
+  mudança usam o /AP do PDF), **PDFOutline**, **PDFDestination**, **PDFAction** URL/GoTo/Named/ResetForm/RemoteGoTo,
+  **PDFBorder** e as constantes (atributos, opções, notificações, subtipos e chaves de anotação).
+- **PDFView**: as páginas renderizadas pelo Core Graphics na escala da view (cache de 8), os 4 modos de exibição (livro,
+  RTL), escala/zoom/ajuste automático, navegação com histórico, destinos e seleção, seleção com o mouse (arrastar,
+  duplo e triplo clique), links (delegate `PDFViewWillClickOnLink:withURL:` ou NSWorkspace), rolagem, teclado,
+  copiar (respeitando a permissão), conversões de ponto/retângulo e as notificações. **PDFThumbnailView**.
+- Renderizador: `cx_pdf_draw_page_content` (página sem anotações) e `cx_pdf_draw_annotation` (uma aparência);
+  `cx_pdf_dest_array` resolve destino nomeado com coordenadas.
+
+Testes: `tools/pdfkit_host.py` 43 + 4 — `tools/pdfkit_host.c` traz um runtime ObjC mínimo (objc_msgSend em assembly,
+classes com superclasse, retain/release com dealloc) e a Foundation que o PDFKit usa, sobre o Core Graphics real:
+leitura, atributos, texto, busca (e notificações), palavra/linha/índice, anotações e outline do arquivo, edição
+completa e regravação relida pelo PDFKit e pelo poppler, cifra, página de imagem e miniatura.
+Limite honesto: PDFView e PDFThumbnailView só foram compilados (x86_64 e arm64); não há AppKit no host para rodá-los.
+
+**Lacunas do corpus** (docs/lacunas/mariana.md, mesmo PR): `CTFontCopyNameForGlyph` (tabela post, senão AGL),
+`CTFontManagerRegisterFontURLs`/`RegisterFontDescriptors`/`UnregisterFontsForURL`/`UnregisterFontURLs`,
+`CTRunGetImageBounds`/`CTRunGetTypeID`, oito constantes kCT*, `kCGColorWhite`, `CGContextSetCTM`/`SetBaseCTM`/
+`Set|GetFontSmoothingStyle`, `ColorSyncDeviceCopyDeviceInfo`/`ColorSyncIterateDeviceProfiles` (o monitor com o perfil
+sRGB gravado em ~/Library/ColorSync/Profiles) e 21 constantes kColorSync* de dispositivo. Os de display/eventos/CGS
+da lista são da Camila (avisado ao Igor).
+

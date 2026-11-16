@@ -194,6 +194,35 @@ u32 cx_font_glyph_unicode(int face, int gid) {
     }
     return r->rev && gid < r->n ? r->rev[gid] : 0;
 }
+/* nome do glifo pela tabela 'post' formato 2 (nomes próprios da fonte; os 258 padrão do Mac ficam de fora) */
+int cx_font_glyph_post_name(int face, int gid, char *out, int cap) {
+    size_t n;
+    u8 *t = ct_table(face, 0x706F7374u, &n);
+    int ok = 0;
+    if (t && n >= 34 && g32(t) == 0x00020000u) {
+        u32 ng = g16(t + 32);
+        if (gid >= 0 && (u32)gid < ng && 34 + ng * 2 <= n) {
+            u32 idx = g16(t + 34 + gid * 2);
+            if (idx >= 258) {
+                const u8 *p = t + 34 + ng * 2, *end = t + n;
+                for (u32 k = 258; p < end; k++) {
+                    u32 len = *p;
+                    if (p + 1 + len > end) break;
+                    if (k == idx) {
+                        int m = (int)len < cap - 1 ? (int)len : cap - 1;
+                        memcpy(out, p + 1, (size_t)m);
+                        out[m] = 0;
+                        ok = m > 0;
+                        break;
+                    }
+                    p += 1 + len;
+                }
+            }
+        }
+    }
+    free(t);
+    return ok;
+}
 /* a face tem contornos? (1 TrueType, 2 CFF, 0 não) */
 int cx_font_outline_kind(int face) { ct_face *f = ct_face_get(face); return f ? f->state : 0; }
 #ifdef CT_HOST

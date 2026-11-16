@@ -42,6 +42,14 @@ CTCONST(kCTFontCollectionRemoveDuplicatesOption, "NSFontCollectionRemoveDuplicat
 CTCONST(kCTFontDisplayNameAttribute, "NSDisplayName")
 CTCONST(kCTFontFamilyNameAttribute, "NSFontFamilyAttribute")
 CTCONST(kCTFontFamilyNameKey, "CTFontFamilyName")
+CTCONST(kCTFontCopyrightNameKey, "CTFontCopyrightName")
+CTCONST(kCTFontUniqueNameKey, "CTFontUniqueName")
+CTCONST(kCTFontVariationAxisNameKey, "NSCTVariationAxisName")
+CTCONST(kCTFontLanguagesAttribute, "NSCTFontLanguagesAttribute")
+CTCONST(kCTFontEnabledAttribute, "NSCTFontEnabledAttribute")
+CTCONST(kCTFontMatrixAttribute, "NSCTFontMatrixAttribute")
+CTCONST(kCTLigatureAttributeName, "NSLigature")
+CTCONST(kCTWritingDirectionAttributeName, "NSWritingDirection")
 CTCONST(kCTFontFormatAttribute, "NSCTFontFormatAttribute")
 CTCONST(kCTFontManagerRegisteredFontsChangedNotification, "CTFontManagerFontChangedNotification")
 CTCONST(kCTFontNameAttribute, "NSFontNameAttribute")
@@ -2904,3 +2912,121 @@ void *CGFontCreateCopyWithVariations(void *font, id variations) {
 }
 /* subconjunto PostScript (Type 1/Type 3) não é gerado: o CGPDFContext embute a fonte inteira (FontFile2/3) */
 _Bool CGFontCanCreatePostScriptSubset(void *font, int format) { (void)font; (void)format; return 0; }
+
+/* ---- registro por lote, remoção, nome de glifo e caixa de tinta do run */
+typedef struct { void *isa; int flags, reserved; void *invoke; void *desc; } ct_block_t;
+/* kCTFontManagerErrorNotRegistered (101) */
+static void ct_add_error(id errors) {
+    id e = MSG0(id, cls("NSError"), "alloc");
+    e = MSG(id, e, "initWithDomain:code:userInfo:", cx_str("com.apple.CoreText.CTFontManagerErrorDomain"), (long)101, (id)0);
+    if (e) { MSG(void, errors, "addObject:", e); objc_release(e); }
+}
+static void ct_call_done(void *block, id errors, int done) {
+    ct_block_t *b = block;
+    if (b && b->invoke) ((u8 (*)(void *, id, u8))b->invoke)(block, errors, (u8)done);
+}
+int CTFontManagerRegisterFontsForURL(id url, unsigned scope, id *error);
+/* CTFontManagerRegisterFontURLs: cada URL registrada; o bloco recebe os erros (vazio se todas entraram) */
+void CTFontManagerRegisterFontURLs(id urls, unsigned scope, u8 enabled, void *block) {
+    (void)enabled;
+    id errors = MSG0(id, cls("NSMutableArray"), "array");
+    long n = urls ? MSG0(long, urls, "count") : 0;
+    for (long i = 0; i < n; i++) {
+        id u = MSG(id, urls, "objectAtIndex:", (u64)i);
+        if (!CTFontManagerRegisterFontsForURL(u, scope, 0))
+            ct_add_error(errors);
+    }
+    ct_call_done(block, errors, 1);
+}
+/* descritores: os que vieram de dados já estão registrados (USER_ID_KEY); os de arquivo, pela URL */
+void CTFontManagerRegisterFontDescriptors(id descs, unsigned scope, u8 enabled, void *block) {
+    (void)enabled;
+    id errors = MSG0(id, cls("NSMutableArray"), "array");
+    long n = descs ? MSG0(long, descs, "count") : 0;
+    for (long i = 0; i < n; i++) {
+        id d = MSG(id, descs, "objectAtIndex:", (u64)i);
+        id attrs = d ? MSG0(id, d, "fontAttributes") : 0;
+        if (attrs && MSG(id, attrs, "objectForKey:", cx_str(USER_ID_KEY))) continue;
+        id u = attrs ? MSG(id, attrs, "objectForKey:", (id)kCTFontURLAttribute) : 0;
+        if (!u || !CTFontManagerRegisterFontsForURL(u, scope, 0))
+            ct_add_error(errors);
+    }
+    ct_call_done(block, errors, 1);
+}
+/* tira a fonte do arquivo das buscas por nome deste processo (o kernel guarda a face; o nome some) */
+int CTFontManagerUnregisterFontsForURL(id url, unsigned scope, id *error) {
+    (void)scope;
+    if (error) *error = 0;
+    id data = ct_data_from_path(ct_url_path(url));
+    id d = data ? CTFontManagerCreateFontDescriptorFromData(data) : 0;
+    objc_release(data);
+    id attrs = d ? MSG0(id, d, "fontAttributes") : 0;
+    id num = attrs ? MSG(id, attrs, "objectForKey:", cx_str(USER_ID_KEY)) : 0;
+    int fid = num ? (int)MSG0(long, num, "longValue") : -1;
+    if (d) objc_release(d);
+    if (!is_user(fid)) return 0;
+    int i = fid - USER_BASE;
+    free(user_bytes[i]);
+    user_bytes[i] = 0;
+    user_nbytes[i] = 0;
+    memset(&unames[i], 0, sizeof unames[i]);
+    return 1;
+}
+void CTFontManagerUnregisterFontURLs(id urls, unsigned scope, void *block) {
+    long n = urls ? MSG0(long, urls, "count") : 0;
+    for (long i = 0; i < n; i++) CTFontManagerUnregisterFontsForURL(MSG(id, urls, "objectAtIndex:", (u64)i), scope, 0);
+    ct_call_done(block, MSG0(id, cls("NSMutableArray"), "array"), 1);
+}
+/* nome do glifo: o da tabela 'post' (formato 2), senão o do Unicode (convenção AGL: uniXXXX / uXXXXX) */
+int cx_font_glyph_post_name(int face, int gid, char *out, int cap);
+u32 cx_font_glyph_unicode(int face, int gid);
+id CTFontCopyNameForGlyph(id f, u16 g) {
+    if (!f) return 0;
+    char b[128];
+    int face = fweight(f);
+    if (cx_font_glyph_post_name(face, g, b, sizeof b)) return objc_retain(cx_str(b));
+    u32 u = cx_font_glyph_unicode(face, g);
+    if (!g) return objc_retain(cx_str(".notdef"));
+    if (u == ' ') return objc_retain(cx_str("space"));
+    if ((u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z')) { b[0] = (char)u; b[1] = 0; }
+    else if (u >= 0x10000) snprintf(b, sizeof b, "u%05X", u);
+    else if (u) snprintf(b, sizeof b, "uni%04X", u);
+    else snprintf(b, sizeof b, "glyph%u", (unsigned)g);
+    return objc_retain(cx_str(b));
+}
+unsigned CTRunGetTypeID(void) { return 0x4354524Eu; }
+/* caixa de tinta do trecho do run: as caixas dos glifos nas posições, com a matriz de texto do contexto */
+ct_rect_t CTFontGetBoundingRectsForGlyphs(id f, int orientation, const u16 *glyphs, ct_rect_t *rects, long n);
+void CTRunGetPositions(id run, ct_range_t range, ct_pt_t *buf);
+void CTRunGetGlyphs(id run, ct_range_t range, u16 *buf);
+ct_pt_t CGContextGetTextPosition(void *c);
+ct_rect_t CTRunGetImageBounds(id run, void *ctx, ct_range_t range) {
+    ct_rect_t z = {0, 0, 0, 0};
+    ct_run_t *r = ct_state(run);
+    if (!r) return z;
+    if (range.len == 0) range.len = r->count - range.loc;
+    if (range.loc < 0 || range.len <= 0 || range.loc + range.len > r->count) return z;
+    u16 *g = malloc((size_t)range.len * sizeof *g);
+    ct_pt_t *p = malloc((size_t)range.len * sizeof *p);
+    ct_rect_t *b = malloc((size_t)range.len * sizeof *b);
+    if (!g || !p || !b) { free(g); free(p); free(b); return z; }
+    CTRunGetGlyphs(run, range, g);
+    CTRunGetPositions(run, range, p);
+    CTFontGetBoundingRectsForGlyphs(r->font, 0, g, b, range.len);
+    double tx = 0, ty = 0;
+    if (ctx) { ct_pt_t t = CGContextGetTextPosition(ctx); tx = t.x; ty = t.y; }
+    int any = 0;
+    for (long i = 0; i < range.len; i++) {
+        if (b[i].w <= 0 || b[i].h <= 0) continue;
+        double x0 = tx + p[i].x + b[i].x, y0 = ty + p[i].y + b[i].y, x1 = x0 + b[i].w, y1 = y0 + b[i].h;
+        if (!any) { z.x = x0; z.y = y0; z.w = x1 - x0; z.h = y1 - y0; any = 1; continue; }
+        double ax1 = z.x + z.w, ay1 = z.y + z.h;
+        if (x0 < z.x) z.x = x0;
+        if (y0 < z.y) z.y = y0;
+        if (x1 > ax1) ax1 = x1;
+        if (y1 > ay1) ay1 = y1;
+        z.w = ax1 - z.x; z.h = ay1 - z.y;
+    }
+    free(g); free(p); free(b);
+    return z;
+}
