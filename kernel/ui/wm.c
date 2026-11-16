@@ -1071,6 +1071,9 @@ static surface_t *make_cursor(int kind) {
     return c;
 }
 
+static surface_t *cursor_surface(int k, int *hx, int *hy);
+/* imagem do cursor atual e onde ela fica na tela (ScreenCaptureKit, kernel/compat/sccapture.c: showsCursor) */
+surface_t *wm_cursor_image(int *x, int *y) { int hx, hy; surface_t *c = cursor_surface(cursor_kind, &hx, &hy); *x = mx - hx; *y = my - hy; return c; }
 static surface_t *cursor_surface(int k, int *hx, int *hy) {
     if (k < 0 || k >= CURSOR_KINDS || !cursors[k]) k = CURSOR_ARROW;
     switch (k) {

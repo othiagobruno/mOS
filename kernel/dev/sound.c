@@ -641,11 +641,46 @@ static void mix_block(i16 *dst, int n, bool late) {
 void (*audio_tap)(const i16 *stereo, u32 frames);
 bool audio_route_bluetooth;   /* true: a saída interna fica em silêncio enquanto o fone toca */
 
+/* mistura final do sistema para o ScreenCaptureKit (capturesAudio): anel de 1 s, ligado no primeiro leitor. Cada leitor
+ * guarda a própria posição (quadros desde que o anel nasceu), então vários apps leem sem roubar áudio um do outro. */
+#define SYS_N 65536u
+#define SYS_MASK (SYS_N - 1)
+static i16 *sys_ring;
+static u64 sys_w;
+static spinlock_t sys_lock;
+static void sys_push(const i16 *s, int n) {
+    if (!sys_ring) return;
+    u64 fl = spin_lock_irqsave(&sys_lock);
+    for (int i = 0; i < n; i++) { u32 k = (u32)((sys_w + (u64)i) & SYS_MASK); sys_ring[k * 2] = s[i * 2]; sys_ring[k * 2 + 1] = s[i * 2 + 1]; }
+    sys_w += (u64)n;
+    spin_unlock_irqrestore(&sys_lock, fl);
+}
+/* copia até 'frames' quadros a partir de *pos; *pos = 0 (ou atrasado demais) começa no presente */
+u32 audio_system_read(i16 *dst, u32 frames, u64 *pos) {
+    if (!sys_ring) {
+        i16 *r = kcalloc(SYS_N * 2, sizeof(i16));
+        if (!r) return 0;
+        u64 fl = spin_lock_irqsave(&sys_lock);
+        if (!sys_ring) { sys_ring = r; r = NULL; }
+        spin_unlock_irqrestore(&sys_lock, fl);
+        if (r) kfree(r);
+    }
+    u64 fl = spin_lock_irqsave(&sys_lock);
+    u64 p = *pos;
+    if (!p || p > sys_w || sys_w - p > SYS_N - 4800) p = sys_w;   /* novo leitor ou atrasado: do agora */
+    u32 n = (u32)MIN((u64)frames, sys_w - p);
+    for (u32 i = 0; i < n; i++) { u32 k = (u32)((p + i) & SYS_MASK); dst[i * 2] = sys_ring[k * 2]; dst[i * 2 + 1] = sys_ring[k * 2 + 1]; }
+    *pos = p + n;
+    spin_unlock_irqrestore(&sys_lock, fl);
+    return n;
+}
+
 /* renderiza 'frames' quadros novos (sobrescreve dst; estéreo intercalado) */
 void snd_render(i16 *dst, u32 frames) {
     while (frames) {
         int n = frames > BLOCK ? BLOCK : (int)frames;
         mix_block(dst, n, false);
+        sys_push(dst, n);
         if (audio_tap) {
             audio_tap(dst, (u32)n);
             if (audio_route_bluetooth) memset(dst, 0, sizeof(i16) * 2 * n);

@@ -532,6 +532,30 @@ void *cx_cm_audio_sample(const short *pcm, unsigned frames, double rate) {
     objc_release((id)bb);
     return out;
 }
+/* áudio Float32 não intercalado (o formato do SCStream e do AVAudioEngine): canais um depois do outro, pts dado; +1 */
+void *cx_cm_audio_float_planar(const float *planar, unsigned frames, unsigned ch, double rate, cm_time_t pts) {
+    if (!planar || !frames || !ch || ch > 8) return 0;
+    u8 asbd[40];
+    memset(asbd, 0, sizeof asbd);
+    double r = rate > 0 ? rate : 48000;
+    u32 fid = 0x6C70636D /* lpcm */, fl = 0x1 | 0x8 | 0x20 /* float, packed, não intercalado */, bpp = 4, fpp = 1, bpf = 4, bits = 32;
+    memcpy(asbd, &r, 8); memcpy(asbd + 8, &fid, 4); memcpy(asbd + 12, &fl, 4); memcpy(asbd + 16, &bpp, 4);
+    memcpy(asbd + 20, &fpp, 4); memcpy(asbd + 24, &bpf, 4); memcpy(asbd + 28, &ch, 4); memcpy(asbd + 32, &bits, 4);
+    void *fd = 0, *bb = 0, *out = 0;
+    if (CMAudioFormatDescriptionCreate(0, asbd, 0, 0, 0, 0, 0, &fd) || !fd) return 0;
+    size_t nbytes = (size_t)frames * ch * 4;
+    if (CMBlockBufferCreateWithMemoryBlock(0, (void *)planar, nbytes, 0, 0, 0, nbytes, 0, &bb) || !bb) { objc_release((id)fd); return 0; }
+    cm_timing_t t;
+    memset(&t, 0, sizeof t);
+    t.duration.value = 1; t.duration.timescale = (i32)(r + 0.5); t.duration.flags = 1;
+    t.presentationTimeStamp = pts;
+    t.decodeTimeStamp.flags = 0;
+    size_t sz = 4;
+    CMSampleBufferCreate(0, bb, 1, 0, 0, fd, (long)frames, 1, &t, 1, &sz, &out);
+    objc_release((id)bb);
+    objc_release((id)fd);
+    return out;
+}
 int CMSampleBufferCreateForImageBuffer(void *a, void *img, u8 ready, void *cb, void *ref, void *fd, const void *t, void **out) {
     (void)cb; (void)ref;
     if (!out || !img) return CM_BAD_SAMPLE;
@@ -753,14 +777,23 @@ int CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(void *s, size_t *nee
     (void)sa; (void)ma; (void)flags;
     sb_t *b = as_sb(s);
     if (!b || !b->data) return CM_BAD_SAMPLE;
-    size_t bytes = sizeof(u32) + sizeof(audio_buf_t);
+    /* o ASBD da descrição diz quantos canais e se vêm separados (kAudioFormatFlagIsNonInterleaved: um buffer por canal) */
+    u32 ch = 0, fl = 0;
+    if (b->fmt && b->fmt->has_asbd) { memcpy(&fl, b->fmt->asbd + 12, 4); memcpy(&ch, b->fmt->asbd + 28, 4); }
+    int planar = (fl & 0x20) && ch > 1;
+    u32 nb = planar ? ch : 1;
+    size_t bytes = __builtin_offsetof(abl_t, mBuffers) + (size_t)nb * sizeof(audio_buf_t);
     if (need) *need = bytes;
     if (!list) return 0;
     if (listSize < bytes) return CM_BAD_SAMPLE;
-    list->mNumberBuffers = 1;
-    list->mBuffers[0].mNumberChannels = 0;
-    list->mBuffers[0].mDataByteSize = (u32)b->data->len;
-    list->mBuffers[0].mData = b->data->data;
+    list->mNumberBuffers = nb;
+    size_t per = b->data->len / nb;
+    for (u32 i = 0; i < nb; i++) {
+        audio_buf_t *ab = &((audio_buf_t *)((u8 *)list + __builtin_offsetof(abl_t, mBuffers)))[i];
+        ab->mNumberChannels = planar ? 1 : (ch ? ch : 1);
+        ab->mDataByteSize = (u32)per;
+        ab->mData = (u8 *)b->data->data + per * i;
+    }
     if (blockOut) *blockOut = objc_retain((id)b->data);
     return 0;
 }
