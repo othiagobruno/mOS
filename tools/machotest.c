@@ -1914,14 +1914,14 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS *ep) {
         extern const char *macho_host_symbolize(u64 addr, u64 *off);
         u64 off;
         const char *fn = macho_host_symbolize(c->Rip, &off);
-        if (fn && c->Rip < USER_BASE + 0x01000000ULL) fprintf(stderr, "  em libSystem: %s+0x%llx\n", fn, off);
+        if (fn && c->Rip < USER_BASE + 0x04000000ULL) fprintf(stderr, "  em libSystem: %s+0x%llx\n", fn, off);
         fprintf(stderr, "  rdi=%llx rsi=%llx rdx=%llx rax=%llx rbx=%llx\n", c->Rdi, c->Rsi, c->Rdx, c->Rax, c->Rbx);
         const u64 *sp = (const u64 *)c->Rsp;
         int shown = 0;
         for (int i = 0; i < 4096 && shown < 14 && (u64)(sp + i) < USER_STACK_TOP; i++) {
             u64 v = sp[i];
             if (v < USER_BASE + 0x100000ULL || v >= USER_BASE + 0x40000000ULL) continue;
-            fn = v < USER_BASE + 0x01000000ULL ? macho_host_symbolize(v, &off) : NULL;
+            fn = v < USER_BASE + 0x04000000ULL ? macho_host_symbolize(v, &off) : NULL;
             if (fn) fprintf(stderr, "  [sp+%d] libSystem %s+0x%llx\n", i * 8, fn, off);
             else fprintf(stderr, "  [sp+%d] imagem %llx\n", i * 8, v);
             shown++;
@@ -1948,7 +1948,7 @@ static DWORD WINAPI watchdog(LPVOID arg) {
         c.ContextFlags = CONTEXT_FULL;
         GetThreadContext(g_main_thread, &c);
         u64 off;
-        const char *fn = c.Rip < USER_BASE + 0x01000000ULL ? macho_host_symbolize(c.Rip, &off) : NULL;
+        const char *fn = c.Rip < USER_BASE + 0x04000000ULL ? macho_host_symbolize(c.Rip, &off) : NULL;
         fprintf(stderr, "[watchdog] amostra %d: rip=%llx %s+0x%llx (última syscall %llu a=%llx b=%llx)\n", k, c.Rip,
                 fn ? fn : "(imagem)", fn ? off : 0, g_last_sys[0], g_last_sys[1], g_last_sys[2]);
         const u64 *sp = (const u64 *)c.Rsp;
@@ -1956,7 +1956,7 @@ static DWORD WINAPI watchdog(LPVOID arg) {
         for (int i = 0; i < 8192 && shown < 16 && (u64)(sp + i) < USER_STACK_TOP && c.Rsp >= USER_BASE; i++) {
             u64 v = sp[i];
             if (v < USER_BASE + 0x100000ULL || v >= USER_BASE + 0x40000000ULL) continue;
-            fn = v < USER_BASE + 0x01000000ULL ? macho_host_symbolize(v, &off) : NULL;
+            fn = v < USER_BASE + 0x04000000ULL ? macho_host_symbolize(v, &off) : NULL;
             if (fn) fprintf(stderr, "  [sp+%d] libSystem %s+0x%llx\n", i * 8, fn, off);
             else fprintf(stderr, "  [sp+%d] imagem %llx\n", i * 8, v);
             shown++;
@@ -2192,7 +2192,7 @@ static void on_guest_signal(int sig, siginfo_t *si, void *v) {
     extern const char *macho_host_symbolize(u64 addr, u64 *off);
     u64 off;
     const char *fn = macho_host_symbolize(rip, &off);
-    if (fn && rip < USER_BASE + 0x01000000ULL) fprintf(stderr, "  em libSystem: %s+0x%llx\n", fn, (unsigned long long)off);
+    if (fn && rip < USER_BASE + 0x04000000ULL) fprintf(stderr, "  em libSystem: %s+0x%llx\n", fn, (unsigned long long)off);
     fprintf(stderr, "  rdi=%llx rsi=%llx rdx=%llx rax=%llx rbx=%llx\n",
             (unsigned long long)g[REG_RDI], (unsigned long long)g[REG_RSI], (unsigned long long)g[REG_RDX],
             (unsigned long long)g[REG_RAX], (unsigned long long)g[REG_RBX]);
@@ -2210,7 +2210,7 @@ static void *watchdog(void *arg) {
     extern const char *macho_host_symbolize(u64 addr, u64 *off);
     for (int k = 0; k < 3; k++) {
         u64 rip = g_guest_rip, off = 0;
-        const char *fn = rip && rip < USER_BASE + 0x01000000ULL ? macho_host_symbolize(rip, &off) : NULL;
+        const char *fn = rip && rip < USER_BASE + 0x04000000ULL ? macho_host_symbolize(rip, &off) : NULL;
         fprintf(stderr, "[watchdog] amostra %d: rip=%llx %s+0x%llx (última syscall %llu a=%llx b=%llx)\n",
                 k, (unsigned long long)rip, fn ? fn : "(imagem)", fn ? (unsigned long long)off : 0,
                 (unsigned long long)g_last_sys[0], (unsigned long long)g_last_sys[1], (unsigned long long)g_last_sys[2]);
