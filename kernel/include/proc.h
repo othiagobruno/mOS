@@ -75,6 +75,10 @@ typedef struct thread {
     bool mach_peek;         /* MACH_OP_WAIT: só espera haver mensagem */
     u64 futex_va;           /* TH_WAITING com wait_pid = -8: palavra do SYS_FUTEX_WAIT (prazo em wake_at; 0 = sem) */
     u64 futex_phys;         /* idem, endereço físico quando a página é compartilhada entre processos (0 = privada) */
+    /* exceções Mach (machipc_raise): a falta foi oferecida à porta e o tratador não resolveu (próxima vez vai direto
+     * ao sinal); o rip avançou 1 para o tratador ver o int3 como no XNU; código de saída do EXC_CRASH pendente */
+    u8 exc_skip, exc_rewind;
+    int exc_crash_code;
     /* leitura/escrita esperando num pseudoterminal (proc/pty.c): wait_pid = -9, TH_WAITING (ou TH_SLEEPING com
      * prazo, VTIME), buffer em read_buf/read_len. Zerado na entrada de toda syscall: a espera nunca sobrevive a ela. */
     struct pty *pty_wait;
@@ -127,6 +131,7 @@ struct process {
     u64 brk, brk_start;     /* heap */
     int exit_code;
     bool exited;
+    bool crash_sent;        /* EXC_CRASH já foi oferecido (morre na resposta, sem oferecer de novo) */
     u64 mem_pages;
     u64 swap_pages;              /* páginas deste processo no swap comprimido (mm/swap.c) */
     /* limites (SYS_VMCTL, vmpolicy.h): rlim_set = já tem valores próprios (senão vale o padrão). mem_limit em páginas,

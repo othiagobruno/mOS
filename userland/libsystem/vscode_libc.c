@@ -32,6 +32,7 @@ int vasprintf(char **out, const char *fmt, va_list ap);
 mach_port_t mach_task_self(void);
 mach_port_t mach_thread_self(void);
 kern_return_t mach_vm_allocate(mach_port_t task, u64 *addr, u64 size, int flags);
+kern_return_t mach_vm_deallocate(mach_port_t task, u64 addr, u64 size);
 off_t lseek(int fd, off_t off, int whence);
 ssize_t pread(int fd, void *b, size_t n, off_t off);
 ssize_t pwrite(int fd, const void *b, size_t n, off_t off);
@@ -479,10 +480,19 @@ kern_return_t thread_policy_get(mach_port_t t, u32 flavor, void *info, u32 *coun
 #define X86_THREAD_STATE64 4
 #define X86_THREAD_STATE64_COUNT 42u               /* 21 u64 em unidades de 32 bits */
 #define X86_THREAD_STATE 7                         /* genérico: {flavor, count} + o de 64 bits */
-static long port_tid(mach_port_t t) { return t >= CX_THREAD_PORT_BASE ? (long)(t - CX_THREAD_PORT_BASE) : -1; }
-kern_return_t thread_get_state(mach_port_t t, int flavor, void *st, u32 *count) {
+static long port_tid(mach_port_t t) { return t >= CX_THREAD_PORT_BASE && t < 0x10000u ? (long)(t - CX_THREAD_PORT_BASE) : -1; }
+/* operação MOS_THR_* numa thread: a do próprio processo (0x1000 + tid) pelo SYS_THREADCTL; uma porta de thread de
+ * outra task (recebida numa exceção ou no task_threads de outra task) pelo kernel Mach (MACH_VM_THREAD_CTL) */
+static long thr_ctl(mach_port_t t, unsigned op, void *arg) {
     long tid = port_tid(t);
-    if (tid < 0 || !st || !count) return KERN_INVALID_ARGUMENT;
+    if (tid >= 0) return SYS3(SYS_THREADCTL, op, tid, arg);
+    u64 q[8] = {t, op, (u64)(usize)arg, 0, 0, 0, 0, 0};
+    if (cx_syscall(SYS_MACH_VM, (long)MACH_VM_THREAD_CTL, (long)q, 0, 0, 0) != KERN_SUCCESS) return -MOS_ESRCH;
+    return (long)q[3];
+}
+static int own_thread(mach_port_t t) { return port_tid(t) >= 0; }
+kern_return_t thread_get_state(mach_port_t t, int flavor, void *st, u32 *count) {
+    if (!t || !st || !count) return KERN_INVALID_ARGUMENT;
     u32 *out = st;
     if (flavor == X86_THREAD_STATE) {
         if (*count < X86_THREAD_STATE64_COUNT + 2) return KERN_INVALID_ARGUMENT;
@@ -491,77 +501,158 @@ kern_return_t thread_get_state(mach_port_t t, int flavor, void *st, u32 *count) 
         out += 2;
     } else if (flavor != X86_THREAD_STATE64 || *count < X86_THREAD_STATE64_COUNT) return KERN_INVALID_ARGUMENT;
     u64 regs[21];
-    long r = SYS3(SYS_THREADCTL, MOS_THR_GETSTATE, tid, regs);
+    long r = thr_ctl(t, MOS_THR_GETSTATE, regs);
     if (r < 0) return KERN_FAILURE;            /* não existe mais, ou não está suspensa e parada */
     memcpy(out, regs, sizeof regs);
     *count = flavor == X86_THREAD_STATE ? X86_THREAD_STATE64_COUNT + 2 : X86_THREAD_STATE64_COUNT;
     return KERN_SUCCESS;
 }
-kern_return_t thread_set_state(mach_port_t t, int flavor, const void *st, u32 count) { (void)t; (void)flavor; (void)st; (void)count; return KERN_NOT_SUPPORTED; }
+/* thread_set_state: a thread tem de estar suspensa e fora da CPU (o mesmo layout do get) */
+kern_return_t thread_set_state(mach_port_t t, int flavor, const void *st, u32 count) {
+    const u32 *in = st;
+    if (!t || !st) return KERN_INVALID_ARGUMENT;
+    if (flavor == X86_THREAD_STATE) {
+        if (count < X86_THREAD_STATE64_COUNT + 2 || in[0] != X86_THREAD_STATE64) return KERN_INVALID_ARGUMENT;
+        in += 2;
+    } else if (flavor != X86_THREAD_STATE64 || count < X86_THREAD_STATE64_COUNT) return KERN_INVALID_ARGUMENT;
+    u64 regs[21];
+    memcpy(regs, in, sizeof regs);
+    return thr_ctl(t, MOS_THR_SETSTATE, regs) < 0 ? KERN_FAILURE : KERN_SUCCESS;
+}
 /* como no XNU, só volta com a thread parada (fora de qualquer CPU): quem chama lê a pilha e os registradores em seguida */
 kern_return_t thread_suspend(mach_port_t t) {
-    long tid = port_tid(t);
-    if (tid < 0) return KERN_INVALID_ARGUMENT;
-    if (SYS3(SYS_THREADCTL, MOS_THR_SUSPEND, tid, 0) < 0) return KERN_FAILURE;   /* thread que já terminou */
-    if (tid != SYS0(SYS_GETTID))
-        while (SYS3(SYS_THREADCTL, MOS_THR_STOPPED, tid, 0) == 0) sched_yield();
+    if (!t) return KERN_INVALID_ARGUMENT;
+    if (thr_ctl(t, MOS_THR_SUSPEND, 0) < 0) return KERN_FAILURE;   /* thread que já terminou */
+    if (!own_thread(t) || port_tid(t) != SYS0(SYS_GETTID))
+        while (thr_ctl(t, MOS_THR_STOPPED, 0) == 0) sched_yield();
     return KERN_SUCCESS;
 }
 kern_return_t thread_resume(mach_port_t t) {
-    long tid = port_tid(t);
-    if (tid < 0) return KERN_INVALID_ARGUMENT;
-    return SYS3(SYS_THREADCTL, MOS_THR_RESUME, tid, 0) < 0 ? KERN_FAILURE : KERN_SUCCESS;
+    if (!t) return KERN_INVALID_ARGUMENT;
+    return thr_ctl(t, MOS_THR_RESUME, 0) < 0 ? KERN_FAILURE : KERN_SUCCESS;
 }
-kern_return_t thread_abort_safely(mach_port_t t) { (void)t; return KERN_NOT_SUPPORTED; }
-/* thread_terminate: a própria thread sai como no pthread_exit; outra thread o kernel do mOS não sabe matar */
+/* a espera em curso da thread termina: EINTR numa syscall, MACH_RCV_INTERRUPTED num mach_msg */
+kern_return_t thread_abort(mach_port_t t) { return !t ? KERN_INVALID_ARGUMENT : thr_ctl(t, MOS_THR_ABORT, 0) < 0 ? KERN_FAILURE : KERN_SUCCESS; }
+kern_return_t thread_abort_safely(mach_port_t t) { return thread_abort(t); }
+/* thread_terminate: a própria sai como no pthread_exit; outra, pelo kernel */
 kern_return_t thread_terminate(mach_port_t t) {
     long tid = port_tid(t);
-    if (tid < 0) return KERN_INVALID_ARGUMENT;
+    if (!t) return KERN_INVALID_ARGUMENT;
     if (tid == SYS0(SYS_GETTID)) { SYS1(SYS_THREAD_EXIT, 0); for (;;) {} }
-    return KERN_NOT_SUPPORTED;
+    return thr_ctl(t, MOS_THR_TERMINATE, 0) < 0 ? KERN_FAILURE : KERN_SUCCESS;
 }
 kern_return_t thread_get_register_pointer_values(mach_port_t t, usize *sp, usize *len, usize *vals) {
-    (void)t; (void)sp; (void)vals;
-    if (len) *len = 0;
-    return KERN_NOT_SUPPORTED;
+    u64 regs[21];
+    if (!len) return KERN_INVALID_ARGUMENT;
+    if (thr_ctl(t, MOS_THR_GETSTATE, regs) < 0) { *len = 0; return KERN_FAILURE; }
+    if (sp) *sp = (usize)regs[7];
+    /* os registradores que podem guardar ponteiros (todos menos rsp, rip e rflags), como o XNU */
+    static const int idx[16] = {0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 18};
+    usize cap = *len, n = 0;
+    for (int i = 0; i < 16; i++) { if (vals && n < cap) vals[n] = (usize)regs[idx[i]]; n++; }
+    *len = n;
+    return vals && cap < n ? 52 /* KERN_INSUFFICIENT_BUFFER_SIZE */ : KERN_SUCCESS;
 }
+/* todas as threads da task: a própria (0x1000 + tid) ou outra task (portas de thread novas no nosso espaço) */
 kern_return_t task_threads(mach_port_t task, mach_port_t **list, u32 *count) {
-    (void)task;
-    u64 a = 0;
-    if (mach_vm_allocate(mach_task_self(), &a, 4096, 1) != KERN_SUCCESS) return KERN_FAILURE;
-    mach_port_t *l = (mach_port_t *)(usize)a;
-    l[0] = mach_thread_self();
-    *list = l;
-    *count = 1;
+    if (!list || !count) return KERN_INVALID_ARGUMENT;
+    for (u32 cap = 64;; cap *= 4) {
+        u64 a = 0;
+        if (mach_vm_allocate(mach_task_self(), &a, ((u64)cap * 4 + 0xFFF) & ~0xFFFULL, 1) != KERN_SUCCESS) return 6 /* KERN_RESOURCE_SHORTAGE */;
+        u64 q[8] = {task ? task : mach_task_self(), a, cap, 0, 0, 0, 0, 0};
+        kern_return_t kr = (kern_return_t)cx_syscall(SYS_MACH_VM, (long)MACH_VM_TASK_THREADS, (long)q, 0, 0, 0);
+        if (kr != KERN_SUCCESS || q[3] > cap) {
+            mach_vm_deallocate(mach_task_self(), a, ((u64)cap * 4 + 0xFFF) & ~0xFFFULL);
+            if (kr != KERN_SUCCESS) return kr;
+            continue;                                  /* mais threads que o buffer: pede de novo com mais espaço */
+        }
+        *list = (mach_port_t *)(usize)a;
+        *count = (u32)q[3];
+        return KERN_SUCCESS;
+    }
+}
+/* portas de exceção da task e das threads: guardadas pelo kernel, que manda exception_raise / mach_exception_raise
+ * na falta (antes do sinal) e EXC_CRASH na morte por sinal (kernel/proc/machipc.c, machipc_raise) */
+typedef struct { unsigned mask, port, behavior, flavor; } cx_excp_t;
+static kern_return_t exc_set(mach_port_t target, int thread, u32 mask, mach_port_t p, int b, int f) {
+    u64 q[8] = {target, mask, p, (u64)(u32)b, (u64)(u32)f, (u64)thread, 0, 0};
+    return (kern_return_t)cx_syscall(SYS_MACH_VM, (long)MACH_VM_EXC_SET, (long)q, 0, 0, 0);
+}
+static kern_return_t exc_get(mach_port_t target, int thread, u32 mask, u32 *masks, u32 *count, mach_port_t *ports, int *b, int *f) {
+    cx_excp_t e[14];
+    u32 cap = count ? *count : 0;
+    u64 q[8] = {target, mask, (u64)(usize)e, 14, 0, (u64)thread, 0, 0};
+    kern_return_t kr = (kern_return_t)cx_syscall(SYS_MACH_VM, (long)MACH_VM_EXC_GET, (long)q, 0, 0, 0);
+    if (kr != KERN_SUCCESS) { if (count) *count = 0; return kr; }
+    u32 n = (u32)q[4] < cap ? (u32)q[4] : cap;
+    for (u32 i = 0; i < n; i++) {
+        if (masks) masks[i] = e[i].mask;
+        if (ports) ports[i] = e[i].port;
+        if (b) b[i] = (int)e[i].behavior;
+        if (f) f[i] = (int)e[i].flavor;
+    }
+    if (count) *count = n;
     return KERN_SUCCESS;
 }
-/* portas de exceção: aceitas e lembradas como "nenhuma" (o crashpad registra o handler e segue) */
-static kern_return_t exc_none(u32 *count) { if (count) *count = 0; return KERN_SUCCESS; }
-kern_return_t thread_set_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f) { (void)t; (void)mask; (void)p; (void)b; (void)f; return KERN_SUCCESS; }
-kern_return_t task_set_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f) { (void)t; (void)mask; (void)p; (void)b; (void)f; return KERN_SUCCESS; }
+kern_return_t thread_set_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f) { return exc_set(t, 1, mask, p, b, f); }
+kern_return_t task_set_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f) { return exc_set(t ? t : mach_task_self(), 0, mask, p, b, f); }
+/* porta de exceção do host: só com host_priv no XNU; aceita e não guarda (nada a entregar para fora da task) */
 kern_return_t host_set_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f) { (void)t; (void)mask; (void)p; (void)b; (void)f; return KERN_SUCCESS; }
-kern_return_t thread_get_exception_ports(mach_port_t t, u32 mask, u32 *masks, u32 *count, mach_port_t *ports, int *b, int *f) { (void)t; (void)mask; (void)masks; (void)ports; (void)b; (void)f; return exc_none(count); }
-kern_return_t task_get_exception_ports(mach_port_t t, u32 mask, u32 *masks, u32 *count, mach_port_t *ports, int *b, int *f) { (void)t; (void)mask; (void)masks; (void)ports; (void)b; (void)f; return exc_none(count); }
-kern_return_t host_get_exception_ports(mach_port_t t, u32 mask, u32 *masks, u32 *count, mach_port_t *ports, int *b, int *f) { (void)t; (void)mask; (void)masks; (void)ports; (void)b; (void)f; return exc_none(count); }
-kern_return_t thread_swap_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f, u32 *masks, u32 *count, mach_port_t *ports, int *ob, int *of) { (void)t; (void)mask; (void)p; (void)b; (void)f; (void)masks; (void)ports; (void)ob; (void)of; return exc_none(count); }
-kern_return_t task_swap_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f, u32 *masks, u32 *count, mach_port_t *ports, int *ob, int *of) { (void)t; (void)mask; (void)p; (void)b; (void)f; (void)masks; (void)ports; (void)ob; (void)of; return exc_none(count); }
-kern_return_t host_swap_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f, u32 *masks, u32 *count, mach_port_t *ports, int *ob, int *of) { (void)t; (void)mask; (void)p; (void)b; (void)f; (void)masks; (void)ports; (void)ob; (void)of; return exc_none(count); }
-/* leitura de memória: só da própria task (a única que o mOS deixa ver) */
+kern_return_t thread_get_exception_ports(mach_port_t t, u32 mask, u32 *masks, u32 *count, mach_port_t *ports, int *b, int *f) { return exc_get(t, 1, mask, masks, count, ports, b, f); }
+kern_return_t task_get_exception_ports(mach_port_t t, u32 mask, u32 *masks, u32 *count, mach_port_t *ports, int *b, int *f) { return exc_get(t ? t : mach_task_self(), 0, mask, masks, count, ports, b, f); }
+kern_return_t host_get_exception_ports(mach_port_t t, u32 mask, u32 *masks, u32 *count, mach_port_t *ports, int *b, int *f) { (void)t; (void)mask; (void)masks; (void)ports; (void)b; (void)f; if (count) *count = 0; return KERN_SUCCESS; }
+kern_return_t thread_swap_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f, u32 *masks, u32 *count, mach_port_t *ports, int *ob, int *of) {
+    kern_return_t kr = exc_get(t, 1, mask, masks, count, ports, ob, of);
+    return kr != KERN_SUCCESS ? kr : exc_set(t, 1, mask, p, b, f);
+}
+kern_return_t task_swap_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f, u32 *masks, u32 *count, mach_port_t *ports, int *ob, int *of) {
+    if (!t) t = mach_task_self();
+    kern_return_t kr = exc_get(t, 0, mask, masks, count, ports, ob, of);
+    return kr != KERN_SUCCESS ? kr : exc_set(t, 0, mask, p, b, f);
+}
+kern_return_t host_swap_exception_ports(mach_port_t t, u32 mask, mach_port_t p, int b, int f, u32 *masks, u32 *count, mach_port_t *ports, int *ob, int *of) { (void)t; (void)mask; (void)p; (void)b; (void)f; (void)masks; (void)ports; (void)ob; (void)of; if (count) *count = 0; return KERN_SUCCESS; }
+kern_return_t task_suspend(mach_port_t t) {
+    if (t == mach_task_self()) return KERN_SUCCESS;   /* a própria: pararia quem chama (o Chromium só suspende outra) */
+    u64 q[8] = {t, 1, 0, 0, 0, 0, 0, 0};
+    return (kern_return_t)cx_syscall(SYS_MACH_VM, (long)MACH_VM_TASK_SUSPEND, (long)q, 0, 0, 0);
+}
+kern_return_t task_resume(mach_port_t t) {
+    if (t == mach_task_self()) return KERN_SUCCESS;
+    u64 q[8] = {t, 0, 0, 0, 0, 0, 0, 0};
+    return (kern_return_t)cx_syscall(SYS_MACH_VM, (long)MACH_VM_TASK_SUSPEND, (long)q, 0, 0, 0);
+}
+/* memória de outra task, pela porta dela (o crashpad lê o processo que caiu); a própria, direto */
+static kern_return_t task_rw(mach_port_t task, u64 addr, u64 local, u64 size, int write) {
+    u64 q[8] = {task, addr, local, size, (u64)write, 0, 0, 0};
+    return (kern_return_t)cx_syscall(SYS_MACH_VM, (long)MACH_VM_TASK_RW, (long)q, 0, 0, 0);
+}
 kern_return_t mach_vm_read(mach_port_t task, u64 addr, u64 size, u64 *data, u32 *count) {
-    if (task != mach_task_self()) return KERN_FAILURE;
+    if (!data || !count) return KERN_INVALID_ARGUMENT;
     u64 a = 0;
-    if (mach_vm_allocate(task, &a, size ? size : 1, 1) != KERN_SUCCESS) return KERN_FAILURE;
-    memcpy((void *)(usize)a, (const void *)(usize)addr, (size_t)size);
+    if (mach_vm_allocate(mach_task_self(), &a, size ? size : 1, 1) != KERN_SUCCESS) return 6 /* KERN_RESOURCE_SHORTAGE */;
+    if (task == mach_task_self()) memcpy((void *)(usize)a, (const void *)(usize)addr, (size_t)size);
+    else {
+        kern_return_t kr = task_rw(task, addr, a, size, 0);
+        if (kr != KERN_SUCCESS) { mach_vm_deallocate(mach_task_self(), a, size ? size : 1); return kr; }
+    }
     *data = a;
     *count = (u32)size;
     return KERN_SUCCESS;
 }
 kern_return_t vm_read_overwrite(mach_port_t task, u64 addr, u64 size, u64 dst, u64 *out) {
-    if (task != mach_task_self()) return KERN_FAILURE;
-    memmove((void *)(usize)dst, (const void *)(usize)addr, (size_t)size);
+    if (task == mach_task_self()) memmove((void *)(usize)dst, (const void *)(usize)addr, (size_t)size);
+    else {
+        kern_return_t kr = task_rw(task, addr, dst, size, 0);
+        if (kr != KERN_SUCCESS) return kr;
+    }
     if (out) *out = size;
     return KERN_SUCCESS;
 }
+kern_return_t mach_vm_write(mach_port_t task, u64 addr, u64 data, u32 count) {
+    if (task == mach_task_self()) { memmove((void *)(usize)addr, (const void *)(usize)data, count); return KERN_SUCCESS; }
+    return task_rw(task, addr, data, count, 1);
+}
+kern_return_t vm_write(mach_port_t task, u64 addr, u64 data, u32 count) { return mach_vm_write(task, addr, data, count); }
 kern_return_t mach_vm_remap(mach_port_t t, u64 *addr, u64 size, u64 mask, int flags, mach_port_t src, u64 saddr, int copy,
                             int *cur, int *max, int inh) {
     (void)mask; (void)inh;

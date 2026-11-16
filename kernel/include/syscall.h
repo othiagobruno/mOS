@@ -307,6 +307,9 @@ enum {
     MOS_THR_AFFINITY,      /* (tid, máscara de CPUs) -> 0            bit i = núcleo i; 0 = qualquer um */
     MOS_THR_ROFILE,        /* (va, u64 id_off[2]) -> 1 se a página é código de arquivo sem escrita */
     MOS_THR_SETPRIO,       /* (tid, pri | 0x100 fixa) -> 0 | -EINVAL | -EPERM   prioridade Mach 0..127; > 63 só root */
+    MOS_THR_SETSTATE,      /* (tid, u64 regs[21]) -> 0 | -MOS_EBUSY   o mesmo layout do GETSTATE, thread parada */
+    MOS_THR_TERMINATE,     /* (tid) -> 0                     outra thread do processo sai (thread_terminate) */
+    MOS_THR_ABORT,         /* (tid) -> 0                     syscall bloqueante da thread volta com EINTR */
 };
 #define MOS_MUNMAP_KEEP    0x4B454550u   /* 'KEEP' */
 #define MOS_MUNMAP_DISCARD 0x44495343u   /* 'DISC' */
@@ -396,7 +399,21 @@ enum {
     MACH_VM_CA_GEN,         /* a0 = id -> a1 = geração (0 = ninguém publicou) */
     MACH_VM_CA_LOOKUP,      /* a0 = id -> a1 = nome (envio), a2 = tamanho, a3 = geração */
     MACH_VM_CA_DROP,        /* a0 = id: o dono tira o contexto do registro */
+    /* ---- outras tasks e threads (crashpad, profiler, hang watcher). Quem tem a porta da task pode tudo nela, como
+     * no XNU. "task" é 0x103 (a própria), ou um nome recebido numa mensagem (a 0x103 de outro processo vira porta de
+     * task com o pid dele). "thread" é 0x1000 + tid da própria, ou um nome de porta de thread recebido/listado. */
+    MACH_VM_TASK_RW = 32,   /* a0 = task, a1 = endereço nela, a2 = buffer local, a3 = tamanho, a4 = 0 lê / 1 escreve */
+    MACH_VM_TASK_REGION,    /* a0 = task, a1 = endereço -> a1 = início, a2 = tamanho, a3 = prot, a4 = prot máxima */
+    MACH_VM_TASK_PID,       /* a0 = task -> a1 = pid */
+    MACH_VM_TASK_THREADS,   /* a0 = task, a1 = buffer de u32, a2 = capacidade -> a3 = threads (nomes de porta) */
+    MACH_VM_TASK_SUSPEND,   /* a0 = task, a1 = 1 suspende / 0 retoma (todas as threads, contador do Mach) */
+    MACH_VM_THREAD_CTL,     /* a0 = thread, a1 = MOS_THR_*, a2 = argumento (buffer de regs) -> a3 = resultado */
+    MACH_VM_EXC_SET,        /* a0 = task ou thread, a1 = máscara (1 << EXC_*), a2 = porta (0 = tira), a3 = behavior,
+                             * a4 = flavor, a5 = 1 se a0 é thread */
+    MACH_VM_EXC_GET,        /* a0 = task ou thread, a1 = máscara, a2 = buffer de mos_exc_port_t, a3 = capacidade,
+                             * a5 = 1 se thread -> a4 = entradas (uma por porta distinta, com a máscara somada) */
 };
+typedef struct { unsigned mask, port, behavior, flavor; } mos_exc_port_t;
 
 #define MOS_O_RDONLY 0x0000
 #define MOS_O_WRONLY 0x0001

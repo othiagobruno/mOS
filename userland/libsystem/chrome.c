@@ -200,8 +200,7 @@ char *_dirhelper(int which, char *buf, size_t len) { (void)which; (void)buf; (vo
 
 /* O Chromium suspende o filho só para registrar as portas do rendezvous e depois retoma.
  * O mOS não congela a tarefa (o filho já corre); responder falha fazia o pai desistir dele. */
-kern_return_t task_suspend(unsigned t) { (void)t; return KERN_SUCCESS; }
-kern_return_t task_resume(unsigned t) { (void)t; return KERN_SUCCESS; }
+/* task_suspend/task_resume: vscode_libc.c (outra task, pelo kernel) */
 kern_return_t task_create_identity_token(unsigned t, unsigned *tok) { (void)t; if (tok) *tok = 0; return KERN_FAILURE; }
 kern_return_t task_identity_token_get_task_port(unsigned tok, int flavor, unsigned *port) { (void)tok; (void)flavor; if (port) *port = 0; return KERN_FAILURE; }
 /* mach_port_insert_member agora é implementado de verdade em mach.c (portas Mach no kernel, conjuntos

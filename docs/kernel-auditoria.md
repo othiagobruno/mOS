@@ -66,6 +66,24 @@ pelo `SYS_SPAWNVEC`), 193 linhas `ok` no `teste`. Sem `panic` nem marca de pilha
 Falham `sleep 100 ms` e trechos do `teste-sh` (Ctrl+C no `spin`): dependem de prazo de relógio e falham também na
 `main` sob TCG com o host carregado (variam de rodada para rodada: `sleep` 101 ms no KVM, 1440 a 30754 ms no TCG).
 
+## Exceções Mach, outras tasks e outras threads (crashpad, profiler, hang watcher)
+
+Antes, o libSystem aceitava `task_set_exception_ports` e esquecia; `task_threads` devolvia só a thread atual; `thread_set_state`, `thread_abort` e `thread_terminate` de outra thread davam `KERN_NOT_SUPPORTED`; e a memória de outra task não era legível. O `0x103` (a task) mandado numa mensagem virava um objeto do kernel sem identidade. O crashpad de todo Electron nunca via um crash.
+
+Agora (`kernel/proc/machipc.c`, `kernel/proc/process.c`):
+
+- **Portas com identidade:** `KP_TASK` (pid) e `KP_THREAD` (tid). O `0x103` e o `0x1000 + tid`, quando vão numa mensagem, viram essas portas. Quem tem a porta da task opera nela, como no XNU.
+- **`SYS_MACH_VM` novas (`syscall.h`):** `MACH_VM_TASK_RW` (`mach_vm_read`, `mach_vm_read_overwrite`, `mach_vm_write`), `MACH_VM_TASK_REGION`, `MACH_VM_TASK_PID` (`pid_for_task`), `MACH_VM_TASK_THREADS` e `MACH_VM_TASK_SUSPEND`. `MACH_VM_THREAD_CTL` aplica `MOS_THR_*` numa thread de outra task.
+- **`MOS_THR_*` novas:** `MOS_THR_SETSTATE` (`thread_set_state`), `MOS_THR_TERMINATE` (outra thread; a principal leva o processo) e `MOS_THR_ABORT` (a espera em curso termina com EINTR ou MACH_RCV_INTERRUPTED). A lógica comum está em `proc_threadctl`. GETSTATE e SETSTATE valem para thread suspensa e também para thread presa numa exceção.
+- **Portas de exceção:** `MACH_VM_EXC_SET` e `MACH_VM_EXC_GET` guardam a porta por task (`mspace_t.texc`) e por thread (`thexc`), com behavior e flavor. O kernel guarda um direito de envio.
+- **Entrega na falta (`proc_fault`, antes do sinal):** `machipc_raise` monta `exception_raise` ou `mach_exception_raise` (2401/2405), as variantes `_state` e `_state_identity` (x86_THREAD_STATE64, x86_THREAD_STATE e x86_EXCEPTION_STATE64), com um send-once para uma porta `KP_EXCREPLY`. A thread espera (`wait_pid -13`), e os sinais ficam pendentes enquanto isso.
+  - Resposta `KERN_SUCCESS`: a thread retoma, com o estado novo se a variante for state.
+  - Resposta com outro valor, ou o tratador soltou o direito ou saiu: a mesma instrução falta de novo com `exc_skip` e segue para o sinal.
+  - `int3` (que chega como #GP) é visto com o rip depois da instrução, como no XNU.
+- **`EXC_CRASH`:** na morte por sinal que gera core (SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGABRT, SIGQUIT, SIGSYS), tanto no `proc_signal_check` quanto na falta sem tratador, a task para inteira. A mensagem vai à porta da task com `code[0] = sinal << 24 | exceção << 20`. O processo só morre na resposta, ou quando o tratador some.
+
+Teste: `userland/tests-excports/main.c` (Mach-O; ligado ao `build.ps1 -Tests` e ao `teste`).
+
 ## Pontos abertos, por prioridade
 
 1. ~~**fd guarda só o caminho**~~ — resolvido sem trocar o fd por vnode: arquivo apagado (ou substituído por `rename`) enquanto um fd ou um `mmap` o usa vai para `/tmp/.orfaos/N`; fds e faixas do `lazy.c` passam a apontar para lá e `orphan_gc` apaga no último `close`/`munmap`/saída. `rename` também atualiza as faixas mapeadas. Teste: `userland/orfaoteste.c` (main: 6 FALHA(S), inclusive `mmap` lendo zeros; agora TODOS OK). Sobra: o `SYS_READ` ainda refaz `vfs_lookup` por chamada, e o fileport (machipc) guarda uma cópia do caminho que não acompanha.

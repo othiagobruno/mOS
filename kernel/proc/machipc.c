@@ -97,7 +97,12 @@
 #define MAX_MSG        (16u << 20)
 #define MAX_OOL        (256u << 20)
 
-enum { KP_PORT, KP_SET, KP_KOBJ, KP_MEM, KP_FILE };
+#define EXC_TYPES 14     /* EXC_BAD_ACCESS (1) .. EXC_CORPSE_NOTIFY (13) */
+#define WAIT_EXC (-13)   /* thread_t.wait_pid: esperando a resposta de uma exceção Mach */
+enum { KP_PORT, KP_SET, KP_KOBJ, KP_MEM, KP_FILE,
+       KP_TASK,       /* porta da task de um processo (kid = pid): quem a tem lê e escreve a memória dele */
+       KP_THREAD,     /* porta de uma thread (kid = tid, único no sistema) */
+       KP_EXCREPLY }; /* resposta de uma exceção Mach que o kernel mandou (kid = tid que espera) */
 
 /* fileports: cópias de descritores guardadas pelo process.c (proc_fd_snapshot) */
 void *proc_fd_snapshot(process_t *p, int fd);
@@ -127,6 +132,9 @@ typedef struct kport {
     u8 mprot;                 /* KP_MEM: proteção máxima (VM_PROT_READ 1 | WRITE 2 | EXECUTE 4) */
     void *file;               /* KP_FILE: cópia do descritor (fileport_makeport) */
     struct kport *gnext;      /* lista global (conjuntos procuram seus membros nela) */
+    int kid;                  /* KP_TASK: pid; KP_THREAD e KP_EXCREPLY: tid */
+    u8 xcrash, xkind;         /* KP_EXCREPLY: EXC_CRASH; 0 default / 1 state / 2 state_identity */
+    u32 xid;                  /* KP_EXCREPLY: id da mensagem pedida (a resposta vem com +100) */
 } kport_t;
 
 typedef struct {
@@ -161,6 +169,7 @@ typedef struct mspace {
      * caminho MAP_JIT (pthread_jit_write_protect_np é vazio aqui), e uma PTE só-leitura o derrubaria. */
     struct prange { u64 lo, hi; u32 prot; } *pr;
     u32 npr, cappr;
+    struct excslot { kport_t *port; u32 behavior, flavor; } texc[EXC_TYPES];   /* task_set_exception_ports */
 } mspace_t;
 
 static void prot_set(mspace_t *sp, u64 lo, u64 hi, u32 prot);
@@ -270,8 +279,12 @@ static ment_t *ent_find(mspace_t *sp, u32 name) {
     ment_t *e = ent_at(sp, name);
     if (e) { ent_fix(e); return e; }
     if (name >= 0x100 && name < 0x10000 && name != BOOTSTRAP_NAME) {
-        kport_t *k = port_new(KP_KOBJ);
+        /* a task (0x103) e as threads (0x1000 + tid) viram portas com identidade: quem recebe esta porta numa
+         * mensagem (o crashpad, o processo principal do Chromium) a usa para ler a memória e as threads */
+        u8 kind = name == 0x103 ? KP_TASK : name >= 0x1000 ? KP_THREAD : KP_KOBJ;
+        kport_t *k = port_new(kind);
         if (!k) return NULL;
+        k->kid = kind == KP_TASK ? sp->pid : kind == KP_THREAD ? (int)(name - 0x1000) : 0;
         port_ref(k);
         k->srights = 1;
         e = ent_add(sp, name, T_SEND, k);
@@ -372,6 +385,7 @@ static u8 bits_local(u32 bits) { return (bits >> 8) & 0x1f; }
 /* ------------------------------------------------------------ enfileirar e acordar */
 static void send_notify(kport_t *note, int id, u32 arg);
 static void so_drop_unused(kport_t *p);   /* send-once destruído sem uso: avisa quem recebe */
+static void exc_reply(kport_t *rp, kmsg_t *m);   /* resposta (ou falta dela) a uma exceção Mach do kernel */
 
 /* direito em trânsito descartado (mensagem destruída ou já entregue sem ele): solta conforme o tipo */
 static void drop_transit(kport_t *p, u8 type) {
@@ -415,6 +429,7 @@ static u32 do_rcv(thread_t *t, kport_t *rcv, u8 *ubuf, u32 cap, u32 opt);
 
 /* põe a mensagem na fila da porta e, se houver thread esperando por ela, entrega já */
 static int enqueue(kport_t *dest, kmsg_t *m) {
+    if (dest->kind == KP_EXCREPLY) { exc_reply(dest, m); return KERN_SUCCESS; }   /* resposta de exceção: é do kernel */
     m->seqno = dest->seqno++;
     m->next = NULL;
     if (dest->qt) dest->qt->next = m; else dest->qh = m;
@@ -441,6 +456,7 @@ static int enqueue(kport_t *dest, kmsg_t *m) {
 static void so_drop_unused(kport_t *p) {
     if (!p) return;
     if (p->sorights) p->sorights--;
+    if (p->kind == KP_EXCREPLY) { exc_reply(p, NULL); port_unref(p); return; }   /* o tratador soltou sem responder */
     if (!p->dead && p->recv) {
         port_ref(p);
         send_notify(p, NOTE_SEND_ONCE, 0);
@@ -502,7 +518,7 @@ static void dead_name_notify(kport_t *p) {
 
 /* a porta perdeu o receptor (dono saiu, ou moveu o direito e ela ficou sem dono): vira morta */
 static void port_kill(kport_t *p) {
-    if (p->dead || p->kind == KP_KOBJ) return;
+    if (p->dead || p->kind == KP_KOBJ || p->kind == KP_TASK || p->kind == KP_THREAD) return;
     p->dead = true;
     p->recv = NULL;
     while (p->qh) { kmsg_t *m = p->qh; p->qh = m->next; kmsg_free(m); }
@@ -1398,7 +1414,331 @@ static u32 ca_op(mspace_t *sp, u32 op, u64 *a) {
 }
 
 /* ------------------------------------------------------------ memória compartilhada (SYS_MACH_VM) */
+static u32 vm_op(mspace_t *sp, u32 op, u64 *a);
+/* ------------------------------------------------------------ outras tasks, threads e exceções Mach
+ * O crashpad de todo Electron registra uma porta de exceção da task (EXC_CRASH) e, quando o processo morre por
+ * sinal, recebe a mensagem com as portas da thread e da task, lê a memória e as threads pela porta da task e só
+ * então responde. O hang watcher e o sampling profiler do Chromium listam as threads e leem o estado delas. */
+extern process_t *proc_find(int pid);
+extern i64 proc_threadctl(process_t *cp, thread_t *self, thread_t *q, u64 op, u64 arg);
+extern void proc_exc_reply(thread_t *t, bool handled, bool crash);
+
+/* processo da porta de task `name` no espaço sp (0x103 = o próprio); NULL se não for task ou se já saiu */
+static process_t *task_proc(mspace_t *sp, u32 name) {
+    if (name == 0x103) return sp->proc;
+    ment_t *e = ent_at(sp, name);
+    if (!e || !e->port || !(e->type & T_SEND) || e->port->kind != KP_TASK) return NULL;
+    process_t *q = proc_find(e->port->kid);
+    return q && !q->exited ? q : NULL;
+}
+
+/* thread da porta `name`: 0x1000 + tid só vale para as threads do próprio processo; de outro processo, só por uma
+ * porta de thread que chegou numa mensagem ou no task_threads */
+static thread_t *thread_of_name(mspace_t *sp, u32 name) {
+    ment_t *e = ent_at(sp, name);
+    int tid = -1;
+    bool own = false;
+    if (e && e->port && e->port->kind == KP_THREAD && (e->type & T_SEND)) tid = e->port->kid;
+    else if (name >= 0x1000 && name < 0x10000) { tid = (int)(name - 0x1000); own = true; }
+    if (tid < 0) return NULL;
+    for (thread_t *t = sched_threads(); t; t = t->next)
+        if (t->id == tid && t->state != TH_DEAD && t->proc && !t->proc->exited)
+            return own && t->proc != sp->proc ? NULL : t;
+    return NULL;
+}
+
+/* direito de envio novo para uma porta de task/thread, no espaço sp (nome devolvido) */
+static u32 give_kobj(mspace_t *sp, u8 kind, int id) {
+    if (sp->proc && kind == KP_TASK && id == sp->pid) return 0x103;
+    if (sp->proc && kind == KP_THREAD)
+        for (thread_t *t = sched_threads(); t; t = t->next)
+            if (t->id == id && t->proc == sp->proc) return 0x1000u + (u32)id;   /* a própria: o nome do libSystem */
+    kport_t *k = port_new(kind);
+    if (!k) return 0;
+    k->kid = id;
+    port_ref(k);
+    k->srights = 1;
+    return insert_recv_right(sp, k, MT_MOVE_SEND);
+}
+
+/* portas de exceção das threads (thread_set_exception_ports): poucas, numa tabela por tid */
+#define THEXC_MAX 128
+static struct { int tid, pid; struct excslot s[EXC_TYPES]; } thexc[THEXC_MAX];
+
+static struct excslot *exc_slots(mspace_t *sp, u32 target, bool thread, bool create, process_t **owner) {
+    if (!thread) {
+        process_t *q = task_proc(sp, target);
+        if (!q) return NULL;
+        mspace_t *qs = sp_of(q);
+        if (owner) *owner = q;
+        return qs ? qs->texc : NULL;
+    }
+    thread_t *t = thread_of_name(sp, target);
+    if (!t) return NULL;
+    if (owner) *owner = t->proc;
+    int freei = -1;
+    for (int i = 0; i < THEXC_MAX; i++) {
+        if (thexc[i].tid == t->id && thexc[i].pid == t->proc->pid) return thexc[i].s;
+        if (freei < 0 && !thexc[i].tid) freei = i;
+    }
+    if (!create || freei < 0) return NULL;
+    memset(&thexc[freei], 0, sizeof thexc[freei]);
+    thexc[freei].tid = t->id;
+    thexc[freei].pid = t->proc->pid;
+    return thexc[freei].s;
+}
+
+static void slot_clear(struct excslot *x) {
+    if (x->port) { srights_drop(x->port); port_unref(x->port); }
+    x->port = NULL; x->behavior = x->flavor = 0;
+}
+
+/* a64: a = target, mask, port, behavior, flavor, is_thread */
+static u32 exc_set(mspace_t *sp, u64 *a) {
+    struct excslot *s = exc_slots(sp, (u32)a[0], a[5] != 0, true, NULL);
+    if (!s) return KERN_INVALID_ARGUMENT;
+    kport_t *port = NULL;
+    if (a[2]) {
+        ment_t *e = ent_find(sp, (u32)a[2]);
+        if (!e || !e->port || !(e->type & (T_SEND | T_RECEIVE))) return 20u /* KERN_INVALID_CAPABILITY */;
+        port = e->port;
+    }
+    u32 beh = (u32)a[3], kind = beh & 0xFFFF;
+    if (port && (kind < 1 || kind > 4)) return KERN_INVALID_ARGUMENT;   /* DEFAULT, STATE, STATE_IDENTITY, IDENTITY_PROTECTED */
+    for (int x = 1; x < EXC_TYPES; x++) {
+        if (!(a[1] & (1ull << x))) continue;
+        slot_clear(&s[x]);
+        if (!port) continue;
+        port_ref(port);
+        port->srights++;                             /* o kernel guarda um direito de envio, como o XNU */
+        s[x].port = port; s[x].behavior = beh; s[x].flavor = (u32)a[4];
+    }
+    return KERN_SUCCESS;
+}
+
+/* a = target, mask, buffer de mos_exc_port_t, capacidade, -> a4 = entradas, a5 = is_thread */
+static u32 exc_get(mspace_t *sp, u64 *a) {
+    struct excslot *s = exc_slots(sp, (u32)a[0], a[5] != 0, false, NULL);
+    mos_exc_port_t out[EXC_TYPES];
+    u32 n = 0;
+    if (!s && !a[5]) return KERN_INVALID_ARGUMENT;
+    for (int x = 1; s && x < EXC_TYPES; x++) {
+        if (!(a[1] & (1ull << x))) continue;
+        u32 j;
+        for (j = 0; j < n; j++)                      /* mesma porta, behavior e flavor: uma entrada com as máscaras somadas */
+            if (out[j].behavior == s[x].behavior && out[j].flavor == s[x].flavor &&
+                ((!s[x].port && !out[j].port) || (s[x].port && out[j].port && ent_at(sp, out[j].port) &&
+                                                   ent_at(sp, out[j].port)->port == s[x].port))) break;
+        if (j < n) { out[j].mask |= 1u << x; continue; }
+        if (n >= (u32)a[3] || n >= EXC_TYPES) break;
+        u32 nm = 0;
+        if (s[x].port && !s[x].port->dead) { port_ref(s[x].port); s[x].port->srights++; nm = insert_recv_right(sp, s[x].port, MT_MOVE_SEND); }
+        out[n].mask = 1u << x; out[n].port = nm; out[n].behavior = s[x].behavior; out[n].flavor = s[x].flavor;
+        n++;
+    }
+    if (n && !uvm_copy_out(sp->proc, a[2], out, n * sizeof out[0])) return KERN_INVALID_ADDRESS;
+    a[4] = n;
+    return KERN_SUCCESS;
+}
+
+/* x86_thread_state64_t (o mesmo layout do MOS_THR_GETSTATE) */
+static void frame_regs(const int_frame_t *g, u64 r[21]) {
+    u64 v[21] = { g->rax, g->rbx, g->rcx, g->rdx, g->rdi, g->rsi, g->rbp, g->rsp, g->r8, g->r9, g->r10, g->r11,
+                  g->r12, g->r13, g->r14, g->r15, g->rip, g->rflags, g->cs, 0, 0 };
+    memcpy(r, v, sizeof v);
+}
+/* escreve o estado no buffer da mensagem; devolve o número de palavras de 32 bits */
+static u32 put_state(u8 *d, u32 off, u32 flavor, const int_frame_t *g, u64 code1) {
+    u64 r[21];
+    if (flavor == 4 || flavor == 7) {                /* x86_THREAD_STATE64, ou x86_THREAD_STATE com cabeçalho */
+        u32 o = off, n = 0;
+        if (flavor == 7) { wr32(d, o, 4); wr32(d, o + 4, 42); o += 8; n = 2; }
+        frame_regs(g, r);
+        for (int i = 0; i < 21; i++) wr64(d, o + (u32)i * 8, r[i]);
+        return n + 42;
+    }
+    if (flavor == 6) {                               /* x86_EXCEPTION_STATE64: trapno, cpu, err, faultvaddr */
+        wr32(d, off, (u32)(g->vector & 0xFFFF));
+        wr32(d, off + 4, (u32)g->error);
+        wr64(d, off + 8, code1);
+        return 4;
+    }
+    return 0;
+}
+
+/* manda a exceção à porta da thread ou da task. true = a thread t passou a esperar a resposta (o chamador troca de
+ * thread); false = ninguém registrado para esta exceção, siga como sempre (sinal, ou a morte do processo). */
+bool machipc_raise(thread_t *t, int_frame_t *f, int exc, i64 code0, i64 code1, bool crash) {
+    process_t *p = t ? t->proc : NULL;
+    mspace_t *sp = p ? p->mach : NULL;
+    if (!sp || exc <= 0 || exc >= EXC_TYPES) return false;
+    struct excslot *x = NULL;
+    for (int i = 0; i < THEXC_MAX && !x; i++)
+        if (thexc[i].tid == t->id && thexc[i].pid == p->pid && thexc[i].s[exc].port) x = &thexc[i].s[exc];
+    if (!x || x->port->dead) x = sp->texc[exc].port ? &sp->texc[exc] : NULL;
+    if (!x || !x->port || x->port->dead || !x->port->recv) return false;
+    u32 kind = x->behavior & 0xFFFF;                 /* 1 DEFAULT, 2 STATE, 3 STATE_IDENTITY, 4 IDENTITY_PROTECTED */
+    bool c64 = x->behavior & 0x80000000u;            /* MACH_EXCEPTION_CODES: códigos de 64 bits (mach_exc.defs) */
+    u8 xk = kind == 2 ? 1 : kind == 3 ? 2 : 0;
+    bool ports = xk != 1;
+    u32 id = (c64 ? 2405u : 2401u) + xk;
+    u8 *d = kcalloc(1, 512);
+    kmsg_t *m = kcalloc(1, sizeof *m);
+    kport_t *rp = port_new(KP_EXCREPLY);
+    if (!d || !m || !rp) { kfree(d); kfree(m); if (rp) { rp->dead = true; port_ref(rp); port_unref(rp); } return false; }
+    rp->kid = t->id; rp->xcrash = crash; rp->xkind = xk; rp->xid = id;
+    u32 off = H_SIZE_BYTES;
+    if (ports) {
+        m->items = kcalloc(2, sizeof(kitem_t));
+        if (!m->items) { kfree(d); kfree(m); rp->dead = true; port_ref(rp); port_unref(rp); return false; }
+        wr32(d, off, 2); off += 4;
+        for (int k = 0; k < 2; k++) {                /* thread e task, como direitos de envio do receptor */
+            kport_t *o = port_new(k ? KP_TASK : KP_THREAD);
+            if (o) { o->kid = k ? p->pid : t->id; port_ref(o); o->srights = 1; }
+            kitem_t *it = &m->items[m->nitems++];
+            it->kind = D_PORT; it->type = MT_MOVE_SEND; it->off = off; it->port = o;
+            d[off + 10] = MT_MOVE_SEND; d[off + 11] = D_PORT;
+            off += 12;
+        }
+    }
+    d[off + 4] = 1;                                  /* NDR_record.int_rep = little-endian */
+    off += 8;
+    wr32(d, off, (u32)exc); off += 4;
+    wr32(d, off, 2); off += 4;
+    if (c64) { wr64(d, off, (u64)code0); wr64(d, off + 8, (u64)code1); off += 16; }
+    else { wr32(d, off, (u32)code0); wr32(d, off + 4, (u32)code1); off += 8; }
+    if (xk) {
+        wr32(d, off, x->flavor); off += 4;
+        u32 n = put_state(d, off + 4, x->flavor, f, (u64)code1);
+        wr32(d, off, n); off += 4 + n * 4;
+    }
+    wr32(d, H_BITS, ports ? MSGH_COMPLEX : 0);
+    wr32(d, H_SIZE, off);
+    wr32(d, H_ID, id);
+    m->data = d; m->size = off;
+    port_ref(x->port);
+    m->dest = x->port; m->dest_type = 0;             /* o direito guardado pelo kernel continua dele */
+    port_ref(rp); rp->sorights = 1;
+    m->reply = rp; m->reply_type = MT_MOVE_SEND_ONCE;
+    m->sender_pid = 0;
+    t->frame = (u64)f;
+    t->wait_pid = WAIT_EXC;
+    t->state = TH_WAITING;
+    if (crash)                                       /* EXC_CRASH: a task para inteira até o tratador responder */
+        for (thread_t *w = sched_threads(); w; w = w->next)
+            if (w->proc == p && w != t && w->state != TH_DEAD) {
+                extern void sched_kick_thread(thread_t *t);
+                if (w->suspend < 0xFFFF) w->suspend++;
+                sched_kick_thread(w);
+            }
+    enqueue(x->port, m);
+    return true;
+}
+
+/* a resposta chegou (m), ou o direito de resposta foi destruído sem ela (m = NULL: o tratador saiu, ou soltou) */
+static void exc_reply(kport_t *rp, kmsg_t *m) {
+    if (rp->dead) { if (m) kmsg_free(m); return; }
+    rp->dead = true;
+    u32 ret = KERN_FAILURE;
+    const u8 *d = m ? m->data : NULL;
+    if (d && m->size >= H_SIZE_BYTES + 12 && rd32(d, H_ID) == rp->xid + 100) ret = rd32(d, H_SIZE_BYTES + 8);
+    thread_t *t = NULL;
+    for (thread_t *w = sched_threads(); w; w = w->next)
+        if (w->id == rp->kid && w->state == TH_WAITING && w->wait_pid == WAIT_EXC) { t = w; break; }
+    if (t && ret == KERN_SUCCESS && rp->xkind && !rp->xcrash && m->size >= H_SIZE_BYTES + 20 && t->frame) {
+        /* *_state_reply: flavor, new_stateCnt, new_state — o tratador pode mudar os registradores (rip, rsp...) */
+        u32 fl = rd32(d, H_SIZE_BYTES + 12), cnt = rd32(d, H_SIZE_BYTES + 16), o = H_SIZE_BYTES + 20;
+        if (fl == 7 && cnt >= 44) { fl = rd32(d, o); cnt -= 2; o += 8; }
+        if (fl == 4 && cnt >= 42 && m->size >= o + 168) {
+            int_frame_t *g = (int_frame_t *)t->frame;
+            u64 r[21];
+            for (int i = 0; i < 21; i++) r[i] = rd64(d, o + (u32)i * 8);
+            if (r[16] < 0x0000800000000000ULL && r[7] < 0x0000800000000000ULL) {
+                g->rax = r[0]; g->rbx = r[1]; g->rcx = r[2]; g->rdx = r[3]; g->rdi = r[4]; g->rsi = r[5];
+                g->rbp = r[6]; g->rsp = r[7]; g->r8 = r[8]; g->r9 = r[9]; g->r10 = r[10]; g->r11 = r[11];
+                g->r12 = r[12]; g->r13 = r[13]; g->r14 = r[14]; g->r15 = r[15]; g->rip = r[16];
+                g->rflags = (r[17] & 0xDD5) | 0x202;
+            }
+        }
+    }
+    bool crash = rp->xcrash;
+    if (m) kmsg_free(m);
+    if (t) proc_exc_reply(t, ret == KERN_SUCCESS, crash);
+}
+
+/* thread_ctl numa thread de outra task (ou da própria, pela porta). a = thread, op, arg -> a3 = resultado */
+static u32 thread_ctl(mspace_t *sp, u64 *a) {
+    thread_t *q = thread_of_name(sp, (u32)a[0]);
+    if (!q) return KERN_INVALID_ARGUMENT;
+    thread_t *self = thread_current();
+    if (q == self && (a[1] == MOS_THR_SUSPEND || a[1] == MOS_THR_TERMINATE)) return KERN_INVALID_ARGUMENT;   /* pelo SYS_THREADCTL */
+    i64 r = proc_threadctl(sp->proc, self, q, a[1], a[2]);
+    a[3] = (u64)r;
+    return r < 0 ? KERN_FAILURE : KERN_SUCCESS;
+}
+
+static u32 task_op(mspace_t *sp, u32 op, u64 *a) {
+    process_t *q = task_proc(sp, (u32)a[0]);
+    if (!q) return KERN_INVALID_ARGUMENT;
+    switch (op) {
+    case MACH_VM_TASK_PID: a[1] = (u64)q->pid; return KERN_SUCCESS;
+    case MACH_VM_TASK_RW: {                          /* mach_vm_read/write/read_overwrite: página por página, pelo kernel */
+        u64 rem = a[1], loc = a[2], n = a[3];
+        if (n > (256ull << 20) || rem + n < rem) return KERN_INVALID_ARGUMENT;
+        u8 *buf = kmalloc(4096);
+        if (!buf) return KERN_RESOURCE_SHORTAGE;
+        u32 kr = KERN_SUCCESS;
+        while (n && kr == KERN_SUCCESS) {
+            u64 k = n < 4096 ? n : 4096;
+            if (a[4] == 0) {
+                if (!uvm_copy_in(q, buf, rem, k)) kr = KERN_INVALID_ADDRESS;
+                else if (!uvm_copy_out(sp->proc, loc, buf, k)) kr = KERN_INVALID_ARGUMENT;
+            } else {
+                if (!uvm_copy_in(sp->proc, buf, loc, k)) kr = KERN_INVALID_ARGUMENT;
+                else if (!uvm_copy_out(q, rem, buf, k)) kr = 2u; /* KERN_PROTECTION_FAILURE */   /* respeita COW e PTE_NOW */
+            }
+            rem += k; loc += k; n -= k;
+        }
+        kfree(buf);
+        return kr;
+    }
+    case MACH_VM_TASK_REGION: {
+        mspace_t *qs = sp_of(q);
+        u64 b[8] = { a[1] };
+        u32 kr = qs ? vm_op(qs, MACH_VM_REGION, b) : KERN_FAILURE;
+        a[1] = b[1]; a[2] = b[2]; a[3] = b[3]; a[4] = b[4];
+        return kr;
+    }
+    case MACH_VM_TASK_THREADS: {
+        u32 n = 0;
+        for (thread_t *w = sched_threads(); w; w = w->next) {
+            if (w->proc != q || w->state == TH_DEAD) continue;
+            if (n < (u32)a[2]) {
+                u32 nm = give_kobj(sp, KP_THREAD, w->id);
+                if (!uvm_copy_out(sp->proc, a[1] + n * 4, &nm, 4)) return KERN_INVALID_ADDRESS;
+            }
+            n++;
+        }
+        a[3] = n;                                    /* n > capacidade: quem chama aumenta o buffer e pede de novo */
+        return KERN_SUCCESS;
+    }
+    case MACH_VM_TASK_SUSPEND: {
+        thread_t *self = thread_current();
+        for (thread_t *w = sched_threads(); w; w = w->next)
+            if (w->proc == q && w != self && w->state != TH_DEAD)
+                proc_threadctl(sp->proc, self, w, a[1] ? MOS_THR_SUSPEND : MOS_THR_RESUME, 0);
+        return KERN_SUCCESS;
+    }
+    }
+    return KERN_INVALID_ARGUMENT;
+}
+
 static u32 vm_op(mspace_t *sp, u32 op, u64 *a) {
+    if (op == MACH_VM_TASK_RW || op == MACH_VM_TASK_REGION || op == MACH_VM_TASK_PID || op == MACH_VM_TASK_THREADS ||
+        op == MACH_VM_TASK_SUSPEND) return task_op(sp, op, a);
+    if (op == MACH_VM_THREAD_CTL) return thread_ctl(sp, a);
+    if (op == MACH_VM_EXC_SET) return exc_set(sp, a);
+    if (op == MACH_VM_EXC_GET) return exc_get(sp, a);
     if (op >= MACH_VM_CA_ALLOC && op <= MACH_VM_CA_DROP) return ca_op(sp, op, a);   /* só a faixa das CA (4..8) */
     if (op == MACH_VM_MAKE_ENTRY) {
         u64 size = (a[0] + 0xFFF) & ~0xFFFULL;
@@ -1725,6 +2065,12 @@ void machipc_exit(process_t *p) {
     if (!sp) return;
     ca_drop_pid(sp->pid);
     p->mach = NULL;
+    for (int x = 0; x < EXC_TYPES; x++) slot_clear(&sp->texc[x]);   /* portas de exceção da task e das threads */
+    for (int i = 0; i < THEXC_MAX; i++)
+        if (thexc[i].tid && thexc[i].pid == sp->pid) {
+            for (int x = 0; x < EXC_TYPES; x++) slot_clear(&thexc[i].s[x]);
+            thexc[i].tid = 0;
+        }
     if (sp->spawn_special) { srights_drop(sp->spawn_special); port_unref(sp->spawn_special); }
     /* 1. pedidos de nome-morto feitos POR este processo em portas de outros: apontam para este espaço,
      *    que vai ser liberado (antes ficavam lá e o aviso escrevia em memória solta) */
