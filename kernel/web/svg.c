@@ -311,6 +311,11 @@ typedef struct {
     char clip[64];
     u32 stop_color;
     float stop_op;
+    char mask[64], filter[64];                 /* não herdados */
+    char mk_start[64], mk_mid[64], mk_end[64]; /* marcadores (herdados) */
+    u32 flood_color;                           /* feFlood/feDropShadow (não herdados) */
+    float flood_op;
+    u8 mask_alpha;                             /* mask-type: alpha */
 } sst_t;
 
 typedef struct { char sel[64]; int spec; char decl[512]; } rule_t;
@@ -326,6 +331,7 @@ typedef struct ctx {
     int depth;            /* use/recursão */
     float vw, vh;         /* viewport atual (para %) */
     u8 *clipm;            /* máscara de recorte do canvas (NULL = nenhuma) */
+    sst_t base;           /* estilo da raiz: marcadores, padrões e máscaras herdam dos ancestrais deles, não de quem usa */
 } ctx_t;
 
 static void set_paint(paint_t *pt, const char *v, const sst_t *par, bool is_fill) {
@@ -361,6 +367,18 @@ static float parse_op(const char *v) {
     if (!parse_f(&p, &f)) return 1;
     if (*p == '%') f /= 100;
     return clamp01(f);
+}
+
+/* url(#id) → id (vazio se não for url) */
+static void url_ref(const char *v, char *out) {
+    out[0] = 0;
+    if (strncmp(v, "url(", 4)) return;
+    const char *s = v + 4;
+    while (*s == ' ' || *s == '\'' || *s == '"') s++;
+    if (*s == '#') s++;
+    int n = 0;
+    while (*s && *s != ')' && *s != '\'' && *s != '"' && n < 63) out[n++] = *s++;
+    out[n] = 0;
 }
 
 static void apply_prop(ctx_t *C, sst_t *st, const sst_t *par, const char *k, int kl, const char *v) {
@@ -412,7 +430,16 @@ static void apply_prop(ctx_t *C, sst_t *st, const sst_t *par, const char *k, int
             while (*s && *s != ')' && *s != '\'' && *s != '"' && n < 63) st->clip[n++] = *s++;
             st->clip[n] = 0;
         }
-    } else if (K("stop-color")) { if (!strncasecmp(v, "currentcolor", 12)) st->stop_color = st->color; else { u32 c; if (css_color(v, &c)) st->stop_color = c; } }
+    } else if (K("mask")) url_ref(v, st->mask);
+    else if (K("filter")) url_ref(v, st->filter);
+    else if (K("marker-start")) url_ref(v, st->mk_start);
+    else if (K("marker-mid")) url_ref(v, st->mk_mid);
+    else if (K("marker-end")) url_ref(v, st->mk_end);
+    else if (K("marker")) { url_ref(v, st->mk_start); strcpy(st->mk_mid, st->mk_start); strcpy(st->mk_end, st->mk_start); }
+    else if (K("flood-color")) { if (!strncasecmp(v, "currentcolor", 12)) st->flood_color = st->color; else { u32 c; if (css_color(v, &c)) st->flood_color = c; } }
+    else if (K("flood-opacity")) st->flood_op = parse_op(v);
+    else if (K("mask-type")) st->mask_alpha = !strncmp(v, "alpha", 5);
+    else if (K("stop-color")) { if (!strncasecmp(v, "currentcolor", 12)) st->stop_color = st->color; else { u32 c; if (css_color(v, &c)) st->stop_color = c; } }
     else if (K("stop-opacity")) st->stop_op = parse_op(v);
 #undef K
 }
@@ -444,6 +471,7 @@ static const char *presentation[] = {
     "fill", "stroke", "color", "fill-opacity", "stroke-opacity", "opacity", "stroke-width", "stroke-miterlimit",
     "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset", "fill-rule", "clip-rule", "display",
     "visibility", "font-size", "font-weight", "text-anchor", "clip-path", "stop-color", "stop-opacity",
+    "mask", "filter", "marker", "marker-start", "marker-mid", "marker-end", "flood-color", "flood-opacity", "mask-type",
 };
 
 /* seletor composto simples casa com o elemento? ("tag", ".a", "#i", "tag.a.b", "*") */
@@ -534,6 +562,10 @@ static void compute_style(ctx_t *C, const xel_t *n, const sst_t *par, sst_t *st)
     *st = *par;
     st->opacity = 1;
     st->clip[0] = 0;
+    st->mask[0] = st->filter[0] = 0;
+    st->flood_color = 0xFF000000u;
+    st->flood_op = 1;
+    st->mask_alpha = 0;
     st->none = false;
     st->stop_color = 0xFF000000u;
     st->stop_op = 1;
@@ -573,9 +605,15 @@ typedef struct {
     u32 color;            /* pré-multiplicado com a opacidade */
     u32 lut[256];
     int spread;           /* 0 pad, 1 reflect, 2 repeat */
-    mat_t inv;            /* canvas → espaço do gradiente */
+    mat_t inv;            /* canvas → espaço do gradiente (ou pixels do ladrilho do padrão) */
     float x1, y1, x2, y2, cx, cy, r, fx, fy;
+    surface_t *tile;      /* kind 3: ladrilho do <pattern> já desenhado (liberar com paint_free) */
+    u32 op8;              /* opacidade aplicada ao padrão */
 } paintsrc_t;
+
+static void render_children(ctx_t *C, xel_t *n, const sst_t *st, mat_t ctm);
+static mat_t viewbox_mat(const char *vb, const char *par, float x, float y, float w, float h, bool *ok);
+static void paint_free(paintsrc_t *P) { if (P->tile) { surface_free(P->tile); P->tile = NULL; } }
 
 
 static int grad_stops(ctx_t *C, xel_t *g, stop_t *st, int max, const sst_t *base, int depth) {
@@ -612,6 +650,71 @@ static const char *gattr(ctx_t *C, xel_t *g, const char *name) {
 }
 
 /* bbox: caixa do objeto (espaço do usuário) para objectBoundingBox */
+/* número de unidade de caixa: "0.5" ou "50%" → fração */
+static float frac_len(const char *v, float def) {
+    if (!v) return def;
+    const char *q = v;
+    float f;
+    if (!parse_f(&q, &f)) return def;
+    return *q == '%' ? f / 100 : f;
+}
+
+/* <pattern>: desenha um ladrilho na resolução do dispositivo; a amostragem repete pelos pixels do ladrilho */
+static bool make_pattern(ctx_t *C, xel_t *g, const sst_t *st, float op, const mat_t *ctm, const float *bb, paintsrc_t *P) {
+    if (C->depth > 8) return false;
+    const char *units = gattr(C, g, "patternUnits"), *cunits = gattr(C, g, "patternContentUnits");
+    bool obb = !units || strcmp(units, "userSpaceOnUse");
+    bool cobb = cunits && !strcmp(cunits, "objectBoundingBox");
+    float x, y, w, h;
+    if (obb) {
+        x = bb[0] + frac_len(gattr(C, g, "x"), 0) * bb[2]; y = bb[1] + frac_len(gattr(C, g, "y"), 0) * bb[3];
+        w = frac_len(gattr(C, g, "width"), 0) * bb[2]; h = frac_len(gattr(C, g, "height"), 0) * bb[3];
+    } else {
+        x = parse_len(gattr(C, g, "x"), C->vw, 16, 0); y = parse_len(gattr(C, g, "y"), C->vh, 16, 0);
+        w = parse_len(gattr(C, g, "width"), C->vw, 16, 0); h = parse_len(gattr(C, g, "height"), C->vh, 16, 0);
+    }
+    if (!(w > 0) || !(h > 0)) return false;
+    mat_t pm = mmul(*ctm, parse_transform(gattr(C, g, "patternTransform")));
+    float sc = mscale(&pm);
+    int tw = (int)fceil(w * sc), th = (int)fceil(h * sc);
+    if (tw < 1) tw = 1;
+    if (th < 1) th = 1;
+    if (tw > 2048) tw = 2048;
+    if (th > 2048) th = 2048;
+    float sx = tw / w, sy = th / h;
+    /* conteúdo: elementos do próprio pattern ou do que ele herda por href */
+    xel_t *content = g;
+    for (int d = 0; d < 8 && content && !content->first; d++) content = by_id(C, xattr(content, "href"));
+    surface_t *tile = surface_new(tw, th);
+    if (!tile || !tile->px) { surface_free(tile); return false; }
+    memset(tile->px, 0, (usize)tile->stride * th * 4);
+    if (content) {
+        mat_t tm = { sx, 0, 0, sy, 0, 0 };
+        bool okv;
+        const char *vb = gattr(C, g, "viewBox");
+        mat_t vm = viewbox_mat(vb, gattr(C, g, "preserveAspectRatio"), 0, 0, w, h, &okv);
+        if (vb && okv) tm = mmul(tm, vm);
+        else if (cobb) { mat_t b = { bb[2], 0, 0, bb[3], 0, 0 }; tm = mmul(tm, b); }
+        surface_t *ss = C->s;
+        int sw = C->W, sh = C->H;
+        u8 *sclip = C->clipm;
+        float svw = C->vw, svh = C->vh;
+        C->s = tile; C->W = tw; C->H = th; C->clipm = NULL;
+        sst_t ps;
+        compute_style(C, g, &C->base, &ps);
+        C->depth++;
+        render_children(C, content, &ps, tm);
+        C->depth--;
+        C->s = ss; C->W = sw; C->H = sh; C->clipm = sclip; C->vw = svw; C->vh = svh;
+    }
+    mat_t t2u = { 1 / sx, 0, 0, 1 / sy, x, y };
+    if (!minv(mmul(pm, t2u), &P->inv)) { surface_free(tile); return false; }
+    P->kind = 3;
+    P->tile = tile;
+    P->op8 = (u32)(clamp01(op) * 255 + 0.5f);
+    return true;
+}
+
 static bool make_paint(ctx_t *C, const paint_t *pt, const sst_t *st, float op, const mat_t *ctm, const float *bbox, paintsrc_t *P) {
     memset(P, 0, sizeof *P);
     if (pt->kind == PT_NONE) return false;
@@ -621,6 +724,11 @@ static bool make_paint(ctx_t *C, const paint_t *pt, const sst_t *st, float op, c
         return (P->color >> 24) != 0;
     }
     xel_t *g = by_id(C, pt->id);
+    if (g && !strcmp(g->name, "pattern")) {
+        if (make_pattern(C, g, st, op, ctm, bbox, P)) return true;
+        if (pt->has_fb) { P->kind = 0; P->color = premul(pt->fallback, op); return true; }
+        return false;
+    }
     if (!g || (strcmp(g->name, "linearGradient") && strcmp(g->name, "radialGradient"))) {
         if (pt->has_fb) { P->kind = 0; P->color = premul(pt->fallback, op); return true; }
         return false;
@@ -679,7 +787,19 @@ static bool make_paint(ctx_t *C, const paint_t *pt, const sst_t *st, float op, c
     return true;
 }
 
+static inline u32 pat_at(const paintsrc_t *P, float px, float py) {
+    float u, v;
+    mapp(&P->inv, px, py, &u, &v);
+    int tw = P->tile->w, th = P->tile->h;
+    int iu = (int)ffloor(u), iv = (int)ffloor(v);
+    iu %= tw; if (iu < 0) iu += tw;
+    iv %= th; if (iv < 0) iv += th;
+    u32 c = P->tile->px[(usize)iv * P->tile->stride + iu];
+    return P->op8 == 255 ? c : mul_px(c, P->op8);
+}
+
 static inline u32 grad_at(const paintsrc_t *P, float px, float py) {
+    if (P->kind == 3) return pat_at(P, px, py);
     float x, y;
     mapp(&P->inv, px, py, &x, &y);
     float t;
@@ -745,7 +865,7 @@ static void draw_path(ctx_t *C, const path_t *p, const sst_t *st, const mat_t *c
     float bb[4];
     bbox_of(p, bb);
     paintsrc_t P;
-    if (can_fill && make_paint(C, &st->fill, st, st->fill_op, ctm, bb, &P)) fill_path(C, p, ctm, st->evenodd, &P);
+    if (can_fill && make_paint(C, &st->fill, st, st->fill_op, ctm, bb, &P)) { fill_path(C, p, ctm, st->evenodd, &P); paint_free(&P); }
     if (st->sw > 0 && make_paint(C, &st->stroke, st, st->stroke_op, ctm, bb, &P)) {
         path_t o = { 0 };
         o.tol = p->tol;
@@ -756,6 +876,7 @@ static void draw_path(ctx_t *C, const path_t *p, const sst_t *st, const mat_t *c
         rs_stroke_path(&o, p, &rs, st->sw / 2, mscale(ctm), 1.0f);
         fill_path(C, &o, ctm, false, &P);
         path_free(&o);
+        paint_free(&P);
     }
 }
 
@@ -946,6 +1067,148 @@ static void draw_image(ctx_t *C, xel_t *n, const sst_t *st, const mat_t *ctm) {
     surface_free(img);
 }
 
+/* ================================================================ texto */
+/* glifo com matriz completa: m leva o espaço do glifo (unidades do usuário, origem na caneta, y para baixo) ao canvas */
+static void draw_glyph(ctx_t *C, int face, u16 gid, float fs, const mat_t *m, const paintsrc_t *P) {
+    float sc = mscale(m);
+    float gs = fs * sc;
+    if (gs < 1) gs = 1;
+    if (gs > 512) gs = 512;
+    float k = gs / fs;   /* pixels do bitmap por unidade do usuário */
+    i16 w, h, l, t;
+    if (font_raster_glyph(face, gid, gs, NULL, 0, &w, &h, &l, &t) <= 0 || w <= 0 || h <= 0) return;
+    u8 *bm = kmalloc((usize)w * h);
+    if (!bm) return;
+    font_raster_glyph(face, gid, gs, bm, (u32)w * h, &w, &h, &l, &t);
+    /* bitmap → espaço do glifo → canvas */
+    mat_t b2g = { 1 / k, 0, 0, 1 / k, l / k, t / k };
+    mat_t b2d = mmul(*m, b2g), d2b;
+    if (!minv(b2d, &d2b)) { kfree(bm); return; }
+    float xs[4], ys[4];
+    mapp(&b2d, 0, 0, &xs[0], &ys[0]); mapp(&b2d, w, 0, &xs[1], &ys[1]);
+    mapp(&b2d, 0, h, &xs[2], &ys[2]); mapp(&b2d, w, h, &xs[3], &ys[3]);
+    float x0 = xs[0], x1 = xs[0], y0 = ys[0], y1 = ys[0];
+    for (int i = 1; i < 4; i++) { x0 = MIN(x0, xs[i]); x1 = MAX(x1, xs[i]); y0 = MIN(y0, ys[i]); y1 = MAX(y1, ys[i]); }
+    int X0 = MAX((int)ffloor(x0), 0), Y0 = MAX((int)ffloor(y0), 0), X1 = MIN((int)fceil(x1) + 1, C->W), Y1 = MIN((int)fceil(y1) + 1, C->H);
+    if (X1 > X0 && Y1 > Y0) {
+        mask_t M = { X0, Y0, X1 - X0, Y1 - Y0, kcalloc((usize)(X1 - X0) * (Y1 - Y0), 1) };
+        if (M.a) {
+            for (int yy = 0; yy < M.h; yy++)
+                for (int xx = 0; xx < M.w; xx++) {
+                    float u, v;
+                    mapp(&d2b, X0 + xx + 0.5f, Y0 + yy + 0.5f, &u, &v);
+                    u -= 0.5f; v -= 0.5f;
+                    int iu = (int)ffloor(u), iv = (int)ffloor(v);
+                    if (iu < -1 || iv < -1 || iu >= w || iv >= h) continue;
+                    float fu = u - iu, fv = v - iv;
+                    float a00 = (iu >= 0 && iv >= 0) ? bm[iv * w + iu] : 0, a10 = (iu + 1 < w && iv >= 0) ? bm[iv * w + iu + 1] : 0;
+                    float a01 = (iu >= 0 && iv + 1 < h) ? bm[(iv + 1) * w + iu] : 0, a11 = (iu + 1 < w && iv + 1 < h) ? bm[(iv + 1) * w + iu + 1] : 0;
+                    float c = (a00 * (1 - fu) + a10 * fu) * (1 - fv) + (a01 * (1 - fu) + a11 * fu) * fv;
+                    M.a[(usize)yy * M.w + xx] = (u8)(c > 255 ? 255 : c + 0.5f);
+                }
+            composite(C, &M, P);
+            kfree(M.a);
+        }
+    }
+    kfree(bm);
+}
+
+/* fonte e avanço de um ponto de código (com a fonte de reserva) */
+static u16 glyph_for(int weight, u32 cp, int *face, float fs, float *adv) {
+    int f = weight;
+    u16 g = font_glyph_id(f, cp);
+    if (!g && cp != ' ') { u16 g2 = font_glyph_id(FONT_FALLBACK_WEIGHT, cp); if (g2) { g = g2; f = FONT_FALLBACK_WEIGHT; } }
+    i32 upem = 0;
+    font_face_metrics(f, &upem, NULL, NULL, NULL);
+    if (!upem) upem = 2048;
+    *face = f;
+    *adv = font_advance_units(f, g) * fs / upem;
+    return g;
+}
+
+/* texto em caminho: posição e ângulo na distância d de um caminho achatado */
+typedef struct { float *xy; float *len; int n; float total; } pathlen_t;
+static bool pathlen_at(const pathlen_t *pl, float d, float *x, float *y, float *ang) {
+    if (d < 0 || d > pl->total || pl->n < 2) return false;
+    int i = 1;
+    while (i < pl->n - 1 && pl->len[i] < d) i++;
+    float seg = pl->len[i] - pl->len[i - 1], t = seg > 0 ? (d - pl->len[i - 1]) / seg : 0;
+    float ax = pl->xy[2 * (i - 1)], ay = pl->xy[2 * (i - 1) + 1], bx = pl->xy[2 * i], by = pl->xy[2 * i + 1];
+    *x = ax + (bx - ax) * t;
+    *y = ay + (by - ay) * t;
+    *ang = atan2_(by - ay, bx - ax);
+    return true;
+}
+
+typedef struct { float *rot; int nrot, idx; } rotlist_t;
+
+/* uma corrida de texto já colapsada: posições, rotate e (em textPath) o caminho */
+static void text_run(ctx_t *C, const char *buf, int k, const sst_t *st, const mat_t *ctm, float *cx, float *cy, rotlist_t *rl, const pathlen_t *pl) {
+    float fs = st->font_size;
+    /* largura para a âncora */
+    float width = 0;
+    for (const char *q = buf; q < buf + k;) { u32 cp = utf8_decode(&q); int f; float adv; glyph_for(st->weight, cp, &f, fs, &adv); width += adv; }
+    float ax = *cx;
+    if (st->anchor == ANCHOR_MIDDLE) ax -= width / 2;
+    else if (st->anchor == ANCHOR_END) ax -= width;
+    paintsrc_t P;
+    float bb[4] = { ax, *cy - fs, width, fs };
+    bool paint = make_paint(C, &st->fill, st, st->fill_op, ctm, bb, &P);
+    float pen = ax;
+    for (const char *q = buf; q < buf + k;) {
+        u32 cp = utf8_decode(&q);
+        int face;
+        float adv;
+        u16 g = glyph_for(st->weight, cp, &face, fs, &adv);
+        float r = 0;
+        if (rl && rl->nrot) { r = rl->rot[rl->idx < rl->nrot ? rl->idx : rl->nrot - 1]; rl->idx++; }
+        mat_t gm;
+        bool draw = true;
+        if (pl) {
+            /* o meio do glifo fica no caminho, girado pela tangente */
+            float px = 0, py = 0, ang = 0;
+            draw = pathlen_at(pl, pen + adv / 2, &px, &py, &ang);
+            mat_t t1 = MID; t1.e = px; t1.f = py;
+            float rr = ang + r * PI_F / 180;
+            mat_t ro = { fcos(rr), fsin(rr), -fsin(rr), fcos(rr), 0, 0 };
+            mat_t t2 = MID; t2.e = -adv / 2; t2.f = *cy;
+            gm = mmul(mmul(mmul(*ctm, t1), ro), t2);
+        } else {
+            mat_t t1 = MID; t1.e = pen; t1.f = *cy;
+            float rr = r * PI_F / 180;
+            mat_t ro = { fcos(rr), fsin(rr), -fsin(rr), fcos(rr), 0, 0 };
+            gm = mmul(mmul(*ctm, t1), ro);
+        }
+        if (draw && paint && cp != ' ' && g) draw_glyph(C, face, g, fs, &gm, &P);
+        pen += adv;
+    }
+    if (paint) paint_free(&P);
+    *cx = pen;
+}
+
+static void collapse_text(const xel_t *c, const xel_t *parent, char *buf, int cap, int *len) {
+    int k = 0;
+    bool sp = false;
+    for (int i = 0; i < c->tlen && k < cap - 2; i++) {
+        char ch = c->text[i];
+        if (isspace(ch)) { if (!sp && k) buf[k++] = ' '; sp = true; }
+        else { buf[k++] = ch; sp = false; }
+    }
+    if (c == parent->last && k && buf[k - 1] == ' ') k--;
+    buf[k] = 0;
+    *len = k;
+}
+
+static void read_rotate(const char *v, rotlist_t *rl) {
+    if (!v) return;
+    static float pool[256];
+    rl->rot = pool;
+    rl->nrot = 0;
+    rl->idx = 0;
+    float f;
+    while (rl->nrot < 256 && parse_f(&v, &f)) pool[rl->nrot++] = f;
+}
+
 static void draw_text(ctx_t *C, xel_t *n, const sst_t *st, const mat_t *ctm, float *cx, float *cy) {
     float fs = st->font_size;
     const char *xa = xattr(n, "x"), *ya = xattr(n, "y");
@@ -953,47 +1216,637 @@ static void draw_text(ctx_t *C, xel_t *n, const sst_t *st, const mat_t *ctm, flo
     if (ya) *cy = parse_len(ya, C->vh, fs, *cy);
     *cx += parse_len(xattr(n, "dx"), C->vw, fs, 0);
     *cy += parse_len(xattr(n, "dy"), C->vh, fs, 0);
+    rotlist_t rl = { 0 };
+    read_rotate(xattr(n, "rotate"), &rl);
     for (xel_t *c = n->first; c; c = c->next) {
         if (c->name) {
-            if (!strcmp(c->name, "tspan")) {
-                sst_t ts;
-                compute_style(C, c, st, &ts);
-                if (!ts.none) draw_text(C, c, &ts, ctm, cx, cy);
+            sst_t ts;
+            compute_style(C, c, st, &ts);
+            if (ts.none) continue;
+            if (!strcmp(c->name, "tspan")) draw_text(C, c, &ts, ctm, cx, cy);
+            else if (!strcmp(c->name, "textPath")) {
+                xel_t *pe = by_id(C, xattr(c, "href"));
+                if (!pe || strcmp(pe->name, "path") || !xattr(pe, "d")) continue;
+                path_t pp = { 0 };
+                pp.tol = 0.1f;
+                parse_path_d(&pp, xattr(pe, "d"));
+                mat_t pt = parse_transform(xattr(pe, "transform"));
+                if (pp.n < 2 || !pp.nc) { path_free(&pp); continue; }
+                /* só o primeiro subcaminho, no espaço do <text> */
+                int np = rs_cont_len(&pp, 0);
+                float *xy = kmalloc(sizeof(float) * 2 * np), *len = kmalloc(sizeof(float) * np);
+                if (xy && len) {
+                    float tot = 0;
+                    for (int i = 0; i < np; i++) {
+                        mapp(&pt, pp.xy[2 * i], pp.xy[2 * i + 1], &xy[2 * i], &xy[2 * i + 1]);
+                        if (i) { float dx = xy[2 * i] - xy[2 * i - 2], dy = xy[2 * i + 1] - xy[2 * i - 1]; tot += sqrtf_(dx * dx + dy * dy); }
+                        len[i] = tot;
+                    }
+                    pathlen_t pl = { xy, len, np, tot };
+                    const char *so = xattr(c, "startOffset");
+                    float start = so ? (strchr(so, '%') ? frac_len(so, 0) * tot : parse_len(so, tot, fs, 0)) : 0;
+                    float pen = start;
+                    float y0 = 0;
+                    for (xel_t *t = c->first; t; t = t->next) {
+                        if (t->name) continue;
+                        char buf[512];
+                        int k;
+                        collapse_text(t, c, buf, sizeof buf, &k);
+                        if (k && !ts.hidden) text_run(C, buf, k, &ts, ctm, &pen, &y0, NULL, &pl);
+                    }
+                }
+                kfree(xy); kfree(len);
+                path_free(&pp);
             }
             continue;
         }
-        /* espaços colapsados */
         char buf[512];
-        int k = 0;
-        bool sp = false;
-        for (int i = 0; i < c->tlen && k < 510; i++) {
-            char ch = c->text[i];
-            if (isspace(ch)) { if (!sp && k) buf[k++] = ' '; sp = true; }
-            else { buf[k++] = ch; sp = false; }
-        }
-        if (c == n->last && k && buf[k - 1] == ' ') k--;
-        buf[k] = 0;
+        int k;
+        collapse_text(c, n, buf, sizeof buf, &k);
         if (!k || st->hidden) continue;
-        float scale = mscale(ctm);
-        float size = fs * scale;
-        font_t *f = font_get(st->weight);
-        int tw = text_width_n(f, size, buf, k);
-        float dxu = (float)tw / (scale > 0 ? scale : 1);
-        float ax = *cx;
-        if (st->anchor == ANCHOR_MIDDLE) ax -= dxu / 2;
-        else if (st->anchor == ANCHOR_END) ax -= dxu;
-        float px, py;
-        mapp(ctm, ax, *cy, &px, &py);
-        paintsrc_t P;
-        float bb[4] = { ax, *cy - fs, dxu, fs };
-        if (make_paint(C, &st->fill, st, st->fill_op, ctm, bb, &P)) {
-            u32 col = P.kind == 0 ? P.color : P.lut[128];
-            /* text_draw recebe cor não pré-multiplicada */
-            u32 a = col >> 24;
-            u32 un = a ? ((((col >> 16) & 255) * 255 / a) << 16) | ((((col >> 8) & 255) * 255 / a) << 8) | ((col & 255) * 255 / a) : 0;
-            text_draw_n(C->s, f, size, (int)(px + 0.5f), (int)(py + 0.5f), (a << 24) | un, buf, k);
+        text_run(C, buf, k, st, ctm, cx, cy, rl.nrot ? &rl : NULL, NULL);
+    }
+}
+
+/* ================================================================ caixa, máscara, filtros e marcadores */
+/* caixa do elemento no espaço m (filhos com as próprias transformações) */
+static void bbox_acc(ctx_t *C, xel_t *n, const sst_t *par, mat_t m, float *bb, bool *any, int depth) {
+    if (!n->name || depth > 16) return;
+    sst_t st;
+    compute_style(C, n, par, &st);
+    if (st.none) return;
+    const char *nm = n->name;
+    if (!strcmp(nm, "g") || !strcmp(nm, "a") || !strcmp(nm, "switch") || !strcmp(nm, "svg")) {
+        mat_t cm = depth ? mmul(m, parse_transform(xattr(n, "transform"))) : m;
+        for (xel_t *c = n->first; c; c = c->next) bbox_acc(C, c, &st, cm, bb, any, depth + 1);
+        return;
+    }
+    if (!strcmp(nm, "use")) {
+        xel_t *t = by_id(C, xattr(n, "href"));
+        if (!t || t == n) return;
+        mat_t tr = depth ? parse_transform(xattr(n, "transform")) : MID;
+        tr.e += parse_len(xattr(n, "x"), C->vw, st.font_size, 0);
+        tr.f += parse_len(xattr(n, "y"), C->vh, st.font_size, 0);
+        bbox_acc(C, t, &st, mmul(m, tr), bb, any, depth + 1);
+        return;
+    }
+    path_t p = { 0 };
+    p.tol = 0.5f;
+    bool f;
+    if (!strcmp(nm, "text")) {
+        float x = parse_len(xattr(n, "x"), C->vw, st.font_size, 0), y = parse_len(xattr(n, "y"), C->vh, st.font_size, 0);
+        path_move(&p, x, y - st.font_size); path_line(&p, x + st.font_size * 4, y + st.font_size * 0.25f);
+    } else shape_path(C, n, &st, &p, &f);
+    mat_t em = depth ? mmul(m, parse_transform(xattr(n, "transform"))) : m;
+    for (int i = 0; i < p.n; i++) {
+        float x, y;
+        mapp(&em, p.xy[2 * i], p.xy[2 * i + 1], &x, &y);
+        if (!*any) { bb[0] = bb[2] = x; bb[1] = bb[3] = y; *any = true; }
+        else { bb[0] = MIN(bb[0], x); bb[1] = MIN(bb[1], y); bb[2] = MAX(bb[2], x); bb[3] = MAX(bb[3], y); }
+    }
+    path_free(&p);
+}
+static void elem_bbox(ctx_t *C, xel_t *n, const sst_t *par, float *out) {
+    float b[4] = { 0, 0, 0, 0 };
+    bool any = false;
+    bbox_acc(C, n, par, MID, b, &any, 0);
+    out[0] = b[0]; out[1] = b[1]; out[2] = b[2] - b[0]; out[3] = b[3] - b[1];
+}
+
+/* região de máscara/filtro: unidades objectBoundingBox (padrão −10% −10% 120% 120%) ou do usuário */
+static void fx_region(ctx_t *C, xel_t *e, const char *unit_attr, const float *bb, float *r) {
+    const char *u = gattr(C, e, unit_attr);
+    if (!u || strcmp(u, "userSpaceOnUse")) {
+        r[0] = bb[0] + frac_len(gattr(C, e, "x"), -0.1f) * bb[2]; r[1] = bb[1] + frac_len(gattr(C, e, "y"), -0.1f) * bb[3];
+        r[2] = frac_len(gattr(C, e, "width"), 1.2f) * bb[2]; r[3] = frac_len(gattr(C, e, "height"), 1.2f) * bb[3];
+    } else {
+        r[0] = parse_len(gattr(C, e, "x"), C->vw, 16, -0.1f * C->vw); r[1] = parse_len(gattr(C, e, "y"), C->vh, 16, -0.1f * C->vh);
+        r[2] = parse_len(gattr(C, e, "width"), C->vw, 16, 1.2f * C->vw); r[3] = parse_len(gattr(C, e, "height"), C->vh, 16, 1.2f * C->vh);
+    }
+}
+
+/* cobertura de um retângulo do usuário no canvas */
+static u8 *rect_cov(ctx_t *C, const float *r, const mat_t *ctm) {
+    path_t p = { 0 };
+    p.tol = 1;
+    path_move(&p, r[0], r[1]); path_line(&p, r[0] + r[2], r[1]); path_line(&p, r[0] + r[2], r[1] + r[3]); path_line(&p, r[0], r[1] + r[3]); path_close(&p);
+    edges_t E = { 0 };
+    edges_from_path(&E, &p, ctm);
+    mask_t M = rasterize(&E, false, 0, 0, C->W, C->H);
+    if (E.e) kfree(E.e);
+    path_free(&p);
+    u8 *out = kcalloc((usize)C->W * C->H, 1);
+    if (out && M.a) for (int y = 0; y < M.h; y++) memcpy(out + (usize)(M.y + y) * C->W + M.x, M.a + (usize)y * M.w, (usize)M.w);
+    if (M.a) kfree(M.a);
+    return out;
+}
+
+/* <mask>: luminância (ou alfa) do conteúdo, recortada à região */
+static u8 *mask_values(ctx_t *C, const char *id, const sst_t *st, const mat_t *ctm, const float *bb) {
+    xel_t *mk = by_id(C, id);
+    if (!mk || strcmp(mk->name, "mask") || C->depth > 8) return NULL;
+    float reg[4];
+    fx_region(C, mk, "maskUnits", bb, reg);
+    surface_t *ms = surface_new(C->W, C->H);
+    if (!ms || !ms->px) { surface_free(ms); return NULL; }
+    memset(ms->px, 0, (usize)ms->stride * ms->h * 4);
+    surface_t *saved = C->s;
+    u8 *sclip = C->clipm;
+    C->s = ms; C->clipm = NULL;
+    mat_t cm = *ctm;
+    const char *cu = gattr(C, mk, "maskContentUnits");
+    if (cu && !strcmp(cu, "objectBoundingBox")) { mat_t b = { bb[2], 0, 0, bb[3], bb[0], bb[1] }; cm = mmul(cm, b); }
+    sst_t ms_st;
+    compute_style(C, mk, &C->base, &ms_st);
+    C->depth++;
+    render_children(C, mk, &ms_st, cm);
+    C->depth--;
+    C->s = saved; C->clipm = sclip;
+    u8 *cov = rect_cov(C, reg, ctm);
+    u8 *out = kmalloc((usize)C->W * C->H);
+    if (out && cov) {
+        for (int y = 0; y < C->H; y++)
+            for (int x = 0; x < C->W; x++) {
+                u32 c = ms->px[(usize)y * ms->stride + x];
+                u32 v;
+                if (ms_st.mask_alpha) v = c >> 24;
+                else v = (u32)(0.2125f * ((c >> 16) & 255) + 0.7154f * ((c >> 8) & 255) + 0.0721f * (c & 255) + 0.5f);   /* luminância já pré-multiplicada */
+                out[(usize)y * C->W + x] = (u8)(v * cov[(usize)y * C->W + x] / 255);
+            }
+    } else { kfree(out); out = NULL; }
+    kfree(cov);
+    surface_free(ms);
+    return out;
+}
+
+/* ---------------------------------------------------------------- filtros */
+typedef struct { u32 *px; } fimg_t;   /* imagem W×H pré-multiplicada */
+
+static u32 *fimg_new(ctx_t *C) { return kcalloc((usize)C->W * C->H, 4); }
+
+static void blur_channel_pass(u8 *a, u8 *tmp, int w, int h, int r, bool horiz) {
+    if (r <= 0) return;
+    int n = horiz ? w : h, m = horiz ? h : w, step = horiz ? 1 : w, div = 2 * r + 1;
+    for (int j = 0; j < m; j++) {
+        u8 *src = horiz ? a + (usize)j * w : a + j, *dst = horiz ? tmp + (usize)j * w : tmp + j;
+        int acc = 0;
+        for (int i = -r; i <= r; i++) if (i >= 0 && i < n) acc += src[i * step];
+        for (int i = 0; i < n; i++) {
+            dst[i * step] = (u8)((acc + div / 2) / div);
+            int ad = i + r + 1, sb = i - r;
+            if (ad < n) acc += src[ad * step];
+            if (sb >= 0) acc -= src[sb * step];
         }
-        *cx += dxu;
+    }
+    memcpy(a, tmp, (usize)w * h);
+}
+
+static void box3(float sigma, int b[3]) {
+    b[0] = b[1] = b[2] = 0;
+    if (!(sigma > 0)) return;
+    if (sigma > 200) sigma = 200;
+    float wi = sqrtf_(12 * sigma * sigma / 3 + 1);
+    int wl = (int)ffloor(wi);
+    if (!(wl & 1)) wl--;
+    int wu = wl + 2;
+    float mi = (12 * sigma * sigma - 3 * wl * wl - 12 * wl - 9) / (-4.0f * wl - 4);
+    int mm = (int)(mi + (mi >= 0 ? 0.5f : -0.5f));
+    for (int i = 0; i < 3; i++) b[i] = ((i < mm ? wl : wu) - 1) / 2;
+}
+
+static void fe_blur(ctx_t *C, u32 *img, float sx, float sy) {
+    int W = C->W, H = C->H, bx[3], by[3];
+    box3(sx, bx); box3(sy, by);
+    u8 *ch = kmalloc((usize)W * H), *tmp = kmalloc((usize)W * H);
+    if (!ch || !tmp) { kfree(ch); kfree(tmp); return; }
+    for (int c = 0; c < 4; c++) {
+        int sh = c * 8;
+        for (usize i = 0; i < (usize)W * H; i++) ch[i] = (u8)(img[i] >> sh);
+        for (int k = 0; k < 3; k++) { blur_channel_pass(ch, tmp, W, H, bx[k], true); blur_channel_pass(ch, tmp, W, H, by[k], false); }
+        for (usize i = 0; i < (usize)W * H; i++) img[i] = (img[i] & ~(0xFFu << sh)) | ((u32)ch[i] << sh);
+    }
+    kfree(ch); kfree(tmp);
+}
+
+static void fe_offset(ctx_t *C, u32 *img, int dx, int dy) {
+    int W = C->W, H = C->H;
+    u32 *o = fimg_new(C);
+    if (!o) return;
+    for (int y = 0; y < H; y++) {
+        int sy = y - dy;
+        if (sy < 0 || sy >= H) continue;
+        for (int x = 0; x < W; x++) { int sx = x - dx; if (sx >= 0 && sx < W) o[(usize)y * W + x] = img[(usize)sy * W + sx]; }
+    }
+    memcpy(img, o, (usize)W * H * 4);
+    kfree(o);
+}
+
+static u32 unpre(u32 c, float *r, float *g, float *b, float *a) {
+    *a = (c >> 24) / 255.0f;
+    if (*a <= 0) { *r = *g = *b = 0; return 0; }
+    *r = ((c >> 16) & 255) / 255.0f / *a; *g = ((c >> 8) & 255) / 255.0f / *a; *b = (c & 255) / 255.0f / *a;
+    return 1;
+}
+static u32 repre(float r, float g, float b, float a) {
+    a = clamp01(a); r = clamp01(r); g = clamp01(g); b = clamp01(b);
+    return (u32)(a * 255 + 0.5f) << 24 | (u32)(r * a * 255 + 0.5f) << 16 | (u32)(g * a * 255 + 0.5f) << 8 | (u32)(b * a * 255 + 0.5f);
+}
+
+static void fe_colormatrix(ctx_t *C, u32 *img, xel_t *e) {
+    const char *type = xattr(e, "type"), *vals = xattr(e, "values");
+    float m[20] = { 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0 };
+    if (!type || !strcmp(type, "matrix")) {
+        const char *q = vals;
+        float v[20];
+        int n = 0;
+        while (q && n < 20 && parse_f(&q, &v[n])) n++;
+        if (n == 20) memcpy(m, v, sizeof m);
+    } else if (!strcmp(type, "saturate")) {
+        float sat = frac_len(vals, 1);
+        float t[20] = { 0.213f + 0.787f * sat, 0.715f - 0.715f * sat, 0.072f - 0.072f * sat, 0, 0,
+                        0.213f - 0.213f * sat, 0.715f + 0.285f * sat, 0.072f - 0.072f * sat, 0, 0,
+                        0.213f - 0.213f * sat, 0.715f - 0.715f * sat, 0.072f + 0.928f * sat, 0, 0, 0, 0, 0, 1, 0 };
+        memcpy(m, t, sizeof m);
+    } else if (!strcmp(type, "hueRotate")) {
+        float deg = 0;
+        const char *q = vals;
+        if (q) parse_f(&q, &deg);
+        float a = deg * PI_F / 180, cs = fcos(a), sn = fsin(a);
+        float t[20] = { 0.213f + cs * 0.787f - sn * 0.213f, 0.715f - cs * 0.715f - sn * 0.715f, 0.072f - cs * 0.072f + sn * 0.928f, 0, 0,
+                        0.213f - cs * 0.213f + sn * 0.143f, 0.715f + cs * 0.285f + sn * 0.140f, 0.072f - cs * 0.072f - sn * 0.283f, 0, 0,
+                        0.213f - cs * 0.213f - sn * 0.787f, 0.715f - cs * 0.715f + sn * 0.715f, 0.072f + cs * 0.928f + sn * 0.072f, 0, 0, 0, 0, 0, 1, 0 };
+        memcpy(m, t, sizeof m);
+    } else if (!strcmp(type, "luminanceToAlpha")) {
+        float t[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.2125f, 0.7154f, 0.0721f, 0, 0 };
+        memcpy(m, t, sizeof m);
+    }
+    for (usize i = 0; i < (usize)C->W * C->H; i++) {
+        float r, g, b, a;
+        unpre(img[i], &r, &g, &b, &a);
+        float o[4];
+        for (int k = 0; k < 4; k++) o[k] = m[5 * k] * r + m[5 * k + 1] * g + m[5 * k + 2] * b + m[5 * k + 3] * a + m[5 * k + 4];
+        img[i] = repre(o[0], o[1], o[2], o[3]);
+    }
+}
+
+/* feComponentTransfer: feFuncR/G/B/A */
+static float transfer(xel_t *f, float c) {
+    const char *t = xattr(f, "type");
+    if (!t || !strcmp(t, "identity")) return c;
+    if (!strcmp(t, "table") || !strcmp(t, "discrete")) {
+        float v[64];
+        int n = 0;
+        const char *q = xattr(f, "tableValues");
+        while (q && n < 64 && parse_f(&q, &v[n])) n++;
+        if (!n) return c;
+        if (!strcmp(t, "discrete")) { int k = (int)ffloor(c * n); if (k >= n) k = n - 1; return v[k]; }
+        if (n == 1) return v[0];
+        float pos = c * (n - 1);
+        int k = (int)ffloor(pos);
+        if (k >= n - 1) return v[n - 1];
+        return v[k] + (pos - k) * (v[k + 1] - v[k]);
+    }
+    if (!strcmp(t, "linear")) return frac_len(xattr(f, "slope"), 1) * c + frac_len(xattr(f, "intercept"), 0);
+    if (!strcmp(t, "gamma")) return frac_len(xattr(f, "amplitude"), 1) * fpow(c, frac_len(xattr(f, "exponent"), 1)) + frac_len(xattr(f, "offset"), 0);
+    return c;
+}
+static void fe_transfer(ctx_t *C, u32 *img, xel_t *e) {
+    xel_t *fn[4] = { NULL, NULL, NULL, NULL };
+    for (xel_t *c = e->first; c; c = c->next) {
+        if (!c->name) continue;
+        if (!strcmp(c->name, "feFuncR")) fn[0] = c; else if (!strcmp(c->name, "feFuncG")) fn[1] = c;
+        else if (!strcmp(c->name, "feFuncB")) fn[2] = c; else if (!strcmp(c->name, "feFuncA")) fn[3] = c;
+    }
+    for (usize i = 0; i < (usize)C->W * C->H; i++) {
+        float v[4];
+        unpre(img[i], &v[0], &v[1], &v[2], &v[3]);
+        for (int k = 0; k < 4; k++) if (fn[k]) v[k] = transfer(fn[k], v[k]);
+        img[i] = repre(v[0], v[1], v[2], v[3]);
+    }
+}
+
+static void fe_morph(ctx_t *C, u32 *img, int rx, int ry, bool dilate) {
+    int W = C->W, H = C->H;
+    if (rx <= 0 && ry <= 0) return;
+    if (rx > 64) rx = 64;
+    if (ry > 64) ry = 64;
+    u32 *o = fimg_new(C);
+    if (!o) return;
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            u32 best[4] = { dilate ? 0u : 255u, dilate ? 0u : 255u, dilate ? 0u : 255u, dilate ? 0u : 255u };
+            for (int dy = -ry; dy <= ry; dy++) {
+                int yy = y + dy;
+                for (int dx = -rx; dx <= rx; dx++) {
+                    int xx = x + dx;
+                    u32 c = (yy < 0 || yy >= H || xx < 0 || xx >= W) ? 0 : img[(usize)yy * W + xx];
+                    for (int k = 0; k < 4; k++) { u32 v = (c >> (8 * k)) & 255; if (dilate ? v > best[k] : v < best[k]) best[k] = v; }
+                }
+            }
+            o[(usize)y * W + x] = best[0] | best[1] << 8 | best[2] << 16 | best[3] << 24;
+        }
+    memcpy(img, o, (usize)W * H * 4);
+    kfree(o);
+}
+
+static u32 fe_comp_px(const char *op, u32 a, u32 b, const float *k) {
+    u32 aa = a >> 24, ba = b >> 24;
+    if (!op || !strcmp(op, "over")) return over(b, a);
+    if (!strcmp(op, "in")) return mul_px(a, ba);
+    if (!strcmp(op, "out")) return mul_px(a, 255 - ba);
+    if (!strcmp(op, "atop")) return mul_px(a, ba) + mul_px(b, 255 - aa);
+    if (!strcmp(op, "xor")) return mul_px(a, 255 - ba) + mul_px(b, 255 - aa);
+    if (!strcmp(op, "arithmetic")) {
+        u32 out = 0;
+        for (int sh = 0; sh < 32; sh += 8) {
+            float i1 = ((a >> sh) & 255) / 255.0f, i2 = ((b >> sh) & 255) / 255.0f;
+            float r = clamp01(k[0] * i1 * i2 + k[1] * i1 + k[2] * i2 + k[3]);
+            out |= (u32)(r * 255 + 0.5f) << sh;
+        }
+        /* cores não passam do alfa */
+        u32 al = out >> 24;
+        for (int sh = 0; sh < 24; sh += 8) if (((out >> sh) & 255) > al) out = (out & ~(0xFFu << sh)) | al << sh;
+        return out;
+    }
+    return over(b, a);
+}
+
+static u32 fe_blend_px(const char *mode, u32 a, u32 b) {
+    if (!mode || !strcmp(mode, "normal")) return over(b, a);
+    float ar, ag, ab_, aa, br, bg, bb2, ba;
+    unpre(a, &ar, &ag, &ab_, &aa); unpre(b, &br, &bg, &bb2, &ba);
+    float s[3] = { ar, ag, ab_ }, d[3] = { br, bg, bb2 }, r[3];
+    for (int i = 0; i < 3; i++) {
+        float x = s[i], y = d[i], f;
+        if (!strcmp(mode, "multiply")) f = x * y;
+        else if (!strcmp(mode, "screen")) f = x + y - x * y;
+        else if (!strcmp(mode, "darken")) f = MIN(x, y);
+        else if (!strcmp(mode, "lighten")) f = MAX(x, y);
+        else if (!strcmp(mode, "difference")) f = fabs_(x - y);
+        else if (!strcmp(mode, "exclusion")) f = x + y - 2 * x * y;
+        else if (!strcmp(mode, "overlay")) f = y <= 0.5f ? 2 * x * y : 1 - 2 * (1 - x) * (1 - y);
+        else f = x;
+        r[i] = aa * (1 - ba) * x + ba * (1 - aa) * y + aa * ba * f;
+    }
+    float ra = aa + ba - aa * ba;
+    return ra > 0 ? repre(r[0] / ra, r[1] / ra, r[2] / ra, ra) : 0;
+}
+
+typedef struct { char name[32]; u32 *img; } fres_t;
+
+static u32 *fe_input(ctx_t *C, const char *in, u32 *src, u32 *last, fres_t *res, int nres) {
+    u32 *o = fimg_new(C);
+    if (!o) return NULL;
+    usize n = (usize)C->W * C->H;
+    if (!in || !*in) memcpy(o, last ? last : src, n * 4);
+    else if (!strcmp(in, "SourceGraphic")) memcpy(o, src, n * 4);
+    else if (!strcmp(in, "SourceAlpha")) for (usize i = 0; i < n; i++) o[i] = src[i] & 0xFF000000u;
+    else {
+        bool found = false;
+        for (int i = nres - 1; i >= 0; i--) if (!strcmp(res[i].name, in)) { memcpy(o, res[i].img, n * 4); found = true; break; }
+        if (!found) memcpy(o, last ? last : src, n * 4);
+    }
+    return o;
+}
+
+/* aplica <filter> à camada (W×H) do elemento; devolve a nova camada (ou a mesma) */
+static void apply_filter(ctx_t *C, surface_t *ls, const char *id, const sst_t *st, const mat_t *ctm, const float *bb) {
+    xel_t *f = by_id(C, id);
+    if (!f || strcmp(f->name, "filter")) return;
+    int W = C->W, H = C->H;
+    usize n = (usize)W * H;
+    u32 *src = fimg_new(C);
+    if (!src) return;
+    for (int y = 0; y < H; y++) memcpy(src + (usize)y * W, ls->px + (usize)y * ls->stride, (usize)W * 4);
+    float reg[4];
+    fx_region(C, f, "filterUnits", bb, reg);
+    u8 *cov = rect_cov(C, reg, ctm);
+    const char *pu = gattr(C, f, "primitiveUnits");
+    bool pobb = pu && !strcmp(pu, "objectBoundingBox");
+    float ux = sqrtf_(ctm->a * ctm->a + ctm->b * ctm->b), uy = sqrtf_(ctm->c * ctm->c + ctm->d * ctm->d);
+    fres_t res[16];
+    int nres = 0;
+    u32 *last = NULL;
+    for (xel_t *e = f->first; e; e = e->next) {
+        if (!e->name || strncmp(e->name, "fe", 2)) continue;
+        const char *nm = e->name;
+        u32 *img = NULL;
+        sst_t es;
+        compute_style(C, e, st, &es);
+        float scx = pobb ? bb[2] * ux : ux, scy = pobb ? bb[3] * uy : uy;
+        if (!strcmp(nm, "feFlood")) {
+            img = fimg_new(C);
+            if (img) { u32 c = premul(es.flood_color, es.flood_op); for (usize i = 0; i < n; i++) img[i] = c; }
+        } else if (!strcmp(nm, "feMerge")) {
+            img = fimg_new(C);
+            for (xel_t *mn = e->first; img && mn; mn = mn->next) {
+                if (!mn->name || strcmp(mn->name, "feMergeNode")) continue;
+                u32 *in = fe_input(C, xattr(mn, "in"), src, last, res, nres);
+                if (in) { for (usize i = 0; i < n; i++) img[i] = over(img[i], in[i]); kfree(in); }
+            }
+        } else if (!strcmp(nm, "feComposite") || !strcmp(nm, "feBlend")) {
+            u32 *a = fe_input(C, xattr(e, "in"), src, last, res, nres), *b = fe_input(C, xattr(e, "in2"), src, last, res, nres);
+            if (a && b) {
+                float k[4] = { frac_len(xattr(e, "k1"), 0), frac_len(xattr(e, "k2"), 0), frac_len(xattr(e, "k3"), 0), frac_len(xattr(e, "k4"), 0) };
+                bool comp = !strcmp(nm, "feComposite");
+                const char *op = xattr(e, comp ? "operator" : "mode");
+                for (usize i = 0; i < n; i++) a[i] = comp ? fe_comp_px(op, a[i], b[i], k) : fe_blend_px(op, a[i], b[i]);
+                img = a; a = NULL;
+            }
+            kfree(a); kfree(b);
+        } else {
+            img = fe_input(C, xattr(e, "in"), src, last, res, nres);
+            if (!img) break;
+            if (!strcmp(nm, "feGaussianBlur")) {
+                float sx = 0, sy;
+                const char *q = xattr(e, "stdDeviation");
+                if (q) parse_f(&q, &sx);
+                sy = sx;
+                if (q) parse_f(&q, &sy);
+                fe_blur(C, img, sx * scx, sy * scy);
+            } else if (!strcmp(nm, "feOffset")) {
+                fe_offset(C, img, (int)ffloor(frac_len(xattr(e, "dx"), 0) * scx + 0.5f), (int)ffloor(frac_len(xattr(e, "dy"), 0) * scy + 0.5f));
+            } else if (!strcmp(nm, "feColorMatrix")) fe_colormatrix(C, img, e);
+            else if (!strcmp(nm, "feComponentTransfer")) fe_transfer(C, img, e);
+            else if (!strcmp(nm, "feMorphology")) {
+                float rx = 0, ry;
+                const char *q = xattr(e, "radius");
+                if (q) parse_f(&q, &rx);
+                ry = rx;
+                if (q) parse_f(&q, &ry);
+                const char *op = xattr(e, "operator");
+                fe_morph(C, img, (int)(rx * scx + 0.5f), (int)(ry * scy + 0.5f), op && !strcmp(op, "dilate"));
+            } else if (!strcmp(nm, "feDropShadow")) {
+                u32 *sh = fimg_new(C);
+                if (sh) {
+                    u32 col = premul(es.flood_color, es.flood_op);
+                    for (usize i = 0; i < n; i++) sh[i] = mul_px(col, img[i] >> 24);
+                    float sx = 2, sy;
+                    const char *q = xattr(e, "stdDeviation");
+                    if (q) parse_f(&q, &sx);
+                    sy = sx;
+                    if (q) parse_f(&q, &sy);
+                    fe_blur(C, sh, sx * scx, sy * scy);
+                    fe_offset(C, sh, (int)ffloor(frac_len(xattr(e, "dx"), 2) * scx + 0.5f), (int)ffloor(frac_len(xattr(e, "dy"), 2) * scy + 0.5f));
+                    for (usize i = 0; i < n; i++) img[i] = over(sh[i], img[i]);
+                    kfree(sh);
+                }
+            }
+            /* outros primitivos (turbulência, iluminação, convolução, imagem) passam a entrada adiante */
+        }
+        if (!img) break;
+        if (cov) for (usize i = 0; i < n; i++) if (cov[i] != 255) img[i] = mul_px(img[i], cov[i]);
+        const char *rn = xattr(e, "result");
+        if (nres < 16) { snprintf(res[nres].name, sizeof res[nres].name, "%s", rn ? rn : ""); res[nres].img = img; nres++; }
+        last = img;
+    }
+    if (last) for (int y = 0; y < H; y++) memcpy(ls->px + (usize)y * ls->stride, last + (usize)y * W, (usize)W * 4);
+    for (int i = 0; i < nres; i++) kfree(res[i].img);
+    kfree(src);
+    kfree(cov);
+}
+
+/* ---------------------------------------------------------------- marcadores */
+typedef struct { float x, y, ain, aout; bool has_in, has_out; } vert_t;
+
+static int path_vertices(ctx_t *C, xel_t *n, const sst_t *st, vert_t *v, int cap) {
+    const char *nm = n->name;
+    int k = 0;
+    float fs = st->font_size;
+#define ADDV(X, Y) do { if (k < cap) { v[k].x = (X); v[k].y = (Y); v[k].has_in = v[k].has_out = false; k++; } } while (0)
+    if (!strcmp(nm, "line")) {
+        ADDV(parse_len(xattr(n, "x1"), C->vw, fs, 0), parse_len(xattr(n, "y1"), C->vh, fs, 0));
+        ADDV(parse_len(xattr(n, "x2"), C->vw, fs, 0), parse_len(xattr(n, "y2"), C->vh, fs, 0));
+    } else if (!strcmp(nm, "polyline") || !strcmp(nm, "polygon")) {
+        const char *s = xattr(n, "points");
+        float x, y;
+        while (s && parse_f(&s, &x) && parse_f(&s, &y)) ADDV(x, y);
+        if (nm[4] == 'g' && k) ADDV(v[0].x, v[0].y);
+    } else if (!strcmp(nm, "path")) {
+        /* vértices = pontos finais dos comandos, com as tangentes das curvas */
+        const char *p = xattr(n, "d");
+        char cmd = 0, prev = 0;
+        float cx = 0, cy = 0, sx = 0, sy = 0, lcx = 0, lcy = 0;
+        int sub0 = 0;
+        while (p && *p && k < cap) {
+            while (*p && (isspace(*p) || *p == ',')) p++;
+            if (!*p) break;
+            if (isalpha(*p)) cmd = *p++;
+            else if (!cmd) break;
+            else if (!num_start(p)) { p++; continue; }
+            bool rel = cmd >= 'a';
+            char Cc = (char)toupper(cmd);
+            float ox = rel ? cx : 0, oy = rel ? cy : 0, a[7];
+            int need = Cc == 'M' || Cc == 'L' || Cc == 'T' ? 2 : Cc == 'H' || Cc == 'V' ? 1 : Cc == 'C' ? 6 : Cc == 'S' || Cc == 'Q' ? 4 : Cc == 'A' ? 7 : 0;
+            if (Cc == 'Z') {
+                float ang = atan2_(sy - cy, sx - cx);
+                if (k) { v[k - 1].aout = ang; v[k - 1].has_out = true; }
+                ADDV(sx, sy);
+                v[k - 1].ain = ang; v[k - 1].has_in = true;
+                if (sub0 < k - 1) { v[sub0].ain = ang; v[sub0].has_in = true; }
+                cx = sx; cy = sy; cmd = 0; prev = 'Z';
+                continue;
+            }
+            bool ok = true;
+            for (int i = 0; i < need && ok; i++) {
+                if (Cc == 'A' && (i == 3 || i == 4)) { while (*p && (isspace(*p) || *p == ',')) p++; if (*p == '0' || *p == '1') a[i] = (float)(*p++ - '0'); else ok = false; }
+                else ok = parse_f(&p, &a[i]);
+            }
+            if (!ok) break;
+            float ex = cx, ey = cy, c1x = cx, c1y = cy, c2x = cx, c2y = cy;
+            switch (Cc) {
+            case 'M': ex = ox + a[0]; ey = oy + a[1]; ADDV(ex, ey); sub0 = k - 1; sx = ex; sy = ey; cx = ex; cy = ey; cmd = rel ? 'l' : 'L'; prev = 'M'; continue;
+            /* reta: tangente de saída = fim − início, de chegada = fim − início */
+            case 'L': ex = ox + a[0]; ey = oy + a[1]; c1x = ex; c1y = ey; c2x = cx; c2y = cy; break;
+            case 'H': ex = ox + a[0]; c1x = ex; c1y = ey; c2x = cx; c2y = cy; break;
+            case 'V': ey = oy + a[0]; c1x = ex; c1y = ey; c2x = cx; c2y = cy; break;
+            case 'C': c1x = ox + a[0]; c1y = oy + a[1]; c2x = ox + a[2]; c2y = oy + a[3]; ex = ox + a[4]; ey = oy + a[5]; break;
+            case 'S':
+                c1x = (prev == 'C' || prev == 'S') ? 2 * cx - lcx : cx; c1y = (prev == 'C' || prev == 'S') ? 2 * cy - lcy : cy;
+                c2x = ox + a[0]; c2y = oy + a[1]; ex = ox + a[2]; ey = oy + a[3]; break;
+            case 'Q': c1x = c2x = ox + a[0]; c1y = c2y = oy + a[1]; ex = ox + a[2]; ey = oy + a[3]; break;
+            case 'T':
+                c1x = c2x = (prev == 'Q' || prev == 'T') ? 2 * cx - lcx : cx; c1y = c2y = (prev == 'Q' || prev == 'T') ? 2 * cy - lcy : cy;
+                ex = ox + a[0]; ey = oy + a[1]; break;
+            case 'A': {
+                ex = ox + a[5]; ey = oy + a[6];
+                path_t tp = { 0 };
+                tp.tol = 0.01f;
+                path_move(&tp, cx, cy);
+                path_arc(&tp, a[0], a[1], a[2], (int)a[3], (int)a[4], ex, ey);
+                if (tp.n >= 2) { c1x = tp.xy[2]; c1y = tp.xy[3]; c2x = tp.xy[2 * (tp.n - 2)]; c2y = tp.xy[2 * (tp.n - 2) + 1]; }
+                path_free(&tp);
+                break;
+            }
+            default: break;
+            }
+            float tox = c1x - cx, toy = c1y - cy;
+            if (fabs_(tox) + fabs_(toy) < 1e-9f) { tox = (c2x != cx || c2y != cy) ? c2x - cx : ex - cx; toy = (c2x != cx || c2y != cy) ? c2y - cy : ey - cy; }
+            float tix = ex - c2x, tiy = ey - c2y;
+            if (fabs_(tix) + fabs_(tiy) < 1e-9f) { tix = ex - c1x; tiy = ey - c1y; }
+            if (k) { v[k - 1].aout = atan2_(toy, tox); v[k - 1].has_out = true; }
+            ADDV(ex, ey);
+            v[k - 1].ain = atan2_(tiy, tix); v[k - 1].has_in = true;
+            lcx = (Cc == 'Q' || Cc == 'T') ? c1x : c2x; lcy = (Cc == 'Q' || Cc == 'T') ? c1y : c2y;
+            cx = ex; cy = ey; prev = Cc;
+        }
+    }
+#undef ADDV
+    /* polilinhas: ângulos pelos vizinhos */
+    if (strcmp(nm, "path"))
+        for (int i = 0; i < k; i++) {
+            if (i > 0) { v[i].ain = atan2_(v[i].y - v[i - 1].y, v[i].x - v[i - 1].x); v[i].has_in = true; }
+            if (i + 1 < k) { v[i].aout = atan2_(v[i + 1].y - v[i].y, v[i + 1].x - v[i].x); v[i].has_out = true; }
+        }
+    return k;
+}
+
+static void draw_marker(ctx_t *C, const char *id, const sst_t *st, const mat_t *ctm, const vert_t *v, int which) {
+    xel_t *mk = by_id(C, id);
+    if (!mk || strcmp(mk->name, "marker") || C->depth > 8) return;
+    float ang;
+    const char *orient = xattr(mk, "orient");
+    if (orient && (!strcmp(orient, "auto") || !strcmp(orient, "auto-start-reverse"))) {
+        if (v->has_in && v->has_out) {
+            float a = v->ain, b = v->aout, d = b - a;
+            while (d > PI_F) d -= 2 * PI_F;
+            while (d < -PI_F) d += 2 * PI_F;
+            ang = a + d / 2;
+        } else ang = v->has_out ? v->aout : v->ain;
+        if (which == 0 && !strcmp(orient, "auto-start-reverse")) ang += PI_F;
+    } else { float deg = 0; const char *q = orient; if (q) parse_f(&q, &deg); ang = deg * PI_F / 180; }
+    float fs = st->font_size;
+    float mw = parse_len(xattr(mk, "markerWidth"), C->vw, fs, 3), mh = parse_len(xattr(mk, "markerHeight"), C->vh, fs, 3);
+    if (mw <= 0 || mh <= 0) return;
+    const char *mu = xattr(mk, "markerUnits");
+    float sc = (!mu || strcmp(mu, "userSpaceOnUse")) ? st->sw : 1;
+    bool okv;
+    const char *vb = xattr(mk, "viewBox");
+    mat_t vm = viewbox_mat(vb, xattr(mk, "preserveAspectRatio"), 0, 0, mw, mh, &okv);
+    if (!vb || !okv) vm = MID;
+    float rx, ry;
+    mapp(&vm, frac_len(xattr(mk, "refX"), 0), frac_len(xattr(mk, "refY"), 0), &rx, &ry);
+    mat_t t1 = MID; t1.e = v->x; t1.f = v->y;
+    mat_t ro = { fcos(ang), fsin(ang), -fsin(ang), fcos(ang), 0, 0 };
+    mat_t s1 = { sc, 0, 0, sc, 0, 0 };
+    mat_t t2 = MID; t2.e = -rx; t2.f = -ry;
+    mat_t m = mmul(mmul(mmul(mmul(mmul(*ctm, t1), ro), s1), t2), vm);
+    sst_t ms;
+    compute_style(C, mk, &C->base, &ms);
+    /* o marcador não herda os marcadores do caminho */
+    ms.mk_start[0] = ms.mk_mid[0] = ms.mk_end[0] = 0;
+    C->depth++;
+    render_children(C, mk, &ms, m);
+    C->depth--;
+}
+
+static void draw_markers(ctx_t *C, xel_t *n, const sst_t *st, const mat_t *ctm) {
+    if (!st->mk_start[0] && !st->mk_mid[0] && !st->mk_end[0]) return;
+    vert_t v[512];
+    int k = path_vertices(C, n, st, v, 512);
+    for (int i = 0; i < k; i++) {
+        const char *id = i == 0 ? st->mk_start : i == k - 1 ? st->mk_end : st->mk_mid;
+        if (id[0]) draw_marker(C, id, st, ctm, &v[i], i == 0 ? 0 : i == k - 1 ? 2 : 1);
     }
 }
 
@@ -1011,7 +1864,11 @@ static void render_node(ctx_t *C, xel_t *n, const sst_t *par, mat_t ctm) {
     /* camada para opacidade de grupo e recorte */
     surface_t *saved = C->s;
     u8 *saved_clip = C->clipm, *own_clip = NULL;
-    bool layer = group && st.opacity < 1;
+    /* camada isolada: opacidade de grupo, máscara ou filtro (para formas também) */
+    bool fx = st.mask[0] || st.filter[0];
+    bool layer = (group && st.opacity < 1) || fx;
+    float ebb[4] = { 0, 0, 0, 0 };
+    if (fx) elem_bbox(C, n, par, ebb);
     float sv_vw = C->vw, sv_vh = C->vh;
     if (st.clip[0]) {
         float bb[4] = { 0, 0, C->vw, C->vh };
@@ -1079,20 +1936,29 @@ static void render_node(ctx_t *C, xel_t *n, const sst_t *par, mat_t ctm) {
         p.tol = 0.15f / (sc > 1e-3f ? sc : 1e-3f);
         bool fillable;
         shape_path(C, n, &st, &p, &fillable);
-        if (st.opacity < 1) { st.fill_op *= st.opacity; st.stroke_op *= st.opacity; }
-        draw_path(C, &p, &st, &ctm, fillable);
+        sst_t ds = st;
+        if (st.opacity < 1 && !layer) { ds.fill_op *= st.opacity; ds.stroke_op *= st.opacity; }
+        draw_path(C, &p, &ds, &ctm, fillable);
         path_free(&p);
+        if (!st.hidden && strcmp(nm, "rect") && strcmp(nm, "circle") && strcmp(nm, "ellipse")) draw_markers(C, n, &st, &ctm);
     }
     C->vw = sv_vw; C->vh = sv_vh;
     if (layer) {
         surface_t *ls = C->s;
         C->s = saved;
+        if (st.filter[0]) apply_filter(C, ls, st.filter, &st, &ctm, ebb);
+        u8 *mv = st.mask[0] ? mask_values(C, st.mask, &st, &ctm, ebb) : NULL;
+        bool masked_out = st.mask[0] && !mv && by_id(C, st.mask);
         u32 op = (u32)(st.opacity * 255 + 0.5f);
-        for (int y = 0; y < C->H; y++)
+        for (int y = 0; y < C->H && !masked_out; y++)
             for (int x = 0; x < C->W; x++) {
                 u32 c = ls->px[(usize)y * ls->stride + x];
-                if (c) { u32 *d = &saved->px[(usize)y * saved->stride + x]; *d = over(*d, mul_px(c, op)); }
+                if (!c) continue;
+                u32 a = op;
+                if (mv) a = a * mv[(usize)y * C->W + x] / 255;
+                if (a) { u32 *d = &saved->px[(usize)y * saved->stride + x]; *d = over(*d, mul_px(c, a)); }
             }
+        kfree(mv);
         surface_free(ls);
     }
     if (own_clip) { kfree(own_clip); C->clipm = saved_clip; }
@@ -1160,6 +2026,7 @@ surface_t *svg_render_ex(const char *src, int len, int w, int h, u32 color) {
     /* o elemento raiz ocupa o surface inteiro: tamanho próprio mapeado para w×h */
     sst_t rs;
     compute_style(&C, r, &st, &rs);
+    C.base = rs;
     if (!rs.none) {
         bool ok;
         mat_t vm;

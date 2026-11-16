@@ -123,6 +123,14 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    corpo em stream no construtor, no fetch e no clone) e Blob.stream(). No núcleo JS: IteratorClose no for-of e no
    for await, e surrogates soltos que se juntam ao concatenar. Teste: `tools/web_host_stream.c`.
    Falta: CompressionStream/DecompressionStream.
+6i. ✅ **SVG, segunda parte** (`svg.c`): `<pattern>` (unidades, viewBox, patternTransform, href), `<mask>`
+   (luminância e alpha, região, unidades), filtros (feGaussianBlur, feOffset, feFlood, feColorMatrix,
+   feComponentTransfer, feComposite com arithmetic, feMerge, feBlend, feMorphology, feDropShadow; região e
+   primitiveUnits), `<marker>` (start/mid/end, orient auto e auto-start-reverse, markerUnits, viewBox, refX/refY),
+   texto por glifo com a matriz inteira (girado, rotate, gradiente e padrão no texto) e `<textPath>`; conteúdo de
+   marcador, padrão e máscara herda dos próprios ancestrais. Teste: casos svg_padrao_mascara, svg_filtros e
+   svg_marcadores_texto em `tools/web_host_svg.c`. Falta: feTurbulence, feImage, feTile, feConvolveMatrix,
+   feDisplacementMap e iluminação; sub-região de primitivo; recorte do marcador; filhos do `<svg>` no DOM do JS.
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.
