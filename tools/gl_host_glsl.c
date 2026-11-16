@@ -254,6 +254,31 @@ static void t_xfb(void) {
     gl_ctx_destroy(C);
 }
 
+static void t_bindable(void) {
+    gl_ctx_t *C = gl_ctx_create(0, 0, 2, 1, 4, 4, 1, 1, 1, 1);
+    gl_ctx_make_current(C);
+    char log[512];
+    const char *vs = "void main() { gl_Position = ftransform(); }\n";
+    const char *fs = "#extension GL_EXT_bindable_uniform : enable\nbindable uniform vec4 bu;\nvoid main() { gl_FragColor = bu; }\n";
+    GLuint p = prog(vs, fs, log, sizeof log);
+    CHECK(p != 0, "bindable uniform liga");
+    if (!p) { gl_ctx_destroy(C); return; }
+    GLint loc = glGetUniformLocation(p, "bu");
+    CHECK(glGetUniformBufferSizeEXT(p, loc) == 16 && glGetUniformOffsetEXT(p, loc) == 0, "tamanho e offset do bindable");
+    float c[4] = {0, 1, 0, 1};
+    GLuint b;
+    glGenBuffers(1, &b);
+    glBindBuffer(GL_UNIFORM_BUFFER_EXT, b);
+    glBufferData(GL_UNIFORM_BUFFER_EXT, 16, c, GL_STATIC_DRAW);
+    glUniformBufferEXT(p, loc, b);
+    glUseProgram(p);
+    glRectf(-1, -1, 1, 1);
+    u8 o[4];
+    px(2, 2, o);
+    CHECK(o[1] == 255 && o[0] == 0, "bindable uniform lido do buffer %d %d %d", o[0], o[1], o[2]);
+    gl_ctx_destroy(C);
+}
+
 void gl_glsl_host_tests(int *fails, int *checks) {
     F = fails;
     K = checks;
@@ -261,4 +286,5 @@ void gl_glsl_host_tests(int *fails, int *checks) {
     t_texture_discard_ubo();
     t_compat_glsl();
     t_xfb();
+    t_bindable();
 }

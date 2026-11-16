@@ -18,6 +18,10 @@ int gl_stage_setup(gl_ctx_t *C) {
         return C->st.vs != 0;
     }
     if (C->profile_core) { gl_err(C, GL_INVALID_OPERATION); return 0; }   /* core sem programa não desenha */
+    extern int gl_arb_stage(gl_ctx_t *C);
+    int r = gl_arb_stage(C);   /* ARB_vertex/fragment_program ligados */
+    if (r < 0) return 0;
+    if (r > 0) { gl_glsl_stage(C); return C->st.vs != 0; }
     gl_ffp_stage(C);
     return 1;
 }

@@ -37,6 +37,7 @@ typedef struct {
     int sampler, target;       /* sampler: índice do alvo (gl_tgt_index) */
     int *units;
     int block, boff, bastride, bmstride;
+    gl_buf_t *bbuf;            /* EXT_bindable_uniform */
 } pu_t;
 typedef struct { char *name; char *inst; ty_t *t; int off[2], size140, binding, arr, rowmajor; int *mem; int nmem; } pb_t;
 typedef struct { int stage, off, comps, skip; } px_t;
@@ -1691,6 +1692,7 @@ void gl_glsl_stage(gl_ctx_t *C) {
     gl_stage_t *S = &C->st;
     memset(S, 0, sizeof *S);
     gl_prog_t *p = C->prog;
+    if (!p) p = C->arb_prog;
     if (!p) p = pipeline_prog(C);
     if (!p || !p->priv) return;
     pg_t *g = p->priv;
@@ -1720,6 +1722,14 @@ void gl_glsl_stage(gl_ctx_t *C) {
         if (C->ubo_size[B->binding] && C->ubo_size[B->binding] < avail) avail = C->ubo_size[B->binding];
         for (int st = 0; st < 2; st++) if (B->off[st] >= 0) copy140(B->t, b->data + off, avail, g->lib[st]->gmem + B->off[st], B->rowmajor);
     }
+    /* EXT_bindable_uniform: o buffer já está no layout do gmem (glGetUniformOffsetEXT) */
+    for (int i = 0; i < g->nuni; i++) {
+        pu_t *u = &g->uni[i];
+        if (!u->bbuf || !u->bbuf->data) continue;
+        i64 n = (i64)u->stride * u->arr;
+        if (n > u->bbuf->size) n = u->bbuf->size;
+        for (int st = 0; st < 2; st++) if (u->off[st] >= 0) memcpy(g->lib[st]->gmem + u->off[st], u->bbuf->data, (size_t)n);
+    }
     compat_uniforms(C, g);
     S->nvar = g->nslots;
     for (int i = 0; i < GLX_VAR; i++) S->interp[i] = MSL_INTERP_PERSP;
@@ -1733,4 +1743,84 @@ void gl_glsl_stage(gl_ctx_t *C) {
     S->alpha_test = g->compat;
     S->two_side = g->compat && gl_is_on(C, GL_VERTEX_PROGRAM_TWO_SIDE);
     S->nxfb = 0;
+}
+
+/* ================================================================ programas internos (ARB_vertex/fragment_program) */
+/* liga um programa a partir de duas fontes GLSL sem registrar nomes no contexto; abind: "nome=loc" por linha */
+gl_prog_t *gl_glsl_build(gl_ctx_t *C, const char *vs, const char *fs, const char *const *anames, const int *alocs, int na, char **log) {
+    gl_prog_t *p = calloc(1, sizeof *p);
+    gl_shader_t *sh = calloc(2, sizeof *sh);
+    if (!p || !sh) { free(p); free(sh); return 0; }
+    p->kind = 2;
+    p->refs = 1;
+    p->xfb_mode = GL_INTERLEAVED_ATTRIBS;
+    const char *src[2] = {vs, fs};
+    for (int i = 0; i < 2; i++) {
+        if (!src[i]) continue;
+        sh[i].kind = 1;
+        sh[i].type = i ? GL_FRAGMENT_SHADER : GL_VERTEX_SHADER;
+        sh[i].src = strdup(src[i]);
+        sh[i].compiled = 1;
+        sh[i].refs = 2;   /* o programa não libera: a memória é deste bloco */
+        p->sh[p->nsh++] = &sh[i];
+    }
+    for (int i = 0; i < na && i < 64; i++) { p->abind_name[i] = strdup(anames[i]); p->abind_loc[i] = alocs[i]; }
+    p->nabind = na < 64 ? na : 64;
+    p->log = strdup("");
+    p->linked = link_prog(C, p);
+    if (log) *log = strdup(p->log ? p->log : "");
+    p->priv_shaders = sh;
+    return p;
+}
+void gl_glsl_free(gl_prog_t *p) {
+    if (!p) return;
+    gl_shader_t *sh = p->priv_shaders;
+    if (sh) { free(sh[0].src); free(sh[1].src); free(sh); }
+    pg_free(p->priv);
+    for (int i = 0; i < p->nabind; i++) free(p->abind_name[i]);
+    free(p->log);
+    free(p);
+}
+/* escreve uma global (uniform interno) nos dois estágios */
+void gl_glsl_set(gl_prog_t *p, const char *name, int idx, const float *v, int n) { if (p && p->priv) set_glob(p->priv, name, idx, v, n); }
+/* unidade de um sampler interno */
+void gl_glsl_sampler_unit(gl_prog_t *p, const char *name, int unit) {
+    pg_t *g = p ? p->priv : 0;
+    if (!g) return;
+    pu_t *u = uni_find(g, name);
+    if (u && u->sampler) u->units[0] = unit;
+}
+void gl_glsl_set_stage(gl_prog_t *p, int stage, const char *name, const float *v, int n) {
+    pg_t *g = p ? p->priv : 0;
+    if (!g || stage < 0 || stage > 1) return;
+    gv_t x = find_glob(g->lib[stage], name);
+    if (x.off >= 0 && n * 4 <= x.size) memcpy(g->lib[stage]->gmem + x.off, v, (size_t)n * 4);
+}
+
+/* ================================================================ EXT_bindable_uniform */
+static pu_t *bind_uni(gl_ctx_t *C, GLuint pn, GLint loc, gl_prog_t **pp) {
+    gl_prog_t *p = pr_get(C, pn);
+    if (!p) { gl_err(C, GL_INVALID_VALUE); return 0; }
+    if (!p->linked) { gl_err(C, GL_INVALID_OPERATION); return 0; }
+    int el;
+    pu_t *u = uni_at(p->priv, loc, &el);
+    if (!u || u->sampler) { gl_err(C, GL_INVALID_OPERATION); return 0; }
+    if (pp) *pp = p;
+    return u;
+}
+void glUniformBufferEXT(GLuint pn, GLint loc, GLuint buf) {
+    GLC();
+    pu_t *u = bind_uni(C, pn, loc, 0);
+    if (!u) return;
+    gl_buf_t *b = buf ? gl_names_get(&C->sh->bufs, buf) : 0;
+    if (buf && !b) GLERR(GL_INVALID_OPERATION, );
+    u->bbuf = b;
+}
+GLint glGetUniformBufferSizeEXT(GLuint pn, GLint loc) { GLC(0); pu_t *u = bind_uni(C, pn, loc, 0); return u ? u->stride * u->arr : 0; }
+GLintptr glGetUniformOffsetEXT(GLuint pn, GLint loc) {
+    GLC(-1);
+    gl_prog_t *p;
+    pu_t *u = bind_uni(C, pn, loc, &p);
+    if (!u) return -1;
+    return (GLintptr)(loc - u->loc) * u->stride;
 }

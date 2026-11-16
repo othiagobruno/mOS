@@ -3,7 +3,7 @@
  *   zig cc -g -O1 -fno-sanitize=all -ffreestanding -fno-builtin -w -Iuserland/libsystem/kshim \
  *     -Iuserland/libsystem/fsinc -Ikernel/include -Iuserland/libsystem \
  *     -c userland/libsystem/appkit_nsopengl.c -o /tmp/nsgl-lib.o
- *   for f in gl_ctx gl_buf gl_tex gl_fbo gl_raster gl_ffp gl_misc gl_eval gl_glsl gl_glsl_tr gl_glsl_pre mtltex mtlshader mtlexec mslspirv; do
+ *   for f in gl_ctx gl_buf gl_tex gl_fbo gl_raster gl_ffp gl_misc gl_eval gl_arbprog gl_glsl gl_glsl_tr gl_glsl_pre mtltex mtlshader mtlexec mslspirv; do
  *     zig cc -g -O1 -fno-sanitize=all -ffreestanding -fno-builtin -w -Iuserland/libsystem/kshim -Iuserland/libsystem/fsinc \
  *       -Ikernel/include -Iuserland/libsystem -c userland/libsystem/$f.c -o /tmp/nsgl-$f.o; done
  *   zig cc -g -O1 -fno-sanitize=all -Iuserland/libsystem -w tools/nsopengl_host.c tools/ctline_host_stubs.c \
