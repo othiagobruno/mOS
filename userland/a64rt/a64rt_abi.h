@@ -5,7 +5,7 @@
  *
  * Processo arm64 no mOS:
  *   0x400000100000  libSystem arm64 (ELF AArch64 static-pie, R_AARCH64_RELATIVE; /Sistema/Biblioteca/a64/libSystem.mos)
- *   0x400001000000  imagens Mach-O arm64 (executável + dylibs do app), stubs, heap
+ *   0x400004000000  imagens Mach-O arm64 (executável + dylibs do app), stubs, heap
  *   USER_STACK_TOP  pilha do guest (argv/envp/apple + bloco cx_start_t, igual ao x86)
  *   A64RT_BASE      a64rt.mos (ELF x86_64 static-pie; /Sistema/Biblioteca/a64/a64rt.mos) + pilha do host
  * A thread começa no runtime (x86_64) com rdi = a64rt_boot_t*; o runtime cria o a64_cpu e entra no

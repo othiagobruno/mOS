@@ -150,7 +150,7 @@ int dladdr(const void *addr, Dl_info *info) {
     if (!info || !addr) return 0;
     memset(info, 0, sizeof *info);
     u64 a = (u64)addr;
-    if (a >= 0x400000100000ULL && a < 0x400001000000ULL) {
+    if (a >= 0x400000100000ULL && a < 0x400004000000ULL) {   /* libSystem: até a imagem do app (IMAGE_BASE, macho.c) */
         info->dli_fname = "/usr/lib/libSystem.B.dylib";
         info->dli_fbase = (void *)0x400000100000ULL;
         return 1;

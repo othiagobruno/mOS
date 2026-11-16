@@ -2,8 +2,8 @@
  * mOS — carregador de executáveis Mach-O (o "dyld" do mOS), no espírito do ravynOS.
  *
  * Layout do processo (região de usuário, ver proc.h):
- *   0x400000100000  libSystem.mos   (ELF estático: build/libSystem.mos, embutido no kernel)
- *   0x400001000000  imagem Mach-O   (com slide; os segmentos ficam contíguos)
+ *   0x400000100000  libSystem.mos   (ELF estático: build/libSystem.mos, embutido no kernel; até 63 MiB)
+ *   0x400004000000  imagem Mach-O   (com slide; os segmentos ficam contíguos)
  *        ...        stubs de símbolos ausentes, depois o heap (brk)
  *   USER_STACK_TOP  pilha: strings, argv, envp, apple, bloco de partida
  *
@@ -28,7 +28,10 @@
 #include "chained_ptr.h"         /* formatos de ponteiro encadeado */
 
 #define LIBSYSTEM_BASE (USER_BASE + 0x00100000ULL)
-#define IMAGE_BASE   (USER_BASE + 0x01000000ULL)
+/* 64 MiB: o libSystem.mos passou de 15 MiB de span (16,8 MiB em 16/11/2026) e o carregador recusava todo app Mach-O
+ * com "libSystem com tamanho inválido". A imagem do app começa depois do espaço dele. */
+#define IMAGE_BASE   (USER_BASE + 0x04000000ULL)
+#define LIBSYSTEM_MAXSPAN (IMAGE_BASE - LIBSYSTEM_BASE)
 #define IMAGE_LIMIT  (USER_STACK_TOP - USER_STACK_SIZE - 0x200000ULL)
 #ifdef MACHO_DEBUG
 #define DBG(...) kprintf(__VA_ARGS__)
@@ -244,7 +247,7 @@ static u64 map_elf(process_t *p, const u8 *e, usize elen, u64 base, u32 relative
 
 static bool map_libsystem(process_t *p, char *err, usize errlen) {
     lsdb_t *d = &ls_db[ls_cur];
-    return map_elf(p, d->e, (usize)(d->end - d->e), LIBSYSTEM_BASE, ls_cur ? 1027 : 8, 0x00F00000, &d->img, &d->span,
+    return map_elf(p, d->e, (usize)(d->end - d->e), LIBSYSTEM_BASE, ls_cur ? 1027 : 8, LIBSYSTEM_MAXSPAN, &d->img, &d->span,
                    ls_cur ? "libSystem arm64" : "libSystem", err, errlen) != 0;
 }
 /* ================================================================ Mach-O */
