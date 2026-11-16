@@ -18,6 +18,8 @@ if [ -f "$ROOT/build/zlib-x86_64/libz.1.dylib" ]; then cp -f "$ROOT/build/zlib-x
 else echo "test-git-image: falta build/zlib-x86_64/libz.1.dylib (tools/build-libz.sh)" >&2; exit 1; fi
 echo "raiz do git: $(du -sh "$V" | cut -f1) (o bottle copiado sem links tem 619 MiB)"
 fails=0
+# Daqui em diante cada passo conta como falha e mostra o stderr do git; o set -e mataria o teste calado.
+set +e
 ok() { echo "ok   $1"; }
 bad() { echo "FALHOU $1"; fails=$((fails + 1)); }
 G() {
@@ -30,6 +32,7 @@ G() {
     ok "pcre2 e libintl em /usr/local/opt" || bad "dylibs do git ausentes"
 v=$(G --version)
 [[ "$v" == "git version "* ]] && ok "$v" || { bad "--version: '$v'"; cat "$T/err"; }
+[ "$fails" = 0 ] || { echo "git-image: o git nem abre; parando"; exit 1; }
 G init -q -b main /tmp/repo >/dev/null
 [ -f "$V/tmp/repo/.git/HEAD" ] && ok "git init cria .git" || { bad "git init"; cat "$T/err"; }
 printf 'ola mOS\n' > "$V/tmp/repo/a.txt"

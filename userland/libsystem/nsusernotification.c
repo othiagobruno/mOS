@@ -28,6 +28,8 @@ id cx_un_props(id o);
 
 extern cx_class_t NSUserNotification_c __asm__("OBJC_CLASS_$_NSUserNotification");
 extern cx_class_t NSUserNotificationCenter_c __asm__("OBJC_CLASS_$_NSUserNotificationCenter");
+extern cx_class_t NSUserNotification_m __asm__("OBJC_METACLASS_$_NSUserNotification");
+extern cx_class_t NSUserNotificationCenter_m __asm__("OBJC_METACLASS_$_NSUserNotificationCenter");
 cx_class_t NSUserNotificationAction_c __asm__("OBJC_CLASS_$_NSUserNotificationAction");
 cx_class_t NSUserNotificationAction_m __asm__("OBJC_METACLASS_$_NSUserNotificationAction");
 
@@ -388,6 +390,10 @@ void cx_nsun_receive(const cx_un_req_t *r, const char *action, const char *text)
 void cx_nsusernotification_init(void) {
     static int done;
     if (done++) return;
+    /* As duas classes nascem aqui: o AppKit (cx_appkit_init) chama este init antes do resto do Foundation. */
+    cx_class_t *ob = cx_class_named("NSObject");
+    cx_define_class(&NSUserNotification_c, &NSUserNotification_m, "NSUserNotification", ob, 0);
+    cx_define_class(&NSUserNotificationCenter_c, &NSUserNotificationCenter_m, "NSUserNotificationCenter", ob, 0);
     cx_class_t *n = &NSUserNotification_c;
     cx_add_method(n, "init", (void *)note_init);
     static const char *const objs[] = {"title", "subtitle", "informativeText", "soundName", "userInfo", "identifier", "deliveryDate",

@@ -1913,7 +1913,6 @@ static sz_t at_sz(id s, SEL c, sz_t z) { (void)c; sz_t r = {z.w * BOX(s)->d, z.h
 
 /* NSUnit, NSDimension, NSMeasurement e NSMeasurementFormatter estão em fdn_units.c */
 
-static id note_alloc(id cls, SEL c) { (void)c; return cx_alloc_instance((cx_class_t *)cls); }
 static void set_a(id s, SEL c, id v) { (void)c; rel(BOX(s)->a); BOX(s)->a = retain(v); }
 static void set_b(id s, SEL c, id v) { (void)c; rel(BOX(s)->b); BOX(s)->b = retain(v); }
 static void set_c(id s, SEL c, id v) { (void)c; rel(BOX(s)->c); BOX(s)->c = retain(v); }
@@ -1928,11 +1927,6 @@ static id get_e(id s, SEL c) { (void)c; return BOX(s)->e; }
 static id get_a(id s, SEL c) { (void)c; return BOX(s)->a; }
 static id get_b(id s, SEL c) { (void)c; return BOX(s)->b; }
 static id get_c(id s, SEL c) { (void)c; return BOX(s)->c; }
-static id unc_default(id cls, SEL c) { (void)c; static id s; if (!s) s = cx_alloc_instance((cx_class_t *)cls); return s; }
-static void unc_deliver(id s, SEL c, id n) {
-    (void)s; (void)c;
-    cx_fdprintf(2, "notificação: %s — %s\n", n ? cs(MSG0(id, n, "title")) : "", n ? cs(MSG0(id, n, "informativeText")) : "");
-}
 static id act_init(id s, SEL c, id type) { (void)c; BOX(s)->a = retain(type); return s; }
 static id act_with(id cls, SEL c, id type) { return ar(act_init(cx_alloc_instance((cx_class_t *)cls), c, type)); }
 static void act_become(id s, SEL c) { (void)s; (void)c; }
@@ -2357,16 +2351,7 @@ void cx_foundation_more_init(void) {
     M(NSAffineTransform, "rotateByDegrees:", at_rotate); M(NSAffineTransform, "transformPoint:", at_pt);
     M(NSAffineTransform, "transformSize:", at_sz);
 
-    DEF(&NSUserNotification_c, &NSUserNotification_m, "NSUserNotification", ob, BEX);
-    CM(NSUserNotification, "alloc", note_alloc);
-    M(NSUserNotification, "setTitle:", set_a); M(NSUserNotification, "title", get_a);
-    M(NSUserNotification, "setInformativeText:", set_b); M(NSUserNotification, "informativeText", get_b);
-    M(NSUserNotification, "setSoundName:", set_c); M(NSUserNotification, "soundName", get_c);
-    M(NSUserNotification, "setUserInfo:", noop);
-    DEF(&NSUserNotificationCenter_c, &NSUserNotificationCenter_m, "NSUserNotificationCenter", ob, BEX);
-    CM(NSUserNotificationCenter, "defaultUserNotificationCenter", unc_default);
-    M(NSUserNotificationCenter, "deliverNotification:", unc_deliver); M(NSUserNotificationCenter, "setDelegate:", set_b);
-    M(NSUserNotificationCenter, "removeDeliveredNotification:", noop);
+    /* NSUserNotification e NSUserNotificationCenter: nsusernotification.c (definidos lá, no init do AppKit) */
     DEF(&NSUserActivity_c, &NSUserActivity_m, "NSUserActivity", ob, BEX);
     CM(NSUserActivity, "alloc", lock_alloc);
     M(NSUserActivity, "initWithActivityType:", act_init);
