@@ -618,6 +618,8 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_more_init(void); cx_appkit_more_init(); }         /* appkit_more.c: gestos, NSAnimation, fontes, NSTextBlock, PDF/EPS */
     { extern void cx_appkit_sheets_init(void); cx_appkit_sheets_init(); }     /* appkit_sheets.c: sheets como janelas filhas, fila, limites, nível */
     { extern void cx_appkit_services_init(void); cx_appkit_services_init(); } /* appkit_services.c: menu Serviços, NSPerformService, provedor */
+    { extern void cx_appkit_textkit_init(void); cx_appkit_textkit_init(); }   /* appkit_textkit.c: NSTextStorage, NSTextContainer, NSLayoutManager */
+    { extern void cx_appkit_textview_init(void); cx_appkit_textview_init(); } /* appkit_textview.c: NSTextView sobre o TextKit */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");
