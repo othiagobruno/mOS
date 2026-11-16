@@ -447,48 +447,10 @@ static void nq_enqueue(id self, SEL c, id note, long style) {
 static void nq_enqueue_full(id self, SEL c, id note, long style, u64 mask, id modes) { (void)mask; (void)modes; nq_enqueue(self, c, note, style); }
 static void nq_dequeue(id self, SEL c, id note, u64 mask) { (void)self; (void)c; (void)note; (void)mask; }
 
-/* NSLocale (o mOS fala pt-BR) e NSAppleEventManager (sem Apple Events: registros aceitos) */
-cx_class_t NSLocale_c __asm__("OBJC_CLASS_$_NSLocale");
-cx_class_t NSLocale_m __asm__("OBJC_METACLASS_$_NSLocale");
+/* NSAppleEventManager (sem Apple Events: registros aceitos). NSLocale está em fdn_i18n.c. */
 cx_class_t NSAppleEventManager_c __asm__("OBJC_CLASS_$_NSAppleEventManager");
 cx_class_t NSAppleEventManager_m __asm__("OBJC_METACLASS_$_NSAppleEventManager");
 static int loc_en(void) { return cx_locale_id()[0] == 'e'; }
-static id loc_langs(id cls, SEL c) {
-    (void)cls; (void)c;
-    static id pt, en;
-    id *slot = loc_en() ? &en : &pt;
-    if (!*slot) {
-        id a = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
-        if (loc_en()) {
-            MSG(void, a, "addObject:", cx_str("en-US"));
-            MSG(void, a, "addObject:", cx_str("en"));
-            MSG(void, a, "addObject:", cx_str("pt-BR"));
-        } else {
-            MSG(void, a, "addObject:", cx_str("pt-BR"));
-            MSG(void, a, "addObject:", cx_str("pt"));
-            MSG(void, a, "addObject:", cx_str("en-US"));
-        }
-        *slot = objc_retain(a);
-    }
-    return *slot;
-}
-static id loc_current(id cls, SEL c) { (void)c; static id l; if (!l) l = cx_alloc_instance((cx_class_t *)cls); return l; }
-static id loc_ident(id self, SEL c) {
-    (void)self; (void)c;
-    static int logged;
-    const char *id = cx_locale_id();
-    if (!logged) { logged = 1; cx_fdprintf(2, "locale: NSLocale %s\n", id); }
-    return cx_str(id);
-}
-static id loc_lang(id self, SEL c) { (void)self; (void)c; return cx_str(loc_en() ? "en" : "pt"); }
-static id loc_country(id self, SEL c) { (void)self; (void)c; return cx_str(loc_en() ? "US" : "BR"); }
-static id loc_object(id self, SEL c, id key) {
-    (void)self; (void)c;
-    const char *k = c_str(key);
-    if (!strncmp(k, "kCFLocaleLanguageCode", 21) || !strncmp(k, "languageCode", 12)) return cx_str(loc_en() ? "en" : "pt");
-    if (!strncmp(k, "kCFLocaleCountryCode", 20) || !strncmp(k, "countryCode", 11)) return cx_str(loc_en() ? "US" : "BR");
-    return cx_str(cx_locale_id());
-}
 static id aem_shared(id cls, SEL c) { (void)c; static id m; if (!m) m = cx_alloc_instance((cx_class_t *)cls); return m; }
 static void aem_set(id self, SEL c, id h, SEL s, u32 cls, u32 ev) { (void)self; (void)c; (void)h; (void)s; (void)cls; (void)ev; }
 static void aem_remove(id self, SEL c, u32 cls, u32 ev) { (void)self; (void)c; (void)cls; (void)ev; }
@@ -613,16 +575,6 @@ void cx_darwin_init(void) {
         cx_kvo_init(ob);
     }
     if (ob) cx_add_method(ob, "setDelegate:", (void *)any_set_delegate);
-    cx_define_class(&NSLocale_c, &NSLocale_m, "NSLocale", ob, 0);
-    cx_add_cmethod(&NSLocale_c, "preferredLanguages", (void *)loc_langs);
-    cx_add_cmethod(&NSLocale_c, "currentLocale", (void *)loc_current);
-    cx_add_cmethod(&NSLocale_c, "systemLocale", (void *)loc_current);
-    cx_add_cmethod(&NSLocale_c, "autoupdatingCurrentLocale", (void *)loc_current);
-    cx_add_method(&NSLocale_c, "localeIdentifier", (void *)loc_ident);
-    cx_add_method(&NSLocale_c, "languageCode", (void *)loc_lang);
-    cx_add_method(&NSLocale_c, "countryCode", (void *)loc_country);
-    cx_add_method(&NSLocale_c, "regionCode", (void *)loc_country);
-    cx_add_method(&NSLocale_c, "objectForKey:", (void *)loc_object);
     cx_define_class(&NSAppleEventManager_c, &NSAppleEventManager_m, "NSAppleEventManager", ob, 0);
     cx_add_cmethod(&NSAppleEventManager_c, "sharedAppleEventManager", (void *)aem_shared);
     cx_add_method(&NSAppleEventManager_c, "setEventHandler:andSelector:forEventClass:andEventID:", (void *)aem_set);

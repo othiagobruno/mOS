@@ -62,11 +62,26 @@ Cada item sai com teste de host e PR próprio. Ao fechar um, o inventário é re
 2. Erros bridged: conformidades `Error`, `_BridgedStoredNSError`, `_ErrorCodeProtocol`, `CustomNSError`,
    `LocalizedError` de `CocoaError`, `URLError`, `POSIXError`, com a ordem dos requisitos conferida no toolchain.
 3. `Data` completa (71) + `__DataStorage`, `DataProtocol`, `ContiguousBytes`; `IndexSet` (32), `IndexPath` (12).
-4. `Calendar` (61), `DateComponents` (29), `Date` (16), `DateInterval`, `TimeZone`, `Locale` com ICU de verdade,
-   e o lado ObjC: `NSLocale`, `NSCalendar`, `NSTimeZone`, `NSDateComponents` respeitando identificador/fuso.
-5. Formatters: `NSDateFormatter`, `NSNumberFormatter`, `NSISO8601DateFormatter`, `NSByteCountFormatter`,
-   `NSDateComponentsFormatter`, `NSRelativeDateTimeFormatter`, `NSMeasurementFormatter`, `NSListFormatter`,
-   `NSPersonNameComponentsFormatter` e os `FormatStyle` Swift (inteiro, ponto flutuante, data, lista).
+4. ✅ ICU no build de Linux: `tools/build-icu.sh` (porte do `.ps1`, ICU4C 74.2 com SHA-256 fixado, 2 jobs) gera
+   `/usr/lib/libicucore.A.dylib` (nomes sem versão, como a da Apple) e `/usr/share/icu/icudt74l.dat`; o `tools/build.sh`
+   o chama e falha se não compilar. Conferido: 445 fontes, dylib de 5 MiB ligada à `libc++` e ao `libSystem`.
+   ✅ Lado ObjC/CF de locale, fuso e calendário (`fdn_icu.c`, `fdn_i18n_core.c`, `fdn_i18n.c`): `NSLocale` com o
+   identificador de verdade (partes, nomes localizados, separadores, moeda, aspas, sistema métrico, direção, listas ISO),
+   `NSTimeZone` com o tzdata da ICU (desvio e horário de verão por data, abreviação, nomes localizados, transições,
+   fuso do sistema por `TZ`, `/etc/localtime` ou `fuso=` em `com.mos.sistema.cfg`), `NSCalendar` com todos os
+   calendários da ICU (componentes, montagem, soma com e sem wrap, diferença, faixas, ordinalidade, intervalos,
+   fim de semana, busca de próxima data, símbolos) e `NSDateComponents` completo; `CFLocale*`, `CFTimeZone*`,
+   `CFCalendar*` (com o descritor de componentes variádico) e `CFGregorianDate`/`CFAbsoluteTime*` sobre os mesmos
+   objetos. As cópias antigas em `nsurl.c`, `foundation_extra.c`, `cf_public.c`, `cf_rest.c`, `cli.c`,
+   `compat_agentes.c` e `vscode_cf.c` saíram. Teste: `tools/fdn_i18n_test.c` 81/81 contra a ICU do host.
+   Falta do lado Swift: `Calendar`/`Locale`/`TimeZone` vêm do `libswiftFoundation` real (item 14).
+5. ✅ Formatters (`fdn_fmt_core.c`, `fdn_formatters.c`): `NSDateFormatter` (estilos, formato, template, relativo,
+   leniente, século de dois dígitos, símbolos), `NSISO8601DateFormatter` (todas as opções), `NSNumberFormatter`
+   (todos os estilos, padrões, símbolos, prefixos, dígitos, arredondamento, multiplicador, mínimo/máximo, decimal),
+   `NSByteCountFormatter`, `NSDateComponentsFormatter` (os seis estilos, regras de zero, contagem máxima, frases),
+   `NSRelativeDateTimeFormatter`, `NSListFormatter`, `NSDateIntervalFormatter`, `NSPersonNameComponentsFormatter`,
+   as classes `NSDateInterval` e `NSPersonNameComponents`, e `CFDateFormatter*`/`CFNumberFormatter*` com as chaves.
+   Teste: `tools/fdn_fmt_test.c` 54/54 (textos do macOS). `NSMeasurementFormatter` entra com `NSUnit`/`NSMeasurement`.
 6. Codable: `JSONEncoder`/`JSONDecoder` (70) e `PropertyListEncoder`/`Decoder` com os containers keyed/unkeyed/
    single-value e as estratégias de data, dados, chave e ponto flutuante.
 7. `URL` (26), `URLComponents`, `URLQueryItem`, `URLRequest` (25), `URLResourceValues` (30), `URLError`.

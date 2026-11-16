@@ -1122,6 +1122,8 @@ void cx_objc_boot(u64 sects, u64 n) {
     if (!objc_ready) {
         objc_ready = 1;
         cx_foundation_init();
+        { extern void cx_fdn_i18n_init(void); cx_fdn_i18n_init(); }   /* fdn_i18n.c: NSLocale, NSTimeZone, NSCalendar, NSDateComponents (ICU) */
+        { extern void cx_fdn_formatters_init(void); cx_fdn_formatters_init(); }   /* fdn_formatters.c: NSDateFormatter, NSNumberFormatter e os outros (ICU) */
         /* blocks são objetos: [block copy] etc. */
         cx_class_t *nsobj = cx_class_named("NSObject");
         cx_class_t *bl[3] = {&_NSConcreteStackBlock_c, &_NSConcreteGlobalBlock_c, &_NSConcreteMallocBlock_c};

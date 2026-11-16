@@ -29,7 +29,7 @@ id objc_autorelease(id o);
 const char *NSGetSizeAndAlignment(const char *type, u64 *size, u64 *align);
 
 #define KLASS(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
-KLASS(NSMutableData) KLASS(NSTimeZone) KLASS(NSCalendar) KLASS(NSDateComponents) KLASS(NSEnumerator)
+KLASS(NSMutableData) KLASS(NSEnumerator)
 KLASS(NSOrderedSet) KLASS(NSMutableOrderedSet) KLASS(NSMethodSignature) KLASS(NSInvocation)
 static id cls(const char *n) { return (id)cx_class_named(n); }
 typedef struct { long loc, len; } ns_range_t;
@@ -110,143 +110,7 @@ static void md_dealloc(id self, SEL c) {
     if (sup) sup(self, sel_registerName("dealloc"));
 }
 
-/* ================================================================ NSTimeZone (UTC) */
-typedef struct { cx_class_t *isa; id name; i64 offset; } tz_t;
-static id tz_make(const char *name, i64 off) {
-    tz_t *t = (tz_t *)cx_alloc_instance(&NSTimeZone_c);
-    t->name = objc_retain(cx_str(name));
-    t->offset = off;
-    return (id)t;
-}
-static id tz_utc(void) { static id u; if (!u) u = tz_make("GMT", 0); return u; }
-static id tz_local(id k, SEL c) { (void)k; (void)c; return tz_utc(); }
-static id tz_named(id k, SEL c, id name) {
-    (void)k; (void)c;
-    const char *n = name ? cx_cstr(name) : "GMT";
-    return objc_autorelease(tz_make(n, 0));
-}
-static id tz_for_seconds(id k, SEL c, i64 s) {
-    (void)k; (void)c;
-    char n[16];
-    long h = (long)(s / 3600), m = (long)((s < 0 ? -s : s) % 3600 / 60);
-    snprintf(n, sizeof n, "GMT%+03ld%02ld", h, m);
-    return objc_autorelease(tz_make(s ? n : "GMT", s));
-}
-static void tz_reset(id k, SEL c) { (void)k; (void)c; }
-static id tz_name(id self, SEL c) { (void)c; return ((tz_t *)self)->name; }
-static id tz_abbrev(id self, SEL c) { (void)c; return ((tz_t *)self)->offset ? ((tz_t *)self)->name : cx_str("GMT"); }
-static i64 tz_seconds(id self, SEL c) { (void)c; return ((tz_t *)self)->offset; }
-static i64 tz_seconds_for(id self, SEL c, id date) { (void)date; return tz_seconds(self, c); }
-static BOOL tz_dst(id self, SEL c) { (void)self; (void)c; return NO; }
-static id tz_known(id k, SEL c) { (void)k; (void)c; id a = cx_arr_new(0); cx_arr_add(a, cx_str("GMT")); cx_arr_add(a, cx_str("America/Sao_Paulo")); return objc_autorelease(a); }
-
-/* ================================================================ calendário gregoriano */
-static void civil_from_days(i64 z, i64 *y, int *m, int *d) {
-    z += 719468;
-    i64 era = (z >= 0 ? z : z - 146096) / 146097;
-    u64 doe = (u64)(z - era * 146097);
-    u64 yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    i64 yy = (i64)yoe + era * 400;
-    u64 doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    u64 mp = (5 * doy + 2) / 153;
-    *d = (int)(doy - (153 * mp + 2) / 5 + 1);
-    *m = (int)(mp < 10 ? mp + 3 : mp - 9);
-    *y = yy + (*m <= 2);
-}
-static i64 days_from_civil(i64 y, int m, int d) {
-    y -= m <= 2;
-    i64 era = (y >= 0 ? y : y - 399) / 400;
-    u64 yoe = (u64)(y - era * 400);
-    u64 doy = (u64)((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1);
-    u64 doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + (i64)doe - 719468;
-}
-#define NSUndefinedDateComponent 0x7fffffffffffffffLL
-typedef struct { cx_class_t *isa; i64 era, year, month, day, hour, minute, second, nanosecond, weekday, weekOfYear, yearForWeek; id tz; } dc_t;
-static id dc_alloc_init(id self, SEL c) {
-    (void)c;
-    dc_t *d = (dc_t *)self;
-    d->era = d->year = d->month = d->day = d->hour = d->minute = d->second = d->nanosecond = d->weekday = d->weekOfYear = d->yearForWeek = NSUndefinedDateComponent;
-    return self;
-}
-#define DC_PROP(field, getter, setter) \
-    static i64 dc_get_##field(id self, SEL c) { (void)c; return ((dc_t *)self)->field; } \
-    static void dc_set_##field(id self, SEL c, i64 v) { (void)c; ((dc_t *)self)->field = v; }
-DC_PROP(era, era, setEra) DC_PROP(year, year, setYear) DC_PROP(month, month, setMonth) DC_PROP(day, day, setDay)
-DC_PROP(hour, hour, setHour) DC_PROP(minute, minute, setMinute) DC_PROP(second, second, setSecond)
-DC_PROP(nanosecond, nanosecond, setNanosecond) DC_PROP(weekday, weekday, setWeekday)
-DC_PROP(weekOfYear, weekOfYear, setWeekOfYear) DC_PROP(yearForWeek, yearForWeekOfYear, setYearForWeekOfYear)
-static id dc_tz(id self, SEL c) { (void)c; return ((dc_t *)self)->tz; }
-static void dc_set_tz(id self, SEL c, id tz) { (void)c; ((dc_t *)self)->tz = tz ? objc_retain(tz) : 0; }
-
-typedef struct { cx_class_t *isa; id ident; id tz; } cal_t;
-static id cal_make(const char *ident) {
-    cal_t *k = (cal_t *)cx_alloc_instance(&NSCalendar_c);
-    k->ident = objc_retain(cx_str(ident));
-    k->tz = tz_utc();
-    return (id)k;
-}
-static id cal_current(id k, SEL c) { (void)k; (void)c; static id g; if (!g) g = cal_make("gregorian"); return g; }
-static id cal_with_ident(id k, SEL c, id ident) { (void)k; (void)c; return objc_autorelease(cal_make(ident ? cx_cstr(ident) : "gregorian")); }
-static id cal_init_ident(id self, SEL c, id ident) { (void)c; ((cal_t *)self)->ident = objc_retain(ident ? ident : cx_str("gregorian")); ((cal_t *)self)->tz = tz_utc(); return self; }
-static id cal_ident(id self, SEL c) { (void)c; return ((cal_t *)self)->ident; }
-static id cal_get_tz(id self, SEL c) { (void)c; return ((cal_t *)self)->tz; }
-static void cal_set_tz(id self, SEL c, id tz) { (void)c; ((cal_t *)self)->tz = tz ? objc_retain(tz) : tz_utc(); }
-static u64 cal_first_weekday(id self, SEL c) { (void)self; (void)c; return 1; }
-static i64 cal_offset(id self) { cal_t *k = (cal_t *)self; return k->tz ? MSG0(i64, k->tz, "secondsFromGMT") : 0; }
-static id cal_components(id self, SEL c, u64 units, id date) {
-    (void)c; (void)units;
-    double t = date ? MSG0(double, date, "timeIntervalSince1970") : 0;
-    t += (double)cal_offset(self);
-    double fl = floor(t);
-    i64 secs = (i64)fl;
-    i64 days = secs >= 0 ? secs / 86400 : -((-secs + 86399) / 86400);
-    i64 rem = secs - days * 86400;
-    dc_t *d = (dc_t *)dc_alloc_init(cx_alloc_instance(&NSDateComponents_c), 0);
-    int m, dd;
-    civil_from_days(days, &d->year, &m, &dd);
-    d->era = 1; d->month = m; d->day = dd;
-    d->hour = rem / 3600; d->minute = rem % 3600 / 60; d->second = rem % 60;
-    d->nanosecond = (i64)((t - fl) * 1e9);
-    d->weekday = ((days % 7) + 7 + 4) % 7 + 1;       /* 1970-01-01 foi quinta (5); domingo = 1 */
-    return objc_autorelease((id)d);
-}
-static id cal_components_tz(id self, SEL c, id tz, id date) { (void)tz; return cal_components(self, c, ~0ull, date); }
-static id cal_date_from(id self, SEL c, id comps) {
-    (void)c;
-    dc_t *d = (dc_t *)comps;
-    i64 y = d->year == NSUndefinedDateComponent ? 2001 : d->year;
-    i64 mo = d->month == NSUndefinedDateComponent ? 1 : d->month;
-    i64 dy = d->day == NSUndefinedDateComponent ? 1 : d->day;
-    i64 h = d->hour == NSUndefinedDateComponent ? 0 : d->hour;
-    i64 mi = d->minute == NSUndefinedDateComponent ? 0 : d->minute;
-    i64 s = d->second == NSUndefinedDateComponent ? 0 : d->second;
-    /* meses fora de 1..12 normalizam como no macOS */
-    y += (mo - 1) >= 0 ? (mo - 1) / 12 : -((12 - mo) / 12);
-    mo = ((mo - 1) % 12 + 12) % 12 + 1;
-    double t = (double)(days_from_civil(y, (int)mo, 1) + dy - 1) * 86400.0 + (double)(h * 3600 + mi * 60 + s);
-    if (d->nanosecond != NSUndefinedDateComponent) t += (double)d->nanosecond / 1e9;
-    t -= (double)cal_offset(self);
-    return MSG(id, cls("NSDate"), "dateWithTimeIntervalSince1970:", t);
-}
-static id cal_by_adding(id self, SEL c, id comps, id date, u64 opts) {
-    (void)opts;
-    id now = cal_components(self, c, ~0ull, date);
-    dc_t *a = (dc_t *)comps, *b = (dc_t *)now;
-#define ADD(f) if (a->f != NSUndefinedDateComponent) b->f += a->f;
-    ADD(year) ADD(month) ADD(day) ADD(hour) ADD(minute) ADD(second)
-#undef ADD
-    return cal_date_from(self, c, now);
-}
-static i64 cal_component(id self, SEL c, u64 unit, id date) {
-    dc_t *d = (dc_t *)cal_components(self, c, ~0ull, date);
-    switch (unit) {
-    case 2: return d->era; case 4: return d->year; case 8: return d->month; case 16: return d->day;
-    case 32: return d->hour; case 64: return d->minute; case 128: return d->second; case 512: return d->weekday;
-    case 32768: return d->nanosecond;
-    }
-    return 0;
-}
+/* NSTimeZone, NSCalendar e NSDateComponents estão em fdn_i18n.c (ICU). */
 
 /* ================================================================ NSEnumerator */
 typedef struct { cx_class_t *isa; id items; u64 i; } en_t;
@@ -664,8 +528,6 @@ static id n_with_ulong(id k, SEL c, u64 v) { (void)c; return MSG(id, k, "numberW
 static id d_init_cap(id self, SEL c, u64 n) { (void)c; (void)n; return MSG0(id, self, "init"); }
 static void ku_set_class(id self, SEL c, id k, id name) { (void)self; (void)c; (void)k; (void)name; }
 static id b_localizations(id self, SEL c) { (void)c; return MSG0(id, self, "preferredLocalizations"); }
-static id loc_with_ident(id k, SEL c, id ident) { (void)c; (void)ident; return MSG0(id, k, "currentLocale"); }
-static id loc_init_ident(id self, SEL c, id ident) { (void)c; (void)ident; id r = MSG0(id, (id)self->isa, "currentLocale"); return objc_retain(r); }
 id NSSearchPathForDirectoriesInDomains(unsigned long dir, unsigned long mask, unsigned char expand);
 static id fm_urls_for_dir(id self, SEL c, u64 dir, u64 mask) {
     (void)self; (void)c;
@@ -827,28 +689,6 @@ static id s_pad(id self, SEL c, u64 len, id pad, u64 start) {
     free(b);
     return r;
 }
-/* +[NSLocale componentsFromLocaleIdentifier:] / CFLocaleCreateComponentsFromLocaleIdentifier: "ll", "ll_CC",
- * "ll_Scrp_CC" ou com '-'; @calendar=... é ignorado */
-static id loc_components(id ident) {
-    id d = MSG0(id, cls("NSMutableDictionary"), "dictionary");
-    const char *s = ident ? cx_cstr(ident) : "";
-    char part[3][16] = {{0}}; int np = 0, k = 0;
-    for (const char *q = s; *q && *q != '@' && np < 3; q++) {
-        if (*q == '_' || *q == '-') { part[np][k] = 0; np++; k = 0; continue; }
-        if (k < 15) part[np][k++] = *q;
-    }
-    if (np < 3) { part[np][k] = 0; np++; }
-    if (part[0][0]) { id v = cx_str(part[0]); MSG(void, d, "setObject:forKey:", v, cx_str("kCFLocaleLanguageCodeKey")); }
-    for (int i = 1; i < np; i++) {
-        if (!part[i][0]) continue;
-        id v = cx_str(part[i]);
-        MSG(void, d, "setObject:forKey:", v, cx_str(strlen(part[i]) == 4 ? "kCFLocaleScriptCodeKey" : "kCFLocaleCountryCodeKey"));
-    }
-    return d;
-}
-static id loc_cmp_m(id k, SEL c, id ident) { (void)k; (void)c; return loc_components(ident); }
-static id loc_nil(id self, SEL c) { (void)self; (void)c; return 0; }
-id CFLocaleCreateComponentsFromLocaleIdentifier(void *alloc, id ident) { (void)alloc; return objc_retain(loc_components(ident)); }
 /* -attributesOfFileSystemForPath:error: com os tamanhos do volume (o WhatsApp lê NSFileSystemFreeSize na partida e
  * registrava "nil-value"); o mOS ainda não informa o espaço real: 64 GiB, 32 GiB livres */
 extern id NSFileSystemSize, NSFileSystemFreeSize, NSFileSystemNodes, NSFileSystemFreeNodes, NSFileSystemNumber;
@@ -900,7 +740,7 @@ static void ma_sort_desc(id self, SEL c, id descs) {
 }
 /* classes que sobem depois do cx_foundation_extra_init (nsurl.c, foundation_more.c): chamado por cx_foundation_gaps */
 void cx_foundation_extra_late(void) {
-    cx_class_t *ku = cx_class_named("NSKeyedUnarchiver"), *lo = cx_class_named("NSLocale"), *s = cx_class_named("NSString");
+    cx_class_t *ku = cx_class_named("NSKeyedUnarchiver"), *s = cx_class_named("NSString");
     { cx_class_t *fmx = cx_class_named("NSFileManager"); if (fmx) cx_add_method(fmx, "attributesOfFileSystemForPath:error:", (void *)fm_fs_attrs); }
     { cx_class_t *nn = cx_class_named("NSNumber"), *aa = cx_class_named("NSArray"), *ma = cx_class_named("NSMutableArray");
       if (nn) { cx_add_method(nn, "unsignedLongLongValue", (void *)n_ull); cx_add_method(nn, "unsignedLongValue", (void *)n_ull);
@@ -908,9 +748,6 @@ void cx_foundation_extra_late(void) {
       if (aa) cx_add_method(aa, "sortedArrayUsingDescriptors:", (void *)a_sorted_desc);
       if (ma) cx_add_method(ma, "sortUsingDescriptors:", (void *)ma_sort_desc); }
     if (ku) { cx_add_cmethod(ku, "setClass:forClassName:", (void *)ku_set_class); cx_add_method(ku, "setClass:forClassName:", (void *)ku_set_class); }
-    if (lo) { cx_add_cmethod(lo, "localeWithLocaleIdentifier:", (void *)loc_with_ident); cx_add_method(lo, "initWithLocaleIdentifier:", (void *)loc_init_ident);
-              cx_add_cmethod(lo, "componentsFromLocaleIdentifier:", (void *)loc_cmp_m); cx_add_method(lo, "scriptCode", (void *)loc_nil);
-              cx_add_method(lo, "variantCode", (void *)loc_nil); }
     { cx_class_t *mt = cx_class_named("NSMapTable"), *ht = cx_class_named("NSHashTable");
       if (mt) { cx_add_method(mt, "initWithKeyOptions:valueOptions:capacity:", (void *)x_init_self3); }
       if (ht) { cx_add_method(ht, "initWithOptions:capacity:", (void *)x_init_self2); cx_add_cmethod(ht, "hashTableWithOptions:", (void *)ht_with_opts); } }
@@ -973,37 +810,6 @@ void cx_foundation_extra_init(void) {
         IM(NSMutableData, "setData:", md_set_data); IM(NSMutableData, "replaceBytesInRange:withBytes:", md_replace);
         IM(NSMutableData, "replaceBytesInRange:withBytes:length:", md_replace_len); IM(NSMutableData, "resetBytesInRange:", md_reset);
         IM(NSMutableData, "copy", md_copy); IM(NSMutableData, "mutableCopy", md_mcopy); IM(NSMutableData, "dealloc", md_dealloc);
-    }
-    if (!cx_class_named("NSTimeZone")) {
-        cx_define_class(&NSTimeZone_c, &NSTimeZone_m, "NSTimeZone", ob, 16);
-        CM_(NSTimeZone, "localTimeZone", tz_local); CM_(NSTimeZone, "systemTimeZone", tz_local); CM_(NSTimeZone, "defaultTimeZone", tz_local);
-        CM_(NSTimeZone, "timeZoneWithName:", tz_named); CM_(NSTimeZone, "timeZoneWithAbbreviation:", tz_named);
-        CM_(NSTimeZone, "timeZoneForSecondsFromGMT:", tz_for_seconds); CM_(NSTimeZone, "resetSystemTimeZone", tz_reset);
-        CM_(NSTimeZone, "knownTimeZoneNames", tz_known);
-        IM(NSTimeZone, "name", tz_name); IM(NSTimeZone, "description", tz_name); IM(NSTimeZone, "abbreviation", tz_abbrev);
-        IM(NSTimeZone, "secondsFromGMT", tz_seconds); IM(NSTimeZone, "secondsFromGMTForDate:", tz_seconds_for);
-        IM(NSTimeZone, "isDaylightSavingTime", tz_dst); IM(NSTimeZone, "isDaylightSavingTimeForDate:", tz_dst);
-    }
-    if (!cx_class_named("NSDateComponents")) {
-        cx_define_class(&NSDateComponents_c, &NSDateComponents_m, "NSDateComponents", ob, (u32)(sizeof(dc_t) - 8));
-        IM(NSDateComponents, "init", dc_alloc_init);
-#define REG(field, getter, setter) IM(NSDateComponents, #getter, dc_get_##field); IM(NSDateComponents, #setter ":", dc_set_##field);
-        REG(era, era, setEra) REG(year, year, setYear) REG(month, month, setMonth) REG(day, day, setDay)
-        REG(hour, hour, setHour) REG(minute, minute, setMinute) REG(second, second, setSecond)
-        REG(nanosecond, nanosecond, setNanosecond) REG(weekday, weekday, setWeekday)
-        REG(weekOfYear, weekOfYear, setWeekOfYear) REG(yearForWeek, yearForWeekOfYear, setYearForWeekOfYear)
-#undef REG
-        IM(NSDateComponents, "timeZone", dc_tz); IM(NSDateComponents, "setTimeZone:", dc_set_tz);
-    }
-    if (!cx_class_named("NSCalendar")) {
-        cx_define_class(&NSCalendar_c, &NSCalendar_m, "NSCalendar", ob, 16);
-        CM_(NSCalendar, "currentCalendar", cal_current); CM_(NSCalendar, "autoupdatingCurrentCalendar", cal_current);
-        CM_(NSCalendar, "calendarWithIdentifier:", cal_with_ident);
-        IM(NSCalendar, "initWithCalendarIdentifier:", cal_init_ident); IM(NSCalendar, "calendarIdentifier", cal_ident);
-        IM(NSCalendar, "timeZone", cal_get_tz); IM(NSCalendar, "setTimeZone:", cal_set_tz); IM(NSCalendar, "firstWeekday", cal_first_weekday);
-        IM(NSCalendar, "components:fromDate:", cal_components); IM(NSCalendar, "componentsInTimeZone:fromDate:", cal_components_tz);
-        IM(NSCalendar, "dateFromComponents:", cal_date_from); IM(NSCalendar, "dateByAddingComponents:toDate:options:", cal_by_adding);
-        IM(NSCalendar, "component:fromDate:", cal_component);
     }
     if (!cx_class_named("NSEnumerator")) {
         cx_define_class(&NSEnumerator_c, &NSEnumerator_m, "NSEnumerator", ob, 16);

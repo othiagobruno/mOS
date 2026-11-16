@@ -286,10 +286,6 @@ id CFStringTokenizerCopyBestStringLanguage(id s, rng_t r) {
     return S("en");
 }
 
-double CFTimeZoneGetNextDaylightSavingTimeTransition(id tz, double at) {
-    const char *n = tz ? C(tz) : "UTC";
-    return cf_tz_next_dst(n[0] ? n : "UTC", at);
-}
 
 unsigned char CFURLCanBeDecomposed(id url) { cf_url_parts u; cf_url_parse(C(CFURLGetString(url)), &u); return u.scheme[0] != 0; }
 void CFURLClearResourcePropertyCacheForKey(id url, id key) { (void)url; (void)key; }
