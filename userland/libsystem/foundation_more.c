@@ -2804,9 +2804,6 @@ void cx_foundation_more_init(void) {
     cx_class_t *fm = cx_class_named("NSFileManager");
     if (fm) {
         cx_add_method(fm, "attributesOfItemAtPath:error:", (void *)fm_attrs);
-        cx_add_method(fm, "attributesOfFileSystemForPath:error:", (void *)fm_attrs);
-        cx_add_method(fm, "copyItemAtPath:toPath:error:", (void *)yes_m);
-        cx_add_method(fm, "moveItemAtPath:toPath:error:", (void *)yes_m);
     }
     (void)singleton; (void)box_init;
 }

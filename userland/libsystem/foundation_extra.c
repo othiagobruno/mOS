@@ -692,17 +692,7 @@ static id s_pad(id self, SEL c, u64 len, id pad, u64 start) {
 /* -attributesOfFileSystemForPath:error: com os tamanhos do volume (o WhatsApp lê NSFileSystemFreeSize na partida e
  * registrava "nil-value"); o mOS ainda não informa o espaço real: 64 GiB, 32 GiB livres */
 extern id NSFileSystemSize, NSFileSystemFreeSize, NSFileSystemNodes, NSFileSystemFreeNodes, NSFileSystemNumber;
-static id fm_fs_attrs(id self, SEL c, id path, id *err) {
-    (void)self; (void)c; (void)path;
-    if (err) *err = 0;
-    id d = MSG0(id, cls("NSMutableDictionary"), "dictionary"), N = cls("NSNumber");
-    id v1 = MSG(id, N, "numberWithUnsignedLongLong:", (u64)64 << 30); MSG(void, d, "setObject:forKey:", v1, NSFileSystemSize);
-    id v2 = MSG(id, N, "numberWithUnsignedLongLong:", (u64)32 << 30); MSG(void, d, "setObject:forKey:", v2, NSFileSystemFreeSize);
-    id v3 = MSG(id, N, "numberWithUnsignedLongLong:", (u64)1 << 24); MSG(void, d, "setObject:forKey:", v3, NSFileSystemNodes);
-    id v4 = MSG(id, N, "numberWithUnsignedLongLong:", (u64)1 << 23); MSG(void, d, "setObject:forKey:", v4, NSFileSystemFreeNodes);
-    id v5 = MSG(id, N, "numberWithUnsignedLongLong:", (u64)1); MSG(void, d, "setObject:forKey:", v5, NSFileSystemNumber);
-    return d;
-}
+/* -attributesOfFileSystemForPath:error: está em fdn_filemanager.c (statfs de verdade) */
 /* NSNumber: os acessores sem sinal que faltavam (o WhatsApp lê o espaço livre com unsignedLongLongValue) */
 static u64 n_ull(id self, SEL c) { (void)c; return (u64)MSG0(i64, self, "longLongValue"); }
 static unsigned short n_us(id self, SEL c) { (void)c; return (unsigned short)MSG0(i64, self, "longLongValue"); }
@@ -741,7 +731,6 @@ static void ma_sort_desc(id self, SEL c, id descs) {
 /* classes que sobem depois do cx_foundation_extra_init (nsurl.c, foundation_more.c): chamado por cx_foundation_gaps */
 void cx_foundation_extra_late(void) {
     cx_class_t *ku = cx_class_named("NSKeyedUnarchiver"), *s = cx_class_named("NSString");
-    { cx_class_t *fmx = cx_class_named("NSFileManager"); if (fmx) cx_add_method(fmx, "attributesOfFileSystemForPath:error:", (void *)fm_fs_attrs); }
     { cx_class_t *nn = cx_class_named("NSNumber"), *aa = cx_class_named("NSArray"), *ma = cx_class_named("NSMutableArray");
       if (nn) { cx_add_method(nn, "unsignedLongLongValue", (void *)n_ull); cx_add_method(nn, "unsignedLongValue", (void *)n_ull);
                 cx_add_method(nn, "unsignedShortValue", (void *)n_us); cx_add_method(nn, "unsignedCharValue", (void *)n_uc); }
