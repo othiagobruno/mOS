@@ -2038,7 +2038,7 @@ static i64 conv_block(id s, SEL c, id outb, id *err, void *blk) {
     conv_route(CNV(s), &r);
     avc_fmt in = conv_fmt(CNV(s)->in);
     avc_buf out = conv_view(outb);
-    int st = avc_convert(&CNV(s)->st, &r.r, &in, &out, conv_pull, b);
+    int st = avc_audio_convert(&CNV(s)->st, &r.r, &in, &out, conv_pull, b);
     if (st == 3) { set_err(err, -108, "AVAudioConverter: sem memória"); return 3; }
     buf_set_len(outb, 0, out.len);
     return st;

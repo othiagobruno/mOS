@@ -69,7 +69,7 @@ static int stage_add(avc_state *s, uint32_t ic, const avc_buf *b) {
     return 1;
 }
 
-int avc_convert(avc_state *s, const avc_route *r, const avc_fmt *in, avc_buf *out, avc_pull_fn pull, void *ctx) {
+int avc_audio_convert(avc_state *s, const avc_route *r, const avc_fmt *in, avc_buf *out, avc_pull_fn pull, void *ctx) {
     uint32_t ic = in->channels > 32 ? 32 : in->channels, och = out->fmt.channels;
     double ratio = in->rate / out->fmt.rate;
     uint32_t made = 0;

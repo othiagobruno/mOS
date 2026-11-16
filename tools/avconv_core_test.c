@@ -110,7 +110,7 @@ int main(void) {
         uint32_t total = 0;
         double err = 0;
         int st = 0, rounds = 0;
-        while ((st = avc_convert(&s, &none, &in, &out.b, feed, &f)) == 0 && rounds < 100) {
+        while ((st = avc_audio_convert(&s, &none, &in, &out.b, feed, &f)) == 0 && rounds < 100) {
             for (uint32_t i = 0; i < out.b.len; i++) {
                 double want = sin(2 * M_PI * 440.0 * (total + i) / 16000.0) * 0.5;
                 double e = fabs(((float *)out.pl[0])[i] - want);
@@ -140,7 +140,7 @@ int main(void) {
         tb_init(&out, AVC_I16, 2, 1, 48000, 512);
         uint32_t total = 0;
         double err = 0;
-        while (avc_convert(&s, &none, &in, &out.b, feed, &f) == 0) {
+        while (avc_audio_convert(&s, &none, &in, &out.b, feed, &f) == 0) {
             for (uint32_t i = 0; i < out.b.len; i++) {
                 double want = sin(2 * M_PI * 440.0 * (total + i) / 48000.0) * 0.5;
                 double e = fabs(((int16_t *)out.pl[0])[2 * i] / 32767.0 - want);
@@ -161,7 +161,7 @@ int main(void) {
         int calls = 0;
         memset(&s, 0, sizeof s);
         tb_init(&out, AVC_F32, 1, 0, 48000, 64);
-        int st = avc_convert(&s, &none, &in, &out.b, nodata, &calls);
+        int st = avc_audio_convert(&s, &none, &in, &out.b, nodata, &calls);
         CHECK(st == 1 && out.b.len == 0 && calls == 1, "NoDataNow -> InputRanDry, um pedido só");
         avc_free(&s);
     }

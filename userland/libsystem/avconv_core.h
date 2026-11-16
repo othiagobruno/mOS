@@ -42,7 +42,7 @@ int avc_direct(const avc_route *r, const avc_buf *in, avc_buf *out);
 typedef int (*avc_pull_fn)(void *ctx, uint32_t want, avc_buf *got);
 
 /* Modo com bloco. Volta 0 HaveData, 1 InputRanDry, 2 EndOfStream, 3 erro (sem memória). */
-int avc_convert(avc_state *s, const avc_route *r, const avc_fmt *in, avc_buf *out, avc_pull_fn pull, void *ctx);
+int avc_audio_convert(avc_state *s, const avc_route *r, const avc_fmt *in, avc_buf *out, avc_pull_fn pull, void *ctx);
 void avc_reset(avc_state *s);
 void avc_free(avc_state *s);
 
