@@ -3,36 +3,48 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Leonardo (runtime C/C++) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**1614** símbolos distintos.
+**1645** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| libSystem.B.dylib | `_putenv` | 35 | android-studio, basictex, comfy, cyberduck |
-| libSystem.B.dylib | `_getloadavg` | 26 | android-studio, blender, calibre, cloudflare-warp |
-| libSystem.B.dylib | `_getprotobyname` | 24 | adobe-acrobat-reader, android-studio, blender, calibre |
-| libSystem.B.dylib | `_OSAtomicAdd32Barrier` | 19 | cmux, deluge, firefox, floorp |
-| libSystem.B.dylib | `__os_activity_create` | 18 | audacity, bitwarden, calibre, db-browser-for-sqlite |
-| libSystem.B.dylib | `_pthread_attr_getschedpolicy` | 18 | audacity, calibre, db-browser-for-sqlite, dolphin |
-| libSystem.B.dylib | `_wcsstr` | 17 | adobe-acrobat-reader, android-studio, audacity, comfy |
-| libcups.2.dylib | `_ppdClose` | 17 | adobe-acrobat-reader, bruno, calibre, db-browser-for-sqlite |
-| libcups.2.dylib | `_ppdFindOption` | 17 | adobe-acrobat-reader, bruno, calibre, db-browser-for-sqlite |
-| libSystem.B.dylib | `_hstrerror` | 16 | android-studio, basictex, blender, calibre |
-| libSystem.B.dylib | `_if_freenameindex` | 16 | android-studio, blender, calibre, cloudflare-warp |
-| libSystem.B.dylib | `_if_nameindex` | 16 | android-studio, blender, calibre, cloudflare-warp |
-| libSystem.B.dylib | `__res` | 15 | adobe-acrobat-reader, audacity, calibre, dolphin |
-| libSystem.B.dylib | `_pthread_setcanceltype` | 15 | adobe-acrobat-reader, deluge, dolphin, godot |
-| libSystem.B.dylib | `_hash_create` | 14 | alt-tab, cyberduck, flycut, gemini |
-| libSystem.B.dylib | `_hash_search` | 14 | alt-tab, cyberduck, flycut, gemini |
+| libSystem.B.dylib | `_putenv` | 37 | android-studio, basictex, comfy, cryptomator |
+| libSystem.B.dylib | `_getloadavg` | 29 | android-studio, blender, calibre, cloudflare-warp |
+| libSystem.B.dylib | `_getprotobyname` | 25 | adobe-acrobat-reader, android-studio, blender, calibre |
+| libSystem.B.dylib | `_pthread_attr_getschedpolicy` | 23 | audacity, calibre, db-browser-for-sqlite, dolphin |
+| libSystem.B.dylib | `__os_activity_create` | 22 | audacity, bitwarden, calibre, db-browser-for-sqlite |
+| libSystem.B.dylib | `_OSAtomicAdd32Barrier` | 21 | android-file-transfer, another-redis-desktop-manager, cmux, deluge |
+| libcups.2.dylib | `_ppdClose` | 21 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_ppdFindOption` | 21 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libSystem.B.dylib | `_hash_create` | 20 | alt-tab, android-file-transfer, bbedit, bettertouchtool |
+| libSystem.B.dylib | `_hash_search` | 20 | alt-tab, android-file-transfer, bbedit, bettertouchtool |
+| libSystem.B.dylib | `_wcsstr` | 19 | adobe-acrobat-reader, android-studio, audacity, comfy |
+| libcups.2.dylib | `_ppdFindMarkedChoice` | 18 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libSystem.B.dylib | `_hstrerror` | 17 | android-studio, basictex, blender, calibre |
+| libSystem.B.dylib | `_if_freenameindex` | 17 | android-studio, blender, calibre, cloudflare-warp |
+| libSystem.B.dylib | `_if_nameindex` | 17 | android-studio, blender, calibre, cloudflare-warp |
+| libSystem.B.dylib | `_pthread_setcanceltype` | 17 | adobe-acrobat-reader, deluge, dolphin, godot |
+| libSystem.B.dylib | `__res` | 16 | adobe-acrobat-reader, audacity, calibre, dolphin |
+| libSystem.B.dylib | `_OSAtomicCompareAndSwapIntBarrier` | 15 | another-redis-desktop-manager, firefox, floorp, librewolf |
+| libSystem.B.dylib | `_wcsxfrm` | 15 | android-studio, blender, calibre, emacs-app |
+| libcups.2.dylib | `_cupsGetDests2` | 15 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libSystem.B.dylib | `_getsectdatafromheader_64` | 14 | adobe-acrobat-reader, alt-tab, another-redis-desktop-manager, firefox |
 | libSystem.B.dylib | `_setpgrp` | 14 | android-studio, blender, calibre, deluge |
-| libSystem.B.dylib | `_wcsxfrm` | 14 | android-studio, blender, calibre, emacs-app |
-| libcups.2.dylib | `_ppdFindMarkedChoice` | 14 | adobe-acrobat-reader, bruno, calibre, db-browser-for-sqlite |
-| libSystem.B.dylib | `_OSAtomicCompareAndSwapIntBarrier` | 13 | firefox, floorp, librewolf, microsoft-teams |
+| libcups.2.dylib | `_ppdOpenFile` | 14 | another-redis-desktop-manager, calibre, db-browser-for-sqlite, inkscape |
+| libSystem.B.dylib | `_OSSpinLockLock` | 13 | alt-tab, bbedit, bettertouchtool, epic-games |
+| libSystem.B.dylib | `_OSSpinLockUnlock` | 13 | alt-tab, bbedit, bettertouchtool, epic-games |
 | libSystem.B.dylib | `_ctermid_r` | 13 | android-studio, blender, calibre, deluge |
 | libSystem.B.dylib | `_getprotobynumber` | 13 | docker-desktop, emacs-app, firefox, floorp |
 | libSystem.B.dylib | `_wcsrchr` | 13 | adobe-acrobat-reader, android-studio, blender, calibre |
 | libSystem.B.dylib | `_wcstok` | 13 | adobe-acrobat-reader, android-studio, blender, calibre |
-| libcups.2.dylib | `_cupsGetDests2` | 13 | adobe-acrobat-reader, bruno, firefox, floorp |
 | libSystem.B.dylib | `_sethostname` | 12 | android-studio, blender, calibre, gimp |
+| libicucore.A.dylib | `_u_strToLower` | 12 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_u_strToUpper` | 12 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_ubrk_close` | 12 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_ubrk_following` | 12 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_ubrk_open` | 12 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_ubrk_setText` | 12 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_unorm2_getNFCInstance` | 12 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_unorm2_normalize` | 12 | bitwarden, gemini, monitorcontrol, mos |
 | libSystem.B.dylib | `_dbm_clearerr` | 11 | android-studio, blender, calibre, gimp |
 | libSystem.B.dylib | `_dbm_close` | 11 | android-studio, blender, calibre, gimp |
 | libSystem.B.dylib | `_dbm_delete` | 11 | android-studio, blender, calibre, gimp |
@@ -42,65 +54,80 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_dbm_nextkey` | 11 | android-studio, blender, calibre, gimp |
 | libSystem.B.dylib | `_dbm_open` | 11 | android-studio, blender, calibre, gimp |
 | libSystem.B.dylib | `_dbm_store` | 11 | android-studio, blender, calibre, gimp |
-| libSystem.B.dylib | `_getsectdatafromheader_64` | 11 | adobe-acrobat-reader, alt-tab, firefox, inkscape |
 | libSystem.B.dylib | `_uuid_generate_time` | 11 | android-studio, blender, calibre, gimp |
 | libcups.2.dylib | `_httpGetHostname` | 11 | firefox, floorp, gimp, inkscape |
-| libcups.2.dylib | `_ppdOpenFile` | 11 | calibre, db-browser-for-sqlite, inkscape, krita |
+| libexpat.1.dylib | `_XML_ParserFree` | 11 | fork, github, iina, inkscape |
+| libexpat.1.dylib | `_XML_SetElementHandler` | 11 | fork, github, iina, inkscape |
+| libexpat.1.dylib | `_XML_SetUserData` | 11 | fork, github, iina, inkscape |
+| libicucore.A.dylib | `_u_charName` | 11 | bbedit, bitwarden, gemini, monitorcontrol |
 | libSystem.B.dylib | `_gethostbyname2` | 10 | firefox, floorp, gimp, libreoffice |
+| libSystem.B.dylib | `_getsectbynamefromheader_64` | 10 | adobe-acrobat-reader, aldente, another-redis-desktop-manager, clipy |
+| libSystem.B.dylib | `_pthread_key_init_np` | 10 | bitwarden, gemini, monitorcontrol, mos |
+| libcups.2.dylib | `_httpBlocking` | 10 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_httpError` | 10 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_ppdFindAttr` | 10 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_ppdFindChoice` | 10 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_ppdMarkDefaults` | 10 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
 | libedit.3.dylib | `_add_history` | 10 | blender, calibre, deluge, hammerspoon |
-| libSystem.B.dylib | `_OSSpinLockLock` | 9 | alt-tab, gemini, kicad, microsoft-teams |
-| libSystem.B.dylib | `_OSSpinLockUnlock` | 9 | alt-tab, gemini, kicad, microsoft-teams |
-| libSystem.B.dylib | `_getsectbynamefromheader_64` | 9 | adobe-acrobat-reader, aldente, clipy, inkscape |
+| libexpat.1.dylib | `_XML_ErrorString` | 10 | fork, github, iina, inkscape |
+| libexpat.1.dylib | `_XML_GetErrorCode` | 10 | fork, github, iina, inkscape |
+| libexpat.1.dylib | `_XML_ParserCreate` | 10 | fork, github, iina, inkscape |
+| libexpat.1.dylib | `_XML_SetCharacterDataHandler` | 10 | fork, github, iina, inkscape |
+| libicucore.A.dylib | `_u_charAge` | 10 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_u_getNumericValue` | 10 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_u_strToTitle` | 10 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_ubrk_preceding` | 10 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_ubrk_setUText` | 10 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_unorm2_hasBoundaryBefore` | 10 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_unorm2_spanQuickCheckYes` | 10 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_utext_openUChars` | 10 | bitwarden, gemini, monitorcontrol, mos |
+| libicucore.A.dylib | `_utext_openUTF8` | 10 | bitwarden, gemini, monitorcontrol, mos |
+| libSystem.B.dylib | `_funopen` | 9 | cleanshot, duckduckgo, gimp, libreoffice |
 | libSystem.B.dylib | `_pthread_rwlockattr_destroy` | 9 | firefox, floorp, librewolf, microsoft-teams |
 | libSystem.B.dylib | `_pthread_rwlockattr_init` | 9 | firefox, floorp, librewolf, microsoft-teams |
+| libSystem.B.dylib | `_timespec_get` | 9 | docker-desktop, fuse-t, kicad, libndi |
+| libcups.2.dylib | `_cupsGetDests` | 9 | firefox, floorp, librewolf, mullvad-browser |
 | libedit.3.dylib | `_read_history` | 9 | blender, calibre, hammerspoon, kicad |
 | libedit.3.dylib | `_rl_attempted_completion_function` | 9 | blender, calibre, hammerspoon, kicad |
 | libedit.3.dylib | `_write_history` | 9 | blender, calibre, hammerspoon, kicad |
-| libexpat.1.dylib | `_XML_ParserFree` | 9 | github, iina, inkscape, keka |
-| libexpat.1.dylib | `_XML_SetElementHandler` | 9 | github, iina, inkscape, keka |
-| libexpat.1.dylib | `_XML_SetUserData` | 9 | github, iina, inkscape, keka |
-| libicucore.A.dylib | `_u_strToLower` | 9 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_u_strToUpper` | 9 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_ubrk_close` | 9 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_ubrk_following` | 9 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_ubrk_open` | 9 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_ubrk_setText` | 9 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_unorm2_getNFCInstance` | 9 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_unorm2_normalize` | 9 | bitwarden, gemini, monitorcontrol, mos |
 | libncurses.5.4.dylib | `_setupterm` | 9 | blender, calibre, deluge, inkscape |
 | libncurses.5.4.dylib | `_tigetnum` | 9 | blender, calibre, deluge, inkscape |
+| libSystem.B.dylib | `_drand48` | 8 | clipy, easydict, gimp, iterm2 |
 | libSystem.B.dylib | `_wcscasecmp` | 8 | adobe-acrobat-reader, audacity, krita, microsoft-teams |
 | libcups.2.dylib | `_cupsConnectDest` | 8 | firefox, floorp, librewolf, mullvad-browser |
 | libcups.2.dylib | `_cupsGetDestMediaByIndex` | 8 | firefox, floorp, librewolf, mullvad-browser |
 | libcups.2.dylib | `_cupsGetDestMediaCount` | 8 | firefox, floorp, librewolf, mullvad-browser |
 | libcups.2.dylib | `_cupsGetDestMediaDefault` | 8 | firefox, floorp, librewolf, mullvad-browser |
-| libcups.2.dylib | `_cupsGetDests` | 8 | firefox, floorp, librewolf, mullvad-browser |
 | libcups.2.dylib | `_cupsLocalizeDestMedia` | 8 | firefox, floorp, librewolf, mullvad-browser |
 | libcups.2.dylib | `_httpAddrPort` | 8 | firefox, floorp, librewolf, mullvad-browser |
-| libcups.2.dylib | `_httpBlocking` | 8 | adobe-acrobat-reader, bruno, gimp, inkscape |
-| libcups.2.dylib | `_httpError` | 8 | adobe-acrobat-reader, bruno, gimp, inkscape |
 | libcups.2.dylib | `_httpGetAddress` | 8 | firefox, floorp, librewolf, mullvad-browser |
-| libcups.2.dylib | `_ppdFindAttr` | 8 | adobe-acrobat-reader, bruno, gimp, inkscape |
-| libcups.2.dylib | `_ppdFindChoice` | 8 | adobe-acrobat-reader, bruno, gimp, inkscape |
-| libcups.2.dylib | `_ppdMarkDefaults` | 8 | adobe-acrobat-reader, bruno, gimp, inkscape |
+| libcups.2.dylib | `_ppdOpenFd` | 8 | adobe-acrobat-reader, battery, bruno, gimp |
 | libedit.3.dylib | `_history_truncate_file` | 8 | blender, calibre, hammerspoon, kicad |
 | libedit.3.dylib | `_rl_attempted_completion_over` | 8 | blender, calibre, hammerspoon, kicad |
 | libedit.3.dylib | `_rl_completion_append_character` | 8 | blender, calibre, hammerspoon, kicad |
 | libedit.3.dylib | `_rl_completion_matches` | 8 | blender, calibre, hammerspoon, kicad |
 | libedit.3.dylib | `_rl_line_buffer` | 8 | blender, calibre, kicad, kitty |
 | libedit.3.dylib | `_rl_readline_name` | 8 | blender, calibre, kicad, kitty |
-| libexpat.1.dylib | `_XML_ErrorString` | 8 | github, iina, inkscape, kicad |
-| libexpat.1.dylib | `_XML_GetErrorCode` | 8 | github, iina, inkscape, kicad |
-| libexpat.1.dylib | `_XML_ParserCreate` | 8 | github, iina, inkscape, keka |
-| libexpat.1.dylib | `_XML_SetCharacterDataHandler` | 8 | github, iina, inkscape, keka |
 | libncurses.5.4.dylib | `_tigetflag` | 8 | blender, calibre, deluge, inkscape |
 | libncurses.5.4.dylib | `_tigetstr` | 8 | blender, calibre, deluge, inkscape |
-| libSystem.B.dylib | `_pthread_key_init_np` | 7 | bitwarden, gemini, monitorcontrol, mos |
+| libsqlite3.dylib | `_sqlite3_snapshot_cmp` | 8 | applite, clipy, macwhisper, openclaw |
+| libsqlite3.dylib | `_sqlite3_snapshot_free` | 8 | applite, clipy, macwhisper, openclaw |
+| libsqlite3.dylib | `_sqlite3_snapshot_get` | 8 | applite, clipy, macwhisper, openclaw |
+| libsqlite3.dylib | `_sqlite3_snapshot_open` | 8 | applite, clipy, macwhisper, openclaw |
+| libSystem.B.dylib | `___invert_d4` | 7 | gemini, macwhisper, monitorcontrol, mos |
+| libSystem.B.dylib | `___invert_f4` | 7 | gemini, monitorcontrol, mos, raycast |
+| libSystem.B.dylib | `_exc_server` | 7 | android-file-transfer, cmux, ghostty, inkscape |
+| libSystem.B.dylib | `_getpass` | 7 | basictex, comfy, keka, proxyman |
 | libSystem.B.dylib | `_swap_fat_arch` | 7 | aldente, google-chrome, kicad, microsoft-edge |
-| libSystem.B.dylib | `_timespec_get` | 7 | docker-desktop, fuse-t, kicad, obs |
 | libSystem.B.dylib | `_wcslcpy` | 7 | dolphin, krita, moonlight, openrct2 |
 | libSystem.B.dylib | `_wcsncat` | 7 | adobe-acrobat-reader, calibre, inkscape, kicad |
-| libcups.2.dylib | `_ppdOpenFd` | 7 | adobe-acrobat-reader, bruno, gimp, inkscape |
+| libcups.2.dylib | `_cupsGetDest` | 7 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_cupsGetPPD` | 7 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_cupsGetPPD2` | 7 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_cupsMarkOptions` | 7 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_httpConnectEncrypt` | 7 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_ppdErrorString` | 7 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
+| libcups.2.dylib | `_ppdLastError` | 7 | adobe-acrobat-reader, another-redis-desktop-manager, battery, bruno |
 | libedit.3.dylib | `_clear_history` | 7 | blender, calibre, kicad, kitty |
 | libedit.3.dylib | `_emacs_meta_keymap` | 7 | blender, calibre, kicad, kitty |
 | libedit.3.dylib | `_history_get` | 7 | blender, calibre, kicad, kitty |
@@ -133,16 +160,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libedit.3.dylib | `_rl_startup_hook` | 7 | blender, calibre, kicad, kitty |
 | libedit.3.dylib | `_rl_variable_bind` | 7 | blender, calibre, kicad, kitty |
 | libedit.3.dylib | `_using_history` | 7 | blender, calibre, kicad, kitty |
-| libicucore.A.dylib | `_u_charAge` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_u_charName` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_u_getNumericValue` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_u_strToTitle` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_ubrk_preceding` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_ubrk_setUText` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_unorm2_hasBoundaryBefore` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_unorm2_spanQuickCheckYes` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_utext_openUChars` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| libicucore.A.dylib | `_utext_openUTF8` | 7 | bitwarden, gemini, monitorcontrol, mos |
+| libexpat.1.dylib | `_XML_GetBuffer` | 7 | iina, inkscape, kicad, kitty |
+| libexpat.1.dylib | `_XML_ParseBuffer` | 7 | iina, inkscape, kicad, kitty |
+| libffi.dylib | `_ffi_prep_cif` | 7 | calibre, kicad, kitty, krita |
 | libncurses.5.4.dylib | `_COLORS` | 7 | blender, calibre, deluge, inkscape |
 | libncurses.5.4.dylib | `_COLOR_PAIRS` | 7 | blender, calibre, deluge, inkscape |
 | libncurses.5.4.dylib | `_COLS` | 7 | blender, calibre, deluge, inkscape |
@@ -275,20 +295,30 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libncurses.5.4.dylib | `_wtimeout` | 7 | blender, calibre, deluge, inkscape |
 | libncurses.5.4.dylib | `_wtouchln` | 7 | blender, calibre, deluge, inkscape |
 | libncurses.5.4.dylib | `_wvline` | 7 | blender, calibre, deluge, inkscape |
-| libSystem.B.dylib | `___invert_f4` | 6 | gemini, monitorcontrol, mos, raycast |
+| libSystem.B.dylib | `_OSAtomicDequeue` | 6 | bettertouchtool, epic-games, hex-fiend, microsoft-teams |
+| libSystem.B.dylib | `_OSAtomicEnqueue` | 6 | bettertouchtool, epic-games, hex-fiend, microsoft-teams |
+| libSystem.B.dylib | `_OSAtomicIncrement64Barrier` | 6 | bettertouchtool, cmux, gemini, hex-fiend |
+| libSystem.B.dylib | `___invert_d2` | 6 | gemini, monitorcontrol, mos, rustdesk |
+| libSystem.B.dylib | `___invert_d3` | 6 | gemini, monitorcontrol, mos, rustdesk |
+| libSystem.B.dylib | `___invert_f2` | 6 | gemini, monitorcontrol, mos, rustdesk |
 | libSystem.B.dylib | `_csqrt` | 6 | blender, calibre, gimp, inkscape |
-| libSystem.B.dylib | `_drand48` | 6 | clipy, gimp, iterm2, krita |
-| libSystem.B.dylib | `_exc_server` | 6 | cmux, ghostty, inkscape, openttd |
 | libSystem.B.dylib | `_fputws` | 6 | adobe-acrobat-reader, audacity, keka, kicad |
+| libSystem.B.dylib | `_inet_net_pton` | 6 | another-redis-desktop-manager, openmtp, pencil, ubersicht |
+| libSystem.B.dylib | `_swscanf` | 6 | adobe-acrobat-reader, audacity, epic-games, espanso |
 | libSystem.B.dylib | `_tmpnam` | 6 | calibre, deluge, google-chrome, intellij-idea |
 | libSystem.B.dylib | `_wcscspn` | 6 | adobe-acrobat-reader, android-studio, gimp, libreoffice |
 | libSystem.B.dylib | `_wcslcat` | 6 | dolphin, krita, moonlight, openrct2 |
 | libcups.2.dylib | `_cupsSetUser` | 6 | adobe-acrobat-reader, gimp, inkscape, meld |
 | libedit.3.dylib | `_rl_basic_word_break_characters` | 6 | blender, calibre, kitty, krita |
-| libexpat.1.dylib | `_XML_GetBuffer` | 6 | iina, inkscape, kicad, kitty |
-| libexpat.1.dylib | `_XML_ParseBuffer` | 6 | iina, inkscape, kicad, kitty |
+| libexpat.1.dylib | `_XML_GetCurrentLineNumber` | 6 | iina, inkscape, kicad, kitty |
+| libexpat.1.dylib | `_XML_Parse` | 6 | fork, github, keka, kitty |
 | libffi.dylib | `_ffi_call` | 6 | calibre, kicad, kitty, krita |
-| libffi.dylib | `_ffi_prep_cif` | 6 | calibre, kicad, kitty, krita |
+| libffi.dylib | `_ffi_closure_alloc` | 6 | calibre, kitty, krita, libreoffice |
+| libffi.dylib | `_ffi_prep_closure_loc` | 6 | calibre, kitty, krita, libreoffice |
+| libffi.dylib | `_ffi_type_pointer` | 6 | calibre, kitty, krita, libreoffice |
+| libffi.dylib | `_ffi_type_uint64` | 6 | calibre, kitty, krita, libreoffice |
+| libffi.dylib | `_ffi_type_uint8` | 6 | calibre, kitty, krita, libreoffice |
+| libiconv.2.dylib | `_libiconv_set_relocation_prefix` | 6 | deluge, krita, lmms, openscad |
 | libncurses.5.4.dylib | `_ESCDELAY` | 6 | blender, calibre, inkscape, kitty |
 | libncurses.5.4.dylib | `_TABSIZE` | 6 | blender, calibre, inkscape, kitty |
 | libncurses.5.4.dylib | `_set_escdelay` | 6 | blender, calibre, inkscape, kitty |
@@ -314,43 +344,33 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libpanel.5.4.dylib | `_top_panel` | 6 | blender, calibre, inkscape, kitty |
 | libpanel.5.4.dylib | `_update_panels` | 6 | blender, calibre, inkscape, kitty |
 | libSystem.B.dylib | `_OSAtomicCompareAndSwap64Barrier` | 5 | deluge, godot, openscad, pixelorama |
+| libSystem.B.dylib | `_OSAtomicIncrement64` | 5 | bettertouchtool, daisydisk, gemini, hex-fiend |
 | libSystem.B.dylib | `___divdc3` | 5 | basictex, krita, libreoffice, shotcut |
-| libSystem.B.dylib | `___invert_d2` | 5 | gemini, monitorcontrol, mos, rustdesk |
-| libSystem.B.dylib | `___invert_d3` | 5 | gemini, monitorcontrol, mos, rustdesk |
-| libSystem.B.dylib | `___invert_d4` | 5 | gemini, monitorcontrol, mos, rustdesk |
-| libSystem.B.dylib | `___invert_f2` | 5 | gemini, monitorcontrol, mos, rustdesk |
+| libSystem.B.dylib | `___divsc3` | 5 | krita, ollama-app, openclaw, shotcut |
+| libSystem.B.dylib | `_cexp` | 5 | blender, inkscape, lmms, stremio |
 | libSystem.B.dylib | `_csqrtf` | 5 | blender, calibre, gimp, inkscape |
 | libSystem.B.dylib | `_csqrtl` | 5 | blender, calibre, gimp, inkscape |
+| libSystem.B.dylib | `_dbopen` | 5 | android-studio, cyberduck, duckduckgo, intellij-idea |
 | libSystem.B.dylib | `_devname` | 5 | adobe-acrobat-reader, calibre, emacs-app, utm |
-| libSystem.B.dylib | `_getpass` | 5 | basictex, comfy, keka, sequel-ace |
+| libSystem.B.dylib | `_fwprintf` | 5 | adobe-acrobat-reader, audacity, espanso, kicad |
+| libSystem.B.dylib | `_readpassphrase` | 5 | easydict, keka, tor-browser, utm |
 | libSystem.B.dylib | `_swap_fat_header` | 5 | aldente, google-chrome, microsoft-edge, orbstack |
 | libSystem.B.dylib | `_wcsncasecmp` | 5 | krita, microsoft-teams, openrct2, shotcut |
-| libcups.2.dylib | `_cupsGetDest` | 5 | adobe-acrobat-reader, bruno, openmtp, pencil |
-| libcups.2.dylib | `_cupsGetPPD` | 5 | adobe-acrobat-reader, bruno, openmtp, pencil |
-| libcups.2.dylib | `_cupsGetPPD2` | 5 | adobe-acrobat-reader, bruno, openmtp, pencil |
-| libcups.2.dylib | `_cupsMarkOptions` | 5 | adobe-acrobat-reader, bruno, openmtp, pencil |
-| libcups.2.dylib | `_httpConnectEncrypt` | 5 | adobe-acrobat-reader, bruno, openmtp, pencil |
-| libcups.2.dylib | `_ppdErrorString` | 5 | adobe-acrobat-reader, bruno, openmtp, pencil |
-| libcups.2.dylib | `_ppdLastError` | 5 | adobe-acrobat-reader, bruno, openmtp, pencil |
-| libexpat.1.dylib | `_XML_GetCurrentLineNumber` | 5 | iina, inkscape, kicad, kitty |
-| libffi.dylib | `_ffi_closure_alloc` | 5 | calibre, kitty, krita, libreoffice |
+| libcups.2.dylib | `_cupsRemoveDest` | 5 | adobe-acrobat-reader, battery, bruno, openmtp |
+| libexpat.1.dylib | `_XML_SetDoctypeDeclHandler` | 5 | iina, inkscape, kicad, meld |
 | libffi.dylib | `_ffi_closure_free` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_prep_cif_var` | 5 | calibre, kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_prep_closure_loc` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_type_double` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_type_float` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_type_longdouble` | 5 | calibre, kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_pointer` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_type_sint16` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_type_sint32` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_type_sint64` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_type_sint8` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_type_uint16` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_type_uint32` | 5 | calibre, kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_uint64` | 5 | calibre, kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_uint8` | 5 | calibre, kitty, krita, libreoffice |
 | libffi.dylib | `_ffi_type_void` | 5 | calibre, kitty, krita, libreoffice |
-| libiconv.2.dylib | `_libiconv_set_relocation_prefix` | 5 | deluge, krita, lmms, openscad |
+| libicucore.A.dylib | `_u_errorName` | 5 | iterm2, openclaw, opencode-desktop, r-app |
 | libncurses.5.4.dylib | `_BC` | 5 | inkscape, keepassxc, lmms, meld |
 | libncurses.5.4.dylib | `_PC` | 5 | inkscape, keepassxc, lmms, meld |
 | libncurses.5.4.dylib | `_UP` | 5 | inkscape, keepassxc, lmms, meld |
@@ -381,23 +401,24 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Tcl.framework | `_Tcl_SetObjResult` | 4 | deluge, hex-fiend, inkscape, meld |
 | libSystem.B.dylib | `_NSAddressOfSymbol` | 4 | adobe-acrobat-reader, keka, kicad, pgadmin4 |
 | libSystem.B.dylib | `_NSLookupAndBindSymbol` | 4 | adobe-acrobat-reader, inkscape, kicad, meld |
-| libSystem.B.dylib | `_OSAtomicIncrement64Barrier` | 4 | cmux, gemini, hex-fiend, vorssaint |
-| libSystem.B.dylib | `___divsc3` | 4 | krita, ollama-app, openclaw, shotcut |
+| libSystem.B.dylib | `_NXGetArchInfoFromName` | 4 | android-file-transfer, openttd, steam, vlc |
+| libSystem.B.dylib | `_OSAtomicAdd64` | 4 | bettertouchtool, daisydisk, hex-fiend, proxyman |
+| libSystem.B.dylib | `_OSAtomicDecrement64` | 4 | bettertouchtool, daisydisk, hex-fiend, proxyman |
+| libSystem.B.dylib | `__os_log_create` | 4 | mac-mouse-fix, monitorcontrol, ubersicht, wireshark-app |
+| libSystem.B.dylib | `__os_log_internal` | 4 | mac-mouse-fix, monitorcontrol, ubersicht, wireshark-app |
+| libSystem.B.dylib | `__sigtramp` | 4 | another-redis-desktop-manager, openmtp, pencil, webtorrent |
 | libSystem.B.dylib | `_aio_cancel` | 4 | adobe-acrobat-reader, cloudflare-warp, localsend, virtualbox |
 | libSystem.B.dylib | `_catanh` | 4 | blender, inkscape, kicad, tic80 |
-| libSystem.B.dylib | `_cexp` | 4 | blender, inkscape, lmms, tic80 |
 | libSystem.B.dylib | `_clnt_create` | 4 | blender, inkscape, kicad, meld |
 | libSystem.B.dylib | `_clnt_spcreateerror` | 4 | blender, inkscape, kicad, meld |
 | libSystem.B.dylib | `_cpow` | 4 | basictex, blender, inkscape, tic80 |
-| libSystem.B.dylib | `_dbopen` | 4 | android-studio, cyberduck, intellij-idea, temurin |
 | libSystem.B.dylib | `_fmtcheck` | 4 | lmms, shotcut, tableplus, zoom |
-| libSystem.B.dylib | `_fwprintf` | 4 | adobe-acrobat-reader, audacity, kicad, prusaslicer |
-| libSystem.B.dylib | `_inet_net_pton` | 4 | openmtp, pencil, webtorrent, xcodes-app |
+| libSystem.B.dylib | `_getwchar` | 4 | android-studio, insomnia, ollama-app, superwhisper |
 | libSystem.B.dylib | `_nl_langinfo_l` | 4 | kicad, pgadmin4, tableplus, virtualbox |
-| libSystem.B.dylib | `_readpassphrase` | 4 | keka, tor-browser, utm, vagrant |
+| libSystem.B.dylib | `_strptime_l` | 4 | easydict, orbstack, proxyman, sourcetree |
 | libSystem.B.dylib | `_swab` | 4 | adobe-acrobat-reader, krita, shotcut, vlc |
-| libSystem.B.dylib | `_swscanf` | 4 | adobe-acrobat-reader, audacity, kicad, prusaslicer |
 | libSystem.B.dylib | `_wcsspn` | 4 | adobe-acrobat-reader, audacity, kicad, prusaslicer |
+| libSystem.B.dylib | `_wcstod_l` | 4 | audacity, espanso, kicad, prusaslicer |
 | libSystem.B.dylib | `_xdr_enum` | 4 | blender, inkscape, kicad, meld |
 | libSystem.B.dylib | `_xdr_pointer` | 4 | blender, inkscape, kicad, meld |
 | libSystem.B.dylib | `_xdr_string` | 4 | blender, inkscape, kicad, meld |
@@ -406,15 +427,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_yp_master` | 4 | blender, inkscape, kicad, meld |
 | libSystem.B.dylib | `_yp_match` | 4 | blender, inkscape, kicad, meld |
 | libSystem.B.dylib | `_yperr_string` | 4 | blender, inkscape, kicad, meld |
-| libcups.2.dylib | `_cupsRemoveDest` | 4 | adobe-acrobat-reader, bruno, openmtp, pencil |
+| libbz2.1.0.dylib | `_BZ2_bzread` | 4 | bbedit, inkscape, sequel-ace, tableplus |
+| libbz2.1.0.dylib | `_BZ2_bzwrite` | 4 | bbedit, inkscape, sequel-ace, tableplus |
 | libedit.3.dylib | `_readline` | 4 | deluge, hammerspoon, openmtp, pgadmin4 |
-| libexpat.1.dylib | `_XML_Parse` | 4 | github, keka, kitty, sourcetree |
-| libexpat.1.dylib | `_XML_SetDoctypeDeclHandler` | 4 | iina, inkscape, kicad, meld |
-| libicucore.A.dylib | `_u_errorName` | 4 | iterm2, openclaw, opencode-desktop, sequel-ace |
-| libsqlite3.dylib | `_sqlite3_snapshot_cmp` | 4 | applite, clipy, openclaw, protonvpn |
-| libsqlite3.dylib | `_sqlite3_snapshot_free` | 4 | applite, clipy, openclaw, protonvpn |
-| libsqlite3.dylib | `_sqlite3_snapshot_get` | 4 | applite, clipy, openclaw, protonvpn |
-| libsqlite3.dylib | `_sqlite3_snapshot_open` | 4 | applite, clipy, openclaw, protonvpn |
 | Tcl.framework | `_TclBN_mp_clear` | 3 | deluge, inkscape, meld |
 | Tcl.framework | `_TclBN_mp_init` | 3 | deluge, inkscape, meld |
 | Tcl.framework | `_TclBN_mp_read_radix` | 3 | deluge, inkscape, meld |
@@ -475,11 +490,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_NSLookupSymbolInModule` | 3 | keka, kicad, pgadmin4 |
 | libSystem.B.dylib | `_NSModuleForSymbol` | 3 | inkscape, kicad, meld |
 | libSystem.B.dylib | `_NSUnLinkModule` | 3 | keka, kicad, pgadmin4 |
-| libSystem.B.dylib | `_NXGetArchInfoFromName` | 3 | openttd, steam, vlc |
-| libSystem.B.dylib | `_OSAtomicDequeue` | 3 | hex-fiend, microsoft-teams, obs |
-| libSystem.B.dylib | `_OSAtomicEnqueue` | 3 | hex-fiend, microsoft-teams, obs |
 | libSystem.B.dylib | `___truncsfhf2` | 3 | moonlight, raycast, zoom |
-| libSystem.B.dylib | `__sigtramp` | 3 | openmtp, pencil, webtorrent |
+| libSystem.B.dylib | `___udivmodti4` | 3 | kicad, macwhisper, meld |
 | libSystem.B.dylib | `_cacos` | 3 | blender, inkscape, tic80 |
 | libSystem.B.dylib | `_cacosh` | 3 | blender, inkscape, tic80 |
 | libSystem.B.dylib | `_casin` | 3 | blender, inkscape, tic80 |
@@ -492,15 +504,16 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_csinh` | 3 | blender, inkscape, tic80 |
 | libSystem.B.dylib | `_ctan` | 3 | blender, inkscape, tic80 |
 | libSystem.B.dylib | `_ctanh` | 3 | blender, inkscape, tic80 |
+| libSystem.B.dylib | `_daemon$1050` | 3 | tunnelblick, vlc, xcodes-app |
 | libSystem.B.dylib | `_devname_r` | 3 | calibre, hex-fiend, vnote |
 | libSystem.B.dylib | `_duplocale` | 3 | gimp, krita, thunderbird |
 | libSystem.B.dylib | `_errc` | 3 | brave-browser, google-chrome, microsoft-edge |
 | libSystem.B.dylib | `_fgetws` | 3 | adobe-acrobat-reader, keka, microsoft-teams |
 | libSystem.B.dylib | `_fmemopen` | 3 | gimp, libreoffice, shotcut |
-| libSystem.B.dylib | `_funopen` | 3 | gimp, libreoffice, utm |
+| libSystem.B.dylib | `_getmntinfo_r_np$INODE64` | 3 | bbedit, brave-browser, cmux |
 | libSystem.B.dylib | `_getsectdatafromheader` | 3 | alt-tab, microsoft-teams, windows-app |
-| libSystem.B.dylib | `_getwchar` | 3 | android-studio, insomnia, ollama-app |
 | libSystem.B.dylib | `_lio_listio` | 3 | cloudflare-warp, localsend, virtualbox |
+| libSystem.B.dylib | `_open_memstream` | 3 | shotcut, utm, voiceink |
 | libSystem.B.dylib | `_regcomp_l` | 3 | comfy, iterm2, kicad |
 | libSystem.B.dylib | `_strunvis` | 3 | android-studio, gimp, tableplus |
 | libSystem.B.dylib | `_strvis` | 3 | android-studio, gimp, tableplus |
@@ -512,13 +525,10 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_vfprintf_l` | 3 | inkscape, kicad, prusaslicer |
 | libSystem.B.dylib | `_vis` | 3 | android-studio, gimp, tableplus |
 | libSystem.B.dylib | `_wcsnlen` | 3 | dolphin, moonlight, zoom |
-| libSystem.B.dylib | `_wcstod_l` | 3 | audacity, kicad, prusaslicer |
 | libSystem.B.dylib | `_wcstol_l` | 3 | audacity, kicad, prusaslicer |
 | libSystem.B.dylib | `_wcstoul_l` | 3 | audacity, kicad, prusaslicer |
 | libSystem.B.dylib | `_wprintf` | 3 | adobe-acrobat-reader, audacity, kicad |
 | libbz2.1.0.dylib | `_BZ2_bzWriteClose` | 3 | deluge, sequel-ace, tableplus |
-| libbz2.1.0.dylib | `_BZ2_bzread` | 3 | inkscape, sequel-ace, tableplus |
-| libbz2.1.0.dylib | `_BZ2_bzwrite` | 3 | inkscape, sequel-ace, tableplus |
 | libcups.2.dylib | `_cupsArrayFirst` | 3 | gimp, inkscape, meld |
 | libcups.2.dylib | `_cupsCloseDestJob` | 3 | adobe-acrobat-reader, openmtp, pencil |
 | libcups.2.dylib | `_cupsCreateDestJob` | 3 | adobe-acrobat-reader, openmtp, pencil |
@@ -570,7 +580,23 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libcups.2.dylib | `_ppdMarkOption` | 3 | gimp, inkscape, meld |
 | libcups.2.dylib | `_ppdNextCustomParam` | 3 | gimp, inkscape, meld |
 | libcups.2.dylib | `_ppdPageSize` | 3 | gimp, inkscape, meld |
+| libicucore.A.dylib | `_u_strlen` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_appendReplacement` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_appendTail` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_clone` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_close` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_end` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_find` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_findNext` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_groupCount` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_open` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_reset` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_setText` | 3 | iterm2, r-app, sequel-ace |
+| libicucore.A.dylib | `_uregex_start` | 3 | iterm2, r-app, sequel-ace |
 | libncurses.5.4.dylib | `_curses_version` | 3 | calibre, kitty, krita |
+| libxar.1.dylib | `_xar_signature_first` | 3 | microsoft-auto-update, teamviewer, zoom |
+| libxar.1.dylib | `_xar_signature_get_x509certificate_count` | 3 | microsoft-auto-update, teamviewer, zoom |
+| libxar.1.dylib | `_xar_signature_get_x509certificate_data` | 3 | microsoft-auto-update, teamviewer, zoom |
 | libIOReport.dylib | `_IOReportChannelGetChannelName` | 2 | figma, stats |
 | libIOReport.dylib | `_IOReportChannelGetGroup` | 2 | figma, stats |
 | libIOReport.dylib | `_IOReportChannelGetSubGroup` | 2 | figma, stats |
@@ -589,14 +615,14 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_NXFindBestFatArch` | 2 | kicad, pgadmin4 |
 | libSystem.B.dylib | `_OSAtomicAdd64Barrier` | 2 | cmux, vorssaint |
 | libSystem.B.dylib | `_OSAtomicAnd32` | 2 | audacity, lmms |
-| libSystem.B.dylib | `_OSAtomicIncrement64` | 2 | gemini, hex-fiend |
 | libSystem.B.dylib | `_OSAtomicOr32` | 2 | audacity, lmms |
 | libSystem.B.dylib | `___divxc3` | 2 | krita, shotcut |
 | libSystem.B.dylib | `___floatuntixf` | 2 | hex-fiend, kicad |
 | libSystem.B.dylib | `___mulxc3` | 2 | krita, shotcut |
-| libSystem.B.dylib | `___udivmodti4` | 2 | kicad, meld |
-| libSystem.B.dylib | `__os_log_create` | 2 | monitorcontrol, wireshark-app |
-| libSystem.B.dylib | `__os_log_internal` | 2 | monitorcontrol, wireshark-app |
+| libSystem.B.dylib | `___sandbox_ms` | 2 | adobe-acrobat-reader, battery |
+| libSystem.B.dylib | `__os_activity_initiate` | 2 | alt-tab, keycastr |
+| libSystem.B.dylib | `__os_activity_label_useraction` | 2 | protonvpn, teamviewer |
+| libSystem.B.dylib | `__os_trace_with_buffer` | 2 | alt-tab, keycastr |
 | libSystem.B.dylib | `_acct` | 2 | cloudflare-warp, localsend |
 | libSystem.B.dylib | `_cabs` | 2 | blender, inkscape |
 | libSystem.B.dylib | `_cabsf` | 2 | blender, inkscape |
@@ -635,32 +661,33 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_ctanhf` | 2 | blender, inkscape |
 | libSystem.B.dylib | `_ctanhl` | 2 | blender, inkscape |
 | libSystem.B.dylib | `_ctanl` | 2 | blender, inkscape |
-| libSystem.B.dylib | `_daemon$1050` | 2 | vlc, xcodes-app |
 | libSystem.B.dylib | `_filesec_free` | 2 | openclaw, utm |
 | libSystem.B.dylib | `_filesec_get_property` | 2 | openclaw, utm |
 | libSystem.B.dylib | `_filesec_init` | 2 | openclaw, utm |
 | libSystem.B.dylib | `_fstatfs64` | 2 | docker-desktop, orbstack |
 | libSystem.B.dylib | `_fstatx_np$INODE64` | 2 | openclaw, utm |
 | libSystem.B.dylib | `_ftime` | 2 | adobe-acrobat-reader, zoom |
-| libSystem.B.dylib | `_getmntinfo_r_np$INODE64` | 2 | brave-browser, cmux |
 | libSystem.B.dylib | `_getsectbynamefromheader` | 2 | clipy, sequel-ace |
 | libSystem.B.dylib | `_kSBXProfilePureComputation` | 2 | calibre, vnote |
-| libSystem.B.dylib | `_open_memstream` | 2 | shotcut, utm |
+| libSystem.B.dylib | `_os_trace_debug_enabled` | 2 | alt-tab, keycastr |
 | libSystem.B.dylib | `_pthread_chdir_np` | 2 | 1password, adobe-acrobat-reader |
 | libSystem.B.dylib | `_pthread_cpu_number_np` | 2 | calibre, vnote |
 | libSystem.B.dylib | `_pthread_setconcurrency` | 2 | kicad, libreoffice |
+| libSystem.B.dylib | `_putwc` | 2 | inkscape, stremio |
 | libSystem.B.dylib | `_sbrk` | 2 | godot, pixelorama |
 | libSystem.B.dylib | `_statx_np$INODE64` | 2 | openclaw, utm |
-| libSystem.B.dylib | `_strptime_l` | 2 | orbstack, sourcetree |
 | libSystem.B.dylib | `_swap_linkedit_data_command` | 2 | google-chrome, microsoft-edge |
 | libSystem.B.dylib | `_swap_mach_header_64` | 2 | google-chrome, microsoft-edge |
 | libSystem.B.dylib | `_swap_segment_command_64` | 2 | google-chrome, microsoft-edge |
 | libSystem.B.dylib | `_swap_symtab_command` | 2 | google-chrome, microsoft-edge |
+| libSystem.B.dylib | `_sys_siglist` | 2 | tableplus, tunnelblick |
 | libSystem.B.dylib | `_unmount` | 2 | docker-desktop, orbstack |
 | libSystem.B.dylib | `_vfwprintf` | 2 | adobe-acrobat-reader, microsoft-teams |
 | libSystem.B.dylib | `_vprintf_l` | 2 | kicad, prusaslicer |
 | libSystem.B.dylib | `_vsprintf_l` | 2 | kicad, prusaslicer |
 | libSystem.B.dylib | `_wcstombs_l` | 2 | adobe-acrobat-reader, zoom |
+| libSystem.B.dylib | `_wordexp` | 2 | anydesk, teamviewer |
+| libSystem.B.dylib | `_wordfree` | 2 | anydesk, teamviewer |
 | libX11.6.dylib | `_XChangeProperty` | 2 | basictex, xquartz |
 | libX11.6.dylib | `_XCreateSimpleWindow` | 2 | basictex, xquartz |
 | libX11.6.dylib | `_XDestroyWindow` | 2 | basictex, xquartz |
@@ -675,6 +702,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libX11.6.dylib | `_XSendEvent` | 2 | basictex, xquartz |
 | libX11.6.dylib | `_XSetErrorHandler` | 2 | basictex, xquartz |
 | libX11.6.dylib | `_XSetIOErrorHandler` | 2 | basictex, xquartz |
+| libbz2.1.0.dylib | `_BZ2_bzclose` | 2 | bbedit, inkscape |
+| libbz2.1.0.dylib | `_BZ2_bzflush` | 2 | bbedit, inkscape |
+| libbz2.1.0.dylib | `_BZ2_bzopen` | 2 | bbedit, inkscape |
 | libcups.2.dylib | `_httpWait` | 2 | gimp, inkscape |
 | libexpat.1.dylib | `_XML_ExpatVersion` | 2 | keka, kitty |
 | libexslt.0.dylib | `_exsltRegisterAll` | 2 | inkscape, libreoffice |
@@ -686,7 +716,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libicucore.A.dylib | `_u_getUnicodeVersion` | 2 | openclaw, opencode-desktop |
 | libicucore.A.dylib | `_u_getVersion` | 2 | openclaw, opencode-desktop |
 | libicucore.A.dylib | `_u_isUWhiteSpace` | 2 | openclaw, opencode-desktop |
-| libicucore.A.dylib | `_u_strlen` | 2 | iterm2, sequel-ace |
 | libicucore.A.dylib | `_u_toupper` | 2 | openclaw, opencode-desktop |
 | libicucore.A.dylib | `_u_versionToString` | 2 | openclaw, opencode-desktop |
 | libicucore.A.dylib | `_ubrk_clone` | 2 | openclaw, opencode-desktop |
@@ -836,18 +865,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libicucore.A.dylib | `_uplrules_openForType` | 2 | openclaw, opencode-desktop |
 | libicucore.A.dylib | `_uplrules_selectForRange` | 2 | openclaw, opencode-desktop |
 | libicucore.A.dylib | `_uplrules_selectFormatted` | 2 | openclaw, opencode-desktop |
-| libicucore.A.dylib | `_uregex_appendReplacement` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_appendTail` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_clone` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_close` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_end` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_find` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_findNext` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_groupCount` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_open` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_reset` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_setText` | 2 | iterm2, sequel-ace |
-| libicucore.A.dylib | `_uregex_start` | 2 | iterm2, sequel-ace |
 | libicucore.A.dylib | `_ureldatefmt_close` | 2 | openclaw, opencode-desktop |
 | libicucore.A.dylib | `_ureldatefmt_closeResult` | 2 | openclaw, opencode-desktop |
 | libicucore.A.dylib | `_ureldatefmt_format` | 2 | openclaw, opencode-desktop |
@@ -873,6 +890,14 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libsasl2.2.dylib | `_sasl_dispose` | 2 | tableplus, utm |
 | libsasl2.2.dylib | `_sasl_errdetail` | 2 | tableplus, utm |
 | libsasl2.2.dylib | `_sasl_errstring` | 2 | tableplus, utm |
+| libstdc++.6.dylib | `__ZNSs4_Rep10_M_destroyERKSaIcE` | 2 | android-file-transfer, deluge |
+| libstdc++.6.dylib | `__ZNSs4_Rep20_S_empty_rep_storageE` | 2 | android-file-transfer, deluge |
+| libstdc++.6.dylib | `__ZNSs6assignEPKcm` | 2 | android-file-transfer, deluge |
+| libstdc++.6.dylib | `__ZNSsC1EPKcRKSaIcE` | 2 | android-file-transfer, deluge |
+| libstdc++.6.dylib | `__ZNSsC1ERKSs` | 2 | android-file-transfer, deluge |
+| libxar.1.dylib | `_xar_signature_copy_signed_data` | 2 | microsoft-auto-update, zoom |
+| libxar.1.dylib | `_xar_signature_next` | 2 | microsoft-auto-update, zoom |
+| libxar.1.dylib | `_xar_signature_type` | 2 | microsoft-auto-update, zoom |
 | libxslt.1.dylib | `_xsltApplyStylesheet` | 2 | inkscape, libreoffice |
 | libxslt.1.dylib | `_xsltApplyStylesheetUser` | 2 | inkscape, libreoffice |
 | libxslt.1.dylib | `_xsltFreeSecurityPrefs` | 2 | inkscape, libreoffice |
@@ -916,9 +941,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libIOReport.dylib | `_IOReportCopyAllChannels` | 1 | figma |
 | libSystem.B.dylib | `_NSCreateObjectFileImageFromFile` | 1 | keka |
 | libSystem.B.dylib | `_NSIsSymbolNameDefined` | 1 | adobe-acrobat-reader |
-| libSystem.B.dylib | `_OSAtomicAdd64` | 1 | hex-fiend |
 | libSystem.B.dylib | `_OSAtomicCompareAndSwap32` | 1 | protonvpn |
-| libSystem.B.dylib | `_OSAtomicDecrement64` | 1 | hex-fiend |
 | libSystem.B.dylib | `_OSAtomicTestAndSetBarrier` | 1 | gemini |
 | libSystem.B.dylib | `_SANDBOX_CHECK_NO_REPORT` | 1 | visual-studio-code |
 | libSystem.B.dylib | `__NSConcreteAutoBlock` | 1 | localsend |
@@ -929,17 +952,18 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `___powidf2` | 1 | shotcut |
 | libSystem.B.dylib | `___powisf2` | 1 | shotcut |
 | libSystem.B.dylib | `___pthread_chdir` | 1 | android-studio |
-| libSystem.B.dylib | `___sandbox_ms` | 1 | adobe-acrobat-reader |
 | libSystem.B.dylib | `__keymgr_get_and_lock_processwide_ptr` | 1 | inkscape |
 | libSystem.B.dylib | `__keymgr_set_and_unlock_processwide_ptr` | 1 | inkscape |
 | libSystem.B.dylib | `__keymgr_unlock_processwide_ptr` | 1 | inkscape |
+| libSystem.B.dylib | `__malloc_fork_parent` | 1 | microsoft-auto-update |
+| libSystem.B.dylib | `__malloc_fork_prepare` | 1 | microsoft-auto-update |
 | libSystem.B.dylib | `__os_activity_current` | 1 | bitwarden |
-| libSystem.B.dylib | `__os_activity_initiate` | 1 | alt-tab |
-| libSystem.B.dylib | `__os_activity_label_useraction` | 1 | protonvpn |
-| libSystem.B.dylib | `__os_trace_with_buffer` | 1 | alt-tab |
 | libSystem.B.dylib | `__simd_pow_f4` | 1 | dolphin |
 | libSystem.B.dylib | `__simd_round_d2` | 1 | linearmouse |
+| libSystem.B.dylib | `__simd_sin_f4` | 1 | macwhisper |
 | libSystem.B.dylib | `_arc4random_addrandom` | 1 | tor-browser |
+| libSystem.B.dylib | `_arc4random_stir` | 1 | bbedit |
+| libSystem.B.dylib | `_asl_key` | 1 | tunnelblick |
 | libSystem.B.dylib | `_asl_log_descriptor` | 1 | xquartz |
 | libSystem.B.dylib | `_chmodx_np` | 1 | utm |
 | libSystem.B.dylib | `_coalition_info_resource_usage` | 1 | adobe-acrobat-reader |
@@ -973,12 +997,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_lfind` | 1 | wireshark-app |
 | libSystem.B.dylib | `_lrand48` | 1 | telegram |
 | libSystem.B.dylib | `_lstatx_np$INODE64` | 1 | utm |
+| libSystem.B.dylib | `_malloc_zone_check` | 1 | epic-games |
 | libSystem.B.dylib | `_minherit` | 1 | tor-browser |
 | libSystem.B.dylib | `_mount` | 1 | orbstack |
+| libSystem.B.dylib | `_nexttowardf` | 1 | battery |
 | libSystem.B.dylib | `_nrand48` | 1 | vlc |
-| libSystem.B.dylib | `_os_trace_debug_enabled` | 1 | alt-tab |
 | libSystem.B.dylib | `_pthread_getconcurrency` | 1 | libreoffice |
-| libSystem.B.dylib | `_putwc` | 1 | inkscape |
 | libSystem.B.dylib | `_putwchar` | 1 | keka |
 | libSystem.B.dylib | `_sethostent` | 1 | vlc |
 | libSystem.B.dylib | `_setprotoent` | 1 | emacs-app |
@@ -993,11 +1017,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_swap_dylib_command` | 1 | steam |
 | libSystem.B.dylib | `_swap_section` | 1 | steam |
 | libSystem.B.dylib | `_sys_errlist` | 1 | vlc |
-| libSystem.B.dylib | `_sys_siglist` | 1 | tableplus |
 | libSystem.B.dylib | `_vswscanf` | 1 | kicad |
 | libSystem.B.dylib | `_vwprintf` | 1 | adobe-acrobat-reader |
-| libSystem.B.dylib | `_wordexp` | 1 | anydesk |
-| libSystem.B.dylib | `_wordfree` | 1 | anydesk |
 | libX11.6.dylib | `_XAllocColor` | 1 | basictex |
 | libX11.6.dylib | `_XAllocColorCells` | 1 | basictex |
 | libX11.6.dylib | `_XBell` | 1 | basictex |
@@ -1312,13 +1333,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libawt_lwawt.dylib | `_awt_SetBounds` | 1 | cyberduck |
 | libawt_lwawt.dylib | `_awt_SynthesizeWindowActivation` | 1 | cyberduck |
 | libawt_lwawt.dylib | `_awt_Unlock` | 1 | cyberduck |
-| libbz2.1.0.dylib | `_BZ2_bzclose` | 1 | inkscape |
 | libbz2.1.0.dylib | `_BZ2_bzerror` | 1 | inkscape |
-| libbz2.1.0.dylib | `_BZ2_bzflush` | 1 | inkscape |
-| libbz2.1.0.dylib | `_BZ2_bzopen` | 1 | inkscape |
+| libc++.1.dylib | `__ZNSt3__16futureIvE3getEv` | 1 | opensuperwhisper |
 | libcarla_native-plugin.dylib | `_carla_get_library_filename` | 1 | lmms |
 | libcarla_native-plugin.dylib | `_carla_get_native_patchbay_plugin` | 1 | lmms |
 | libcarla_native-plugin.dylib | `_carla_get_native_rack_plugin` | 1 | lmms |
+| libcups.2.dylib | `_cupsPrintFile` | 1 | teamviewer |
 | libcups.2.dylib | `_httpCheck` | 1 | meld |
 | libcupsimage.2.dylib | `_cupsRasterClose` | 1 | inkscape |
 | libcupsimage.2.dylib | `_cupsRasterOpen` | 1 | inkscape |
@@ -1378,6 +1398,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libexslt.0.dylib | `_exsltMathXpathCtxtRegister` | 1 | inkscape |
 | libexslt.0.dylib | `_exsltSetsXpathCtxtRegister` | 1 | inkscape |
 | libexslt.0.dylib | `_exsltStrXpathCtxtRegister` | 1 | inkscape |
+| libicucore.A.dylib | `_u_getCombiningClass` | 1 | bbedit |
+| libicucore.A.dylib | `_u_iscntrl` | 1 | bbedit |
 | libicucore.A.dylib | `_uidna_IDNToASCII` | 1 | adobe-acrobat-reader |
 | libmimerapi.dylib | `_MimerAddBatch` | 1 | moonlight |
 | libmimerapi.dylib | `_MimerBeginSession8` | 1 | moonlight |
@@ -1579,22 +1601,31 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libsqlite3.dylib | `_sqlite3_mutex_enter` | 1 | whatsapp |
 | libsqlite3.dylib | `_sqlite3_mutex_free` | 1 | whatsapp |
 | libsqlite3.dylib | `_sqlite3_mutex_leave` | 1 | whatsapp |
-| libstdc++.6.dylib | `__ZNSs4_Rep10_M_destroyERKSaIcE` | 1 | deluge |
-| libstdc++.6.dylib | `__ZNSs4_Rep20_S_empty_rep_storageE` | 1 | deluge |
-| libstdc++.6.dylib | `__ZNSs6assignEPKcm` | 1 | deluge |
-| libstdc++.6.dylib | `__ZNSsC1EPKcRKSaIcE` | 1 | deluge |
-| libstdc++.6.dylib | `__ZNSsC1ERKSs` | 1 | deluge |
+| libstdc++.6.dylib | `__ZNKSs13find_first_ofEPKcmm` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNKSs17find_first_not_ofEPKcmm` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNKSs6substrEmm` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNKSs7compareEPKc` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNKSs7compareERKSs` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNSs12_M_leak_hardEv` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNSs6appendEPKcm` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNSs6appendERKSs` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNSs6appendEmc` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNSs6assignERKSs` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNSsC1EPKcmRKSaIcE` | 1 | android-file-transfer |
 | libstdc++.6.dylib | `__ZNSsD1Ev` | 1 | deluge |
+| libstdc++.6.dylib | `__ZNSt8ios_base4InitC1Ev` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZNSt8ios_base4InitD1Ev` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZSt18_Rb_tree_decrementPSt18_Rb_tree_node_base` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZSt20__throw_length_errorPKc` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZSt20__throw_out_of_rangePKc` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZSt28_Rb_tree_rebalance_for_erasePSt18_Rb_tree_node_baseRS_` | 1 | android-file-transfer |
+| libstdc++.6.dylib | `__ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_node_baseS0_RS_` | 1 | android-file-transfer |
 | libxar.1.dylib | `_xar_err_get_errno` | 1 | zoom |
 | libxar.1.dylib | `_xar_err_get_string` | 1 | zoom |
 | libxar.1.dylib | `_xar_get_safe_path` | 1 | docker-desktop |
 | libxar.1.dylib | `_xar_register_errhandler` | 1 | zoom |
-| libxar.1.dylib | `_xar_signature_copy_signed_data` | 1 | zoom |
-| libxar.1.dylib | `_xar_signature_first` | 1 | zoom |
-| libxar.1.dylib | `_xar_signature_get_x509certificate_count` | 1 | zoom |
-| libxar.1.dylib | `_xar_signature_get_x509certificate_data` | 1 | zoom |
-| libxar.1.dylib | `_xar_signature_next` | 1 | zoom |
-| libxar.1.dylib | `_xar_signature_type` | 1 | zoom |
 | libxslt.1.dylib | `_xsltApplyOneTemplate` | 1 | inkscape |
 | libxslt.1.dylib | `_xsltCleanupGlobals` | 1 | inkscape |
 | libxslt.1.dylib | `_xsltDocDefaultLoader` | 1 | inkscape |
