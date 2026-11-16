@@ -333,6 +333,16 @@ int main(int argc, char **argv) {
     }
     CHECK(media, "associação: H2C de estado da mídia (conectado)");
     CHECK(ra, "associação: RA com ARFR1 AC 1SS, 80 MHz, SGI, VHT, máscara OFDM + MCS0-9");
+    {   /* páginas reservadas do LPS na FIFO (a partir da página 460) e o H2C com as posições */
+        const u8 *pg = txff + 460 * 128;
+        bool ps = pg[128] != 0 && pg[128 + 48] == 0xA4 && (pg[128 + 48 + 2] | (pg[128 + 48 + 3] & 0x3F) << 8) == 3 && !memcmp(pg + 128 + 48 + 4, b.bssid, 6);
+        bool qn = pg[256 + 48] == 0xC8 && (pg[256 + 8 + 2] & 0x80);
+        bool nl = pg[384 + 48] == 0x48 && pg[384 + 48 + 1] == 0x01 && !memcmp(pg + 384 + 48 + 10, radio->mac, 6);
+        bool h = false;
+        for (int i = before; i < nh2c; i++) if (h2c_log[i].b[0] == 0x00 && h2c_log[i].b[2] == 1 && h2c_log[i].b[3] == 3 && h2c_log[i].b[4] == 2) h = true;
+        CHECK(ps && qn && nl, "LPS: PS-Poll (AID 3), QoS Null e Null nas páginas reservadas, cada um com descritor");
+        CHECK(h, "LPS: H2C de páginas reservadas (PS-Poll 1, Null 3, QoS Null 2)");
+    }
     CHECK(!memcmp(R + 0x618, b.bssid, 6) && (R[0x6A8] | R[0x6A9] << 8) == 3 && ((rd32raw(0x100) >> 16) & 3) == 2, "BSSID, AID e tipo de rede gravados");
 
     /* dados unicast: o firmware escolhe a taxa */

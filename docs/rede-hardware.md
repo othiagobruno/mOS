@@ -118,3 +118,10 @@ RTL8821CE desliga o MAC pela sequência de energia e, na volta, sobe de novo (fi
 volta ao canal e à largura de antes e chama `wifi_radio_lost()`, que refaz autenticação e handshake na
 mesma rede com a PMK guardada. O Bluetooth USB é reenumerado pelo xHCI. Testes: `r8169_host` 68/68 e
 `rtw88_chip_host` 37/37 com o caso de repouso.
+
+## Páginas reservadas do LPS
+
+Na associação o driver grava na FIFO do chip (páginas do driver, a partir da 460) um PS-Poll com o AID,
+um QoS Null e um Null, cada um com descritor de TX, e manda o H2C 0x00 com as posições (1, 3, 2): é com
+eles que o firmware avisa o AP ao entrar e sair do LPS. Falha na gravação desliga o LPS na sessão.
+Teste: `rtw88_chip_host` 39/39.
