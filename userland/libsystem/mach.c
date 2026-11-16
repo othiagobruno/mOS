@@ -1227,3 +1227,22 @@ int task_set_special_port(u32 task, int which, u32 port) {
     u64 a[8] = {(u64)which, port, 0, 0, 0, 0, 0, 0};
     return (int)mach_port(MACH_OP_SET_SPECIAL, a);
 }
+
+/* ---- lock sets (lock_set_create, lock_acquire...): aposentados no XNU atual (osfmk/kern/sync_lock.c só devolve
+ * KERN_FAILURE). Mesmo contrato aqui: quem chama recebe a falha que receberia num macOS de verdade. */
+kern_return_t lock_set_create(mach_port_t task, mach_port_t *set, int n, int policy) { (void)task; (void)n; (void)policy; if (set) *set = 0; return KERN_FAILURE; }
+kern_return_t lock_set_destroy(mach_port_t task, mach_port_t set) { (void)task; (void)set; return KERN_FAILURE; }
+kern_return_t lock_acquire(mach_port_t set, int id) { (void)set; (void)id; return KERN_FAILURE; }
+kern_return_t lock_release(mach_port_t set, int id) { (void)set; (void)id; return KERN_FAILURE; }
+kern_return_t lock_try(mach_port_t set, int id) { (void)set; (void)id; return KERN_FAILURE; }
+kern_return_t lock_make_stable(mach_port_t set, int id) { (void)set; (void)id; return KERN_FAILURE; }
+kern_return_t lock_handoff(mach_port_t set, int id) { (void)set; (void)id; return KERN_FAILURE; }
+kern_return_t lock_handoff_accept(mach_port_t set, int id) { (void)set; (void)id; return KERN_FAILURE; }
+kern_return_t task_lock_set_create(mach_port_t task, mach_port_t *set, int n, int policy) { return lock_set_create(task, set, n, policy); }
+
+/* voucher_mach_msg_set: o libdispatch chama antes de cada mach_msg para pôr o voucher da thread no cabeçalho.
+ * O mOS não tem vouchers: com voucher nulo o libdispatch devolve false e não mexe na mensagem, que é o que vale aqui. */
+int voucher_mach_msg_set(void *msg) { (void)msg; return 0; }
+void voucher_mach_msg_clear(void *msg) { (void)msg; }
+void *voucher_mach_msg_adopt(void *msg) { (void)msg; return 0; }
+void voucher_mach_msg_revert(void *state) { (void)state; }

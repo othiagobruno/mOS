@@ -1025,12 +1025,16 @@ int posix_spawn_file_actions_addchdir_np(void *a, const char *p) {
     }
     return fa_push(a, op);
 }
+/* macOS 26: o nome sem _np (POSIX.1-2024); o Electron do Claude e do Slack importa este */
+int posix_spawn_file_actions_addchdir(void *a, const char *p) { return posix_spawn_file_actions_addchdir_np(a, p); }
+int posix_spawn_file_actions_addfchdir(void *a, int fd);
 /* addfchdir_np: o filho começa na pasta do fd (o std.process do Zig muda a pasta do filho assim) */
 int posix_spawn_file_actions_addfchdir_np(void *a, int fd) {
     char d[1024];
     if (cx_syscall(SYS_FDPATH, fd, (long)d, sizeof d, 0, 0) < 0) return 9;   /* EBADF */
     return posix_spawn_file_actions_addchdir_np(a, d);
 }
+int posix_spawn_file_actions_addfchdir(void *a, int fd) { return posix_spawn_file_actions_addfchdir_np(a, fd); }
 int posix_spawnattr_init(void *a) {
     cx_at *t = calloc(1, sizeof *t);
     if (!a || !t) return 12;
