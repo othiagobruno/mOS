@@ -214,6 +214,41 @@ void vmm_map_mmio(u64 phys, u64 size) {
 
 /* memória de vídeo fora do framebuffer do GOP (VRAM da GPU AMD, kernel/dev/amdgpu): write-combining (PAT1),
  * como o próprio framebuffer no paging_init. Faixa em páginas de 2 MiB; só para BAR de memória de vídeo. */
+/* Página de guarda no mapa de identidade (pilhas do kernel, proc/sched.c): guard = true tira o P da página de 4 KiB em
+ * va; false devolve. Na primeira vez, a página de 2 MiB que a contém vira uma tabela de 512 páginas com os mesmos bits
+ * (mesmo endereço e cache), então nada muda para o resto. As PDs são as mesmas em todo processo (a PML4 de cada um copia
+ * as entradas do kernel). Outros núcleos podem ter a entrada antiga no TLB por um tempo: a guarda vale assim que a
+ * entrada sai de lá; tirar a guarda nunca deixa entrada velha errada (o x86 não guarda "ausente" no TLB). */
+static spinlock_t guard_lock;
+bool vmm_guard(u64 va, bool guard) {
+    va &= ~0xFFFULL;
+    if (!pml4 || !(pml4[(va >> 39) & 511] & PG_P)) return false;
+    u64 f = spin_lock_irqsave(&guard_lock);
+    u64 *pdpt = (u64 *)(pml4[(va >> 39) & 511] & 0x000FFFFFFFFFF000ULL);
+    bool ok = false;
+    if (pdpt[(va >> 30) & 511] & PG_P) {
+        u64 *pd = (u64 *)(pdpt[(va >> 30) & 511] & 0x000FFFFFFFFFF000ULL);
+        u64 *pde = &pd[(va >> 21) & 511];
+        if ((*pde & PG_P) && (*pde & PG_PS)) {
+            u64 *pt = (u64 *)pmm_alloc(1);
+            if (pt) {
+                u64 base = *pde & ~0x1FFFFFULL & 0x000FFFFFFFFFFFFFULL, bits = *pde & (PG_RW | PG_PWT | PG_PCD | (1ULL << 2));
+                for (int i = 0; i < 512; i++) pt[i] = (base + (u64)i * 4096) | PG_P | bits;
+                *pde = (u64)pt | PG_P | PG_RW | (*pde & (1ULL << 2));
+            }
+        }
+        if ((*pde & PG_P) && !(*pde & PG_PS)) {
+            u64 *pt = (u64 *)(*pde & 0x000FFFFFFFFFF000ULL);
+            if (guard) pt[(va >> 12) & 511] &= ~PG_P;
+            else pt[(va >> 12) & 511] |= PG_P;
+            __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
+            ok = true;
+        }
+    }
+    spin_unlock_irqrestore(&guard_lock, f);
+    return ok;
+}
+
 void vmm_map_wc(u64 phys, u64 size) {
     pmm_mark_device(phys, size);                 /* VRAM: nunca vira RAM livre (gpu_user_map_io) */
     for (u64 a = ALIGN_DOWN(phys, 0x200000); a < phys + size; a += 0x200000) map_2m(a, PG_PWT);

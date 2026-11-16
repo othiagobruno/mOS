@@ -453,10 +453,36 @@ static u64 build_frame(thread_t *t, u64 rip, u64 rsp, bool user, u64 rcx, u64 rd
     return (u64)f;
 }
 
+/* Pilha do kernel: KSTACK_SIZE do PMM com uma página de guarda embaixo (não mapeada, vmm_guard). Estourar a pilha vira
+ * falta de página na hora, com o nome da thread (sched_kstack_guard_hit), em vez de escrever no vizinho. */
+#define KSTACK_PAGES (KSTACK_SIZE / 4096)
+static u8 *kstack_alloc(void) {
+    u64 ph = pmm_alloc(KSTACK_PAGES + 1);
+    if (!ph) return NULL;
+    vmm_guard(ph, true);
+    return (u8 *)(ph + 4096);
+}
+static void kstack_free(u8 *k) {
+    if (!k) return;
+    u64 ph = (u64)k - 4096;
+    vmm_guard(ph, false);
+    pmm_free(ph, KSTACK_PAGES + 1);
+}
+/* exceção do kernel (arch/cpu.c) em addr: é a guarda de alguma pilha? Diz de quem e devolve true. */
+bool sched_kstack_guard_hit(u64 addr) {
+    for (thread_t *t = threads; t; t = t->next)
+        if (t->kstack && addr >= (u64)t->kstack - 4096 && addr < (u64)t->kstack) {
+            kprintf("*** pilha do kernel estourou: thread %d \"%s\" (pid %d), %u KiB\n", t->id, t->name,
+                    t->proc ? t->proc->pid : -1, KSTACK_SIZE >> 10);
+            return true;
+        }
+    return false;
+}
+
 static thread_t *new_thread(const char *name, process_t *p) {
     thread_t *t = kcalloc(1, sizeof *t);
     if (!t) return NULL;
-    t->kstack = kmalloc(KSTACK_SIZE);
+    t->kstack = kstack_alloc();
     if (!t->kstack) { kfree(t); return NULL; }
     t->kstack_top = ((u64)t->kstack + KSTACK_SIZE) & ~15ULL;
     ((u64 *)t->kstack)[0] = ((u64 *)t->kstack)[1] = KSTACK_CANARY;
@@ -543,11 +569,10 @@ static void reap(void) {
         thread_t *t = dead;
         dead = t->next;
         extern bool kheap_live(const void *p);
-        if (!kheap_live(t) || !kheap_live(t->kstack))   /* diagnóstico do kfree duplo (docs/porte-brew.md) */
-            kprintf("reap: thread %d \"%s\" (pid %d) já liberada: t=%p vivo=%d kstack=%p vivo=%d\n", t->id, t->name,
-                    t->proc ? t->proc->pid : -1, t, kheap_live(t), t->kstack, kheap_live(t->kstack));
+        if (!kheap_live(t))   /* diagnóstico do kfree duplo (docs/porte-brew.md) */
+            kprintf("reap: thread %d \"%s\" (pid %d) já liberada: t=%p\n", t->id, t->name, t->proc ? t->proc->pid : -1, t);
         if (t->proc) proc_thread_exited(t);
-        kfree(t->kstack);
+        kstack_free(t->kstack);
         kfree(t);
     }
     sched_lk();

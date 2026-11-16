@@ -114,6 +114,7 @@ __attribute__((weak)) u64 sched_dead_check(int_frame_t *f) { (void)f; return 0; 
 __attribute__((weak)) u64 sched_kexit(u64 r) { return r; }
 __attribute__((weak)) u64 proc_syscall_fast(int_frame_t *f) { (void)f; return 0; }
 __attribute__((weak)) u64 sched_irq_exit_nobkl(int_frame_t *f) { return (u64)f; }
+__attribute__((weak)) bool sched_kstack_guard_hit(u64 addr) { (void)addr; return false; }
 __attribute__((weak)) void sched_post(void) {}
 
 static void exc_panic(int_frame_t *f) {
@@ -123,7 +124,9 @@ static void exc_panic(int_frame_t *f) {
     snprintf(msg, sizeof(msg), "%s (vetor %llu, erro 0x%llx) em RIP=0x%llx CR2=0x%llx [núcleo %d]",
              exc_names[f->vector], f->vector, f->error, f->rip, cr2, this_cpu());
     kprintf("\n*** EXCEÇÃO: %s\n", msg);
-    {   /* para traduzir em funções (build com /map): base de carga, registradores e endereços do kernel na pilha */
+    extern bool sched_kstack_guard_hit(u64 addr);
+    bool guard = (f->cs & 3) != 3 && (sched_kstack_guard_hit(cr2) || sched_kstack_guard_hit(f->rsp));
+    if (!guard) {   /* para traduzir em funções (build com /map): base de carga, registradores e endereços do kernel na pilha */
         extern char __ImageBase;
         u64 kb = (u64)&__ImageBase;
         kprintf("*** kernel em 0x%llx (RIP-base = 0x%llx) rax=%llx rbx=%llx rcx=%llx rdx=%llx rsi=%llx rdi=%llx\n",
