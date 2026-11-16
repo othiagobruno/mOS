@@ -149,7 +149,7 @@ u64 CMClockConvertHostTimeToSystemUnits(cm_time_t t) {
     return (u64)((double)t.value * 1e9 / (double)t.timescale);    /* mach_absolute_time em ns no mOS */
 }
 /* Bloco, formato e sample buffer: openbot_cm.c. */
-OSStatus CMIOObjectGetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 sz, u32 *used, void *data) { (void)obj; (void)addr; (void)qs; (void)q; (void)sz; (void)data; if (used) *used = 0; return 0x77686F3F; /* kCMIOHardwareUnknownPropertyError 'who?' */ }
+/* CMIOObjectGetPropertyData e o resto do CoreMediaIO: cmio.c */
 
 /* ================================================================ VideoToolbox
  * H.264: decodificador e codificador do OpenH264 (host-audio/h264_glue.cpp, h264enc_glue.cpp). HEVC (-12906/-12908):
