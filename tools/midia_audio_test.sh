@@ -66,5 +66,27 @@ n=$((n+1)); "$T/agt" && ok=$((ok+1))
 # CoreMIDI (fontes/destinos virtuais, UMP 1.0/2.0)
 gcc -O1 -w -I"$R/userland/libsystem" "$R/tools/coremidi_test.c" "$R/userland/libsystem/coremidi.c" -lpthread -o "$T/cmt" || exit 1
 n=$((n+1)); "$T/cmt" && ok=$((ok+1))
+# codificadores AAC (FDK libAACenc) e Opus: ida e volta pelos decodificadores do mOS; o ADTS pelo ffmpeg
+gcc -O1 -w -I"$R/userland/host-audio" -I"$R/userland/libsystem" -c "$R/tools/audioenc_test.c" -o "$T/aet.o" && g++ "$T/aet.o" "$T"/o/*.o -lm -o "$T/aet" || exit 1
+for c in "aac 48000 2 128000" "aac 44100 1 64000" "he 48000 2 64000" "hev2 48000 2 32000" "opus 48000 2 96000" "opus 48000 1 32000"; do
+    set -- $c
+    n=$((n+1))
+    r=$("$T/aet" $1 $2 $3 $4 "$T/enc_$1_$3.adts"); echo "$r"
+    case "$r" in "audioenc ok"*) ;; *) continue;; esac
+    if [ "$1" != opus ]; then
+        d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$T/enc_$1_$3.adts" 2>/dev/null)
+        ffmpeg $F -i "$T/enc_$1_$3.adts" -f s16le "$T/enc.raw" 2>/dev/null || { echo "  ffmpeg não decodificou o ADTS"; continue; }
+        echo "  ffmpeg decodifica o ADTS: $(stat -c%s "$T/enc.raw") bytes"
+    fi
+    ok=$((ok+1))
+done
+# AudioConverter codificando (coreaudio.c de verdade) e decodificando o que saiu com o cookie dele
+gcc -std=gnu11 -O1 -w -fno-builtin -I"$R/userland/libsystem/kshim" -I"$R/userland/libsystem" -I"$R/kernel/include" \
+    -c "$R/userland/libsystem/coreaudio.c" -o "$T/ca.o" && gcc -O1 -w -c "$R/tools/audioconverter_enc_test.c" -o "$T/acet.o" && \
+    g++ "$T/acet.o" "$T/ca.o" "$T/stubs.o" "$T"/o/*.o -lm -lpthread -o "$T/acet" || exit 1
+for c in "aac 48000 2 128000" "aac 44100 1 64000" "aach 48000 2 64000" "aacp 48000 2 32000" "opus 48000 2 96000" "aac 48000 2 128000 pequeno"; do
+    n=$((n+1)); r=$("$T/acet" $c); echo "$r"
+    case "$r" in "acenc ok"*) ok=$((ok+1));; esac
+done
 echo "midia-audio: $ok/$n ok"
 [ "$ok" = "$n" ]

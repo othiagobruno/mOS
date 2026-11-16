@@ -2255,7 +2255,14 @@ struct aconv {
     cx_pdec *dec;
     u8 *cookie; u32 cookie_n;
     i16 *fifo; u32 fifo_n, fifo_cap, fifo_ch, fifo_rate;
-    aconv_t *inner;           /* PCM s16 do decodificador -> dst */
+    aconv_t *inner;           /* PCM s16 do decodificador -> dst; na codificação: src -> s16 na taxa/canais de dst */
+    /* modo de codificação (LPCM -> AAC/HE-AAC/Opus) */
+    int encode, enc_kind;     /* 1 AAC (FDK), 2 Opus */
+    void *enc;
+    u32 enc_bitrate, enc_frame, enc_delay;
+    int enc_eof, enc_failed;
+    i16 *ein; u32 ein_n;      /* PCM esperando completar um pacote */
+    u8 *hold; int hold_n;     /* pacote pronto que não coube no buffer do app: sai na próxima chamada */
 };
 #define AC_MAGIC 0x4143564Eu
 static aconv_t *ac_of(void *c) { aconv_t *a = c; return a && a->magic == AC_MAGIC ? a : 0; }
@@ -2265,9 +2272,39 @@ static int ac_decodable(u32 f) {
            f == FCC('.', 'm', 'p', '2') || f == FCC('.', 'm', 'p', '1') || f == FCC('o', 'p', 'u', 's') || f == FCC('a', 'l', 'a', 'c');
 }
 OSStatus AudioConverterDispose(void *c);
+/* codificação: cascas em host-audio (aac_glue.cpp, opus_glue.c) */
+void *cx_aacenc_open(int rate, int channels, int bitrate, int aot, int adts, u8 *asc, int *asc_n, int *frame, int *delay);
+int cx_aacenc_encode(void *e, const i16 *pcm, int frames, u8 *out, int cap);
+void cx_aacenc_close(void *e);
+void *cx_opusenc_open(int rate, int channels, int bitrate, int voip, int *frame, int *preskip);
+int cx_opusenc_encode(void *e, const i16 *pcm, int frames, u8 *out, int cap);
+void cx_opusenc_close(void *e);
+int cx_opusenc_head(int channels, int preskip, int in_rate, u8 out[19]);
+static int ac_encodable(u32 f) {
+    return f == FCC('a', 'a', 'c', ' ') || f == FCC('a', 'a', 'c', 'h') || f == FCC('a', 'a', 'c', 'p') || f == FCC('o', 'p', 'u', 's');
+}
 OSStatus AudioConverterNew(const asbd_t *src, const asbd_t *dst, void **out) {
     if (!src || !dst || !out) return kAudio_ParamError;
     asbd_t s = *src, d = *dst;
+    lpcm_fix(&s);
+    if (s.mFormatID == kAudioFormatLinearPCM && lpcm_ok(&s) && ac_encodable(d.mFormatID)) {
+        int opus = d.mFormatID == FCC('o', 'p', 'u', 's');
+        if (d.mChannelsPerFrame < 1 || d.mChannelsPerFrame > (opus ? 2u : 8u) || d.mSampleRate <= 0) { *out = 0; return kAudioConverterErr_FormatNotSupported; }
+        if (d.mFormatID == FCC('a', 'a', 'c', 'p') && d.mChannelsPerFrame != 2) { *out = 0; return kAudioConverterErr_FormatNotSupported; }
+        aconv_t *c = calloc(1, sizeof *c);
+        if (!c) return -108;
+        c->magic = AC_MAGIC;
+        c->src = s;
+        c->dst = d;
+        c->encode = 1;
+        c->enc_kind = opus ? 2 : 1;
+        /* o que o macOS preenche no ASBD de destino */
+        c->dst.mFramesPerPacket = opus ? (u32)(d.mSampleRate / 50) : d.mFormatID == FCC('a', 'a', 'c', ' ') ? 1024 : 2048;
+        c->dst.mBytesPerPacket = 0; c->dst.mBytesPerFrame = 0; c->dst.mBitsPerChannel = 0;
+        *out = c;
+        return 0;
+    }
+    s = *src;
     lpcm_fix(&d);
     if (s.mFormatID != kAudioFormatLinearPCM && ac_decodable(s.mFormatID) && lpcm_ok(&d)) {
         aconv_t *c = calloc(1, sizeof *c);
@@ -2303,6 +2340,11 @@ OSStatus AudioConverterDispose(void *c) {
     aconv_t *a = ac_of(c);
     if (!a) return kAudio_ParamError;
     if (a->decode) { ac_dec_reset(a); free(a->fifo); free(a->cookie); }
+    if (a->encode) {
+        if (a->enc) { if (a->enc_kind == 1) cx_aacenc_close(a->enc); else cx_opusenc_close(a->enc); }
+        if (a->inner) AudioConverterDispose(a->inner);
+        free(a->ein); free(a->cookie); free(a->hold);
+    }
     a->magic = 0; free(a->tmp); free(a->tmp2); free(a->pend); free(a);
     return 0;
 }
@@ -2310,6 +2352,12 @@ OSStatus AudioConverterReset(void *c) {
     aconv_t *a = ac_of(c);
     if (!a) return kAudio_ParamError;
     if (a->decode) { ac_dec_reset(a); return 0; }
+    if (a->encode) {   /* recomeça o fluxo: codificador novo (o cookie continua o mesmo) */
+        if (a->enc) { if (a->enc_kind == 1) cx_aacenc_close(a->enc); else cx_opusenc_close(a->enc); a->enc = 0; }
+        if (a->inner) AudioConverterReset(a->inner);
+        a->ein_n = 0; a->enc_eof = 0; a->enc_failed = 0; a->hold_n = 0;
+        return 0;
+    }
     rs_init(&a->rs, a->src.mSampleRate, a->dst.mSampleRate);
     a->pend_n = 0;
     return 0;
@@ -2456,11 +2504,114 @@ static OSStatus ac_fill_decode(aconv_t *a, acinput_fn proc, void *ud, u32 *npack
 }
 
 /* o conversor pede entrada ao app pelo proc até encher a saída (ou o proc devolver 0 pacotes / erro) */
+OSStatus AudioConverterFillComplexBuffer(void *c, acinput_fn proc, void *ud, u32 *npackets, ablist_t *out, aspd_t *pd);
+/* abre o codificador (na primeira necessidade: as propriedades já foram ajustadas) e o conversor src -> s16 */
+static OSStatus ac_enc_open(aconv_t *a) {
+    if (a->enc) return 0;
+    if (a->enc_failed) return kAudioConverterErr_FormatNotSupported;
+    int rate = (int)(a->dst.mSampleRate + 0.5), ch = (int)a->dst.mChannelsPerFrame, frame = 0, delay = 0;
+    if (a->enc_kind == 1) {
+        int aot = a->dst.mFormatID == FCC('a', 'a', 'c', 'h') ? 5 : a->dst.mFormatID == FCC('a', 'a', 'c', 'p') ? 29 : 2;
+        u8 asc[64];
+        int asc_n = sizeof asc;
+        a->enc = cx_aacenc_open(rate, ch, (int)a->enc_bitrate, aot, 0, asc, &asc_n, &frame, &delay);
+        if (a->enc && !a->cookie) {   /* cookie = ES_Descriptor (esds) com o ASC, como o AudioConverter do macOS */
+            u8 *ck = malloc(64 + (size_t)asc_n), *p = ck;
+            if (ck) {
+                *p++ = 3; *p++ = (u8)(3 + 2 + 13 + 2 + asc_n + 3); *p++ = 0; *p++ = 0; *p++ = 0;
+                *p++ = 4; *p++ = (u8)(13 + 2 + asc_n); *p++ = 0x40; *p++ = 0x15;
+                for (int i = 0; i < 3; i++) *p++ = 0;   /* bufferSizeDB */
+                u32 brs[2] = {a->enc_bitrate, a->enc_bitrate};
+                for (int k = 0; k < 2; k++) { *p++ = (u8)(brs[k] >> 24); *p++ = (u8)(brs[k] >> 16); *p++ = (u8)(brs[k] >> 8); *p++ = (u8)brs[k]; }
+                *p++ = 5; *p++ = (u8)asc_n; memcpy(p, asc, (size_t)asc_n); p += asc_n;
+                *p++ = 6; *p++ = 1; *p++ = 2;   /* SLConfigDescriptor */
+                a->cookie = ck;
+                a->cookie_n = (u32)(p - ck);
+            }
+        }
+    } else {
+        int pre = 0;
+        a->enc = cx_opusenc_open(rate, ch, (int)a->enc_bitrate, 0, &frame, &pre);
+        delay = pre;
+        if (a->enc && !a->cookie && (a->cookie = malloc(19))) a->cookie_n = (u32)cx_opusenc_head(ch, pre, rate, a->cookie);
+    }
+    if (!a->enc) { a->enc_failed = 1; return kAudioConverterErr_FormatNotSupported; }
+    a->enc_frame = (u32)frame;
+    a->enc_delay = (u32)delay;
+    a->dst.mFramesPerPacket = (u32)frame;
+    if (!a->inner) {
+        asbd_t mid = {0};
+        mid.mSampleRate = a->dst.mSampleRate;
+        mid.mFormatID = kAudioFormatLinearPCM;
+        mid.mFormatFlags = kFmtSignedInt | kFmtPacked;
+        mid.mChannelsPerFrame = (u32)ch;
+        mid.mBitsPerChannel = 16;
+        mid.mFramesPerPacket = 1;
+        mid.mBytesPerFrame = mid.mBytesPerPacket = 2u * (u32)ch;
+        void *ic = 0;
+        if (AudioConverterNew(&a->src, &mid, &ic)) { a->enc_failed = 1; return kAudioConverterErr_FormatNotSupported; }
+        a->inner = ic;
+    }
+    if (!a->ein && !(a->ein = malloc((size_t)frame * (size_t)ch * 2))) return -108;
+    return 0;
+}
+/* PCM do app (pelo conversor interno) -> pacotes; o erro do proc volta como no macOS */
+static OSStatus ac_fill_encode(aconv_t *a, acinput_fn proc, void *ud, u32 *npackets, ablist_t *out, aspd_t *pd) {
+    u32 want = *npackets, got = 0;
+    *npackets = 0;
+    OSStatus r = ac_enc_open(a);
+    if (r) return r;
+    if (!out->mNumberBuffers || !out->mBuffers[0].mData) return kAudio_ParamError;
+    u8 *dst = out->mBuffers[0].mData;
+    u32 cap = out->mBuffers[0].mDataByteSize, used = 0, ch = a->dst.mChannelsPerFrame;
+    u8 pkt[8192];
+    OSStatus perr = 0;
+    while (got < want) {
+        int bytes = 0;
+        if (a->hold_n) { memcpy(pkt, a->hold, (size_t)a->hold_n); bytes = a->hold_n; a->hold_n = 0; goto emit; }
+        if (!a->enc_eof) {
+            while (a->ein_n < a->enc_frame) {   /* completa um pacote de entrada */
+                u32 n = a->enc_frame - a->ein_n;
+                ablist_t l = {1, 0, {{ch, n * ch * 2, a->ein + (u64)a->ein_n * ch}}};
+                OSStatus e = AudioConverterFillComplexBuffer(a->inner, proc, ud, &n, &l, 0);
+                a->ein_n += n;
+                if (e || !n) { perr = e; if (!e) a->enc_eof = 1; break; }
+            }
+            if (a->ein_n == a->enc_frame || (a->enc_eof && a->ein_n)) {
+                if (a->ein_n < a->enc_frame) memset(a->ein + (u64)a->ein_n * ch, 0, (size_t)(a->enc_frame - a->ein_n) * ch * 2);   /* último pacote */
+                bytes = a->enc_kind == 1 ? cx_aacenc_encode(a->enc, a->ein, (int)a->ein_n, pkt, sizeof pkt)
+                                         : cx_opusenc_encode(a->enc, a->ein, (int)a->enc_frame, pkt, sizeof pkt);
+                a->ein_n = 0;
+            } else if (perr) break;   /* "sem dados agora": devolve o que já saiu */
+            else if (!a->enc_eof) break;
+        }
+        if (a->enc_eof && !bytes && a->enc_kind == 1) bytes = cx_aacenc_encode(a->enc, 0, 0, pkt, sizeof pkt);   /* esvazia o atraso */
+        if (bytes < 0) return kAudioConverterErr_FormatNotSupported;
+        if (!bytes) { if (a->enc_eof && (a->enc_kind == 2 || !a->ein_n)) break; if (perr) break; continue; }
+    emit:
+        if (used + (u32)bytes > cap) {   /* não cabe: guarda para a próxima chamada */
+            u8 *h = realloc(a->hold, (size_t)bytes);
+            if (!h) return -108;
+            a->hold = h;
+            memcpy(h, pkt, (size_t)bytes);
+            a->hold_n = bytes;
+            if (!got) { out->mBuffers[0].mDataByteSize = 0; return kAudio_ParamError; }   /* nem um pacote cabe */
+            break;
+        }
+        memcpy(dst + used, pkt, (size_t)bytes);
+        if (pd) { pd[got].mStartOffset = used; pd[got].mVariableFramesInPacket = 0; pd[got].mDataByteSize = (u32)bytes; }
+        used += (u32)bytes;
+        got++;
+    }
+    out->mBuffers[0].mDataByteSize = used;
+    *npackets = got;
+    return got || !perr ? 0 : perr;
+}
 OSStatus AudioConverterFillComplexBuffer(void *c, acinput_fn proc, void *ud, u32 *npackets, ablist_t *out, aspd_t *pd) {
-    (void)pd;
     aconv_t *a = ac_of(c);
     if (!a || !proc || !npackets || !out) return kAudio_ParamError;
     if (a->decode) return ac_fill_decode(a, proc, ud, npackets, out);
+    if (a->encode) return ac_fill_encode(a, proc, ud, npackets, out, pd);
     u32 want = *npackets, got = 0;
     /* o destino é escrito em pedaços: um ablist com os ponteiros deslocados */
     u32 nb = out->mNumberBuffers;
@@ -2513,11 +2664,23 @@ OSStatus AudioConverterSetProperty(void *c, u32 id_, u32 sz, const void *d) {
         ac_dec_reset(a);   /* o decodificador reabre com o cookie novo */
         return 0;
     }
+    if (a->encode) {
+        if (id_ == FCC('b', 'r', 'a', 't')) {   /* kAudioConverterEncodeBitRate: antes do primeiro pacote */
+            if (sz < 4 || !d) return kAudio_ParamError;
+            if (a->enc) return kAudioConverterErr_PropertyNotSupported;
+            a->enc_bitrate = *(const u32 *)d;
+            return 0;
+        }
+        if (id_ == FCC('c', 'd', 'q', 'u') || id_ == FCC('b', 'r', 'm', 'o')) return 0;   /* qualidade e modo de taxa: o do codificador */
+        return kAudioConverterErr_PropertyNotSupported;
+    }
     return 0;
 }
 OSStatus AudioConverterGetPropertyInfo(void *c, u32 id_, u32 *sz, u8 *w) {
     if (!ac_of(c)) return kAudio_ParamError;
     aconv_t *a = ac_of(c);
+    if (a->encode && id_ == FCC('k', 'm', 'g', 'c')) { if (ac_enc_open(a)) return kAudioConverterErr_FormatNotSupported; if (sz) *sz = a->cookie_n; if (w) *w = 0; return 0; }
+    if (a->encode && id_ == FCC('p', 'r', 'i', 'm')) { if (sz) *sz = 8; if (w) *w = 0; return 0; }
     u32 n = id_ == FCC('a', 'c', 'i', 'd') || id_ == FCC('a', 'c', 'o', 'd') ? 40 : id_ == FCC('d', 'm', 'g', 'c') ? a->cookie_n : 4;
     if (w && id_ == FCC('d', 'm', 'g', 'c')) { if (sz) *sz = n; *w = 1; return 0; }
     if (sz) *sz = n;
@@ -2528,7 +2691,31 @@ OSStatus AudioConverterGetProperty(void *c, u32 id_, u32 *sz, void *d) {
     aconv_t *a = ac_of(c);
     if (!a || !sz || !d) return kAudio_ParamError;
     if (id_ == FCC('a', 'c', 'i', 'd') && *sz >= 40) { *(asbd_t *)d = a->src; *sz = 40; return 0; }   /* CurrentInputStreamDescription */
+    if (a->encode && (id_ == FCC('k', 'm', 'g', 'c') || id_ == FCC('x', 'o', 'p', 's') || id_ == FCC('p', 'r', 'i', 'm') || id_ == FCC('a', 'c', 'o', 'd'))) {
+        if (ac_enc_open(a)) return kAudioConverterErr_FormatNotSupported;
+        if (id_ == FCC('k', 'm', 'g', 'c')) {   /* kAudioConverterCompressionMagicCookie */
+            if (*sz < a->cookie_n) return kAudio_ParamError;
+            memcpy(d, a->cookie, a->cookie_n);
+            *sz = a->cookie_n;
+            return 0;
+        }
+        if (id_ == FCC('x', 'o', 'p', 's')) {   /* kAudioConverterPropertyMaximumOutputPacketSize */
+            if (*sz < 4) return kAudio_ParamError;
+            *(u32 *)d = a->enc_kind == 1 ? 768 * a->dst.mChannelsPerFrame : 1275 * 3;
+            *sz = 4;
+            return 0;
+        }
+        if (id_ == FCC('p', 'r', 'i', 'm')) {   /* kAudioConverterPrimeInfo: quadros de priming no começo */
+            if (*sz < 8) return kAudio_ParamError;
+            ((u32 *)d)[0] = a->enc_delay;
+            ((u32 *)d)[1] = 0;
+            *sz = 8;
+            return 0;
+        }
+    }
     if (id_ == FCC('a', 'c', 'o', 'd') && *sz >= 40) { *(asbd_t *)d = a->dst; *sz = 40; return 0; }
+    if (a->encode && id_ == FCC('b', 'r', 'a', 't') && *sz >= 4) { *(u32 *)d = a->enc_bitrate; *sz = 4; return 0; }
+    if (a->encode) return kAudioConverterErr_PropertyNotSupported;
     if (id_ == FCC('d', 'm', 'g', 'c')) {
         if (!a->decode || !a->cookie) return kAudioConverterErr_PropertyNotSupported;
         if (*sz < a->cookie_n) return kAudio_ParamError;

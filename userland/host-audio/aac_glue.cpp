@@ -3,6 +3,7 @@
  * Entrada: AudioSpecificConfig (MP4/CAF) ou fluxo ADTS/LATM. Saída: PCM 16 bits intercalado.
  * Compila como C++ freestanding (sem exceções, RTTI nem libc++). */
 #include "aacdecoder_lib.h"
+#include "aacenc_lib.h"
 #include "aac_glue.h"
 
 extern "C" {
@@ -10,6 +11,7 @@ void *malloc(unsigned long n);
 void *realloc(void *p, unsigned long n);
 void free(void *p);
 void *memmove(void *d, const void *s, unsigned long n);
+void *memset(void *d, int c, unsigned long n);
 
 struct cx_aac {
     HANDLE_AACDECODER h;
@@ -126,5 +128,60 @@ int cx_aac_decode_adts(const uint8_t *b, uint64_t n, int max_channels, int16_t *
     *rate = sr;
     *frames = (int)(len / (unsigned long)ch);
     return 0;
+}
+
+/* ---- codificador */
+struct cx_aacenc { HANDLE_AACENCODER h; int ch; };
+void *cx_aacenc_open(int rate, int channels, int bitrate, int aot, int adts, uint8_t *asc, int *asc_n, int *frame, int *delay) {
+    if (channels < 1 || channels > 8 || (aot == 29 && channels != 2)) return 0;
+    HANDLE_AACENCODER h = 0;
+    if (aacEncOpen(&h, 0, (UINT)channels) != AACENC_OK) return 0;
+    CHANNEL_MODE mode = channels == 1 ? MODE_1 : channels == 2 ? MODE_2 : channels == 3 ? MODE_1_2 : channels == 4 ? MODE_1_2_1 :
+                        channels == 5 ? MODE_1_2_2 : channels == 6 ? MODE_1_2_2_1 : channels == 7 ? MODE_1_2_2_2_1 : MODE_7_1_BACK;
+    if (aacEncoder_SetParam(h, AACENC_AOT, (UINT)(aot == 5 || aot == 29 ? aot : 2)) != AACENC_OK ||
+        aacEncoder_SetParam(h, AACENC_SAMPLERATE, (UINT)rate) != AACENC_OK ||
+        aacEncoder_SetParam(h, AACENC_CHANNELMODE, mode) != AACENC_OK ||
+        aacEncoder_SetParam(h, AACENC_CHANNELORDER, 1) != AACENC_OK ||   /* ordem WAV (L R C LFE ...) */
+        aacEncoder_SetParam(h, AACENC_TRANSMUX, adts ? TT_MP4_ADTS : TT_MP4_RAW) != AACENC_OK ||
+        aacEncoder_SetParam(h, AACENC_AFTERBURNER, 1) != AACENC_OK ||
+        (bitrate > 0 && aacEncoder_SetParam(h, AACENC_BITRATE, (UINT)bitrate) != AACENC_OK) ||
+        aacEncEncode(h, NULL, NULL, NULL, NULL) != AACENC_OK) {
+        aacEncClose(&h);
+        return 0;
+    }
+    AACENC_InfoStruct info;
+    if (aacEncInfo(h, &info) != AACENC_OK) { aacEncClose(&h); return 0; }
+    if (asc && asc_n) { int n = (int)info.confSize; if (n > *asc_n) n = *asc_n; memmove(asc, info.confBuf, (unsigned long)n); *asc_n = n; }
+    if (frame) *frame = (int)info.frameLength;
+    if (delay) *delay = (int)info.nDelay;
+    cx_aacenc *e = (cx_aacenc *)malloc(sizeof(cx_aacenc));
+    if (!e) { aacEncClose(&h); return 0; }
+    e->h = h;
+    e->ch = channels;
+    return e;
+}
+int cx_aacenc_encode(void *p, const int16_t *pcm, int frames, uint8_t *out, int cap) {
+    cx_aacenc *e = (cx_aacenc *)p;
+    if (!e || !out || cap <= 0) return -1;
+    void *ib = (void *)pcm, *ob = out;
+    INT iid = IN_AUDIO_DATA, oid = OUT_BITSTREAM_DATA, isz = (INT)(frames > 0 ? frames * e->ch * 2 : 0), osz = cap, iel = 2, oel = 1;
+    AACENC_BufDesc in, o;
+    in.numBufs = 1; in.bufs = &ib; in.bufferIdentifiers = &iid; in.bufSizes = &isz; in.bufElSizes = &iel;
+    o.numBufs = 1; o.bufs = &ob; o.bufferIdentifiers = &oid; o.bufSizes = &osz; o.bufElSizes = &oel;
+    AACENC_InArgs ia;
+    AACENC_OutArgs oa;
+    memset(&ia, 0, sizeof ia);
+    memset(&oa, 0, sizeof oa);
+    ia.numInSamples = frames > 0 ? frames * e->ch : -1;
+    AACENC_ERROR r = aacEncEncode(e->h, &in, &o, &ia, &oa);   /* numInSamples -1: esvazia o atraso do fim */
+    if (r == AACENC_ENCODE_EOF) return 0;
+    if (r != AACENC_OK) return -2;
+    return oa.numOutBytes;
+}
+void cx_aacenc_close(void *p) {
+    cx_aacenc *e = (cx_aacenc *)p;
+    if (!e) return;
+    aacEncClose(&e->h);
+    free(e);
 }
 }

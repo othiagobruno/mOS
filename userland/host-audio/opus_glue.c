@@ -190,3 +190,32 @@ int cx_opus_decode_ogg(const uint8_t *b, uint64_t n, int16_t **out, int *channel
     *frames = (int)keep;
     return 0;
 }
+
+/* ---- codificador */
+#include "../third_party/opus/include/opus.h"
+void *cx_opusenc_open(int rate, int channels, int bitrate, int voip, int *frame, int *preskip) {
+    int err = 0;
+    if (channels < 1 || channels > 2) return 0;
+    OpusEncoder *e = opus_encoder_create(rate, channels, voip ? OPUS_APPLICATION_VOIP : OPUS_APPLICATION_AUDIO, &err);
+    if (!e || err != OPUS_OK) return 0;
+    if (bitrate > 0) opus_encoder_ctl(e, OPUS_SET_BITRATE(bitrate));
+    opus_int32 la = 0;
+    opus_encoder_ctl(e, OPUS_GET_LOOKAHEAD(&la));
+    if (frame) *frame = rate / 50;
+    if (preskip) *preskip = (int)((long long)la * 48000 / rate);
+    return e;
+}
+int cx_opusenc_encode(void *e, const int16_t *pcm, int frames, uint8_t *out, int cap) {
+    return opus_encode((OpusEncoder *)e, pcm, frames, out, cap);
+}
+void cx_opusenc_close(void *e) { if (e) opus_encoder_destroy((OpusEncoder *)e); }
+int cx_opusenc_head(int channels, int preskip, int in_rate, uint8_t o[19]) {
+    memcpy(o, "OpusHead", 8);
+    o[8] = 1;
+    o[9] = (uint8_t)channels;
+    o[10] = (uint8_t)preskip; o[11] = (uint8_t)(preskip >> 8);
+    o[12] = (uint8_t)in_rate; o[13] = (uint8_t)(in_rate >> 8); o[14] = (uint8_t)(in_rate >> 16); o[15] = (uint8_t)(in_rate >> 24);
+    o[16] = 0; o[17] = 0;   /* ganho */
+    o[18] = 0;              /* família de mapeamento 0 (mono/estéreo) */
+    return 19;
+}

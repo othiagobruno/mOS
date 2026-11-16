@@ -17,4 +17,11 @@ void cx_opus_close(void *d);
 int cx_opus_packet_frames(const uint8_t *pkt, int n);
 /* Arquivo Ogg Opus inteiro. 0 ok (*out com free), < 0 erro. Sempre 48 kHz. */
 int cx_opus_decode_ogg(const uint8_t *b, uint64_t n, int16_t **out, int *channels, int *frames);
+/* codificador (opus_encoder: 1 ou 2 canais). rate 8000/12000/16000/24000/48000; bitrate em bits/s (0 = automático).
+ * frame = quadros por pacote (20 ms: rate/50). *preskip em amostras a 48 kHz (o OpusHead do pacote). */
+void *cx_opusenc_open(int rate, int channels, int bitrate, int voip, int *frame, int *preskip);
+int cx_opusenc_encode(void *e, const int16_t *pcm, int frames, uint8_t *out, int cap); /* bytes do pacote ou < 0 */
+void cx_opusenc_close(void *e);
+/* OpusHead (RFC 7845) do codificador: o cookie do AudioConverter. Devolve o tamanho (19). */
+int cx_opusenc_head(int channels, int preskip, int in_rate, uint8_t out[19]);
 #endif
