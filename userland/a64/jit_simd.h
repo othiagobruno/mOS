@@ -258,7 +258,34 @@ static int s_three_same_x(T *t, a64_u32 w, int sc) {
 }
 
 static int s_misc_x(T *t, a64_u32 w, int sc);
+static int s_addlp(T *t, int q, int u, int size, int acc, int n, int d);
 static int s_misc(T *t, a64_u32 w) { return s_misc_x(t, w, 0); }
+/* SADDLP / UADDLP / SADALP / UADALP: soma de pares vizinhos alargada (acc: + V[d]) */
+static int s_addlp(T *t, int q, int u, int size, int acc, int n, int d) {
+    if (size == 3 || !jit_g.ssse3 || (size == 2 && !jit_g.sse41)) return 0;
+    if (q) s_ld(t, 0, n); else x_movq_ld(B, 0, VO(n));
+    if (size == 0) {                                /* pmaddubsw: 1º operando sem sinal, 2º com sinal */
+        s_const(t, 1, 0x0101010101010101ull);
+        if (u) s_op38(t, 0x04, 0, 1);
+        else { s_op38(t, 0x04, 1, 0); x_movdqa_ld(B, 0, XR(1)); }
+    } else if (size == 1) {
+        if (!u) { s_const(t, 1, 0x0001000100010001ull); s_op(t, 0xF5, 0, 1); }   /* pmaddwd */
+        else {
+            x_movdqa_ld(B, 1, XR(0));
+            xop2(B, XF_66, 0x72, 2, XR(1)); xe8(B, 16);     /* psrld 16 */
+            s_const(t, 2, 0x0000FFFF0000FFFFull); s_op(t, 0xDB, 0, 2);
+            s_op(t, 0xFE, 0, 1);
+        }
+    } else {
+        xop2(B, XF_66, 0x70, 1, XR(0)); xe8(B, 0xDD);       /* ímpares */
+        xop2(B, XF_66, 0x70, 0, XR(0)); xe8(B, 0x88);       /* pares */
+        s_op38(t, u ? 0x35 : 0x25, 0, 0); s_op38(t, u ? 0x35 : 0x25, 1, 1);
+        s_op(t, 0xD4, 0, 1);
+    }
+    if (acc) { static const unsigned padd[3] = { 0xFD, 0xFE, 0xD4 }; s_ld(t, 1, d); s_op(t, padd[size], 0, 1); }
+    s_st(t, d, 0, q);
+    return 1;
+}
 static int s_misc_x(T *t, a64_u32 w, int sc) {
     int q = (int)BIT(w, 30), u = (int)BIT(w, 29), size = (int)BITS(w, 23, 22), op = (int)BITS(w, 16, 12);
     int n = (int)BITS(w, 9, 5), d = (int)(w & 31);
@@ -309,6 +336,9 @@ static int s_misc_x(T *t, a64_u32 w, int sc) {
     case 0x12:                                      /* XTN / XTN2, SQXTUN */
         if (u) return s_qxtn(t, q, u, 0x12, size, n, d);
         return s_xtn(t, q, size, n, d);
+    case 0x02: case 0x06:                           /* SADDLP UADDLP / SADALP UADALP */
+        if (sc) return 0;
+        return s_addlp(t, q, u, size, op == 0x06, n, d);
     case 0x07:                                      /* SQABS / SQNEG */
         return s_sqabsneg(t, q, size, u, n, d, sc);
     case 0x0B:                                      /* NEG (ABS vai ao interpretador) */
@@ -335,6 +365,31 @@ static int s_across(T *t, a64_u32 w) {
         s_op(t, 0xD4, 0, 1);
         x_movd_st(B, XR(XAX), 0);
         x_movzx8(B, XAX, XR(XAX));
+        s_wsc_rax(t, d);
+        return 1;
+    }
+    static const unsigned padd[4] = { 0xFC, 0xFD, 0xFE, 0xD4 };
+    if (op == 0x1B && !u) {                         /* ADDV H/S: somas com volta, metade a metade */
+        s_ld(t, 0, n);
+        for (int sh = q ? 8 : 4; sh >= (1 << size); sh >>= 1) {
+            x_movdqa_ld(B, 1, XR(0)); s_shiftdq(t, 1, 0, sh); s_op(t, padd[size], 0, 1);
+        }
+        x_movd_st(B, XR(XAX), 0);
+        if (size == 1) x_movzx16(B, XAX, XR(XAX));
+        s_wsc_rax(t, d);
+        return 1;
+    }
+    if (op == 0x03) {                               /* SADDLV / UADDLV: alarga e soma (sem estouro) */
+        if (!jit_g.sse41) return 0;
+        static const unsigned wid[2][3] = { { 0x20, 0x23, 0x25 }, { 0x30, 0x33, 0x35 } };   /* pmovsx / pmovzx */
+        s_ld(t, 2, n);
+        s_op38(t, wid[u][size], 0, 2);
+        if (q) { s_shiftdq(t, 2, 0, 8); s_op38(t, wid[u][size], 1, 2); s_op(t, padd[size + 1], 0, 1); }
+        for (int sh = 8; sh >= (2 << size); sh >>= 1) {
+            x_movdqa_ld(B, 1, XR(0)); s_shiftdq(t, 1, 0, sh); s_op(t, padd[size + 1], 0, 1);
+        }
+        if (size == 2) xop2(B, XF_66 | XF_W, 0x7E, 0, XR(XAX));   /* movq rax, xmm0 */
+        else { x_movd_st(B, XR(XAX), 0); if (size == 0) x_movzx16(B, XAX, XR(XAX)); }
         s_wsc_rax(t, d);
         return 1;
     }
