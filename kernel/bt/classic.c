@@ -21,6 +21,9 @@
 int sdp_handle(const u8 *q, int len, u8 *o, int max);     /* bt/avrcp.c */
 int avrcp_handle(const u8 *f, int len, u8 *o, int max);
 void avrcp_set_playing(bool on);
+int avrcp_ct_start(u8 *o);
+int avrcp_volume_poll(u8 *o);
+void avrcp_ct_stop(void);
 #define MAXCH 6
 
 void input_hid_keyboard(u8 mods, const u8 keys[6]);
@@ -323,6 +326,9 @@ static void chan_opened(int i) {
         kprintf("bt: teclado/mouse Bluetooth pronto\n");
     } else if (c.ch[i].psm == PSM_AVCTP) {
         kprintf("bt: AVRCP pronto (botões do fone)\n");
+        static u8 q[32];
+        int n = avrcp_ct_start(q);                             /* volume absoluto: o fone tem VOLUME_CHANGED? */
+        if (n > 0) l2_send(c.ch[i].dcid, q, (u16)n);
     }
 }
 
@@ -491,6 +497,7 @@ bool classic_event(const u8 *ev, int len) {
         if (le16(p + 1) != c.handle || !c.st) return false;
         kprintf("bt: dispositivo clássico desconectado (0x%02x)\n", p[3]);
         if (audio_tap == tap) { audio_tap = NULL; audio_route_bluetooth = false; }
+        avrcp_ct_stop();
         memset(&c, 0, sizeof c);
         return true;
     }
@@ -516,7 +523,18 @@ bool classic_acl(const u8 *a, int len) {
     return true;
 }
 
+static void avrcp_poll(void) {
+    for (int i = 0; i < MAXCH; i++)
+        if (c.ch[i].used && c.ch[i].open && c.ch[i].psm == PSM_AVCTP) {
+            static u8 q[32];
+            int n = avrcp_volume_poll(q);
+            if (n > 0) l2_send(c.ch[i].dcid, q, (u16)n);
+            return;
+        }
+}
+
 void classic_poll(void) {
+    if (c.st == 4) avrcp_poll();
     for (int i = 0; i < pq; i++) bt_hci_cmd(pend_op[i], pend[i], pend_len[i], 1000);
     pq = 0;
     av_pump();

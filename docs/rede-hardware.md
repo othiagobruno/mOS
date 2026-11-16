@@ -53,7 +53,7 @@ kernel/wifi/rtw88/        driver RTL8821CE que implementa wifi_radio_t
 ### Bluetooth (`kernel/bt/`, `kernel/dev/bluetooth.c`)
 15. [x] Firmware rtl8821c: os arquivos do repositório são idênticos aos que o Linux carrega neste PC (SHA-256); `tools/btrtl_host.c` 29/29.
 16. [x] RPA: o pareamento LE pede a identidade (IRK + endereço); o vínculo passa para a identidade, a IRK fica em `<identidade>.irk`, os anúncios e conexões com RPA são resolvidos e a IRK vai para a lista de resolução do controlador (a reconexão pela lista de aceitação pega o RPA novo). `tools/ble_host.c` 32/32.
-17. [x] AVRCP 1.6 (alvo) e servidor SDP (`kernel/bt/avrcp.c`): registros da fonte A2DP e do AVRCP; play/pausa/parar/próxima/anterior/volume/mudo do fone viram teclas de mídia; UNIT/SUBUNIT INFO, GetCapabilities, GetPlayStatus, RegisterNotification. O mOS abre o AVCTP ao abrir o canal de mídia do A2DP. `tools/avrcp_host.c` 19/19. Fora: volume absoluto (SetAbsoluteVolume, papel de controle).
+17. [x] AVRCP 1.6 (alvo) e servidor SDP (`kernel/bt/avrcp.c`): registros da fonte A2DP e do AVRCP; play/pausa/parar/próxima/anterior/volume/mudo do fone viram teclas de mídia; UNIT/SUBUNIT INFO, GetCapabilities, GetPlayStatus, RegisterNotification. O mOS abre o AVCTP ao abrir o canal de mídia do A2DP. Volume absoluto (papel de controle): GetCapabilities → RegisterNotification(VOLUME_CHANGED) → o volume do fone vira o do sistema, e SetAbsoluteVolume quando o do sistema muda, sem eco. `tools/avrcp_host.c` 26/26.
 18. [ ] Coex com o Wi-Fi do lado BT (o firmware BT recebe o estado do Wi-Fi pelo PTA/mailbox).
 
 ### Ethernet RTL8168H (`kernel/dev/r8169.c`)
