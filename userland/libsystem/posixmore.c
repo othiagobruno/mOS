@@ -25,6 +25,8 @@ double ldexp(double x, int e);
 int tolower(int c);
 
 typedef int wchar_t_;
+unsigned long wctype(const char *name);          /* wctype_wide.c */
+int iswctype(wchar_t_ c, unsigned long t);
 size_t mbrtowc(wchar_t_ *pwc, const char *s, size_t n, void *ps);
 size_t wcrtomb(char *s, wchar_t_ wc, void *ps);
 
@@ -52,22 +54,7 @@ wchar_t_ *wmemset(wchar_t_ *d, wchar_t_ c, size_t n) { for (size_t i = 0; i < n;
 wchar_t_ btowc(int c) { return c >= 0 && c < 0x80 ? c : -1; }   /* WEOF = -1 */
 int wctob(wchar_t_ c) { return c >= 0 && c < 0x80 ? c : -1; }
 
-/* largura na tela: 0 para combinantes e sem largura, 2 para CJK/emoji, -1 para controle */
-int wcwidth(wchar_t_ c) {
-    if (c == 0) return 0;
-    if (c < 32 || (c >= 0x7F && c < 0xA0)) return -1;
-    if ((c >= 0x300 && c <= 0x36F) || (c >= 0x200B && c <= 0x200F) || (c >= 0xFE00 && c <= 0xFE0F) ||
-        (c >= 0x1AB0 && c <= 0x1AFF) || (c >= 0x20D0 && c <= 0x20FF)) return 0;
-    if ((c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF) || (c >= 0xAC00 && c <= 0xD7A3) ||
-        (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFE30 && c <= 0xFE4F) || (c >= 0xFF00 && c <= 0xFF60) ||
-        (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x1F300 && c <= 0x1FAFF) || (c >= 0x20000 && c <= 0x3FFFD)) return 2;
-    return 1;
-}
-int wcswidth(const wchar_t_ *s, size_t n) {
-    int w = 0;
-    for (; n && *s; n--, s++) { int k = wcwidth(*s); if (k < 0) return -1; w += k; }
-    return w;
-}
+/* wcwidth/wcswidth, wctype/iswctype e as classes/troca de caixa de wint_t estão em wctype_wide.c (tabelas Unicode). */
 
 size_t mbsnrtowcs(wchar_t_ *dst, const char **src, size_t nms, size_t len, void *ps) {
     const char *s = *src;
@@ -105,33 +92,6 @@ size_t wcsrtombs(char *dst, const wchar_t_ **src, size_t len, void *ps) { return
 size_t wcstombs(char *dst, const wchar_t_ *src, size_t len) { const wchar_t_ *s = src; return wcsrtombs(dst, &s, len, 0); }
 
 /* classes de wctype: só ASCII é classificado; acima de 0x7F letras contam como alpha/print */
-enum { WC_ALNUM = 1, WC_ALPHA, WC_BLANK, WC_CNTRL, WC_DIGIT, WC_GRAPH, WC_LOWER, WC_PRINT, WC_PUNCT, WC_SPACE, WC_UPPER, WC_XDIGIT };
-unsigned long wctype(const char *name) {
-    static const char *const n[] = {"alnum", "alpha", "blank", "cntrl", "digit", "graph", "lower", "print", "punct", "space", "upper", "xdigit"};
-    for (int i = 0; i < 12; i++) if (!strcmp(name, n[i])) return (unsigned long)(i + 1);
-    return 0;
-}
-int iswctype(wchar_t_ c, unsigned long t) {
-    if (c < 0) return 0;
-    if (c >= 0x80) return t == WC_ALPHA || t == WC_ALNUM || t == WC_PRINT || t == WC_GRAPH;
-    int up = c >= 'A' && c <= 'Z', lo = c >= 'a' && c <= 'z', dg = c >= '0' && c <= '9';
-    int sp = c == ' ' || (c >= 9 && c <= 13), ct = c < 32 || c == 127;
-    switch (t) {
-    case WC_ALNUM: return up || lo || dg;
-    case WC_ALPHA: return up || lo;
-    case WC_BLANK: return c == ' ' || c == '\t';
-    case WC_CNTRL: return ct;
-    case WC_DIGIT: return dg;
-    case WC_GRAPH: return c > 32 && c < 127;
-    case WC_LOWER: return lo;
-    case WC_PRINT: return c >= 32 && c < 127;
-    case WC_PUNCT: return c > 32 && c < 127 && !up && !lo && !dg;
-    case WC_SPACE: return sp;
-    case WC_UPPER: return up;
-    case WC_XDIGIT: return dg || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-    }
-    return 0;
-}
 
 /* ------------------------------------------------------------ locale (só "C" com UTF-8) */
 typedef struct {

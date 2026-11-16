@@ -355,6 +355,8 @@ echo "==> libc_bsd (random BSD, ffs/fls, lldiv, NXArchInfo, backtrace; teste de 
 ZIG="$ZIG" bash "$ROOT/tools/libc_bsd_hosttest.sh" "$OUT/libc-bsd-hosttest"
 echo "==> multibyte (UTF-8 estrito, estado parcial; teste de host)"
 ZIG="$ZIG" bash "$ROOT/tools/multibyte_hosttest.sh" "$OUT/multibyte-hosttest"
+echo "==> wctype largo (tabelas Unicode do musl; teste de host)"
+ZIG="$ZIG" bash "$ROOT/tools/wctype_hosttest.sh" "$OUT/wctype-hosttest"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
