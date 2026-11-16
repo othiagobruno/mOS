@@ -31,7 +31,7 @@ typedef struct {
     /* apontador */
     bool boot, ids, abs;
     u8   rid;
-    hfield_t x, y, wheel;
+    hfield_t x, y, wheel, pan;
     u16  btn_off;
     u8   nbtn;
     u8   last_buttons;
@@ -148,7 +148,7 @@ static i32 field(const hfield_t *f, const u8 *r, u32 len, u32 base) {
 static void ptr_report(hid_t *h, const u8 *r, u32 len) {
     input_event_t ev = {0};
     ev.mods = input_mods();
-    i32 wheel = 0;
+    i32 wheel = 0, pan = 0;
     if (h->boot) {
         if (len < 3) return;
         ev.buttons = r[0] & 7;
@@ -164,6 +164,7 @@ static void ptr_report(hid_t *h, const u8 *r, u32 len) {
         ev.buttons = b;
         i32 x = field(&h->x, r, len, base), y = field(&h->y, r, len, base);
         if (h->wheel.have) wheel = field(&h->wheel, r, len, base);
+        if (h->pan.have) pan = field(&h->pan, r, len, base);
         if (h->abs) {
             i32 rx = h->x.lmax - h->x.lmin, ry = h->y.lmax - h->y.lmin;
             if (rx <= 0 || ry <= 0) return;
@@ -171,20 +172,22 @@ static void ptr_report(hid_t *h, const u8 *r, u32 len) {
             ev.dx = (i32)((i64)(CLAMP(x, h->x.lmin, h->x.lmax) - h->x.lmin) * (W - 1) / rx);
             ev.dy = (i32)((i64)(CLAMP(y, h->y.lmin, h->y.lmax) - h->y.lmin) * (H - 1) / ry);
             ev.type = EV_MOUSE_ABS;
-            if (ev.dx == h->last_x && ev.dy == h->last_y && b == h->last_buttons && !wheel) return;
+            if (ev.dx == h->last_x && ev.dy == h->last_y && b == h->last_buttons && !wheel && !pan) return;
             h->last_x = ev.dx; h->last_y = ev.dy;
         } else {
             ev.dx = x; ev.dy = y;
             ev.type = EV_MOUSE;
         }
     }
-    if (ev.type == EV_MOUSE && !ev.dx && !ev.dy && !wheel && ev.buttons == h->last_buttons) return;
+    if (ev.type == EV_MOUSE && !ev.dx && !ev.dy && !wheel && !pan && ev.buttons == h->last_buttons) return;
     h->last_buttons = ev.buttons;
-    ev.dz = -wheel;                      /* HID: positivo = para longe do usuário; mOS segue o PS/2 */    input_push(&ev);
+    ev.dz = -wheel;                      /* HID: positivo = para longe do usuário; mOS segue o PS/2 */
+    ev.dw = pan;                         /* AC Pan: positivo = direita, como o dw */
+    input_push(&ev);
 }
 
 /* parser mínimo de report descriptor: procura X/Y (Generic Desktop), roda e botões */
-typedef struct { u8 rid; hfield_t x, y, wheel; u16 btn_off; u8 nbtn; bool used; } layout_t;
+typedef struct { u8 rid; hfield_t x, y, wheel, pan; u16 btn_off; u8 nbtn; bool used; } layout_t;
 
 static bool parse_report(hid_t *h, const u8 *rd, int len) {
     layout_t lay[8];
@@ -229,6 +232,7 @@ static bool parse_report(hid_t *h, const u8 *rd, int len) {
                         if (u == 0x10030 && !L->x.have) L->x = f;
                         else if (u == 0x10031 && !L->y.have) L->y = f;
                         else if (u == 0x10038 && !L->wheel.have) L->wheel = f;
+                        else if (u == 0x000C0238 && !L->pan.have) L->pan = f;   /* AC Pan: roda inclinada / horizontal */
                         else if ((u >> 16) == 9 && rsize == 1 && (u & 0xFFFF) >= 1 && (u & 0xFFFF) <= 8) {
                             if (!L->nbtn) L->btn_off = off[rid] - ((u & 0xFFFF) - 1);
                             if (L->nbtn < (u & 0xFFFF)) L->nbtn = (u8)(u & 0xFFFF);
@@ -262,7 +266,7 @@ static bool parse_report(hid_t *h, const u8 *rd, int len) {
         layout_t *L = &lay[k];
         if (!L->used || !L->x.have || !L->y.have) continue;
         h->ids = ids; h->rid = L->rid;
-        h->x = L->x; h->y = L->y; h->wheel = L->wheel;
+        h->x = L->x; h->y = L->y; h->wheel = L->wheel; h->pan = L->pan;
         h->btn_off = L->btn_off; h->nbtn = L->nbtn;
         h->abs = L->x.abs;
         return true;
@@ -502,7 +506,7 @@ static void hid_start(usb_dev_t *d, usb_iface_t *it) {
             usb_set_kind(d, h->abs ? USB_KIND_TABLET : USB_KIND_MOUSE);
             kprintf("USB HID: apontador %s na interface %u (id %u, X %u bits @%u, Y %u bits @%u, %u botões%s)\n",
                     h->abs ? "absoluto" : "relativo", it->num, h->rid, h->x.size, h->x.off, h->y.size, h->y.off,
-                    h->nbtn, h->wheel.have ? ", roda" : "");
+                    h->nbtn, h->wheel.have ? (h->pan.have ? ", roda e rolagem lateral" : ", roda") : "");
         } else if (h->cc) {
             h->type = 4;
             usb_control(d, 0x21, 0x0A, 0, it->num, 0, NULL);          /* SET_IDLE(0) */
