@@ -73,7 +73,14 @@ CLASS(MTLVertexBufferLayoutDescriptor) CLASS(MTLVertexBufferLayoutDescriptorArra
 CLASS(MTLPipelineBufferDescriptor) CLASS(MTLPipelineBufferDescriptorArray) CLASS(MTLCompileOptions)
 CLASS(MTLFunctionConstantValues) CLASS(MTLFunctionDescriptor) CLASS(MTLHeapDescriptor) CLASS(MTLCommandBufferDescriptor)
 CLASS(MTLComputePassDescriptor) CLASS(MTLBlitPassDescriptor) CLASS(MTLCaptureDescriptor) CLASS(MTLArgumentDescriptor)
-CLASS(MTLIndirectCommandBufferDescriptor) CLASS(MTLStageInputOutputDescriptor) CLASS(MTLAttributeDescriptor)
+CLASS(MTLIndirectCommandBufferDescriptor) CLASS(MTLStageInputOutputDescriptor)
+CLASS(MTLAccelerationStructureDescriptor) CLASS(MTLAccelerationStructureGeometryDescriptor)
+CLASS(MTLAccelerationStructureTriangleGeometryDescriptor) CLASS(MTLAccelerationStructureBoundingBoxGeometryDescriptor)
+CLASS(MTLAccelerationStructureMotionTriangleGeometryDescriptor) CLASS(MTLAccelerationStructureMotionBoundingBoxGeometryDescriptor)
+CLASS(MTLAccelerationStructureCurveGeometryDescriptor) CLASS(MTLPrimitiveAccelerationStructureDescriptor)
+CLASS(MTLInstanceAccelerationStructureDescriptor) CLASS(MTLIndirectInstanceAccelerationStructureDescriptor)
+CLASS(MTLIntersectionFunctionDescriptor) CLASS(MTLIntersectionFunctionTableDescriptor) CLASS(MTLVisibleFunctionTableDescriptor)
+CLASS(MTLMotionKeyframeData) CLASS(MTLAccelerationStructurePassDescriptor) CLASS(MTLAttributeDescriptor)
 CLASS(MTLAttributeDescriptorArray) CLASS(MTLBufferLayoutDescriptor) CLASS(MTLBufferLayoutDescriptorArray)
 CLASS(MTLRenderPassSampleBufferAttachmentDescriptor) CLASS(MTLRenderPassSampleBufferAttachmentDescriptorArray)
 CLASS(MTLComputePassSampleBufferAttachmentDescriptor) CLASS(MTLComputePassSampleBufferAttachmentDescriptorArray)
@@ -528,6 +535,35 @@ static pspec_t ps_tiledesc[] = {{"label", 'o'}, {"tileFunction", 'o'}, {"rasterS
                                 {"threadgroupSizeMatchesTileSize", 'b'}, {"maxTotalThreadsPerThreadgroup", 'u'}, P_END};
 static const pspec_t ps_tileca[] = {{"pixelFormat", 'u'}, P_END};
 static const pspec_t ps_none[] = {P_END};
+/* raytracing: descritores com todas as propriedades (a execução não existe: supportsRaytracing = NO) */
+static const pspec_t ps_asdesc[] = {{"usage", 'u'}, P_END};
+static const pspec_t ps_asgeom[] = {{"intersectionFunctionTableOffset", 'u'}, {"opaque", 'b', 1}, {"allowDuplicateIntersectionFunctionInvocation", 'b', 1},
+    {"label", 'o'}, {"primitiveDataBuffer", 'o'}, {"primitiveDataBufferOffset", 'u'}, {"primitiveDataStride", 'u'}, {"primitiveDataElementSize", 'u'}, P_END};
+static const pspec_t ps_astri[] = {{"vertexBuffer", 'o'}, {"vertexBufferOffset", 'u'}, {"vertexFormat", 'u', 30}, {"vertexStride", 'u', 12},
+    {"indexBuffer", 'o'}, {"indexBufferOffset", 'u'}, {"indexType", 'u', 1}, {"triangleCount", 'u'},
+    {"transformationMatrixBuffer", 'o'}, {"transformationMatrixBufferOffset", 'u'}, {"transformationMatrixLayout", 'u'}, P_END};
+static const pspec_t ps_asbox[] = {{"boundingBoxBuffer", 'o'}, {"boundingBoxBufferOffset", 'u'}, {"boundingBoxStride", 'u', 24}, {"boundingBoxCount", 'u'}, P_END};
+static const pspec_t ps_asmtri[] = {{"vertexBuffers", 'o'}, {"vertexFormat", 'u', 30}, {"vertexStride", 'u', 12}, {"indexBuffer", 'o'},
+    {"indexBufferOffset", 'u'}, {"indexType", 'u', 1}, {"triangleCount", 'u'}, {"transformationMatrixBuffer", 'o'},
+    {"transformationMatrixBufferOffset", 'u'}, {"transformationMatrixLayout", 'u'}, P_END};
+static const pspec_t ps_asmbox[] = {{"boundingBoxBuffers", 'o'}, {"boundingBoxStride", 'u', 24}, {"boundingBoxCount", 'u'}, P_END};
+static const pspec_t ps_ascurve[] = {{"controlPointBuffer", 'o'}, {"controlPointBufferOffset", 'u'}, {"controlPointCount", 'u'}, {"controlPointStride", 'u'},
+    {"controlPointFormat", 'u', 30}, {"radiusBuffer", 'o'}, {"radiusBufferOffset", 'u'}, {"radiusFormat", 'u', 28}, {"radiusStride", 'u', 4},
+    {"indexBuffer", 'o'}, {"indexBufferOffset", 'u'}, {"indexType", 'u', 1}, {"segmentCount", 'u'}, {"segmentControlPointCount", 'u', 4},
+    {"curveType", 'u'}, {"curveBasis", 'u'}, {"curveEndCaps", 'u'}, P_END};
+static const pspec_t ps_asprim[] = {{"geometryDescriptors", 'o'}, {"motionStartBorderMode", 'u'}, {"motionEndBorderMode", 'u'},
+    {"motionStartTime", 'f'}, {"motionEndTime", 'f', 0, 1.0}, {"motionKeyframeCount", 'u', 1}, P_END};
+static const pspec_t ps_asinst[] = {{"instanceDescriptorBuffer", 'o'}, {"instanceDescriptorBufferOffset", 'u'}, {"instanceDescriptorStride", 'u', 64},
+    {"instanceCount", 'u'}, {"instancedAccelerationStructures", 'o'}, {"instanceDescriptorType", 'u'}, {"motionTransformBuffer", 'o'},
+    {"motionTransformBufferOffset", 'u'}, {"motionTransformCount", 'u'}, {"instanceTransformationMatrixLayout", 'u'},
+    {"motionTransformType", 'u'}, {"motionTransformStride", 'u'}, P_END};
+static const pspec_t ps_asiinst[] = {{"instanceDescriptorBuffer", 'o'}, {"instanceDescriptorBufferOffset", 'u'}, {"instanceDescriptorStride", 'u', 64},
+    {"maxInstanceCount", 'u'}, {"instanceCountBuffer", 'o'}, {"instanceCountBufferOffset", 'u'}, {"instanceDescriptorType", 'u'},
+    {"motionTransformBuffer", 'o'}, {"motionTransformBufferOffset", 'u'}, {"maxMotionTransformCount", 'u'}, {"motionTransformCountBuffer", 'o'},
+    {"motionTransformCountBufferOffset", 'u'}, {"instanceTransformationMatrixLayout", 'u'}, {"motionTransformType", 'u'}, {"motionTransformStride", 'u'}, P_END};
+static const pspec_t ps_ifdesc[] = {{"name", 'o'}, {"specializedName", 'o'}, {"constantValues", 'o'}, {"options", 'u'}, {"binaryArchives", 'o'}, P_END};
+static const pspec_t ps_ftdesc[] = {{"functionCount", 'u'}, P_END};
+static const pspec_t ps_mkf[] = {{"buffer", 'o'}, {"offset", 'u'}, P_END};
 
 /* construtores de classe dos descritores */
 #define TDS(o, n, v) (*dslot((o), dc_of(o), dprop_name(dc_of(o), (n))) = (u64)(v))
@@ -2655,6 +2691,27 @@ void cx_metal_init(void) {
     desc_arr_class(ps_tiledesc, "colorAttachments", &MTLTileRenderPipelineColorAttachmentDescriptorArray_c);
     DESC(MTLTileRenderPipelineDescriptor, ps_tiledesc);
     DESC(MTLRenderPassDescriptorArrayDummy, ps_none);
+    DESC(MTLAccelerationStructureDescriptor, ps_asdesc);
+    DESC(MTLAccelerationStructureGeometryDescriptor, ps_asgeom);
+#define DSUB(N, ps, S) mtl_def_desc(&N##_c, &N##_m, #N, ps, &S##_c, 0); CM(N, "descriptor", dnew_ar)
+    DSUB(MTLAccelerationStructureTriangleGeometryDescriptor, ps_astri, MTLAccelerationStructureGeometryDescriptor);
+    DSUB(MTLAccelerationStructureBoundingBoxGeometryDescriptor, ps_asbox, MTLAccelerationStructureGeometryDescriptor);
+    DSUB(MTLAccelerationStructureMotionTriangleGeometryDescriptor, ps_asmtri, MTLAccelerationStructureGeometryDescriptor);
+    DSUB(MTLAccelerationStructureMotionBoundingBoxGeometryDescriptor, ps_asmbox, MTLAccelerationStructureGeometryDescriptor);
+    DSUB(MTLAccelerationStructureCurveGeometryDescriptor, ps_ascurve, MTLAccelerationStructureGeometryDescriptor);
+    DSUB(MTLPrimitiveAccelerationStructureDescriptor, ps_asprim, MTLAccelerationStructureDescriptor);
+    DSUB(MTLInstanceAccelerationStructureDescriptor, ps_asinst, MTLAccelerationStructureDescriptor);
+    DSUB(MTLIndirectInstanceAccelerationStructureDescriptor, ps_asiinst, MTLAccelerationStructureDescriptor);
+    DSUB(MTLIntersectionFunctionDescriptor, ps_ifdesc, MTLFunctionDescriptor);
+    DESC(MTLIntersectionFunctionTableDescriptor, ps_ftdesc);
+    CM(MTLIntersectionFunctionTableDescriptor, "intersectionFunctionTableDescriptor", dnew_ar);
+    DESC(MTLVisibleFunctionTableDescriptor, ps_ftdesc);
+    CM(MTLVisibleFunctionTableDescriptor, "visibleFunctionTableDescriptor", dnew_ar);
+    DESC(MTLMotionKeyframeData, ps_mkf);
+    CM(MTLMotionKeyframeData, "data", dnew_ar);
+    DESC(MTLAccelerationStructurePassDescriptor, ps_none);
+    CM(MTLAccelerationStructurePassDescriptor, "accelerationStructurePassDescriptor", dnew_ar);
+#undef DSUB
     /* reflexão (vazios) */
     DESC(MTLVertexAttribute, ps_none);
     DESC(MTLAttribute, ps_none);

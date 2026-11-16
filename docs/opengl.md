@@ -49,7 +49,8 @@ buffer apagado, GLSL 4.10 core (atributos, uniforms, `out`, função com `out`, 
 `gl_FragData`, transform feedback com query, avaliador 2D com cor, `glGetMap`, `glAccum`, programas ARB (vp com `state.matrix.mvp`, fp com `TEX`, `program.local`, `KIL`, `MUL_SAT`, erro de sintaxe com posição), `EXT_bindable_uniform`, `dFdx`/`dFdy`/`fwidth` com valor conhecido, nível de mipmap escolhido pela lod implícita, geometry shader (ponto → quadrado com cor interpolada, triângulos com bloco e `gl_PrimitiveIDIn`, erro de modo incompatível). Também roda no `tools/build.sh`.
 
 `tools/nsopengl_host.c` (objetos compilados com as flags do libSystem): `CGLChoosePixelFormat`, contexto legado (2.1)
-e core (4.1), `flushBuffer` pondo o quadro BGRA no layer da view, `CGLSetOffScreen`. Resultado: 0 falhas.
+e core (4.1), `flushBuffer` pondo o quadro BGRA no layer da view, `CGLSetOffScreen`, `CVOpenGLTextureCache` com `2vuy` e `420v`
+(cores conferidas na textura). Resultado: 0 falhas.
 
 Não houve VM nem app real nesta entrega: nada aqui diz que um app OpenGL específico abre.
 

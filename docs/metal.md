@@ -84,6 +84,12 @@ dispara o boot se ainda não houve.
   MSL grande demais para valer a pena aqui. `MOS_METAL=1` força o device; `MOS_METAL=0` desliga para todos.
 - Sem captura de GPU, contadores, indirect command buffers, argument encoders, binary archives,
   dynamic libraries, rasterization rate maps nem encoders paralelos (devolvem nil).
+- Raytracing: os descritores existem com todas as propriedades (`MTLPrimitive/Instance/IndirectInstanceAccelerationStructureDescriptor`,
+  geometrias de triângulo, caixa, movimento e curva, `MTLIntersectionFunctionDescriptor`, tabelas de funções visíveis e de interseção,
+  `MTLMotionKeyframeData`), para os apps que os referenciam (Blender) carregarem. `supportsRaytracing` = NO e
+  `accelerationStructureCommandEncoder` = nil: não há construção nem travessia de estrutura.
+- Overlay Swift (`mtl_didmodify.c`): `MTLBuffer.didModifyRange(_:)` e `MTLRenderCommandEncoder.setVertexBuffers(_:offsets:range:)`
+  (teste `tools/mtl_vbufs_test.c`).
 
 ## Testes
 
@@ -110,6 +116,9 @@ formato `C:/...`, senão o `MACHOTEST_PATH` vira um caminho do Windows.
   armazenamento e origem (inverte as linhas), nas versões síncronas e com `completionHandler`.
 - **`CVMetalTextureCache`**: `CVMetalTextureCacheCreateTextureFromImage` cria a textura sobre o IOSurface do
   `CVPixelBuffer` (ou sobre a memória dele, se não tiver IOSurface), por plano.
+- **`CVOpenGLTextureCache`/`CVOpenGLTexture`**: o `CVPixelBuffer` vira textura `GL_TEXTURE_RECTANGLE` no contexto CGL do
+  cache, convertida para BGRA (BGRA, ARGB, RGBA, `420v`, `420f`, `2vuy`, `yuvs`). `CVPixelBufferCreateWithPlanarBytes`,
+  anexos com e sem propagação (`CVBufferGetAttachments`), tamanhos codificado/de exibição. Teste em `tools/nsopengl_host.c`.
 - **MetalPerformanceShaders**: `MPSSupportsMTLDevice`, `MPSImageBilinearScale` e `MPSImageLanczosScale`
   (com `scaleTransform`; na redução o destino é a média da área coberta).
 

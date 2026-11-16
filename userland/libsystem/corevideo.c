@@ -51,6 +51,8 @@ CFCONST(kCVImageBufferCGColorSpaceKey, "CVImageBufferCGColorSpace")
 #define kCVReturnError -6660
 #define kCVReturnInvalidArgument -6661
 #define kCVReturnUnsupported -6670
+#define kCVReturnInvalidPixelFormat -6680
+IMP class_getMethodImplementation(cx_class_t *c, SEL s);
 
 /* ================================================================ CVDisplayLink */
 typedef struct {
@@ -205,9 +207,17 @@ typedef struct {
     u8 *bytes;
     u32 w, h, fmt;
     u64 bpr;
-    id attach;                  /* anexos (CVBufferSetAttachment) */
+    id attach;                  /* anexos que propagam (kCVAttachmentMode_ShouldPropagate) */
+    id attach_np;               /* anexos que não propagam */
     void (*release_cb)(void *ctx, const void *base);
     void *release_ctx;
+    /* planos em memória do chamador (CVPixelBufferCreateWithPlanarBytes) */
+    u32 np;
+    void *pbase[4];
+    u64 pw[4], ph[4], pbpr[4];
+    void (*prel)(void *ctx, const void *data, u64 size, u64 np, const void **planes);
+    void *pdata;
+    u64 psize;
 } cvpb_t;
 cx_class_t CVPixelBuffer_c __asm__("OBJC_CLASS_$_CVPixelBuffer");
 cx_class_t CVPixelBuffer_m __asm__("OBJC_METACLASS_$_CVPixelBuffer");
@@ -231,6 +241,8 @@ static void pb_dealloc(id self, SEL c) {
     cvpb_t *p = (cvpb_t *)self;
     if (p->surf) objc_release(p->surf);
     if (p->attach) objc_release(p->attach);
+    if (p->attach_np) objc_release(p->attach_np);
+    if (p->prel) { const void *pl[4] = {p->pbase[0], p->pbase[1], p->pbase[2], p->pbase[3]}; p->prel(p->release_ctx, p->pdata, p->psize, p->np, pl); }
     if (p->release_cb) p->release_cb(p->release_ctx, p->bytes);
     IMP sup = cx_lookup(cx_class_named("NSObject"), c);
     if (sup) ((void (*)(id, SEL))sup)(self, c);
@@ -299,12 +311,26 @@ int CVPixelBufferCreateWithBytes(void *alloc, u64 w, u64 h, u32 fmt, void *base,
     *out = p;
     return kCVReturnSuccess;
 }
-/* planos em memória do chamador (vídeo por software): ainda não */
+/* planos em memória do chamador: o buffer aponta para eles (sem cópia) e o callback solta no fim */
 int CVPixelBufferCreateWithPlanarBytes(void *alloc, u64 w, u64 h, u32 fmt, void *d, u64 ds, u64 np, void **pb, u64 *pw, u64 *ph, u64 *pr,
                                        void *rel, void *ctx, id attrs, cvpb_t **out) {
-    (void)alloc; (void)w; (void)h; (void)fmt; (void)d; (void)ds; (void)np; (void)pb; (void)pw; (void)ph; (void)pr; (void)rel; (void)ctx; (void)attrs;
-    if (out) *out = 0;
-    return kCVReturnUnsupported;
+    (void)alloc; (void)attrs;
+    if (!out) return kCVReturnInvalidArgument;
+    *out = 0;
+    if (!w || !h || np < 1 || np > 4 || !pb || !pw || !ph || !pr) return kCVReturnInvalidArgument;
+    for (u64 i = 0; i < np; i++) if (!pb[i]) return kCVReturnInvalidArgument;
+    cvpb_t *p = (cvpb_t *)cx_alloc_instance(&CVPixelBuffer_c);
+    p->w = (u32)w; p->h = (u32)h; p->fmt = fmt;
+    p->np = (u32)np;
+    for (u64 i = 0; i < np; i++) { p->pbase[i] = pb[i]; p->pw[i] = pw[i]; p->ph[i] = ph[i]; p->pbpr[i] = pr[i]; }
+    p->bytes = pb[0];
+    p->bpr = pr[0];
+    p->prel = (void (*)(void *, const void *, u64, u64, const void **))rel;
+    p->release_ctx = ctx;
+    p->pdata = d;
+    p->psize = ds;
+    *out = p;
+    return kCVReturnSuccess;
 }
 id CVPixelBufferGetIOSurface(cvpb_t *p) { return p ? p->surf : 0; }
 int CVPixelBufferLockBaseAddress(cvpb_t *p, u64 f) { if (!p) return kCVReturnInvalidArgument; if (p->surf) IOSurfaceLock(p->surf, (u32)f, 0); return 0; }
@@ -314,34 +340,49 @@ u64 CVPixelBufferGetBytesPerRow(cvpb_t *p) { return p ? p->bpr : 0; }
 u64 CVPixelBufferGetWidth(cvpb_t *p) { return p ? p->w : 0; }
 u64 CVPixelBufferGetHeight(cvpb_t *p) { return p ? p->h : 0; }
 u32 CVPixelBufferGetPixelFormatType(cvpb_t *p) { return p ? p->fmt : 0; }
-u64 CVPixelBufferGetDataSize(cvpb_t *p) { return !p ? 0 : p->surf ? IOSurfaceGetAllocSize(p->surf) : p->bpr * p->h; }
-u64 CVPixelBufferGetPlaneCount(cvpb_t *p) { return p && p->surf ? IOSurfaceGetPlaneCount(p->surf) : 0; }
+u64 CVPixelBufferGetDataSize(cvpb_t *p) { return !p ? 0 : p->surf ? IOSurfaceGetAllocSize(p->surf) : p->np ? p->psize : p->bpr * p->h; }
+u64 CVPixelBufferGetPlaneCount(cvpb_t *p) { return !p ? 0 : p->surf ? IOSurfaceGetPlaneCount(p->surf) : p->np; }
 u8 CVPixelBufferIsPlanar(cvpb_t *p) { return CVPixelBufferGetPlaneCount(p) > 0; }
-void *CVPixelBufferGetBaseAddressOfPlane(cvpb_t *p, u64 i) { return p && p->surf ? IOSurfaceGetBaseAddressOfPlane(p->surf, i) : 0; }
-u64 CVPixelBufferGetBytesPerRowOfPlane(cvpb_t *p, u64 i) { return p && p->surf ? IOSurfaceGetBytesPerRowOfPlane(p->surf, i) : 0; }
-u64 CVPixelBufferGetWidthOfPlane(cvpb_t *p, u64 i) { return p && p->surf ? IOSurfaceGetWidthOfPlane(p->surf, i) : 0; }
-u64 CVPixelBufferGetHeightOfPlane(cvpb_t *p, u64 i) { return p && p->surf ? IOSurfaceGetHeightOfPlane(p->surf, i) : 0; }
+void *CVPixelBufferGetBaseAddressOfPlane(cvpb_t *p, u64 i) { return !p ? 0 : p->surf ? IOSurfaceGetBaseAddressOfPlane(p->surf, i) : i < p->np ? p->pbase[i] : 0; }
+u64 CVPixelBufferGetBytesPerRowOfPlane(cvpb_t *p, u64 i) { return !p ? 0 : p->surf ? IOSurfaceGetBytesPerRowOfPlane(p->surf, i) : i < p->np ? p->pbpr[i] : 0; }
+u64 CVPixelBufferGetWidthOfPlane(cvpb_t *p, u64 i) { return !p ? 0 : p->surf ? IOSurfaceGetWidthOfPlane(p->surf, i) : i < p->np ? p->pw[i] : 0; }
+u64 CVPixelBufferGetHeightOfPlane(cvpb_t *p, u64 i) { return !p ? 0 : p->surf ? IOSurfaceGetHeightOfPlane(p->surf, i) : i < p->np ? p->ph[i] : 0; }
 cvpb_t *CVPixelBufferRetain(cvpb_t *p) { if (p) objc_retain((id)p); return p; }
 void CVPixelBufferRelease(cvpb_t *p) { if (p) objc_release((id)p); }
 typedef struct { double x, y, w, h; } cvrect_t;
 cvrect_t CVImageBufferGetCleanRect(cvpb_t *p) { cvrect_t r = {0, 0, p ? p->w : 0, p ? p->h : 0}; return r; }
 
 /* ---- anexos (CVBuffer*) */
+/* modo 1 (kCVAttachmentMode_ShouldPropagate) e 0 (ShouldNotPropagate) ficam em dicionários separados */
 void CVBufferSetAttachment(cvpb_t *p, id key, id val, u32 mode) {
-    (void)mode;
     if (!p || !key) return;
-    if (!p->attach) p->attach = objc_retain(MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary"));
-    if (val) MSG(void, p->attach, "setObject:forKey:", val, key);
-    else MSG(void, p->attach, "removeObjectForKey:", key);
+    id *mine = mode ? &p->attach : &p->attach_np, other = mode ? p->attach_np : p->attach;
+    if (other) MSG(void, other, "removeObjectForKey:", key);
+    if (!*mine) *mine = objc_retain(MSG0(id, (id)cx_class_named("NSMutableDictionary"), "dictionary"));
+    if (val) MSG(void, *mine, "setObject:forKey:", val, key);
+    else MSG(void, *mine, "removeObjectForKey:", key);
 }
 id CVBufferGetAttachment(cvpb_t *p, id key, u32 *mode) {
-    if (mode) *mode = 1;
-    return p && p->attach && key ? MSG(id, p->attach, "objectForKey:", key) : 0;
+    if (!p || !key) return 0;
+    id v = p->attach ? MSG(id, p->attach, "objectForKey:", key) : 0;
+    if (v) { if (mode) *mode = 1; return v; }
+    v = p->attach_np ? MSG(id, p->attach_np, "objectForKey:", key) : 0;
+    if (v && mode) *mode = 0;
+    return v;
+}
+/* o dicionário do modo pedido (sem retenção: regra do Get) */
+id CVBufferGetAttachments(cvpb_t *p, u32 mode) {
+    id d = !p ? 0 : mode ? p->attach : p->attach_np;
+    return d && MSG0(u64, d, "count") ? d : 0;
 }
 id CVBufferCopyAttachment(cvpb_t *p, id key, u32 *mode) { id v = CVBufferGetAttachment(p, key, mode); return v ? objc_retain(v) : 0; }
 u8 CVBufferHasAttachment(cvpb_t *p, id key) { return CVBufferGetAttachment(p, key, 0) != 0; }
-void CVBufferRemoveAttachment(cvpb_t *p, id key) { if (p && p->attach && key) MSG(void, p->attach, "removeObjectForKey:", key); }
-void CVBufferRemoveAllAttachments(cvpb_t *p) { if (p && p->attach) MSG0(void, p->attach, "removeAllObjects"); }
+void CVBufferRemoveAttachment(cvpb_t *p, id key) {
+    if (!p || !key) return;
+    if (p->attach) MSG(void, p->attach, "removeObjectForKey:", key);
+    if (p->attach_np) MSG(void, p->attach_np, "removeObjectForKey:", key);
+}
+void CVBufferRemoveAllAttachments(cvpb_t *p) { if (p && p->attach) MSG0(void, p->attach, "removeAllObjects"); if (p && p->attach_np) MSG0(void, p->attach_np, "removeAllObjects"); }
 void CVBufferPropagateAttachments(cvpb_t *a, cvpb_t *b) {
     if (!a || !b || !a->attach) return;
     nsdict_t *d = (nsdict_t *)a->attach;
@@ -384,9 +425,8 @@ CFCONST(kCVImageBufferChromaLocationBottomFieldKey, "ChromaLocationBottomField")
 CFCONST(kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey, "IOSurfaceCoreAnimationCompatibility")
 CFCONST(kCVPixelBufferPoolMaximumBufferAgeKey, "MaximumBufferAge") CFCONST(kCVImageBufferICCProfileKey, "ICCProfile")
 id CVBufferCopyAttachments(cvpb_t *p, u32 mode) {
-    (void)mode;
-    if (!p || !p->attach || !MSG0(u64, p->attach, "count")) return 0;
-    return MSG0(id, p->attach, "copy");
+    id d = CVBufferGetAttachments(p, mode);
+    return d ? MSG0(id, d, "copy") : 0;
 }
 void CVBufferSetAttachments(cvpb_t *p, id dict, u32 mode) {
     if (!p || !dict) return;
@@ -479,6 +519,199 @@ id CVPixelFormatDescriptionCreateWithPixelFormatType(void *alloc, u32 fmt) { (vo
  * SwiftShader) e o NSOpenGL estão em appkit_nsopengl.c */
 
 void cx_metal_init(void);
+
+/* ================================================================ OpenGL: tamanhos, constantes e CVOpenGLTextureCache */
+CFCONST(kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey, "IOSurfaceOpenGLTextureCompatibility")
+CFCONST(kCVPixelBufferIOSurfaceOpenGLFBOCompatibilityKey, "IOSurfaceOpenGLFBOCompatibility")
+CFCONST(kCVPixelBufferOpenGLTextureCacheCompatibilityKey, "OpenGLTextureCacheCompatibility")
+CFCONST(kCVImageBufferColorPrimaries_P22, "P22")
+CFCONST(kCVImageBufferChromaLocation_DV420, "DV 4:2:0")
+CFCONST(kCVOpenGLTextureCacheChromaSamplingModeKey, "ChromaSamplingMode")
+typedef struct { double w, h; } cvsize_t;
+cvsize_t CVImageBufferGetEncodedSize(cvpb_t *p) { cvsize_t z = {p ? p->w : 0, p ? p->h : 0}; return z; }
+cvsize_t CVImageBufferGetDisplaySize(cvpb_t *p) { return CVImageBufferGetEncodedSize(p); }
+u8 CVImageBufferIsFlipped(cvpb_t *p) { (void)p; return 1; }   /* linha 0 da memória é a de cima */
+/* o display link segue a tela do contexto GL: o mOS tem uma tela de saída por vez */
+int CVDisplayLinkSetCurrentCGDisplayFromOpenGLContext(cvlink_t *l, void *cgl_ctx, void *cgl_pix) {
+    (void)cgl_ctx; (void)cgl_pix;
+    if (!l) return kCVReturnInvalidArgument;
+    l->display = 1;
+    return kCVReturnSuccess;
+}
+
+/* GL usado pelo cache (OpenGL por software, gl_*.c) */
+void *CGLGetCurrentContext(void);
+int CGLSetCurrentContext(void *ctx);
+void glGenTextures(int n, u32 *t);
+void glDeleteTextures(int n, const u32 *t);
+void glBindTexture(u32 target, u32 t);
+void glTexImage2D(u32 target, int lvl, int ifmt, int w, int h, int border, u32 fmt, u32 type, const void *px);
+void glTexParameteri(u32 target, u32 p, int v);
+void glPixelStorei(u32 p, int v);
+void glGetIntegerv(u32 p, int *v);
+#define CV_GL_TEXTURE_RECTANGLE 0x84F5
+#define CV_GL_TEXTURE_BINDING_RECTANGLE 0x84F6
+#define CV_GL_RGBA8 0x8058
+#define CV_GL_BGRA 0x80E1
+#define CV_GL_UNSIGNED_INT_8_8_8_8_REV 0x8367
+#define CV_GL_UNPACK_ROW_LENGTH 0x0CF2
+#define CV_GL_UNPACK_ALIGNMENT 0x0CF5
+#define CV_GL_TEXTURE_MIN_FILTER 0x2801
+#define CV_GL_TEXTURE_MAG_FILTER 0x2800
+#define CV_GL_LINEAR 0x2601
+typedef struct { cx_class_t *isa; void *cgl; void *pix; } cvglcache_t;
+typedef struct { cx_class_t *isa; cvglcache_t *cache; u32 name, target; u32 w, h; cvpb_t *image; } cvgltex_t;
+cx_class_t CVOpenGLTextureCache_c __asm__("OBJC_CLASS_$_CVOpenGLTextureCache");
+cx_class_t CVOpenGLTextureCache_m __asm__("OBJC_METACLASS_$_CVOpenGLTextureCache");
+cx_class_t CVOpenGLTexture_c __asm__("OBJC_CLASS_$_CVOpenGLTexture");
+cx_class_t CVOpenGLTexture_m __asm__("OBJC_METACLASS_$_CVOpenGLTexture");
+void *CGLRetainContext(void *c);
+void CGLReleaseContext(void *c);
+int CVOpenGLTextureCacheCreate(void *alloc, id cattrs, void *cgl_ctx, void *cgl_pix, id tattrs, cvglcache_t **out) {
+    (void)alloc; (void)cattrs; (void)tattrs;
+    if (!out || !cgl_ctx) return kCVReturnInvalidArgument;
+    cvglcache_t *c = (cvglcache_t *)cx_alloc_instance(&CVOpenGLTextureCache_c);
+    c->cgl = CGLRetainContext(cgl_ctx);
+    c->pix = cgl_pix;
+    *out = c;
+    return kCVReturnSuccess;
+}
+static void cache_dealloc(id self, SEL c) {
+    cvglcache_t *k = (cvglcache_t *)self;
+    if (k->cgl) CGLReleaseContext(k->cgl);
+    IMP sup = class_getMethodImplementation(cx_class_named("NSObject"), sel_registerName("dealloc"));
+    if (sup) ((void (*)(id, SEL))sup)(self, c);
+}
+static u8 clamp8(int v) { return (u8)(v < 0 ? 0 : v > 255 ? 255 : v); }
+/* YCbCr -> BGRA (BT.601 para SD, BT.709 para HD; faixa de vídeo ou cheia) */
+static void yuv_px(int y, int cb, int cr, int full, int hd, u8 *o) {
+    double Y = full ? y : (y - 16) * 255.0 / 219.0, U = (cb - 128) * (full ? 1.0 : 255.0 / 224.0), V = (cr - 128) * (full ? 1.0 : 255.0 / 224.0);
+    double r, g, b;
+    if (hd) { r = Y + 1.5748 * V; g = Y - 0.1873 * U - 0.4681 * V; b = Y + 1.8556 * U; }
+    else { r = Y + 1.402 * V; g = Y - 0.344136 * U - 0.714136 * V; b = Y + 1.772 * U; }
+    o[0] = clamp8((int)(b + 0.5)); o[1] = clamp8((int)(g + 0.5)); o[2] = clamp8((int)(r + 0.5)); o[3] = 255;
+}
+/* os pixels do buffer em BGRA8 (devolve memória nova ou 0) */
+static u8 *to_bgra(cvpb_t *p) {
+    u32 w = p->w, h = p->h, f = p->fmt;
+    u8 *o = malloc((size_t)w * h * 4 + 1);
+    if (!o) return 0;
+    int hd = w > 1024 || h > 576;
+    switch (f) {
+    case 0x42475241: /* 'BGRA' */ { const u8 *b = CVPixelBufferGetBaseAddress(p); u64 bpr = CVPixelBufferGetBytesPerRow(p); for (u32 y = 0; y < h; y++) memcpy(o + (u64)y * w * 4, b + y * bpr, (size_t)w * 4); return o; }
+    case 0x00000020: /* k32ARGBPixelFormat */ case 0x52474241: /* 'RGBA' */ {
+        const u8 *b = CVPixelBufferGetBaseAddress(p);
+        u64 bpr = CVPixelBufferGetBytesPerRow(p);
+        for (u32 y = 0; y < h; y++)
+            for (u32 x = 0; x < w; x++) {
+                const u8 *q = b + y * bpr + x * 4;
+                u8 *d = o + ((u64)y * w + x) * 4;
+                if (f == 0x20) { d[0] = q[3]; d[1] = q[2]; d[2] = q[1]; d[3] = q[0]; }
+                else { d[0] = q[2]; d[1] = q[1]; d[2] = q[0]; d[3] = q[3]; }
+            }
+        return o;
+    }
+    case 0x34323076: case 0x34323066: { /* '420v' / '420f': Y + CbCr intercalado */
+        const u8 *Y = CVPixelBufferGetBaseAddressOfPlane(p, 0), *C = CVPixelBufferGetBaseAddressOfPlane(p, 1);
+        u64 yb = CVPixelBufferGetBytesPerRowOfPlane(p, 0), cb = CVPixelBufferGetBytesPerRowOfPlane(p, 1);
+        if (!Y || !C) break;
+        for (u32 y = 0; y < h; y++)
+            for (u32 x = 0; x < w; x++) {
+                const u8 *c = C + (y / 2) * cb + (x / 2) * 2;
+                yuv_px(Y[y * yb + x], c[0], c[1], f == 0x34323066, hd, o + ((u64)y * w + x) * 4);
+            }
+        return o;
+    }
+    case 0x32767579: case 0x79757673: { /* '2vuy' (Cb Y0 Cr Y1) / 'yuvs' (Y0 Cb Y1 Cr) */
+        const u8 *b = CVPixelBufferGetBaseAddress(p);
+        u64 bpr = CVPixelBufferGetBytesPerRow(p);
+        for (u32 y = 0; y < h; y++)
+            for (u32 x = 0; x < w; x++) {
+                const u8 *q = b + y * bpr + (x / 2) * 4;
+                int yy, u, v;
+                if (f == 0x32767579) { u = q[0]; yy = (x & 1) ? q[3] : q[1]; v = q[2]; }
+                else { yy = (x & 1) ? q[2] : q[0]; u = q[1]; v = q[3]; }
+                yuv_px(yy, u, v, 0, hd, o + ((u64)y * w + x) * 4);
+            }
+        return o;
+    }
+    }
+    free(o);
+    return 0;
+}
+int CVOpenGLTextureCacheCreateTextureFromImage(void *alloc, cvglcache_t *cache, cvpb_t *img, id attrs, cvgltex_t **out) {
+    (void)alloc; (void)attrs;
+    if (!out || !cache || !img) return kCVReturnInvalidArgument;
+    *out = 0;
+    CVPixelBufferLockBaseAddress(img, 1);
+    u8 *px = to_bgra(img);
+    CVPixelBufferUnlockBaseAddress(img, 1);
+    if (!px) return kCVReturnInvalidPixelFormat;
+    void *prev = CGLGetCurrentContext();
+    CGLSetCurrentContext(cache->cgl);
+    int old_tex = 0, old_row = 0, old_al = 4;
+    glGetIntegerv(CV_GL_TEXTURE_BINDING_RECTANGLE, &old_tex);
+    glGetIntegerv(CV_GL_UNPACK_ROW_LENGTH, &old_row);
+    glGetIntegerv(CV_GL_UNPACK_ALIGNMENT, &old_al);
+    u32 name = 0;
+    glGenTextures(1, &name);
+    glBindTexture(CV_GL_TEXTURE_RECTANGLE, name);
+    glPixelStorei(CV_GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(CV_GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(CV_GL_TEXTURE_RECTANGLE, 0, CV_GL_RGBA8, (int)img->w, (int)img->h, 0, CV_GL_BGRA, CV_GL_UNSIGNED_INT_8_8_8_8_REV, px);
+    glTexParameteri(CV_GL_TEXTURE_RECTANGLE, CV_GL_TEXTURE_MIN_FILTER, CV_GL_LINEAR);
+    glTexParameteri(CV_GL_TEXTURE_RECTANGLE, CV_GL_TEXTURE_MAG_FILTER, CV_GL_LINEAR);
+    glBindTexture(CV_GL_TEXTURE_RECTANGLE, (u32)old_tex);
+    glPixelStorei(CV_GL_UNPACK_ROW_LENGTH, old_row);
+    glPixelStorei(CV_GL_UNPACK_ALIGNMENT, old_al);
+    CGLSetCurrentContext(prev);
+    free(px);
+    cvgltex_t *t = (cvgltex_t *)cx_alloc_instance(&CVOpenGLTexture_c);
+    t->cache = (cvglcache_t *)objc_retain((id)cache);
+    t->name = name;
+    t->target = CV_GL_TEXTURE_RECTANGLE;
+    t->w = img->w;
+    t->h = img->h;
+    t->image = CVPixelBufferRetain(img);
+    *out = t;
+    return kCVReturnSuccess;
+}
+static void gltex_dealloc(id self, SEL c) {
+    cvgltex_t *t = (cvgltex_t *)self;
+    if (t->cache && t->name) {
+        void *prev = CGLGetCurrentContext();
+        CGLSetCurrentContext(t->cache->cgl);
+        glDeleteTextures(1, &t->name);
+        CGLSetCurrentContext(prev);
+    }
+    if (t->image) CVPixelBufferRelease(t->image);
+    if (t->cache) objc_release((id)t->cache);
+    IMP sup = class_getMethodImplementation(cx_class_named("NSObject"), sel_registerName("dealloc"));
+    if (sup) ((void (*)(id, SEL))sup)(self, c);
+}
+void CVOpenGLTextureCacheFlush(cvglcache_t *c, u64 opts) { (void)c; (void)opts; }   /* cada textura solta o nome GL no dealloc */
+cvglcache_t *CVOpenGLTextureCacheRetain(cvglcache_t *c) { if (c) objc_retain((id)c); return c; }
+void CVOpenGLTextureCacheRelease(cvglcache_t *c) { if (c) objc_release((id)c); }
+u32 CVOpenGLTextureGetName(cvgltex_t *t) { return t ? t->name : 0; }
+u32 CVOpenGLTextureGetTarget(cvgltex_t *t) { return t ? t->target : 0; }
+u8 CVOpenGLTextureIsFlipped(cvgltex_t *t) { (void)t; return 1; }
+/* coordenadas (retângulo: em texels) dos quatro cantos; com a imagem de cabeça para baixo na textura */
+void CVOpenGLTextureGetCleanTexCoords(cvgltex_t *t, float *ll, float *lr, float *ur, float *ul) {
+    float w = t ? (float)t->w : 0, h = t ? (float)t->h : 0;
+    if (ll) { ll[0] = 0; ll[1] = h; }
+    if (lr) { lr[0] = w; lr[1] = h; }
+    if (ur) { ur[0] = w; ur[1] = 0; }
+    if (ul) { ul[0] = 0; ul[1] = 0; }
+}
+cvgltex_t *CVOpenGLTextureRetain(cvgltex_t *t) { if (t) objc_retain((id)t); return t; }
+void CVOpenGLTextureRelease(cvgltex_t *t) { if (t) objc_release((id)t); }
+void cx_corevideo_gl_init(void) {
+    cx_class_t *ob = cx_class_named("NSObject");
+    cx_define_class(&CVOpenGLTextureCache_c, &CVOpenGLTextureCache_m, "CVOpenGLTextureCache", ob, sizeof(cvglcache_t) - 8);
+    cx_add_method(&CVOpenGLTextureCache_c, "dealloc", (void *)cache_dealloc);
+    cx_define_class(&CVOpenGLTexture_c, &CVOpenGLTexture_m, "CVOpenGLTexture", ob, sizeof(cvgltex_t) - 8);
+    cx_add_method(&CVOpenGLTexture_c, "dealloc", (void *)gltex_dealloc);
+}
 void cx_corevideo_init(void) {
     cx_metal_init();
     cx_class_t *ob = cx_class_named("NSObject");
@@ -488,4 +721,5 @@ void cx_corevideo_init(void) {
     cx_add_method(&CVPixelBuffer_c, "dealloc", (void *)pb_dealloc);
     cx_add_method(&CVPixelBuffer_c, "_cfTypeID", (void *)pb_typeid);
     cx_define_class(&CVPixelBufferPool_c, &CVPixelBufferPool_m, "CVPixelBufferPool", ob, sizeof(cvpool_t) - 8);
+    cx_corevideo_gl_init();
 }
