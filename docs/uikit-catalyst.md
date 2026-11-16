@@ -150,3 +150,12 @@ Apps Catalyst (o WhatsApp para Mac é um) ligam o UIKit pelo caminho do Catalyst
 - O contexto da janela do AppKit ainda ignora `CGContextConcatCTM` e `CGContextDrawImage` (isso está em `appkit.c` /
   no caminho não-bitmap de `coregraphics.c`, fora deste trabalho). Na janela, transform e a imagem da transição não
   movem pixel; hit-test, `frame` e o bitmap (`UIGraphics`) honram. `popoverPresentationController` continua vazio.
+
+## Linux (15 nov. 2026)
+
+- `tools/build-swift-uikit-objc.sh` (porte do `.ps1`, chamado pelo `tools/build.sh` depois do Foundation): compila o overlay e
+  liga `/System/iOSSupport/usr/lib/swift/libswiftUIKit.dylib` contra o libswiftCore/libswiftFoundation reais (dois níveis;
+  `llvm-objdump-21 --macho --bind --lazy-bind` dá 0 `_swift_*` em busca plana).
+- `tools/test-uikit-swift.sh` liga `userland/tests-swiftobjc/uikit/main.swift` como binário da Apple (dylibs) e roda no
+  `build/machotest` com `build/swift/objc/dylib` como raiz: **uikit 28/28**.
+- Os 278 `$s5UIKit…` de `sys_zerados.c` saíram: o `libswiftUIKit.dylib` exporta todos com o mesmo nome.

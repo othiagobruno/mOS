@@ -1,5 +1,5 @@
 # Stubs exportados do mOS
-Auditoria somente de leitura do que ainda liga e não faz o trabalho. Contagem conferida em `userland/libsystem/sys_zerados.c`: <!--n:total-sys-->**1929**<!--/n--> funções no formato `void nome(void) {}`. O recado de «cerca de 5404» não bate com o arquivo nesta main (`0c9c75e`). A lista símbolo a símbolo está em [stubs-full.txt](stubs-full.txt).
+Auditoria somente de leitura do que ainda liga e não faz o trabalho. Contagem conferida em `userland/libsystem/sys_zerados.c`: <!--n:total-sys-->**1647**<!--/n--> funções no formato `void nome(void) {}`. O recado de «cerca de 5404» não bate com o arquivo nesta main (`0c9c75e`). A lista símbolo a símbolo está em [stubs-full.txt](stubs-full.txt).
 ## Onde vive cada parte
 | Componente | Caminho |
 |---|---|
@@ -49,8 +49,7 @@ A libswift de stdlib e de runtime deste arquivo é nossa. Foundation, CoreFounda
 <!-- gerado:tabela-grupos início -->
 | Quantidade | Grupo | Dono | Primeiro símbolo |
 |---:|---|---|---|
-| 800 | Foundation | Sistemas | `$s10Foundation10CocoaErrorV4CodeVAA01_cD8ProtocolAAMc` |
-| 248 | UIKit | Interface | `$s5UIKit01_A23NumericRawRepresentablePAAE1poiyxx_0C5ValueQztFZ` |
+| 776 | Foundation | Sistemas | `$s10Foundation10CocoaErrorV4CodeVAA01_cD8ProtocolAAMc` |
 | 154 | Network | Runtime C/C++ e Swift | `$s7Network10NWEndpointO4HostO13stringLiteralAESS_tcfC` |
 | 132 | Swift (stdlib) | Runtime C/C++ e Swift | `$s10_ErrorType10Foundation01_A12CodeProtocolPTl` |
 | 69 | ObjC (sem módulo reconhecido) | a definir | `$sSo10CKDatabaseC8CloudKitE17modifyRecordZones6saving8deletingSDySo14CKRecordZoneIDCs6ResultOySo0iJ0Cs5Error_pGG11saveResults_SDyAhJyytsAM_pGG06deleteO0tSayALG_SayAHGtYaKF` |
@@ -58,11 +57,11 @@ A libswift de stdlib e de runtime deste arquivo é nossa. Foundation, CoreFounda
 | 52 | libc/libm (C) | Runtime C/C++ e Swift | `NXGetArchInfoFromCpuType` |
 | 47 | UniformTypeIdentifiers | Frameworks Apple | `$s22UniformTypeIdentifiers10UTTagClassV04mimeB0ACvgZ` |
 | 34 | AVFoundation | Frameworks Apple | `$s12AVFoundation15AVAsyncPropertyC6StatusO11descriptionSSvg` |
-| 32 | System | Runtime C/C++ e Swift | `$s6System14FileDescriptorV11OpenOptionsVMn` |
-| 27 | CoreGraphics | Interface | `$s12CoreGraphics7CGFloatV10FoundationE10truncatingACSo8NSNumberCh_tcfC` |
+| 31 | System | Runtime C/C++ e Swift | `$s6System14FileDescriptorV11OpenOptionsVMn` |
 | 27 | Foundation (C, NS*) | Sistemas | `NSLocaleCalendar` |
 | 27 | PhotosUI | Interface | `$s8PhotosUI14PHPickerFilterV6imagesACvgZ` |
 | 27 | os | Runtime C/C++ e Swift | `$s2os0A4_log_3dso0B04type_ys12StaticStringV_SVSgSo03OS_a1_B0CSo0a1_b1_D2_tas7CVarArg_pdtF` |
+| 25 | CoreGraphics | Interface | `$s12CoreGraphics7CGFloatV10FoundationE10truncatingACSo8NSNumberCh_tcfC` |
 | 25 | Network (C, nw_*) | Runtime C/C++ e Swift | `nw_connection_cancel` |
 | 21 | _StringProcessing | Runtime C/C++ e Swift | `$s17_StringProcessing13_RegexFactoryV10accumulateyAA0C0VyxGq__q0_tAA0C9ComponentR_AaHR0_r1_lF` |
 | 18 | RegexBuilder | Runtime C/C++ e Swift | `$s12RegexBuilder0a9ComponentB0O15buildExpressionyxx17_StringProcessing0aC0RzlFZ` |
@@ -76,25 +75,23 @@ A libswift de stdlib e de runtime deste arquivo é nossa. Foundation, CoreFounda
 | 7 | Accelerate | Runtime C/C++ e Swift | `$s10Accelerate6vImageO7OptionsV7noFlagsAEvgZ` |
 | 6 | filesystem (C) | Storage | `endfsent` |
 | 5 | Combine | Interface | `$sSo12NSURLSessionC10FoundationE17DataTaskPublisherV7Combine0E0ACMc` |
-| 5 | mach (C) | Kernel | `mach_port_get_attributes` |
+| 4 | mach (C) | Kernel | `mach_port_guard` |
 | 4 | pthread (C) | Runtime C/C++ e Swift | `pthread_fchdir_np` |
-| 3 | ObjectiveC | Runtime C/C++ e Swift | `$sSo12UIKeyCommandC5UIKitE5title5image6action5input13modifierFlags12propertyList10alternates20discoverabilityTitle10attributes5stateABSS_So7UIImageCSg10ObjectiveC8SelectorVSSSo0a8ModifierI0VypSgSaySo18UICommandAlternateCGSSSgSo23UIMenuElementAttributesVSo0wX5StateVtcfC` |
 | 3 | libdispatch (C) | Runtime C/C++ e Swift | `dispatch_apply` |
-| 3 | mach exception (C) | Kernel | `exception_raise` |
 | 2 | Security (C) | Sistemas | `SecTaskCopyTeamIdentifier` |
 | 2 | xpc (C) | Kernel | `xpc_dictionary_get_audit_token` |
 
-Soma: **1929**. Há ainda 29 `void *kCF…` / `kCFURL…` sem inicializador (ponteiro nulo), listados no anexo. Não são função.
+Soma: **1647**. Há ainda 29 `void *kCF…` / `kCFURL…` sem inicializador (ponteiro nulo), listados no anexo. Não são função.
 <!-- gerado:tabela-grupos fim -->
 
 ### O que o grupo deveria fazer
-- **Swift (stdlib), <!--n:Swift (stdlib)-->132<!--/n-->. Runtime.** Metadados e witness tables. Corpo vazio: o binário liga e a chamada não materializa tipo nem compara. O primeiro símbolo da tabela é um associated type cujo módulo não parseou como Foundation; os <!--n:Foundation-->800<!--/n--> com módulo Foundation estão na linha de baixo.
-- **Foundation, <!--n:Foundation-->800<!--/n--> + <!--n:Foundation (C, NS*)-->27<!--/n--> `NS*`. Sistemas.** `URLRequest`, `JSONDecoder`, `Data`, `Date`, erros Cocoa/POSIX. Sem isso o app não decodifica JSON nem monta pedido HTTP. Não é PR do Runtime.
+- **Swift (stdlib), <!--n:Swift (stdlib)-->132<!--/n-->. Runtime.** Metadados e witness tables. Corpo vazio: o binário liga e a chamada não materializa tipo nem compara. O primeiro símbolo da tabela é um associated type cujo módulo não parseou como Foundation; os <!--n:Foundation-->776<!--/n--> com módulo Foundation estão na linha de baixo.
+- **Foundation, <!--n:Foundation-->776<!--/n--> + <!--n:Foundation (C, NS*)-->27<!--/n--> `NS*`. Sistemas.** `URLRequest`, `JSONDecoder`, `Data`, `Date`, erros Cocoa/POSIX. Sem isso o app não decodifica JSON nem monta pedido HTTP. Não é PR do Runtime.
 - **CoreFoundation, <!--n:CoreFoundation-->0<!--/n-->, e os <!--n:ponteiros-->29<!--/n--> ponteiros `kCF*`. Sistemas.** O mesmo vale para qualquer `CF*` que aparecer fora deste arquivo.
 - **CoreMedia, <!--n:CoreMedia-->65<!--/n-->, e Compression, <!--n:Compression-->9<!--/n-->. Sistemas.** Junto com VideoToolbox, Metal, ImageIO, libcurl e libz (zero stubs `void nome(void) {}` aqui).
 - **Security, <!--n:Security (C)-->2<!--/n-->. Sistemas.** `SecTaskCopyTeamIdentifier` e o vizinho. `SecTransformCreateGroupTransform` em `security.c` também.
 - **swift_*, <!--n:swift_* (runtime C)-->0<!--/n-->, Dispatch <!--n:Dispatch-->17<!--/n-->, libdispatch <!--n:libdispatch (C)-->3<!--/n-->, pthread <!--n:pthread (C)-->4<!--/n-->, Darwin, os, System, ObjectiveC, _StringProcessing, RegexBuilder, Observation. Runtime.** `swift_retain` / `allocObject` / cast / task. Referência: `tools/vscode-macho-stubs/libswift-runtime.c` (#82/#94).
-- **UIKit <!--n:UIKit-->248<!--/n-->, PhotosUI <!--n:PhotosUI-->27<!--/n-->, CoreGraphics <!--n:CoreGraphics-->27<!--/n-->. Interface.** SwiftUI dos <!--n:total-swiftui-->46<!--/n--> de `swiftui_imports.c` também.
+- **UIKit <!--n:UIKit-->0<!--/n-->, PhotosUI <!--n:PhotosUI-->27<!--/n-->, CoreGraphics <!--n:CoreGraphics-->25<!--/n-->. Interface.** SwiftUI dos <!--n:total-swiftui-->46<!--/n--> de `swiftui_imports.c` também.
 - **mach, exception, xpc e o módulo XPC. Kernel.**
 - **filesystem <!--n:filesystem (C)-->6<!--/n--> e AppleArchive <!--n:AppleArchive-->10<!--/n-->. Storage.**
 - **Network <!--n:Network-->154<!--/n-->, `nw_*` <!--n:Network (C, nw_*)-->25<!--/n-->, libc/libm <!--n:libc/libm (C)-->52<!--/n-->, CommonCrypto <!--n:CommonCrypto (C)-->11<!--/n-->, Accelerate <!--n:Accelerate-->7<!--/n-->. Runtime C/C++ e Swift.**
@@ -163,7 +160,7 @@ Nesta rodada não rodei `tools/build.sh`, QEMU nem a suíte de host. O estado ab
 | `operator new`, `__cxa_guard_*`, `std::string` em `libcxx.c` / `cxxabi.c` | Código com comportamento. Não reexecutado aqui. |
 | `_Unwind_RaiseException` e `_Unwind_DeleteException` | Código em `cxx_unwind.c`. Não reexecutado aqui. |
 | `compression_stream_*` e `crc32` | Código da zlib no #83. Não reexecutado aqui. |
-| <!--n:total-sys-->1929<!--/n--> de `sys_zerados.c` e <!--n:total-swiftui-->46<!--/n--> de `swiftui_imports.c` | Stub. |
+| <!--n:total-sys-->1647<!--/n--> de `sys_zerados.c` e <!--n:total-swiftui-->46<!--/n--> de `swiftui_imports.c` | Stub. |
 | `__cxa_throw` de `libcxx.c` | Stub que aborta. |
 | Unicode em `swiftrt.c` | Stub (ASCII/Latin-1 de caixa é real; normalização não). |
 | Exceção ObjC com libc++ no disco | Código em `objc_exc.c`. O harness citado é `tools/objc_eh_hosttest.c`. Não rodei. |
