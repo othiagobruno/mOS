@@ -140,7 +140,18 @@ typedef struct {
     u8 ltk[16], rand8[8];
     u16 ediv;
     bool notify_on;
+    /* privacidade: IRK e identidade; anuncia com um RPA */
+    bool privacy;
+    u8 irk[16], id_addr[6];
 } periph_t;
+void smp_ah(const u8 irk_le[16], const u8 r_le[3], u8 out_le[3]);
+static void rnd(u8 *p, int n);
+static u8 rl[8][23]; static int nrl; static bool rl_on;          /* lista de resolução do controlador */
+static void new_rpa(periph_t *x) {
+    u8 pr[3]; rnd(pr, 3); pr[2] = (u8)((pr[2] & 0x3F) | 0x40);
+    u8 h[3]; smp_ah(x->irk, pr, h);
+    memcpy(x->addr, h, 3); memcpy(x->addr + 3, pr, 3); x->type = 1;
+}
 
 static periph_t P[2];
 #define MOUSE (&P[0])
@@ -337,6 +348,9 @@ int bt_hci_cmd(u16 op, const void *pv, u8 len, int timeout_ms) {
         pending = false;
         conn_complete_ev(0x02, NULL);
         return 0;
+    case 0x2027: if (nrl < 8) { memcpy(rl[nrl], p + 1, 6); memcpy(rl[nrl] + 6, p + 7, 16); nrl++; } return 0;
+    case 0x2029: nrl = 0; return 0;
+    case 0x202D: rl_on = p[0]; return 0;
     case 0x2010: if (pending && pend_filter) return 0x0C; naccept = 0; return 0;
     case 0x2011: if (pending && pend_filter) return 0x0C; if (naccept < 8) memcpy(accept[naccept++], p, 7); return 0;
     case 0x2019: {                                                 /* LE Start Encryption */
@@ -352,6 +366,10 @@ int bt_hci_cmd(u16 op, const void *pv, u8 len, int timeout_ms) {
                 u8 k[17] = {0x06}; memcpy(k + 1, x->ltk, 16); smp_send(x, k, 17);
                 u8 m[11] = {0x07, (u8)x->ediv, (u8)(x->ediv >> 8)}; memcpy(m + 3, x->rand8, 8); smp_send(x, m, 11);
             } else { memcpy(x->ltk, ltk, 16); memset(x->rand8, 0, 8); x->ediv = 0; }
+            if (x->privacy && (x->preq[6] & 2)) {                  /* distribui a identidade */
+                u8 ii[17] = {0x08}; memcpy(ii + 1, x->irk, 16); smp_send(x, ii, 17);
+                u8 ia[8] = {0x09, 0}; memcpy(ia + 2, x->id_addr, 6); smp_send(x, ia, 8);
+            }
             x->bonded = true;
             x->paired_now = true;
             return 0;
@@ -387,7 +405,14 @@ bool bt_acl_send(u16 handle, const void *data, u16 len) {
 }
 
 static bool in_accept(periph_t *x) {
-    for (int i = 0; i < naccept; i++) if (!memcmp(accept[i] + 1, x->addr, 6)) return true;
+    for (int i = 0; i < naccept; i++) {
+        if (!memcmp(accept[i] + 1, x->addr, 6)) return true;
+        if (rl_on && (x->addr[5] & 0xC0) == 0x40)                  /* o controlador resolve o RPA pela lista */
+            for (int k = 0; k < nrl; k++) {
+                u8 h[3]; smp_ah(rl[k] + 6, x->addr + 3, h);
+                if (!memcmp(h, x->addr, 3) && !memcmp(rl[k], accept[i] + 1, 6)) return true;
+            }
+    }
     return false;
 }
 static void adv_report(periph_t *x) {
@@ -573,6 +598,31 @@ int main(int argc, char **argv) {
     pairs = n_smp_pair_req;
     run(8000);
     check(strstr(bt_le_status(), "Slim X1 Keyboard: conectado") && n_smp_pair_req == pairs, "legado: reconecta com EDIV/Rand/LTK salvos");
+
+    printf("-- mouse com endereço privado resolvível (RPA)\n");
+    memset(&dirnode, 0, sizeof dirnode); dir_exists = false;
+    for (int i = 0; i < 8; i++) if (fused[i]) { free(fnodes[i].data); fused[i] = false; }
+    setup_periphs(true);
+    MOUSE->privacy = true;
+    for (int i = 0; i < 16; i++) MOUSE->irk[i] = (u8)(0x30 + i);
+    { u8 id[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC6}; memcpy(MOUSE->id_addr, id, 6); }   /* identidade estática */
+    new_rpa(MOUSE);
+    u8 first_rpa[6]; memcpy(first_rpa, MOUSE->addr, 6);
+    MOUSE->adv = MOUSE->pairable = true;
+    reboot();
+    run(20000);
+    check(MOUSE->bonded && strstr(bt_le_status(), "MX Master 3S: conectado"), "pareia com o mouse que usa RPA");
+    check(vfs_lookup(BOND_DIR "/C6-55-44-33-22-11.vinculo") && vfs_lookup(BOND_DIR "/C6-55-44-33-22-11.irk"), "vínculo e IRK salvos pela identidade");
+    char rp[96];
+    snprintf(rp, sizeof rp, BOND_DIR "/%02X-%02X-%02X-%02X-%02X-%02X.vinculo", first_rpa[5], first_rpa[4], first_rpa[3], first_rpa[2], first_rpa[1], first_rpa[0]);
+    check(!vfs_lookup(rp), "nenhum vínculo sobra no RPA do pareamento");
+    MOUSE->pairable = false;
+    new_rpa(MOUSE);                                          /* o mouse troca o endereço privado */
+    pairs = n_smp_pair_req;
+    reboot();
+    run(10000);
+    check(rl_on && nrl == 1, "a IRK vai para a lista de resolução do controlador");
+    check(strstr(bt_le_status(), "MX Master 3S: conectado") && n_smp_pair_req == pairs, "volta com um RPA novo pela lista de aceitação, sem parear de novo");
 
     printf("%s (%d ok, %d falhas)\n", fails ? "ble_host: FALHOU" : "ble_host: ok", oks, fails);
     return fails ? 1 : 0;

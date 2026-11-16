@@ -32,6 +32,7 @@ void smp_c1(const u8 *k, const u8 *r, const u8 *preq, const u8 *pres, u8 iat, co
 void smp_s1(const u8 *k, const u8 *r1, const u8 *r2, u8 *out);
 void smp_f4(const u8 *u, const u8 *v, const u8 *x, u8 z, u8 *out);
 void smp_f5(const u8 *w, const u8 *n1, const u8 *n2, const u8 *a1, const u8 *a2, u8 *mackey, u8 *ltk);
+void smp_ah(const u8 irk_le[16], const u8 r_le[3], u8 out_le[3]);
 void smp_f6(const u8 *w, const u8 *n1, const u8 *n2, const u8 *r, const u8 *io, const u8 *a1, const u8 *a2, u8 *out);
 void p256_public(const u8 *priv, u8 *x, u8 *y);
 bool p256_ecdh(const u8 *priv, const u8 *px, const u8 *py, u8 *dh);
@@ -79,6 +80,8 @@ typedef struct {
     u32 pk;
     int round;                  /* SC: rodada 0..19 (um bit da passkey por rodada) */
     bool bonded, have_ltk;
+    u8 irk[16];                 /* chave de identidade do aparelho (endereço privado resolvível) */
+    bool have_irk;
     int resume;                 /* estado a retomar depois de recifrar um enlace já configurado */
     u16 mtu;
     /* GATT */
@@ -223,6 +226,81 @@ static bool is_bonded(const u8 *a) {
     return v && v->data && v->size >= 33;
 }
 
+/* ---- endereços privados resolvíveis (RPA): IRK de cada vinculado em <identidade>.irk (IRK 16 + tipo 1)
+ * Um RPA tem os 2 bits altos = 01; hash (3 bytes baixos) = ah(IRK, prand (3 bytes altos)). */
+#define MAX_IRK 8
+static struct { u8 id[6], type, irk[16]; } irks[MAX_IRK];
+static int nirks;
+static bool rl_dirty;                                              /* lista de resolução do controlador desatualizada */
+
+static void irk_path(const u8 *a, char *p, usize n) {
+    char s[18];
+    addr_str(a, s);
+    for (char *q = s; *q; q++) if (*q == ':') *q = '-';
+    snprintf(p, n, BOND_DIR "/%s.irk", s);
+}
+static void irk_add(const u8 *id, u8 type, const u8 *irk) {
+    int k = 0;
+    for (; k < nirks; k++) if (!memcmp(irks[k].id, id, 6)) break;
+    if (k == nirks) { if (nirks == MAX_IRK) return; nirks++; }
+    memcpy(irks[k].id, id, 6); irks[k].type = type; memcpy(irks[k].irk, irk, 16);
+    rl_dirty = true;
+}
+static void irk_load_all(void) {
+    nirks = 0;
+    vnode_t *d = vfs_lookup(BOND_DIR);
+    for (vnode_t *f = d && d->dir ? d->child : NULL; f; f = f->next) {
+        const char *nm = f->name;
+        for (const char *q = f->name; *q; q++) if (*q == '/') nm = q + 1;
+        usize nl = strlen(nm);
+        if (!f->data || f->size < 17 || nl != 21 || strcmp(nm + 17, ".irk")) continue;
+        u8 id[6];
+        bool ok = true;
+        for (int i = 0; i < 6 && ok; i++) {                        /* "AA-BB-CC-DD-EE-FF": o primeiro é o byte alto */
+            u8 v = 0;
+            for (int k = 0; k < 2; k++) {
+                char ch = nm[i * 3 + k];
+                int h = ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1;
+                if (h < 0) ok = false; else v = (u8)(v << 4 | h);
+            }
+            id[5 - i] = v;
+        }
+        if (!ok) continue;
+        irk_add(id, f->data[16], f->data);
+    }
+}
+/* resolve um endereço aleatório; true e a identidade se algum IRK vinculado bater */
+static bool rpa_resolve(const u8 *a, u8 *id, u8 *type) {
+    if ((a[5] & 0xC0) != 0x40) return false;
+    for (int k = 0; k < nirks; k++) {
+        u8 h[3];
+        smp_ah(irks[k].irk, a + 3, h);
+        if (!memcmp(h, a, 3)) { memcpy(id, irks[k].id, 6); *type = irks[k].type; return true; }
+    }
+    return false;
+}
+/* lista de resolução do controlador: com ela a lista de aceitação (identidades) pega os RPAs na reconexão */
+static void rl_sync(void) {
+    if (!rl_dirty || conn_pending()) return;
+    rl_dirty = false;
+    u8 off = 0, on = 1;
+    /* a lista não muda com a varredura ligada: pausa e retoma */
+    bool was = scanning;
+    u8 so[2] = {0, 0}, son[2] = {1, 0};
+    if (was) bt_hci_cmd(0x200C, so, 2, 1000);
+    bt_hci_cmd(0x202D, &off, 1, 1000);
+    bt_hci_cmd(0x2029, NULL, 0, 1000);                             /* limpa */
+    for (int k = 0; k < nirks; k++) {
+        u8 p[39] = {0};
+        p[0] = irks[k].type;
+        memcpy(p + 1, irks[k].id, 6);
+        memcpy(p + 7, irks[k].irk, 16);                            /* IRK local zerada: o mOS usa o endereço público */
+        bt_hci_cmd(0x2027, p, 39, 1000);
+    }
+    if (nirks) bt_hci_cmd(0x202D, &on, 1, 1000);
+    if (was) bt_hci_cmd(0x200C, son, 2, 1000);
+}
+
 /* ---- API */
 int  bt_le_device_count(void) { return ndevs; }
 bool bt_le_device(int i, char *name, usize ncap, char *addr, int *rssi, bool *hid) {
@@ -322,6 +400,9 @@ void bt_le_forget(const char *addr_text) {
         bond_path(devs[i].addr, p, sizeof p);
         vnode_t *v = vfs_lookup(p);
         if (v) vfs_delete(v);
+        irk_path(devs[i].addr, p, sizeof p);
+        if ((v = vfs_lookup(p))) vfs_delete(v);
+        irk_load_all();
     }
 }
 
@@ -329,6 +410,7 @@ void bt_le_forget(const char *addr_text) {
 static void bg_reconnect(void) {
     if (conn_pending() || !conn_free() || want_dev >= 0 || timer_ticks() < bg_next) return;
     bg_next = timer_ticks() + 2000;
+    rl_sync();
     vnode_t *d = vfs_lookup(BOND_DIR);
     if (!d || !d->dir) return;
     if (bt_hci_cmd(0x2010, NULL, 0, 1000)) return;                 /* limpa a lista de aceitação */
@@ -345,8 +427,9 @@ static void bg_reconnect(void) {
 
 /* ---- SMP (iniciador) */
 static void smp_start(void) {
-    /* só tela (DisplayOnly), sem OOB, bonding + Secure Connections, sem exigir MITM; o periférico distribui a LTK */
-    u8 p[7] = {0x01, SMP_IOCAP, 0x00, 0x09, 16, 0x00, 0x01};
+    /* só tela (DisplayOnly), sem OOB, bonding + Secure Connections, sem exigir MITM; o periférico distribui a LTK
+     * e a identidade (IRK + endereço), para o mOS reconhecer os endereços privados dele depois */
+    u8 p[7] = {0x01, SMP_IOCAP, 0x00, 0x09, 16, 0x00, 0x03};
     memcpy(c->preq, p, 7);
     c->st = C_PAIRING;
     c->sc = false;
@@ -546,6 +629,35 @@ static void smp_rx(const u8 *p, int len) {
     }
     case 0x06: if (len >= 17) { memcpy(c->ltk, p + 1, 16); } return;              /* Encryption Information */
     case 0x07: if (len >= 11) { c->ediv = le16(p + 1); memcpy(c->rand, p + 3, 8); c->have_ltk = true; bond_save(); } return;
+    case 0x08: if (len >= 17) { memcpy(c->irk, p + 1, 16); c->have_irk = true; } return;   /* Identity Information */
+    case 0x09:                                                     /* Identity Address Information */
+        if (len >= 8 && c->have_irk) {
+            u8 id[6], type = p[1] & 1;
+            memcpy(id, p + 2, 6);
+            bool zero = true;
+            for (int i = 0; i < 16; i++) if (c->irk[i]) zero = false;
+            if (memcmp(id, c->addr, 6)) {                          /* pareou por um RPA: o vínculo passa para a identidade */
+                char old[96];
+                bond_path(c->addr, old, sizeof old);
+                vnode_t *v = vfs_lookup(old);
+                if (v) vfs_delete(v);
+                memcpy(c->addr, id, 6);
+                c->type = type;
+                if (c->have_ltk) bond_save();
+                char a[18]; addr_str(id, a);
+                kprintf("ble: endereço privado; identidade %s\n", a);
+            }
+            if (!zero) {                                           /* IRK zerada = o aparelho não usa RPA */
+                u8 b[17];
+                memcpy(b, c->irk, 16); b[16] = type;
+                char ip[96];
+                irk_path(id, ip, sizeof ip);
+                vfs_mkdir(BOND_DIR);
+                vfs_write_file(ip, b, 17);
+                irk_add(id, type, c->irk);
+            }
+        }
+        return;
     case 0x0B:                                                     /* Security Request: o periférico quer parear */
         if (c->st == C_GATT || c->st == C_READY) { if (bond_load(c->addr)) start_encryption(c->ltk, c->rand, c->ediv); else smp_start(); }
         return;
@@ -711,6 +823,7 @@ static void parse_adv(const u8 *r, int len) {
         if (!d && ndevs < MAX_DEVS) { d = &devs[ndevs++]; memset(d, 0, sizeof *d); memcpy(d->addr, addr, 6); d->type = at; }
         if (d) {
             d->rssi = rssi;
+            { u8 id[6], t; if (at == 1 && rpa_resolve(addr, id, &t) && !d->name[0]) { const char *nm = dev_name(id); if (nm) snprintf(d->name, sizeof d->name, "%s", nm); } }
             for (int i = 0; i + 1 < dl && i + 1 + ad[i] <= dl; i += 1 + ad[i]) {
                 u8 l = ad[i], t = ad[i + 1];
                 if (!l) break;
@@ -744,8 +857,9 @@ static void conn_complete(const u8 *p) {
         n->raw = true; periph_role = true; rawc = n;
         raw_failed = raw_gone = false; raw_rh = raw_rt = 0;
     }
-    n->type = p[4];
+    n->type = p[4] & 1;                              /* 2/3 (evento melhorado): identidade resolvida pelo controlador */
     memcpy(n->addr, p + 5, 6);                       /* pela lista de aceitação, o endereço só vem aqui */
+    { u8 id[6], t; if (n->type == 1 && rpa_resolve(n->addr, id, &t)) { memcpy(n->addr, id, 6); n->type = t; } }
     const char *nm = dev_name(n->addr);
     if (nm && nm != n->name) snprintf(n->name, sizeof n->name, "%s", nm);
     n->handle = le16(p + 1) & 0x0FFF;
@@ -869,6 +983,7 @@ void bt_stack_init(void) {
     bt_hci_cmd(0x2001, lemask, 8, 1000);
     bt_on_event = on_event;
     bt_on_acl = on_acl;
+    irk_load_all();
     memset(conns, 0, sizeof conns);
     c = &conns[0];
     rawc = NULL;

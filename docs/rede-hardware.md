@@ -51,9 +51,9 @@ kernel/wifi/rtw88/        driver RTL8821CE que implementa wifi_radio_t
 14. [ ] Varredura de 5 GHz (canais 36–165, passivo nos DFS) e regulatório.
 
 ### Bluetooth (`kernel/bt/`, `kernel/dev/bluetooth.c`)
-15. [ ] Revisar o caminho de firmware rtl8821c no USB real (já existe `btrtl.c` com teste de host).
-16. [ ] RPA: pedir e guardar a IRK no pareamento LE e resolver endereços privados.
-17. [ ] A2DP: conferir SBC/AVDTP com o teste de host; AVRCP básico (volume/play/pause).
+15. [x] Firmware rtl8821c: os arquivos do repositório são idênticos aos que o Linux carrega neste PC (SHA-256); `tools/btrtl_host.c` 29/29.
+16. [x] RPA: o pareamento LE pede a identidade (IRK + endereço); o vínculo passa para a identidade, a IRK fica em `<identidade>.irk`, os anúncios e conexões com RPA são resolvidos e a IRK vai para a lista de resolução do controlador (a reconexão pela lista de aceitação pega o RPA novo). `tools/ble_host.c` 32/32.
+17. [x] AVRCP 1.6 (alvo) e servidor SDP (`kernel/bt/avrcp.c`): registros da fonte A2DP e do AVRCP; play/pausa/parar/próxima/anterior/volume/mudo do fone viram teclas de mídia; UNIT/SUBUNIT INFO, GetCapabilities, GetPlayStatus, RegisterNotification. O mOS abre o AVCTP ao abrir o canal de mídia do A2DP. `tools/avrcp_host.c` 19/19. Fora: volume absoluto (SetAbsoluteVolume, papel de controle).
 18. [ ] Coex com o Wi-Fi do lado BT (o firmware BT recebe o estado do Wi-Fi pelo PTA/mailbox).
 
 ### Ethernet RTL8168H (`kernel/dev/r8169.c`)
