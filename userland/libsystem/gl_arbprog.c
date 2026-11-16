@@ -979,7 +979,7 @@ void gl_arb_free(gl_ctx_t *C) {
     if (!S) return;
     for (u32 i = 1; i < S->names.n; i++) prog_free(S->names.v ? S->names.v[i] : 0);
     free(S->names.v);
-    free(S->names.used);
+    free(S->names.used); free(S->names.lab);
     gl_glsl_free(S->combo);
     free(S);
     C->arb_state = 0;

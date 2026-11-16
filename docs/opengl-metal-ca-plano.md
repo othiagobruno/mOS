@@ -53,8 +53,9 @@ Cada passo tem teste de host em `tools/` e entra por PR na `main`. Build complet
 | #363 | Derivadas no GLSL por reexecução e lod implícita de mipmap | `gl_host` 88/88, `host-metal-gpu` ok |
 | #408 | Geometry shader | `gl_host` 95/95 |
 | #449 | Lacunas do corpus: `NSOpenGLGetOption`/`SetOption`/`GetVersion`, `CVOpenGLTextureCache`, CoreVideo planar e anexos, descritores de raytracing do Metal, `setVertexBuffers` do overlay Swift | `nsopengl_host` 0 falhas, `mtl_vbufs_test` ok |
-| (este) | Pontilhado de linha e de polígono | `gl_host` 106/106 |
+| #450 | Pontilhado de linha e de polígono | `gl_host` 106/106 |
+| (este) | `KHR_debug`, `EXT_debug_label`, `EXT_debug_marker` completos | `gl_host` 126/126 |
 
 ## Próximo (OpenGL)
 
-MSAA com amostras; anisotropia; `KHR_debug` com mensagens; tesselação; teste com app real na VM.
+MSAA com amostras; anisotropia; tesselação; teste com app real na VM.

@@ -1369,6 +1369,7 @@ void glGetProgramStageiv(GLuint p, GLenum t, GLenum q, GLint *v) { (void)p; (voi
 /* ================================================================ pipelines (ARB_separate_shader_objects) */
 typedef struct { u32 name; gl_prog_t *vs, *fs, *active; gl_prog_t combo; int dirty; char *log; } ppl_t;
 static gl_names_t g_ppl;
+gl_names_t *gl_ppl_names(void) { return &g_ppl; }
 static ppl_t *g_ppl_bound;
 void glGenProgramPipelines(GLsizei n, GLuint *out) { for (int i = 0; i < n; i++) { u32 k = gl_names_gen(&g_ppl); ppl_t *p = calloc(1, sizeof *p); p->name = k; gl_names_set(&g_ppl, k, p); out[i] = k; } }
 void glDeleteProgramPipelines(GLsizei n, const GLuint *ids) {

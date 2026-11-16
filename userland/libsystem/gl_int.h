@@ -34,7 +34,7 @@ typedef long GLsizeiptr;
 #define GLX_XFB 4
 
 /* ---- nomes (tabela por tipo de objeto) */
-typedef struct { void **v; u32 n, cap; u8 *used; } gl_names_t;
+typedef struct { void **v; u32 n, cap; u8 *used; char **lab; } gl_names_t;   /* lab: rótulos de depuração */
 u32 gl_names_gen(gl_names_t *t);
 void gl_names_reserve(gl_names_t *t, u32 name);
 void *gl_names_get(gl_names_t *t, u32 name);
@@ -294,6 +294,7 @@ typedef struct gl_ctx {
     GLenum sfunc[2], sfail[2], szfail[2], szpass[2]; int sref[2]; u32 svmask[2], swmask[2];
     GLenum cull_mode, front_face, pmode[2];
     float poff_factor, poff_units, poff_clamp;
+    struct gl_dbg *dbg;           /* KHR_debug: log, callback, grupos (gl_debug.c) */
     float line_w, point_s, point_min, point_max, point_fade, point_att[3];
     int ls_factor; u16 ls_pattern; u32 pstipple[32]; /* pontilhado: linha (fator, padrão) e polígono (bit x da linha y) */
     GLenum point_origin;
@@ -357,6 +358,12 @@ typedef struct gl_ctx {
 /* ---- utilidades */
 gl_ctx_t *gl_cur(void);
 void gl_err(gl_ctx_t *C, GLenum e);
+/* depuração (gl_debug.c) */
+struct gl_dbg;
+void gl_debug_error(gl_ctx_t *C, GLenum e);
+void gl_debug_free(gl_ctx_t *C);
+int gl_debug_get(gl_ctx_t *C, GLenum p, long long *v);
+int gl_debug_getp(gl_ctx_t *C, GLenum p, void **out);
 #define GLC(ret) gl_ctx_t *C = gl_cur(); if (!C) return ret
 #define GLERR(e, ret) do { gl_err(C, (e)); return ret; } while (0)
 
