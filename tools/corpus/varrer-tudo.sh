@@ -5,7 +5,8 @@
 # começa com RAM disponível >= 4000 MB. O binário é apagado depois de medido.
 # Não roda o build: usa o libSystem já compilado em build/. Uso: tools/corpus/varrer-tudo.sh [ids...]
 # Sem ids mede um lote de LOTE apps (padrão 20) e sai 3 se ainda faltar. PEQUENOS=1: só os que não precisam do
-# mos-pesado (download < 200 MB ou ainda não baixado); os grandes ficam no disco para quando a trava vagar.
+# mos-pesado (download < 200 MB); os grandes ficam para quando a trava vagar (build/corpus/grandes.txt guarda os que
+# passaram do teto sem baixar; sem PEQUENOS eles voltam ao lote normal).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 H=tools/corpus/harness.py
@@ -36,6 +37,7 @@ if [ $# -eq 0 ] && [ -n "${PEQUENOS:-}" ]; then
     leves=()
     for id in "${ids[@]}"; do
         tam=$(du -sm "build/corpus/$id" 2>/dev/null | cut -f1)
+        grep -qxF "$id" build/corpus/grandes.txt 2>/dev/null && continue    # passou do teto num lote anterior
         [ "${tam:-0}" -lt 200 ] && leves+=("$id")
     done
     echo "varrer-tudo: $(( ${#ids[@]} - ${#leves[@]} )) grandes já baixados ficam para a trava"
@@ -54,7 +56,7 @@ adiados=()
 for id in "${ids[@]}"; do
     if [ -n "${PEQUENOS:-}" ]; then
         saida=$(MOS_CORPUS_MAX_MB=200 python3 "$H" baixar --fixar "$id" 2>&1 | grep -v '^baixando')
-        if [[ "$saida" == *"adiado:"* ]]; then echo "varrer-tudo: $id passa de 200 MB, fica para a trava (não baixado)"; continue; fi
+        if [[ "$saida" == *"adiado:"* ]]; then echo "varrer-tudo: $id passa de 200 MB, fica para a trava (não baixado)"; echo "$id" >> build/corpus/grandes.txt; continue; fi
         [ -n "$saida" ] && echo "$saida"
     else
         python3 "$H" baixar --fixar "$id" 2>&1 | grep -v '^baixando'
