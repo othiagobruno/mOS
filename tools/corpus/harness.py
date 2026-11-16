@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import lzma
 import os
 import shutil
 import subprocess
@@ -196,7 +197,7 @@ def extrai_pkg(archive: Path, dest: Path) -> None:
     """Pacote do instalador: xar com um ou mais Payload (cpio com gzip). Cada Payload vira uma pasta ao lado dele.
 
     O instalador do mOS (kernel/apps/pkgextract.c) é outro caminho; aqui só interessa chegar ao .app para medir.
-    Payload em pbzx (pacotes da Apple) não é aberto pelo 7z e fica sem .app, o que a varredura registra.
+    Payload em pbzx (Teams, Acrobat, pacotes da Apple) vira cpio antes (pbzx_para_cpio): o 7z não o abre.
     """
     extrai_7z(archive, dest)
     for _volta in range(3):
@@ -206,11 +207,37 @@ def extrai_pkg(archive: Path, dest: Path) -> None:
         for payload in pendentes:
             alvo = payload.parent / (payload.name.rstrip("~") + ".d")
             alvo.mkdir(exist_ok=True)
+            with payload.open("rb") as f:
+                pbzx = f.read(4) == b"pbzx"
+            if pbzx:
+                cpio = payload.with_name(payload.name.rstrip("~") + ".pbzx.cpio")
+                pbzx_para_cpio(payload, cpio)
+                payload.unlink()
+                payload = cpio
             proc = subprocess.run([sete_zip(), "x", "-y", f"-o{alvo}", str(payload)],
                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
             payload.unlink()
             if proc.returncode not in (0, 2):
                 print(f"7z: {payload.relative_to(dest)} não abriu ({proc.returncode})", flush=True)
+
+
+def pbzx_para_cpio(origem: Path, destino: Path) -> None:
+    """pbzx: "pbzx", u64 tamanho de bloco; depois blocos (u64 flags, u64 tamanho, dados). Cada bloco é um xz
+    inteiro, ou o cpio cru quando não começa com a assinatura do xz. Lê e grava um bloco por vez."""
+    xz = b"\xfd7zXZ\x00"
+    with origem.open("rb") as f, destino.open("wb") as out:
+        if f.read(4) != b"pbzx":
+            raise SystemExit(f"{origem.name}: não é pbzx")
+        f.read(8)
+        while True:
+            cab = f.read(16)
+            if len(cab) < 16:
+                break
+            n = int.from_bytes(cab[8:16], "big")
+            dados = f.read(n)
+            if len(dados) != n:
+                raise SystemExit(f"{origem.name}: bloco pbzx cortado")
+            out.write(lzma.decompress(dados) if dados.startswith(xz) else dados)
 
 
 MACHO_MAGICS = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf")
