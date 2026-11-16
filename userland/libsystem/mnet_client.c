@@ -93,6 +93,7 @@ typedef struct {
     int h2_done, h2_code, h2_head_ok;
 } job_t;
 
+#define JAR(j) ((j)->q->jar ? (j)->q->jar : (j)->c->jar)
 static void setmsg(job_t *j, const char *m) {
     if (!j->msg || !j->msglen) return;
     size_t n = strlen(m);
@@ -171,13 +172,15 @@ static int head_ready(job_t *j, int follow_possible) {
     r->expected_len = -1;
     if (cl) { long long v = 0; const char *p = cl; while (*p >= '0' && *p <= '9') v = v * 10 + (*p++ - '0'); if (p != cl) r->expected_len = v; }
     /* cookies de toda resposta, inclusive redirect */
-    if (j->c->jar && !q->no_cookies) {
+    if (JAR(j) && !q->no_cookies && !q->no_store_cookies) {
         mnet_url_t u;
         if (!mnet_url_parse(r->url, &u)) {
             long long now = j->c->io->unix_time(j->c->io->env);
+            lk(j->c);                                             /* o jar é compartilhado entre os fios */
             for (int i = 0; i < r->hdrs.n; i++)
                 if (mnet_ieq(r->hdrs.v[i].name, "set-cookie"))
-                    mnet_jar_set(j->c->jar, r->hdrs.v[i].value, u.scheme, u.host, u.target, 1, now);
+                    mnet_jar_set(JAR(j), r->hdrs.v[i].value, u.scheme, u.host, u.target, 1, now);
+            ulk(j->c);
             mnet_url_free(&u);
         }
     }
@@ -294,6 +297,12 @@ static int open_conn(job_t *j, const mnet_url_t *u, mnet_url_t *px, void **out, 
             else *h2 = h;
         }
         if (!r) memcpy(j->r->alpn, al, sizeof al);
+        if (!r && j->q->on_tls) {
+            void *tr = io->copy_trust ? io->copy_trust(io->env, conn) : 0;
+            int stop = j->q->on_tls(j->q->ctx, u->host, u->port, tr);
+            if (tr && j->q->release_trust) j->q->release_trust(tr);
+            if (stop) { setmsg(j, "o desafio do servidor foi recusado"); r = MNET_E_CANCELLED; j->cancelled = 1; }
+        }
     }
     if (r) { io->close(io->env, conn); return r; }
     *out = conn;
@@ -319,8 +328,10 @@ static void build_headers(job_t *j, const mnet_url_t *u, const char *method, mne
         mnet_hdrs_add(h, "Accept-Encoding", 15, "gzip, deflate, br", 17);
         *we_set_ae = 1;
     }
-    if (j->c->jar && !q->no_cookies && !mnet_hdrs_get(h, "cookie")) {
-        char *ck = mnet_jar_header(j->c->jar, u->scheme, u->host, u->target, 1, j->c->io->unix_time(j->c->io->env));
+    if (JAR(j) && !q->no_cookies && !mnet_hdrs_get(h, "cookie")) {
+        lk(j->c);
+        char *ck = mnet_jar_header(JAR(j), u->scheme, u->host, u->target, 1, j->c->io->unix_time(j->c->io->env));
+        ulk(j->c);
         if (ck) { mnet_hdrs_add(h, "Cookie", 6, ck, strlen(ck)); free(ck); }
     }
     (void)method;

@@ -354,6 +354,69 @@ static void t_decode(void) {
     system("rm -f /tmp/mnet_dec_src /tmp/mnet_dec.gz /tmp/mnet_dec2.gz /tmp/mnet_dec.zlib /tmp/mnet_dec.raw /tmp/mnet_dec.br");
 }
 
+/* ---- cache HTTP (RFC 9111) */
+static void hset(mnet_hdrs_t *h, const char *n, const char *v) { mnet_hdrs_add(h, n, strlen(n), v, strlen(v)); }
+static void t_cache(void) {
+    mnet_hdrs_t rq = {0}, rs = {0};
+    long long t0 = 784111777;                    /* Sun, 06 Nov 1994 08:49:37 GMT */
+    hset(&rs, "Date", "Sun, 06 Nov 1994 08:49:37 GMT");
+    hset(&rs, "Cache-Control", "public, max-age=600");
+    hset(&rs, "ETag", "\"v1\"");
+    CHECK(mnet_cache_storable("GET", 200, &rq, &rs) && !mnet_cache_storable("POST", 200, &rq, &rs));
+    CHECK(mnet_cache_fresh_left(&rs, 200, t0, t0, t0 + 100) == 500);
+    CHECK(mnet_cache_fresh_left(&rs, 200, t0, t0, t0 + 700) < 0);
+    hset(&rs, "Age", "550");
+    CHECK(mnet_cache_fresh_left(&rs, 200, t0, t0, t0 + 10) == 40);   /* Age conta */
+    mnet_hdrs_free(&rs);
+    hset(&rs, "Date", "Sun, 06 Nov 1994 08:49:37 GMT");
+    hset(&rs, "Expires", "Sun, 06 Nov 1994 09:49:37 GMT");
+    CHECK(mnet_cache_fresh_left(&rs, 200, t0, t0, t0) == 3600);
+    mnet_hdrs_free(&rs);
+    hset(&rs, "Date", "Sun, 06 Nov 1994 08:49:37 GMT");
+    hset(&rs, "Expires", "0");
+    CHECK(mnet_cache_fresh_left(&rs, 200, t0, t0, t0) <= 0);              /* Expires inválido = vencido */
+    mnet_hdrs_free(&rs);
+    hset(&rs, "Date", "Sun, 06 Nov 1994 08:49:37 GMT");
+    hset(&rs, "Last-Modified", "Thu, 27 Oct 1994 08:49:37 GMT");          /* 10 dias antes: heurística = 1 dia */
+    CHECK(mnet_cache_fresh_left(&rs, 200, t0, t0, t0) == 86400);
+    CHECK(mnet_cache_fresh_left(&rs, 302, t0, t0, t0) <= 0);
+    mnet_hdrs_free(&rs);
+    hset(&rs, "Cache-Control", "no-store");
+    CHECK(!mnet_cache_storable("GET", 200, &rq, &rs));
+    mnet_hdrs_free(&rs);
+    hset(&rs, "Cache-Control", "no-cache, max-age=600");
+    CHECK(mnet_cache_storable("GET", 200, &rq, &rs) && mnet_cache_fresh_left(&rs, 200, t0, t0, t0) <= 0 && mnet_cache_must_revalidate(&rs));
+    mnet_hdrs_free(&rs);
+    hset(&rs, "Vary", "*");
+    CHECK(!mnet_cache_storable("GET", 200, &rq, &rs));
+    mnet_hdrs_free(&rs);
+    hset(&rq, "Cache-Control", "max-age=0");
+    CHECK(mnet_cache_req_revalidate(&rq));
+    mnet_hdrs_free(&rq);
+    hset(&rq, "Pragma", "no-cache");
+    CHECK(mnet_cache_req_revalidate(&rq));
+    mnet_hdrs_free(&rq);
+    /* validadores, 304 e Vary */
+    hset(&rs, "ETag", "\"v1\""); hset(&rs, "Last-Modified", "Thu, 27 Oct 1994 08:49:37 GMT");
+    hset(&rs, "Content-Length", "10"); hset(&rs, "Cache-Control", "max-age=1"); hset(&rs, "Vary", "Accept-Encoding, Accept-Language");
+    mnet_hdrs_t cond = {0};
+    CHECK(mnet_cache_validators(&rs, &cond) == 2 && !strcmp(mnet_hdrs_get(&cond, "if-none-match"), "\"v1\""));
+    mnet_hdrs_t r304 = {0};
+    hset(&r304, "Cache-Control", "max-age=900"); hset(&r304, "Content-Length", "0"); hset(&r304, "ETag", "\"v2\"");
+    mnet_cache_merge_304(&rs, &r304);
+    CHECKS(mnet_hdrs_get(&rs, "cache-control"), "max-age=900");
+    CHECKS(mnet_hdrs_get(&rs, "content-length"), "10");
+    CHECKS(mnet_hdrs_get(&rs, "etag"), "\"v2\"");
+    hset(&rq, "Accept-Encoding", "gzip"); hset(&rq, "Accept-Language", "pt-BR");
+    char *k1 = mnet_cache_vary_key(&rs, &rq);
+    CHECKS(k1, "accept-encoding=gzip\naccept-language=pt-BR\n");
+    mnet_hdrs_set(&rq, "Accept-Language", "en");
+    char *k2 = mnet_cache_vary_key(&rs, &rq);
+    CHECK(strcmp(k1, k2) != 0);
+    free(k1); free(k2);
+    mnet_hdrs_free(&rq); mnet_hdrs_free(&rs); mnet_hdrs_free(&cond); mnet_hdrs_free(&r304);
+}
+
 /* ---- HTTP/2: cliente e servidor do mnet ligados em memória */
 typedef struct { mnet_h2_t *c; int is_srv; mnet_buf_t body; int status, closed, close_code, trailers, heads, pings; long long body_want; } peer_t;
 static void h2_on_headers(void *ctx, mnet_h2_stream_t *st, const mnet_hdrs_t *h, int end) {
@@ -529,6 +592,7 @@ int main(void) {
     t_cookies();
     t_hpack();
     t_url();
+    t_cache();
     t_decode();
     t_h2();
     t_h2_curl();
