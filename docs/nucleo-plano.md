@@ -60,3 +60,7 @@ antes do build final (REGRAS.md).
 | 2 swap no compressor | pronto | `tools/vmcomp_host.c`: 4000 páginas, fork com dois donos, munmap solta o slot, zona volta a 0 páginas; `resto_host` com a API nova |
 | 3 correções de swap | pronto, sem VM | `clang -fsyntax-only` nos arquivos do kernel; QEMU só no build final |
 | 4–8 | aberto | — |
+
+## Pedidos de outras frentes
+
+- `dma_alloc32(bytes, &phys)` e `pmm_alloc_below(pages, limit)` (Felipe, Wi-Fi RTL8821CE com DMA de 32 bits): bloco contíguo, zerado, inteiro abaixo de 4 GiB; libera com `pmm_free`. Não há zona reservada abaixo de 4 GiB: chamar na subida do driver. Busca com limite testada no host (harness temporário).

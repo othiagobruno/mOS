@@ -126,6 +126,8 @@ bool   kmalloc_is_pages(const void *p);
 void   heap_init(void);
 usize  heap_used(void);
 void  *dma_alloc(usize bytes, u64 *phys); /* memória alinhada a página, zerada */
+void  *dma_alloc32(usize bytes, u64 *phys); /* idem, todo o bloco abaixo de 4 GiB (DMA de 32 bits); NULL = não há */
+u64    pmm_alloc_below(u64 pages, u64 limit);  /* páginas contíguas com fim abaixo de limit, ou 0 */
 
 /* ---------- arch ---------- */
 void   gdt_init(void);
