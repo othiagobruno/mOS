@@ -134,6 +134,14 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
 6j. ✅ **SVG inline no DOM** (`html.c`, `layout.c`, `js_dom.c`): os filhos do `<svg>` viram nós (XML, com a caixa dos
    nomes e atributos), com `namespaceURI`, `tagName` como no navegador, `createElementNS` e `innerHTML` em XML;
    qualquer mudança pelo JS re-serializa a subárvore e redesenha. Teste: caso svg_dom_js em `tools/web_host_svg.c`.
+6k. ✅ **History API e iframes completos** (`js_dom.c`, `frame.c`, `webview.c`, `js_interp.c`, `WebKit.m`):
+   `pushState`/`replaceState`/`go` com estado clonado, `popstate`/`hashchange`, fragmento sem recarregar, histórico
+   do WKWebView e de cada iframe (voltar a entrada do mesmo documento sem recarregar); `sandbox` com todos os tokens,
+   `allow` (Permissions Policy, `document.featurePolicy`), `window[i]`/`length`, `window.open`, WindowProxy
+   restrito entre origens, cursor de link sobre iframe, `WKFrameInfo.isMainFrame` real e `WKUserScript`
+   `forMainFrameOnly:NO` nos iframes. O motor passou a rodar cada função no reino em que nasceu. Testes:
+   `tools/web_host_history.c`, `tools/web_host_frames.c`. Falta: `decidePolicyForNavigationAction` para
+   navegações de iframe (hoje só o quadro principal passa pela política).
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.
