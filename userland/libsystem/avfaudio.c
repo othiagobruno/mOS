@@ -2329,6 +2329,7 @@ void cx_avfaudio_init(void) {
     { extern void cx_auv3_init(void); cx_auv3_init(); }   /* AUAudioUnit (v3): auv3.c */
     { extern void cx_avcomposition_init(void); cx_avcomposition_init(); }   /* AVMutableComposition: avcomposition.c */
     { extern void cx_mediaplayer_init(void); cx_mediaplayer_init(); }   /* MediaPlayer: mediaplayer.c (antes da casca do vscode_fwclasses) */
+    { extern void cx_avcapture_classes_init(void); cx_avcapture_classes_init(); }   /* AVCapture: avcapture.c (tamanho das instâncias, antes das cascas) */
     K(&AVPlayerItem_c, &AVPlayerItem_m, "AVPlayerItem", obj, sizeof(avitem_t) - 8);
     CM(AVPlayerItem, "playerItemWithURL:", item_with_url); CM(AVPlayerItem, "playerItemWithAsset:", item_with_asset);
     M(AVPlayerItem, "initWithURL:", item_init_url); M(AVPlayerItem, "initWithAsset:", item_init_asset);
