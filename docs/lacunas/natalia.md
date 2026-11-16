@@ -3,122 +3,180 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Natalia (serviços e segurança) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**1614** símbolos distintos.
+**1663** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeVMa` | 22 | alt-tab, betterdisplay, chatgpt, claude |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeVMn` | 21 | alt-tab, betterdisplay, chatgpt, claude |
-| CoreServices.framework | `_kUTTypeFileURL` | 19 | db-browser-for-sqlite, dolphin, firefox, floorp |
-| CoreServices.framework | `_GetIconRef` | 17 | android-studio, audacity, db-browser-for-sqlite, dbeaver-community |
-| CoreServices.framework | `_kUTTagClassNSPboardType` | 16 | audacity, firefox, floorp, git-credential-manager |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeVMa` | 25 | alt-tab, betterdisplay, chatgpt, claude |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeVMn` | 24 | alt-tab, betterdisplay, chatgpt, claude |
+| CoreServices.framework | `_kUTTypeFileURL` | 21 | db-browser-for-sqlite, dolphin, firefox, floorp |
+| CoreServices.framework | `_GetIconRef` | 18 | android-studio, audacity, db-browser-for-sqlite, dbeaver-community |
+| CryptoKit.framework | `_$s9CryptoKit12HashFunctionP8finalize6DigestQzyFTj` | 18 | betterdisplay, chatgpt, claude, clipy |
+| CoreServices.framework | `_kUTTagClassNSPboardType` | 17 | audacity, firefox, floorp, git-credential-manager |
+| CryptoKit.framework | `_$s9CryptoKit12HashFunctionP6update13bufferPointerySW_tFTj` | 17 | betterdisplay, chatgpt, claude, clipy |
+| CryptoKit.framework | `_$s9CryptoKit12HashFunctionPxycfCTj` | 17 | betterdisplay, chatgpt, claude, clipy |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4dataACvgZ` | 17 | betterdisplay, chatgpt, cmux, coteditor |
+| CoreServices.framework | `_ReleaseIconRef` | 16 | android-studio, audacity, db-browser-for-sqlite, dbeaver-community |
+| CryptoKit.framework | `_$s9CryptoKit12SHA256DigestVMa` | 16 | betterdisplay, chatgpt, claude, clipy |
+| CryptoKit.framework | `_$s9CryptoKit6SHA256VAA12HashFunctionAAMc` | 16 | betterdisplay, chatgpt, claude, clipy |
+| CryptoKit.framework | `_$s9CryptoKit6SHA256VMa` | 16 | betterdisplay, chatgpt, claude, clipy |
 | Security.framework | `_kSecAttrServer` | 16 | 1password, audacity, bitwarden, docker-desktop |
-| CoreServices.framework | `_ReleaseIconRef` | 15 | android-studio, audacity, db-browser-for-sqlite, dbeaver-community |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10identifierSSvg` | 16 | alt-tab, chatgpt, claude, clipy |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV17filenameExtension12conformingToACSgSS_ACtcfC` | 16 | chatgpt, cmux, coteditor, ghostty |
 | CoreServices.framework | `_UCCreateCollator` | 15 | audacity, db-browser-for-sqlite, deluge, dolphin |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10identifierSSvg` | 15 | alt-tab, chatgpt, claude, clipy |
+| CoreServices.framework | `_FSFindFolder` | 14 | android-studio, cyberduck, dbeaver-community, deluge |
 | CoreServices.framework | `_UCGetCollationKey` | 14 | audacity, db-browser-for-sqlite, deluge, dolphin |
-| CryptoKit.framework | `_$s9CryptoKit12HashFunctionP6update13bufferPointerySW_tFTj` | 14 | betterdisplay, chatgpt, claude, clipy |
-| CryptoKit.framework | `_$s9CryptoKit12HashFunctionP8finalize6DigestQzyFTj` | 14 | betterdisplay, chatgpt, claude, clipy |
-| CryptoKit.framework | `_$s9CryptoKit12HashFunctionPxycfCTj` | 14 | betterdisplay, chatgpt, claude, clipy |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4dataACvgZ` | 14 | betterdisplay, chatgpt, cmux, coteditor |
-| CryptoKit.framework | `_$s9CryptoKit12SHA256DigestVMa` | 13 | betterdisplay, chatgpt, claude, clipy |
-| CryptoKit.framework | `_$s9CryptoKit6SHA256VAA12HashFunctionAAMc` | 13 | betterdisplay, chatgpt, claude, clipy |
-| CryptoKit.framework | `_$s9CryptoKit6SHA256VMa` | 13 | betterdisplay, chatgpt, claude, clipy |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV19_bridgeToObjectiveCSoABCyF` | 14 | alt-tab, chatgpt, claude, clipy |
+| CoreServices.framework | `_FSPathMakeRefWithOptions` | 13 | android-studio, brave-browser, cyberduck, dbeaver-community |
+| CryptoKit.framework | `_$s9CryptoKit12SHA256DigestVSTAAMc` | 13 | betterdisplay, chatgpt, claude, clipy |
+| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyV4dataACx_tc10Foundation15ContiguousBytesRzlufC` | 13 | 1password, cmux, dotnet-sdk, github |
+| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyVMa` | 13 | 1password, cmux, dotnet-sdk, github |
+| Security.framework | `_SSLSetDiffieHellmanParams` | 13 | audacity, db-browser-for-sqlite, hammerspoon, lmms |
 | Security.framework | `_kSecAttrProtocol` | 13 | audacity, bitwarden, docker-desktop, keepassxc |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV17filenameExtension12conformingToACSgSS_ACtcfC` | 13 | chatgpt, cmux, coteditor, ghostty |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV19_bridgeToObjectiveCSoABCyF` | 13 | alt-tab, chatgpt, claude, clipy |
-| CoreServices.framework | `_FSFindFolder` | 12 | android-studio, cyberduck, dbeaver-community, deluge |
-| Security.framework | `_SSLSetDiffieHellmanParams` | 12 | audacity, db-browser-for-sqlite, hammerspoon, lmms |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeVyACSgSScfC` | 12 | betterdisplay, chatgpt, claude, cmux |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeVyACSgSScfC` | 13 | betterdisplay, chatgpt, claude, cmux |
+| CoreServices.framework | `_kUTTypeHTML` | 12 | 1password, firefox, floorp, kicad |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV8conforms2toSbAC_tF` | 12 | betterdisplay, chatgpt, claude, cmux |
 | CoreServices.framework | `_LocaleRefFromLocaleString` | 11 | audacity, db-browser-for-sqlite, dolphin, lmms |
 | CoreServices.framework | `_UCCompareText` | 11 | audacity, db-browser-for-sqlite, dolphin, lmms |
 | CoreServices.framework | `_UCCompareTextDefault` | 11 | android-studio, deluge, git-credential-manager, github |
 | CoreServices.framework | `_UCDisposeCollator` | 11 | audacity, db-browser-for-sqlite, dolphin, lmms |
-| CoreServices.framework | `_kUTTypeHTML` | 11 | 1password, firefox, floorp, kicad |
 | CoreServices.framework | `_kUTTypeTIFF` | 11 | db-browser-for-sqlite, dolphin, kicad, krita |
-| CryptoKit.framework | `_$s9CryptoKit12SHA256DigestVSTAAMc` | 11 | betterdisplay, chatgpt, claude, clipy |
 | Security.framework | `_kSecImportExportKeychain` | 11 | audacity, bitwarden, db-browser-for-sqlite, lmms |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV8conforms2toSbAC_tF` | 11 | betterdisplay, chatgpt, claude, cmux |
-| CoreServices.framework | `_FSPathMakeRefWithOptions` | 10 | android-studio, brave-browser, cyberduck, dbeaver-community |
+| CoreServices.framework | `_FSGetCatalogInfo` | 10 | brave-browser, deluge, hex-fiend, iterm2 |
+| CoreServices.framework | `_FSPathMakeRef` | 10 | android-studio, cyberduck, dbeaver-community, deluge |
 | CoreServices.framework | `_UCCompareCollationKeys` | 10 | audacity, db-browser-for-sqlite, dolphin, lmms |
-| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyV4dataACx_tc10Foundation15ContiguousBytesRzlufC` | 10 | 1password, cmux, github, iterm2 |
-| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyVMa` | 10 | 1password, cmux, github, iterm2 |
-| CryptoKit.framework | `_$s9CryptoKit12SHA256DigestV10Foundation15ContiguousBytesAAMc` | 9 | chatgpt, clipy, cmux, github |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV5imageACvgZ` | 9 | claude, cmux, coteditor, iterm2 |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV6folderACvgZ` | 9 | cmux, ghostty, iterm2, orbstack |
-| CoreServices.framework | `_FSGetCatalogInfo` | 8 | brave-browser, deluge, hex-fiend, iterm2 |
+| CryptoKit.framework | `_$s9CryptoKit12SHA256DigestV10Foundation15ContiguousBytesAAMc` | 10 | chatgpt, clipy, cmux, github |
+| CryptoKit.framework | `_$s9CryptoKit6SHA256VMn` | 10 | cmux, dotnet-sdk, iterm2, openclaw |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV5imageACvgZ` | 10 | claude, cmux, coteditor, iterm2 |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV6folderACvgZ` | 10 | cmux, ghostty, iterm2, orbstack |
+| CoreServices.framework | `_FSCopyObjectSync` | 9 | brave-browser, hex-fiend, iterm2, keka |
+| Security.framework | `_SecIdentitySearchCopyNext` | 9 | android-studio, bruno, cyberduck, dbeaver-community |
+| Security.framework | `_SecIdentitySearchCreate` | 9 | android-studio, bruno, cyberduck, dbeaver-community |
+| libswiftUniformTypeIdentifiers.dylib | `_$s10Foundation17URLResourceValuesV22UniformTypeIdentifiersE07contentE0AD6UTTypeVSgvg` | 9 | chatgpt, claude, cmux, coteditor |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV17preferredMIMETypeSSSgvg` | 9 | cmux, ghostty, iterm2, obsidian |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV9plainTextACvgZ` | 9 | betterdisplay, cmux, coteditor, ghostty |
+| CoreServices.framework | `_FSCompareFSRefs` | 8 | deluge, firefox, floorp, librewolf |
+| CoreServices.framework | `_FSRefMakePath` | 8 | android-studio, cyberduck, dbeaver-community, deluge |
 | CoreServices.framework | `_Gestalt` | 8 | audacity, cyberduck, deluge, lmms |
-| Security.framework | `_SecIdentitySearchCopyNext` | 8 | android-studio, bruno, cyberduck, dbeaver-community |
-| Security.framework | `_SecIdentitySearchCreate` | 8 | android-studio, bruno, cyberduck, dbeaver-community |
+| CoreServices.framework | `_LSGetApplicationForInfo` | 8 | cyberduck, firefox, floorp, librewolf |
+| CoreServices.framework | `_kUTTagClassOSType` | 8 | db-browser-for-sqlite, dolphin, hammerspoon, kicad |
+| CryptoKit.framework | `_$s9CryptoKit0aB5ErrorOMa` | 8 | cmux, dotnet-sdk, github, iterm2 |
+| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyV15withUnsafeBytesyxxSWKXEKlF` | 8 | cmux, dotnet-sdk, iterm2, openclaw |
+| CryptoKit.framework | `_$s9CryptoKit24HashedAuthenticationCodeVMn` | 8 | cmux, dotnet-sdk, iterm2, openclaw |
+| CryptoKit.framework | `_$s9CryptoKit6SHA256VACycfC` | 8 | clipy, cmux, dotnet-sdk, openclaw |
+| Security.framework | `_SecTrustGetResult` | 8 | android-studio, cyberduck, dbeaver-community, pencil |
 | Security.framework | `_kSecAttrProtocolFTPProxy` | 8 | audacity, keepassxc, musescore, obs |
 | Security.framework | `_kSecAttrProtocolHTTPProxy` | 8 | audacity, keepassxc, musescore, obs |
 | Security.framework | `_kSecAttrProtocolHTTPSProxy` | 8 | audacity, keepassxc, musescore, obs |
-| libswiftUniformTypeIdentifiers.dylib | `_$s10Foundation17URLResourceValuesV22UniformTypeIdentifiersE07contentE0AD6UTTypeVSgvg` | 8 | chatgpt, claude, cmux, coteditor |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV17preferredMIMETypeSSSgvg` | 8 | cmux, ghostty, iterm2, obsidian |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV9plainTextACvgZ` | 8 | betterdisplay, cmux, coteditor, ghostty |
-| CoreServices.framework | `_FSCompareFSRefs` | 7 | deluge, firefox, floorp, mullvad-browser |
-| CoreServices.framework | `_FSCopyObjectSync` | 7 | brave-browser, hex-fiend, iterm2, macdown |
-| CoreServices.framework | `_FSPathMakeRef` | 7 | android-studio, cyberduck, dbeaver-community, deluge |
-| CoreServices.framework | `_FSRefMakePath` | 7 | android-studio, cyberduck, dbeaver-community, deluge |
-| CoreServices.framework | `_LSGetApplicationForInfo` | 7 | cyberduck, firefox, floorp, mullvad-browser |
-| CoreServices.framework | `_kUTTagClassOSType` | 7 | db-browser-for-sqlite, dolphin, hammerspoon, kicad |
-| CryptoKit.framework | `_$s9CryptoKit0aB5ErrorOMa` | 7 | cmux, github, iterm2, orbstack |
-| CryptoKit.framework | `_$s9CryptoKit6SHA256VMn` | 7 | cmux, iterm2, orbstack, raycast |
-| Security.framework | `_SecTrustGetResult` | 7 | android-studio, cyberduck, dbeaver-community, pencil |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3pngACvgZ` | 7 | chatgpt, claude, cmux, iterm2 |
-| AppIntents.framework | `_$s10AppIntents09_SupportsA12DependenciesMp` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentMp` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentP04openA7WhenRunSbvgZTq` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentP11descriptionAA0C11DescriptionVSgvgZTq` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentP13PerformResultAC_AA0cE0Tn` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentP14SummaryContentAC_AA09ParameterD0Tn` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentP16parameterSummary0E7ContentQzvgZTq` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentP20authenticationPolicyAA0c14AuthenticationE0OvgZTq` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentP5title10Foundation23LocalizedStringResourceVvgZTq` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentP7perform13PerformResultQzyYaKFTq` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentPAA09_SupportsA12DependenciesTb` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentPAA24PersistentlyIdentifiableTb` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentPAAE20authenticationPolicyAA0c14AuthenticationE0OvgZ` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentPxycfCTq` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents12IntentDialogVMa` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents12IntentDialogVMn` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents12IntentResultMp` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents15IntentParameterC12wrappedValuexvg` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents15IntentParameterCMn` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents21IntentResultContainerVMn` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents23InputConnectionBehaviorO7defaultyA2CmFWC` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents23InputConnectionBehaviorOMa` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents24PersistentlyIdentifiableMp` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents24PersistentlyIdentifiableP20persistentIdentifierSSvgZTq` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s13PerformResult10AppIntents0C6IntentPTl` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s14SummaryContent10AppIntents0C6IntentPTl` | 6 | betterdisplay, coteditor, ghostty, maccy |
-| CoreServices.framework | `_LSCopyApplicationForMIMEType` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| CoreServices.framework | `_LSCopyItemAttribute` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| CoreServices.framework | `_LSOpenFromRefSpec` | 6 | firefox, floorp, mullvad-browser, thunderbird |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3pngACvgZ` | 8 | chatgpt, claude, cmux, iterm2 |
+| AppIntents.framework | `_$s10AppIntents09_SupportsA12DependenciesMp` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentMp` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentP04openA7WhenRunSbvgZTq` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentP11descriptionAA0C11DescriptionVSgvgZTq` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentP13PerformResultAC_AA0cE0Tn` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentP14SummaryContentAC_AA09ParameterD0Tn` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentP16parameterSummary0E7ContentQzvgZTq` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentP20authenticationPolicyAA0c14AuthenticationE0OvgZTq` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentP5title10Foundation23LocalizedStringResourceVvgZTq` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentP7perform13PerformResultQzyYaKFTq` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentPAA09_SupportsA12DependenciesTb` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentPAA24PersistentlyIdentifiableTb` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentPAAE20authenticationPolicyAA0c14AuthenticationE0OvgZ` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentPxycfCTq` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents12IntentDialogVMa` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents12IntentDialogVMn` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents12IntentResultMp` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents15IntentParameterC12wrappedValuexvg` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents15IntentParameterCMn` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents21IntentResultContainerVMn` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents23InputConnectionBehaviorO7defaultyA2CmFWC` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents23InputConnectionBehaviorOMa` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents24PersistentlyIdentifiableMp` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents24PersistentlyIdentifiableP20persistentIdentifierSSvgZTq` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s13PerformResult10AppIntents0C6IntentPTl` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s14SummaryContent10AppIntents0C6IntentPTl` | 7 | betterdisplay, coteditor, ghostty, maccy |
+| CoreServices.framework | `_LSCopyApplicationForMIMEType` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| CoreServices.framework | `_LSCopyItemAttribute` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| CoreServices.framework | `_LSOpenFromRefSpec` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| CoreServices.framework | `_kLSItemDisplayName` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyVMn` | 7 | 1password, cmux, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO5NonceVMn` | 7 | cmux, dotnet-sdk, github, iterm2 |
+| CryptoKit.framework | `_$s9CryptoKit4HMACV18authenticationCode3for5usingAA020HashedAuthenticationE0VyxGqd___AA12SymmetricKeyVt10Foundation12DataProtocolRd__lFZ` | 7 | cmux, iterm2, openclaw, raycast |
+| CryptoKit.framework | `_$s9CryptoKit6SHA256V8finalizeAA0C6DigestVyF` | 7 | clipy, cmux, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO3MD5VAA12HashFunctionAAMc` | 7 | betterdisplay, clipy, dotnet-sdk, iina |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO3MD5VMa` | 7 | betterdisplay, clipy, dotnet-sdk, iina |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO9MD5DigestVMa` | 7 | betterdisplay, clipy, dotnet-sdk, iina |
+| Security.framework | `_SecCertificateGetData` | 7 | android-studio, cyberduck, dbeaver-community, pencil |
+| Security.framework | `_SecPolicySearchCopyNext` | 7 | android-studio, cyberduck, dbeaver-community, pencil |
+| Security.framework | `_SecPolicySearchCreate` | 7 | android-studio, cyberduck, dbeaver-community, pencil |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV04mimeB012conformingToACSgSS_ACtcfC` | 7 | cmux, ghostty, iterm2, localsend |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10exportedAs12conformingToACSS_ACSgtcfC` | 7 | cmux, coteditor, ghostty, maccy |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV11applicationACvgZ` | 7 | alt-tab, clipy, coteditor, ghostty |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV14unixExecutableACvgZ` | 7 | cmux, coteditor, ghostty, iterm2 |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4textACvgZ` | 7 | cmux, coteditor, openclaw, qlmarkdown |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV5movieACvgZ` | 7 | claude, cmux, coteditor, openclaw |
+| AppIntents.framework | `_$s10AppIntents0A5ValueMp` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents0A5ValuePAA07_IntentC0Tb` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents0A5ValuePAA24PersistentlyIdentifiableTb` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents0A5ValuePAA24TypeDisplayRepresentableTb` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents0A6IntentPAAE11descriptionAA0C11DescriptionVSgvgZ` | 6 | betterdisplay, coteditor, ghostty, maccy |
+| AppIntents.framework | `_$s10AppIntents0A6IntentPAAE20persistentIdentifierSSvgZ` | 6 | betterdisplay, coteditor, ghostty, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents12_IntentValueMp` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents12_IntentValueP0D4TypeAC_AaBTn` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents12_IntentValueP13SpecificationAC_AA08ResolverE0Tn` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents12_IntentValueP13UnwrappedTypeAC_AaBTn` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents12_IntentValueP28defaultResolverSpecification0G0QzvgZTq` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents15IntentParameterC14projectedValueACyxGvg` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents16ParameterSummaryMp` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationV5ImageVMa` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationV5ImageVMn` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationV5title8subtitle5imageAC10Foundation23LocalizedStringResourceV_AISgAC5ImageVSgtcfC` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryVMn` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryVyxGAA0dE0AAMc` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV0E13InterpolationV06appendF0yyqd_0_AA12_IntentValueRd__s8SendableRd__s7KeyPathCyxAA0hC0Cyqd__GGRbd_0_r0_lF` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV0E13InterpolationV13appendLiteralyySSF` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV0E13InterpolationV15literalCapacity18interpolationCountAEyx_GSi_SitcfC` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV0E13InterpolationVMn` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV19stringInterpolationACyxGAC0eG0Vyx_G_tcfC` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringVMn` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents24PersistentlyIdentifiablePAAE20persistentIdentifierSSvgZ` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents24TypeDisplayRepresentableMp` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents24TypeDisplayRepresentableP04typeD14RepresentationAA0cdG0VvgZTq` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents25TypeDisplayRepresentationV4name13numericFormatAC10Foundation23LocalizedStringResourceV_AHSgtcfC` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents25TypeDisplayRepresentationVMa` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s13Specification10AppIntents12_IntentValuePTl` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s13UnwrappedType10AppIntents12_IntentValuePTl` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s9ValueType10AppIntents07_IntentA0PTl` | 6 | betterdisplay, ghostty, maccy, qlmarkdown |
+| CoreServices.framework | `_LSSharedFileListItemResolve` | 6 | appcleaner, blender, figma, hammerspoon |
 | CoreServices.framework | `_UTGetOSTypeFromString` | 6 | clipy, db-browser-for-sqlite, dolphin, krita |
-| CoreServices.framework | `_kLSItemDisplayName` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyVMn` | 6 | 1password, cmux, orbstack, raycast |
+| CoreServices.framework | `_kUTTypeImage` | 6 | kicad, pencil, prusaslicer, telegram |
+| CryptoKit.framework | `_$s9CryptoKit12SHA256DigestVMn` | 6 | cmux, iterm2, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit24HashedAuthenticationCodeVyxG10Foundation15ContiguousBytesAAMc` | 6 | cmux, dotnet-sdk, iterm2, openclaw |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO4open_5using14authenticating10Foundation4DataVAE9SealedBoxV_AA12SymmetricKeyVxtKAI0I8ProtocolRzlFZ` | 6 | cmux, dotnet-sdk, github, iterm2 |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO4seal_5using5nonce14authenticatingAE9SealedBoxVx_AA12SymmetricKeyVAE5NonceVSgq_tK10Foundation12DataProtocolRzAqRR_r0_lFZ` | 6 | cmux, dotnet-sdk, github, iterm2 |
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO5NonceVMa` | 6 | cmux, github, iterm2, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO5NonceVMn` | 6 | cmux, github, iterm2, visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxVMa` | 6 | cmux, github, iterm2, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit8InsecureO3MD5VAA12HashFunctionAAMc` | 6 | betterdisplay, clipy, iina, raycast |
-| CryptoKit.framework | `_$s9CryptoKit8InsecureO3MD5VMa` | 6 | betterdisplay, clipy, iina, raycast |
-| CryptoKit.framework | `_$s9CryptoKit8InsecureO9MD5DigestVMa` | 6 | betterdisplay, clipy, iina, raycast |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO10SHA1DigestVMa` | 6 | betterdisplay, cmux, dotnet-sdk, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1VAA12HashFunctionAAMc` | 6 | betterdisplay, cmux, dotnet-sdk, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1VMa` | 6 | betterdisplay, cmux, dotnet-sdk, orbstack |
 | Security.framework | `_AuthorizationMakeExternalForm` | 6 | android-studio, bitwarden, github, hex-fiend |
-| Security.framework | `_SecCertificateGetData` | 6 | android-studio, cyberduck, dbeaver-community, pencil |
-| Security.framework | `_SecPolicySearchCopyNext` | 6 | android-studio, cyberduck, dbeaver-community, pencil |
-| Security.framework | `_SecPolicySearchCreate` | 6 | android-studio, cyberduck, dbeaver-community, pencil |
 | Security.framework | `_kSecAttrComment` | 6 | 1password, bitwarden, cmux, docker-desktop |
 | Security.framework | `_kSecAttrPort` | 6 | bitwarden, docker-desktop, iina, localsend |
+| Security.framework | `_kSecCodeInfoStatus` | 6 | docker-desktop, firefox, floorp, librewolf |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers10UTTagClassVMa` | 6 | betterdisplay, coteditor, iina, raycast |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV04mimeB012conformingToACSgSS_ACtcfC` | 6 | cmux, ghostty, iterm2, localsend |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10exportedAs12conformingToACSS_ACSgtcfC` | 6 | cmux, coteditor, ghostty, maccy |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV11applicationACvgZ` | 6 | alt-tab, clipy, coteditor, ghostty |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV5movieACvgZ` | 6 | claude, cmux, coteditor, raycast |
-| AppIntents.framework | `_$s10AppIntents0A5ValueMp` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents0A5ValuePAA07_IntentC0Tb` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents0A5ValuePAA24PersistentlyIdentifiableTb` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents0A5ValuePAA24TypeDisplayRepresentableTb` | 5 | betterdisplay, ghostty, maccy, raycast |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV17applicationBundleACvgZ` | 6 | clipy, cmux, iterm2, openclaw |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV26preferredFilenameExtensionSSSgvg` | 6 | cmux, coteditor, iterm2, openclaw |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3urlACvgZ` | 6 | alt-tab, cmux, localsend, raycast |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4jpegACvgZ` | 6 | chatgpt, claude, cmux, openclaw |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4jsonACvgZ` | 6 | cmux, coteditor, openclaw, pearcleaner |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV7fileURLACvgZ` | 6 | cmux, openclaw, raycast, tailscale-app |
+| AppIntents.framework | `_$s10AppIntents0A4EnumMp` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents0A4EnumP8RawValueSY_s25LosslessStringConvertibleTn` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents0A4EnumPAA0A5ValueTb` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents0A4EnumPAA26StaticDisplayRepresentableTb` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents0A4EnumPAAE28defaultResolverSpecificationQrvgZ` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents0A4EnumPAAE28defaultResolverSpecificationQrvpZQOMQ` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents0A4EnumPSYTb` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
 | AppIntents.framework | `_$s10AppIntents0A6EntityMp` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s10AppIntents0A6EntityP12DefaultQueryAC_AA0cE0Tn` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s10AppIntents0A6EntityP12defaultQuery07DefaultE0QzvgZTq` | 5 | betterdisplay, ghostty, maccy, raycast |
@@ -128,80 +186,64 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppIntents.framework | `_$s10AppIntents0A6EntityPAAE28defaultResolverSpecificationAA05EmptyeF0VyxGvgZ` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s10AppIntents0A6EntityPs12IdentifiableTb` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s10AppIntents0A6IntentPAAE04openA7WhenRunSbvgZ` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents0A6IntentPAAE11descriptionAA0C11DescriptionVSgvgZ` | 5 | betterdisplay, coteditor, ghostty, maccy |
-| AppIntents.framework | `_$s10AppIntents0A6IntentPAAE20persistentIdentifierSSvgZ` | 5 | betterdisplay, coteditor, ghostty, raycast |
+| AppIntents.framework | `_$s10AppIntents12IntentResultPAAE6result5valueAA0cD9ContainerVyqd__s5NeverOA2IGqd___tAJRszAA01_C5ValueRd__lFZ` | 5 | betterdisplay, ghostty, maccy, qlmarkdown |
 | AppIntents.framework | `_$s10AppIntents12IntentResultPAAE6resultAA0cD9ContainerVys5NeverOA3HGyAIRszrlFZ` | 5 | coteditor, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents12_IntentValueMp` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents12_IntentValueP0D4TypeAC_AaBTn` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents12_IntentValueP13SpecificationAC_AA08ResolverE0Tn` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents12_IntentValueP13UnwrappedTypeAC_AaBTn` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents12_IntentValueP28defaultResolverSpecification0G0QzvgZTq` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents15IntentParameterC14projectedValueACyxGvg` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents16ParameterSummaryMp` | 5 | betterdisplay, ghostty, maccy, raycast |
+| AppIntents.framework | `_$s10AppIntents12ReturnsValueMp` | 5 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents15IntentParameterCA2A0A4Enum9ValueTypeRpzrlE5title11description7default07requestF6Dialog0k14DisambiguationL023inputConnectionBehavior15supportedValuesACyxG10Foundation23LocalizedStringResourceV_AQSg09UnwrappedG0QzSgYtAA0cL0VSgAxA05InputoP0OYtSayAFGtcfC` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
 | AppIntents.framework | `_$s10AppIntents20DisplayRepresentableMp` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s10AppIntents20DisplayRepresentablePAA04TypecD0Tb` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s10AppIntents20DisplayRepresentablePAA08InstancecD0Tb` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationV5ImageVMa` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationV5ImageVMn` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationV5title8subtitle5imageAC10Foundation23LocalizedStringResourceV_AISgAC5ImageVSgtcfC` | 5 | betterdisplay, ghostty, maccy, raycast |
+| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationV13stringLiteralACSS_tcfC` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationVMa` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationVMn` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
 | AppIntents.framework | `_$s10AppIntents21IntentResultContainerVyxq_q0_q1_GAA0cD0AAMc` | 5 | coteditor, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryVMn` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryVyxGAA0dE0AAMc` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV0E13InterpolationV06appendF0yyqd_0_AA12_IntentValueRd__s8SendableRd__s7KeyPathCyxAA0hC0Cyqd__GGRbd_0_r0_lF` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV0E13InterpolationV13appendLiteralyySSF` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV0E13InterpolationV15literalCapacity18interpolationCountAEyx_GSi_SitcfC` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV0E13InterpolationVMn` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV19stringInterpolationACyxGAC0eG0Vyx_G_tcfC` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringVMn` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents24PersistentlyIdentifiablePAAE20persistentIdentifierSSvgZ` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents24TypeDisplayRepresentableMp` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents24TypeDisplayRepresentableP04typeD14RepresentationAA0cdG0VvgZTq` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents25TypeDisplayRepresentationV4name13numericFormatAC10Foundation23LocalizedStringResourceV_AHSgtcfC` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s10AppIntents25TypeDisplayRepresentationVMa` | 5 | betterdisplay, ghostty, maccy, raycast |
+| AppIntents.framework | `_$s10AppIntents21IntentResultContainerVyxq_q0_q1_GAA12ReturnsValueAAMc` | 5 | betterdisplay, ghostty, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentableMp` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentableP04caseD15RepresentationsSDyxAA0D14RepresentationVGvgZTq` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentableP10Foundation40CustomLocalizedStringResourceConvertibleTb` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentablePAAE23localizedStringResource10Foundation09LocalizedgH0Vvg` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentablePSHTb` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentablePs0C8IterableTb` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
 | AppIntents.framework | `_$s10AppIntents26EmptyResolverSpecificationVMn` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s10AppIntents26EmptyResolverSpecificationVyxGAA0dE0AAMc` | 5 | betterdisplay, ghostty, maccy, raycast |
+| AppIntents.framework | `_$s10AppIntents26StaticDisplayRepresentableMp` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents26StaticDisplayRepresentablePAA04CasedE0Tb` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents26StaticDisplayRepresentablePAA04TypedE0Tb` | 5 | betterdisplay, ghostty, qlmarkdown, raycast |
 | AppIntents.framework | `_$s10AppIntents28InstanceDisplayRepresentableMp` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s10AppIntents28InstanceDisplayRepresentableP10Foundation40CustomLocalizedStringResourceConvertibleTb` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s10AppIntents28InstanceDisplayRepresentableP21displayRepresentationAA0dG0VvgTq` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s10AppIntents28InstanceDisplayRepresentablePAAE23localizedStringResource10Foundation09LocalizedgH0Vvg` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$s12DefaultQuery10AppIntents0C6EntityPTl` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s13Specification10AppIntents12_IntentValuePTl` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s13UnwrappedType10AppIntents12_IntentValuePTl` | 5 | betterdisplay, ghostty, maccy, raycast |
-| AppIntents.framework | `_$s9ValueType10AppIntents07_IntentA0PTl` | 5 | betterdisplay, ghostty, maccy, raycast |
 | AppIntents.framework | `_$sSS10AppIntentsE18IntentInputOptionsVMa` | 5 | betterdisplay, coteditor, ghostty, raycast |
 | AppIntents.framework | `_$sSS10AppIntentsE18IntentInputOptionsVMn` | 5 | betterdisplay, coteditor, ghostty, raycast |
+| AuthenticationServices.framework | `_OBJC_CLASS_$_ASWebAuthenticationSessionRequest` | 5 | firefox, floorp, librewolf, thunderbird |
+| CoreServices.framework | `_CSCopyMachineName` | 5 | android-studio, cyberduck, dbeaver-community, temurin |
+| CoreServices.framework | `_FSResolveAliasFileWithMountFlags` | 5 | android-studio, cyberduck, dbeaver-community, deluge |
 | CoreServices.framework | `_LSGetApplicationForItem` | 5 | floorp, mullvad-browser, thunderbird, tor-browser |
-| CoreServices.framework | `_LSSharedFileListItemResolve` | 5 | appcleaner, blender, hammerspoon, ollama-app |
-| CoreServices.framework | `_kUTTypeImage` | 5 | kicad, pencil, prusaslicer, webtorrent |
+| CoreServices.framework | `_kUTTypeURL` | 5 | hammerspoon, pencil, telegram, webtorrent |
 | CoreServices.framework | `_kUTTypeUTF8PlainText` | 5 | iterm2, kicad, pencil, prusaslicer |
+| CryptoKit.framework | `_$s9CryptoKit0aB5ErrorO21authenticationFailureyA2CmFWC` | 5 | dotnet-sdk, github, orbstack, visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit0aB5ErrorOs0C0AAMc` | 5 | cmux, iterm2, orbstack, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit12SHA256DigestVMn` | 5 | cmux, iterm2, orbstack, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyV15withUnsafeBytesyxxSWKXEKlF` | 5 | cmux, iterm2, orbstack, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit24HashedAuthenticationCodeVMn` | 5 | cmux, iterm2, raycast, utm |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO4open_5using14authenticating10Foundation4DataVAE9SealedBoxV_AA12SymmetricKeyVxtKAI0I8ProtocolRzlFZ` | 5 | cmux, github, iterm2, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO4seal_5using5nonce14authenticatingAE9SealedBoxVx_AA12SymmetricKeyVAE5NonceVSgq_tK10Foundation12DataProtocolRzAqRR_r0_lFZ` | 5 | cmux, github, iterm2, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit4HMACV18authenticationCode3for5usingAA020HashedAuthenticationE0VyxGqd___AA12SymmetricKeyVt10Foundation12DataProtocolRd__lFZ` | 5 | cmux, iterm2, raycast, utm |
-| CryptoKit.framework | `_$s9CryptoKit6SHA256V8finalizeAA0C6DigestVyF` | 5 | clipy, cmux, orbstack, raycast |
-| CryptoKit.framework | `_$s9CryptoKit6SHA256VACycfC` | 5 | clipy, cmux, orbstack, raycast |
-| CryptoKit.framework | `_$s9CryptoKit8InsecureO10SHA1DigestVMa` | 5 | betterdisplay, cmux, orbstack, raycast |
-| CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1VAA12HashFunctionAAMc` | 5 | betterdisplay, cmux, orbstack, raycast |
-| CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1VMa` | 5 | betterdisplay, cmux, orbstack, raycast |
+| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyV4sizeAcA0cD4SizeV_tcfC` | 5 | cmux, openclaw, vorssaint, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit16SymmetricKeySizeVMa` | 5 | cmux, openclaw, vorssaint, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit24HashedAuthenticationCodeVyxGSTAAMc` | 5 | cmux, iterm2, openclaw, vorssaint |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO4open_5using10Foundation4DataVAE9SealedBoxV_AA12SymmetricKeyVtKFZ` | 5 | dotnet-sdk, github, visual-studio-code, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO4seal_5using5nonceAE9SealedBoxVx_AA12SymmetricKeyVAE5NonceVSgtK10Foundation12DataProtocolRzlFZ` | 5 | dotnet-sdk, github, visual-studio-code, whatsapp |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO9MD5DigestVSTAAMc` | 5 | betterdisplay, iina, raycast, tailscale-app |
+| Security.framework | `_SecKeychainSearchCopyNext` | 5 | android-studio, cyberduck, dbeaver-community, temurin |
+| Security.framework | `_SecKeychainSearchCreateFromAttributes` | 5 | android-studio, cyberduck, dbeaver-community, temurin |
 | Security.framework | `_kSecAttrPath` | 5 | bitwarden, docker-desktop, localsend, orbstack |
-| Security.framework | `_kSecCodeInfoStatus` | 5 | docker-desktop, firefox, floorp, orbstack |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV14unixExecutableACvgZ` | 5 | cmux, coteditor, ghostty, iterm2 |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV17applicationBundleACvgZ` | 5 | clipy, cmux, iterm2, raycast |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV26preferredFilenameExtensionSSSgvg` | 5 | cmux, coteditor, iterm2, raycast |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3urlACvgZ` | 5 | alt-tab, cmux, localsend, raycast |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4jpegACvgZ` | 5 | chatgpt, claude, cmux, raycast |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV7fileURLACvgZ` | 5 | cmux, raycast, tailscale-app, utm |
-| AppIntents.framework | `_$s10AppIntents0A4EnumMp` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents0A4EnumP8RawValueSY_s25LosslessStringConvertibleTn` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents0A4EnumPAA0A5ValueTb` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents0A4EnumPAA26StaticDisplayRepresentableTb` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents0A4EnumPAAE28defaultResolverSpecificationQrvgZ` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents0A4EnumPAAE28defaultResolverSpecificationQrvpZQOMQ` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents0A4EnumPSYTb` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
+| Security.framework | `_sec_identity_create` | 5 | dotnet-sdk, git-credential-manager, github, orbstack |
+| Security.framework | `_sec_protocol_options_set_max_tls_protocol_version` | 5 | dotnet-sdk, git-credential-manager, github, orbstack |
+| Security.framework | `_sec_protocol_options_set_min_tls_protocol_version` | 5 | dotnet-sdk, git-credential-manager, github, orbstack |
+| Security.framework | `_sec_protocol_options_set_tls_server_name` | 5 | cmux, dotnet-sdk, git-credential-manager, github |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3gifACvgZ` | 5 | chatgpt, cmux, openclaw, raycast |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4heicACvgZ` | 5 | chatgpt, claude, cmux, openclaw |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4htmlACvgZ` | 5 | qlmarkdown, raycast, sequel-ace, tailscale-app |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4itemACvgZ` | 5 | claude, qlmarkdown, tailscale-app, utm |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4tiffACvgZ` | 5 | claude, cmux, openclaw, raycast |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV5audioACvgZ` | 5 | cmux, coteditor, openclaw, tailscale-app |
+| AppIntents.framework | `_$s10AppIntents0A6IntentP14isDiscoverableSbvgZTq` | 4 | coteditor, maccy, qlmarkdown, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents0A6IntentPAAE16parameterSummaryQrvgZ` | 4 | coteditor, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents0A6IntentPAAE16parameterSummaryQrvpZQOMQ` | 4 | coteditor, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents11EntityQueryMp` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
@@ -213,16 +255,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppIntents.framework | `_$s10AppIntents11EntityQueryPAAE7results6ResultQzyYaKF` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents11EntityQueryPAAE7results6ResultQzyYaKFTu` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents11EntityQueryPxycfCTq` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents12IntentResultPAAE6result5valueAA0cD9ContainerVyqd__s5NeverOA2IGqd___tAJRszAA01_C5ValueRd__lFZ` | 4 | betterdisplay, ghostty, maccy, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents12ReturnsValueMp` | 4 | betterdisplay, ghostty, maccy, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents15IntentParameterCA2A0A4Enum9ValueTypeRpzrlE5title11description7default07requestF6Dialog0k14DisambiguationL023inputConnectionBehavior15supportedValuesACyxG10Foundation23LocalizedStringResourceV_AQSg09UnwrappedG0QzSgYtAA0cL0VSgAxA05InputoP0OYtSayAFGtcfC` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents15IntentParameterCA2A0A6Entity9ValueTypeRpzrlE5title11description7default07requestF6Dialog0k14DisambiguationL023inputConnectionBehaviorACyxG10Foundation23LocalizedStringResourceV_APSg09UnwrappedG0QzSgYtAA0cL0VSgAwA05InputoP0OYttcfC` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents15IntentParameterCAASS9ValueTypeRtzrlE5title11description7default12inputOptions07requestE6Dialog0J18ConnectionBehaviorACyxG10Foundation23LocalizedStringResourceV_AOSg09UnwrappedF0QzSgYtSSAAE0c5InputK0VSgAA0cM0VSgAA0unO0OYttcfC` | 4 | betterdisplay, coteditor, ghostty, raycast |
 | AppIntents.framework | `_$s10AppIntents15IntentParameterCAASb9ValueTypeRtzrlE5title11description7default11displayName07requestE6Dialog23inputConnectionBehaviorACyxG10Foundation23LocalizedStringResourceV_AOSg09UnwrappedF0QzSgYtSbAAE0c7DisplayK0VSgAA0cM0VSgAA05InputoP0OYttcfC` | 4 | betterdisplay, ghostty, maccy, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationV13stringLiteralACSS_tcfC` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationVMa` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents21DisplayRepresentationVMn` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents21IntentResultContainerVyxq_q0_q1_GAA12ReturnsValueAAMc` | 4 | betterdisplay, ghostty, maccy, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents22DynamicOptionsProviderMp` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents22DynamicOptionsProviderP12DefaultValueAC_AA07_IntentG0Tn` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents22DynamicOptionsProviderP13defaultResult12DefaultValueQzSgyYaFTq` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
@@ -232,53 +267,59 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppIntents.framework | `_$s10AppIntents22DynamicOptionsProviderPAAE13defaultResult12DefaultValueQzSgyYaF` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents22DynamicOptionsProviderPAAE13defaultResult12DefaultValueQzSgyYaFTu` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryV_5tableACyxGAA0dE6StringVyxG_SSSgtcfC` | 4 | ghostty, maccy, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentableMp` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentableP04caseD15RepresentationsSDyxAA0D14RepresentationVGvgZTq` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentableP10Foundation40CustomLocalizedStringResourceConvertibleTb` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentablePAAE23localizedStringResource10Foundation09LocalizedgH0Vvg` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentablePSHTb` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents24CaseDisplayRepresentablePs0C8IterableTb` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents26StaticDisplayRepresentableMp` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents26StaticDisplayRepresentablePAA04CasedE0Tb` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents26StaticDisplayRepresentablePAA04TypedE0Tb` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s12DefaultValue10AppIntents22DynamicOptionsProviderPTl` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s6Entity10AppIntents0A5QueryPTl` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s6Result10AppIntents22DynamicOptionsProviderPTl` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
+| AppIntents.framework | `_$sSS10AppIntents12_IntentValueAAMc` | 4 | ghostty, maccy, qlmarkdown, tailscale-app |
 | AppIntents.framework | `_$sSayxG10AppIntents17ResultsCollectionA2B12_IntentValueRzlMc` | 4 | betterdisplay, ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$sSb10AppIntentsE17IntentDisplayNameVMa` | 4 | betterdisplay, ghostty, maccy, tailscale-app |
 | AppIntents.framework | `_$sSb10AppIntentsE17IntentDisplayNameVMn` | 4 | betterdisplay, ghostty, maccy, tailscale-app |
-| AuthenticationServices.framework | `_OBJC_CLASS_$_ASWebAuthenticationSessionRequest` | 4 | firefox, floorp, thunderbird, zen |
-| CoreServices.framework | `_CSCopyMachineName` | 4 | android-studio, cyberduck, dbeaver-community, zoom |
+| CoreServices.framework | `_AECountItems` | 4 | deluge, flycut, kicad, pgadmin4 |
+| CoreServices.framework | `_AEGetParamPtr` | 4 | deluge, flycut, kicad, pgadmin4 |
+| CoreServices.framework | `_AEPutParamPtr` | 4 | deluge, flycut, kicad, pgadmin4 |
 | CoreServices.framework | `_CreateTextEncoding` | 4 | android-studio, git-credential-manager, github, iterm2 |
-| CoreServices.framework | `_FSResolveAliasFileWithMountFlags` | 4 | android-studio, cyberduck, dbeaver-community, deluge |
-| CoreServices.framework | `_kUTTypeURL` | 4 | hammerspoon, pencil, webtorrent, zoom |
-| CryptoKit.framework | `_$s9CryptoKit0aB5ErrorO21authenticationFailureyA2CmFWC` | 4 | github, orbstack, visual-studio-code, whatsapp |
+| CoreServices.framework | `_LSCopyDisplayNameForRef` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| CoreServices.framework | `_LSCopyItemInfoForRef` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO4open_5using10Foundation4DataVAC9SealedBoxV_AA12SymmetricKeyVtKFZ` | 4 | dotnet-sdk, github, iterm2, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO4seal_5using5nonceAC9SealedBoxVx_AA12SymmetricKeyVAC5NonceVSgtK10Foundation12DataProtocolRzlFZ` | 4 | dotnet-sdk, github, iterm2, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO5NonceVMn` | 4 | dotnet-sdk, github, iterm2, visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit0aB5ErrorO22incorrectParameterSizeyA2CmFWC` | 4 | cmux, iterm2, orbstack, zoom |
-| CryptoKit.framework | `_$s9CryptoKit24HashedAuthenticationCodeVyxG10Foundation15ContiguousBytesAAMc` | 4 | cmux, iterm2, raycast, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO4open_5using10Foundation4DataVAE9SealedBoxV_AA12SymmetricKeyVtKFZ` | 4 | github, visual-studio-code, whatsapp, zoom |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO4seal_5using5nonceAE9SealedBoxVx_AA12SymmetricKeyVAE5NonceVSgtK10Foundation12DataProtocolRzlFZ` | 4 | github, visual-studio-code, whatsapp, zoom |
+| CryptoKit.framework | `_$s9CryptoKit0aB5ErrorOMn` | 4 | dotnet-sdk, github, visual-studio-code, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0V17rawRepresentation10Foundation4DataVvg` | 4 | cmux, dotnet-sdk, orbstack, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyV06publicF0AE06PublicF0Vvg` | 4 | cmux, iterm2, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyV17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 4 | cmux, iterm2, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyV9signature3for10Foundation4DataVx_tKAJ0J8ProtocolRzlF` | 4 | cmux, iterm2, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyVMa` | 4 | cmux, iterm2, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO9PublicKeyV16isValidSignature_3forSbx_q_t10Foundation12DataProtocolRzAjKR_r0_lF` | 4 | cmux, iterm2, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO9PublicKeyV17rawRepresentation10Foundation4DataVvg` | 4 | cmux, iterm2, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO9PublicKeyV17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 4 | cmux, iterm2, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO9PublicKeyVMa` | 4 | cmux, iterm2, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit16SymmetricKeySizeV7bits256ACvgZ` | 4 | openclaw, vorssaint, whatsapp, zoom |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO5NonceV4dataAGx_tKc10Foundation12DataProtocolRzlufC` | 4 | dotnet-sdk, github, visual-studio-code, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV10ciphertext10Foundation4DataVvg` | 4 | dotnet-sdk, github, visual-studio-code, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV3tag10Foundation4DataVvg` | 4 | dotnet-sdk, github, visual-studio-code, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV5nonce10ciphertext3tagAgE5NonceV_xq_tKc10Foundation12DataProtocolRzAmNR_r0_lufC` | 4 | dotnet-sdk, github, visual-studio-code, whatsapp |
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV8combined10Foundation4DataVSgvg` | 4 | cmux, iterm2, whatsapp, zoom |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxVMn` | 4 | dotnet-sdk, github, visual-studio-code, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMOMn` | 4 | dotnet-sdk, github, orbstack, visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit6DigestPAAE12makeIterators08IndexingE0VySays5UInt8VGGyF` | 4 | cmux, orbstack, raycast, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit6SHA384VMa` | 4 | dotnet-sdk, orbstack, qlmarkdown, visual-studio-code |
+| Intents.framework | `_OBJC_CLASS_$_INStringResolutionResult` | 4 | hammerspoon, swiftbar, tailscale-app, whatsapp |
 | Security.framework | `_AuthorizationCreateFromExternalForm` | 4 | bitwarden, hex-fiend, localsend, orbstack |
+| Security.framework | `_CSSMOID_APPLE_X509_BASIC` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
 | Security.framework | `_SecCodeGetTypeID` | 4 | betterdisplay, brave-browser, google-chrome, microsoft-edge |
 | Security.framework | `_SecIdentityCreate` | 4 | iina, krita, obs, shotcut |
-| Security.framework | `_SecKeychainSearchCopyNext` | 4 | android-studio, cyberduck, dbeaver-community, vlc |
-| Security.framework | `_SecKeychainSearchCreateFromAttributes` | 4 | android-studio, cyberduck, dbeaver-community, vlc |
+| Security.framework | `_SecKeychainItemModifyContent` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| Security.framework | `_cssmPerror` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
 | Security.framework | `_kSecAttrAuthenticationType` | 4 | bitwarden, docker-desktop, localsend, orbstack |
-| Security.framework | `_sec_identity_create` | 4 | git-credential-manager, github, orbstack, utm |
-| Security.framework | `_sec_protocol_options_set_max_tls_protocol_version` | 4 | git-credential-manager, github, orbstack, utm |
-| Security.framework | `_sec_protocol_options_set_min_tls_protocol_version` | 4 | git-credential-manager, github, orbstack, utm |
-| Security.framework | `_sec_protocol_options_set_tls_server_name` | 4 | cmux, git-credential-manager, github, orbstack |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3gifACvgZ` | 4 | chatgpt, cmux, raycast, whatsapp |
+| Security.framework | `_sec_protocol_options_add_tls_application_protocol` | 4 | dotnet-sdk, git-credential-manager, github, orbstack |
+| Security.framework | `_sec_protocol_options_set_challenge_block` | 4 | dotnet-sdk, git-credential-manager, github, utm |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV12propertyListACvgZ` | 4 | alt-tab, betterdisplay, coteditor, vorssaint |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3bmpACvgZ` | 4 | cmux, openclaw, raycast, whatsapp |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3pdfACvgZ` | 4 | cmux, openclaw, raycast, vorssaint |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3rtfACvgZ` | 4 | chatgpt, coteditor, iterm2, tailscale-app |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4heicACvgZ` | 4 | chatgpt, claude, cmux, raycast |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4heifACvgZ` | 4 | chatgpt, cmux, raycast, whatsapp |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4itemACvgZ` | 4 | claude, tailscale-app, utm, whatsapp |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4jsonACvgZ` | 4 | cmux, coteditor, raycast, rectangle |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4textACvgZ` | 4 | cmux, coteditor, raycast, tailscale-app |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4tiffACvgZ` | 4 | claude, cmux, raycast, whatsapp |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4webPACvgZ` | 4 | chatgpt, cmux, raycast, whatsapp |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV5audioACvgZ` | 4 | cmux, coteditor, tailscale-app, whatsapp |
 | AppIntents.framework | `_$s10AppIntents0A14ShortcutPhraseV19StringInterpolationV06appendF0yyAA0acD5TokenOF` | 3 | coteditor, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents0A14ShortcutPhraseV19StringInterpolationV13appendLiteralyySSF` | 3 | coteditor, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents0A14ShortcutPhraseV19StringInterpolationV15literalCapacity18interpolationCountAEyx_GSi_SitcfC` | 3 | coteditor, raycast, tailscale-app |
@@ -290,9 +331,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppIntents.framework | `_$s10AppIntents0A17ShortcutsProviderP17shortcutTileColorAA08ShortcutfG0OvgZTq` | 3 | coteditor, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents0A19ShortcutPhraseTokenO15applicationNameyA2CmFWC` | 3 | coteditor, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents0A19ShortcutPhraseTokenOMa` | 3 | coteditor, raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents0A6IntentP14isDiscoverableSbvgZTq` | 3 | coteditor, maccy, tailscale-app |
+| AppIntents.framework | `_$s10AppIntents0A6IntentPAAE14isDiscoverableSbvgZ` | 3 | coteditor, maccy, qlmarkdown |
 | AppIntents.framework | `_$s10AppIntents0A8ShortcutVMa` | 3 | coteditor, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents0A8ShortcutVMn` | 3 | coteditor, raycast, tailscale-app |
+| AppIntents.framework | `_$s10AppIntents10IntentFileV7fileURL10Foundation0F0VSgvg` | 3 | ghostty, qlmarkdown, tailscale-app |
+| AppIntents.framework | `_$s10AppIntents10IntentFileVMa` | 3 | ghostty, qlmarkdown, tailscale-app |
+| AppIntents.framework | `_$s10AppIntents10IntentFileVMn` | 3 | ghostty, qlmarkdown, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents12IntentDialogV13stringLiteralACSS_tcfC` | 3 | maccy, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents14EntityPropertyC12wrappedValuexvs` | 3 | ghostty, maccy, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents14EntityPropertyCAASS9ValueTypeRtzrlE5titleACyxG10Foundation23LocalizedStringResourceV_tcfC` | 3 | ghostty, maccy, tailscale-app |
@@ -304,9 +348,10 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppIntents.framework | `_$s10AppIntents17EntityStringQueryMp` | 3 | ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents17EntityStringQueryP8entities8matching6ResultQzSS_tYaKFTq` | 3 | ghostty, raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents17EntityStringQueryPAA0cE0Tb` | 3 | ghostty, raycast, tailscale-app |
+| AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryV0D15KeyPathsBuilderO10buildBlockySays07PartialF4PathCyxGGAId_tFZ` | 3 | betterdisplay, maccy, qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryV0D15KeyPathsBuilderO15buildExpressionys07PartialF4PathCyxGs0fL0CyxAA0cD0Cyqd__GGAA01_C5ValueRd__s8SendableRd__lFZ` | 3 | betterdisplay, maccy, qlmarkdown |
 | AppIntents.framework | `_$s10AppIntents22ParameterSummaryStringV13stringLiteralACyxGSS_tcfC` | 3 | betterdisplay, maccy, tailscale-app |
 | AppIntents.framework | `_$s10Foundation4UUIDV10AppIntents27EntityIdentifierConvertibleADWP` | 3 | ghostty, maccy, tailscale-app |
-| AppIntents.framework | `_$sSS10AppIntents12_IntentValueAAMc` | 3 | ghostty, maccy, tailscale-app |
 | AppIntents.framework | `_$sSS10AppIntents27EntityIdentifierConvertibleAAWP` | 3 | betterdisplay, raycast, tailscale-app |
 | AppIntents.framework | `_$sSb10AppIntents12_IntentValueAAMc` | 3 | betterdisplay, ghostty, tailscale-app |
 | AuthenticationServices.framework | `_OBJC_CLASS_$_ASAuthorizationRequest` | 3 | 1password, cmux, whatsapp |
@@ -315,9 +360,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CloudKit.framework | `_OBJC_CLASS_$_CKRecordID` | 3 | clipy, flycut, whatsapp |
 | CloudKit.framework | `_OBJC_CLASS_$_CKRecordZone` | 3 | clipy, flycut, whatsapp |
 | CloudKit.framework | `_OBJC_CLASS_$_CKRecordZoneID` | 3 | clipy, flycut, whatsapp |
-| CoreServices.framework | `_AECountItems` | 3 | deluge, flycut, kicad |
-| CoreServices.framework | `_AEGetParamPtr` | 3 | deluge, flycut, kicad |
-| CoreServices.framework | `_AEPutParamPtr` | 3 | deluge, flycut, kicad |
+| CoreServices.framework | `_AECoercePtr` | 3 | deluge, flycut, keka |
+| CoreServices.framework | `_AEGetAttributePtr` | 3 | deluge, kicad, pgadmin4 |
+| CoreServices.framework | `_AEGetNthPtr` | 3 | deluge, kicad, pgadmin4 |
 | CoreServices.framework | `_CSBackupSetItemExcluded` | 3 | pencil, transmission, webtorrent |
 | CoreServices.framework | `_ConvertFromTextToUnicode` | 3 | android-studio, git-credential-manager, github |
 | CoreServices.framework | `_ConvertFromUnicodeToText` | 3 | android-studio, git-credential-manager, github |
@@ -325,40 +370,46 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreServices.framework | `_CreateUnicodeToTextInfo` | 3 | android-studio, git-credential-manager, github |
 | CoreServices.framework | `_DisposeTextToUnicodeInfo` | 3 | android-studio, git-credential-manager, github |
 | CoreServices.framework | `_DisposeUnicodeToTextInfo` | 3 | android-studio, git-credential-manager, github |
-| CoreServices.framework | `_LSCopyDisplayNameForRef` | 3 | android-studio, cyberduck, dbeaver-community |
-| CoreServices.framework | `_LSCopyItemInfoForRef` | 3 | android-studio, cyberduck, dbeaver-community |
 | CoreServices.framework | `_LSFindApplicationForInfo` | 3 | android-studio, flycut, zoom |
 | CoreServices.framework | `_LSGetExtensionInfo` | 3 | audacity, kicad, prusaslicer |
 | CoreServices.framework | `_UTTypeCopyDeclaration` | 3 | audacity, kicad, prusaslicer |
 | CoreServices.framework | `_UpdateSystemActivity` | 3 | deluge, lmms, xquartz |
 | CoreServices.framework | `_UpgradeScriptInfoToTextEncoding` | 3 | android-studio, git-credential-manager, github |
 | CoreServices.framework | `_kUTTypeVCard` | 3 | dolphin, musescore, wireshark-app |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO4open_5using10Foundation4DataVAC9SealedBoxV_AA12SymmetricKeyVtKFZ` | 3 | github, iterm2, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO4seal_5using5nonceAC9SealedBoxVx_AA12SymmetricKeyVAC5NonceVSgtK10Foundation12DataProtocolRzlFZ` | 3 | github, iterm2, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO5NonceVMn` | 3 | github, iterm2, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit0aB5ErrorOMn` | 3 | github, visual-studio-code, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0V17rawRepresentation10Foundation4DataVvg` | 3 | cmux, orbstack, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyV06publicF0AE06PublicF0Vvg` | 3 | cmux, iterm2, orbstack |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyV17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 3 | cmux, iterm2, orbstack |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyV9signature3for10Foundation4DataVx_tKAJ0J8ProtocolRzlF` | 3 | cmux, iterm2, orbstack |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyVMa` | 3 | cmux, iterm2, orbstack |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO9PublicKeyV16isValidSignature_3forSbx_q_t10Foundation12DataProtocolRzAjKR_r0_lF` | 3 | cmux, iterm2, orbstack |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO9PublicKeyV17rawRepresentation10Foundation4DataVvg` | 3 | cmux, iterm2, orbstack |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO9PublicKeyV17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 3 | cmux, iterm2, orbstack |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO9PublicKeyVMa` | 3 | cmux, iterm2, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO4open_5using14authenticating10Foundation4DataVAC9SealedBoxV_AA12SymmetricKeyVxtKAG0I8ProtocolRzlFZ` | 3 | dotnet-sdk, github, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO4seal_5using5nonce14authenticatingAC9SealedBoxVx_AA12SymmetricKeyVAC5NonceVSgq_tK10Foundation12DataProtocolRzAoPR_r0_lFZ` | 3 | dotnet-sdk, github, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO5NonceV4dataAEx_tKc10Foundation12DataProtocolRzlufC` | 3 | dotnet-sdk, github, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO9SealedBoxV10ciphertext10Foundation4DataVvg` | 3 | dotnet-sdk, github, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO9SealedBoxV3tag10Foundation4DataVvg` | 3 | dotnet-sdk, github, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO9SealedBoxV5nonce10ciphertext3tagAeC5NonceV_xq_tKc10Foundation12DataProtocolRzAkLR_r0_lufC` | 3 | dotnet-sdk, github, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO9SealedBoxVMn` | 3 | dotnet-sdk, github, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyOMa` | 3 | dotnet-sdk, github, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyOMn` | 3 | dotnet-sdk, github, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO06PublicD0V17rawRepresentation10Foundation4DataVvg` | 3 | cmux, dotnet-sdk, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO06PublicD0V17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 3 | cmux, dotnet-sdk, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO06PublicD0VMa` | 3 | cmux, dotnet-sdk, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0V06publicD0AE06PublicD0Vvg` | 3 | cmux, dotnet-sdk, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0V17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 3 | cmux, dotnet-sdk, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0VAGycfC` | 3 | cmux, dotnet-sdk, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0VMa` | 3 | cmux, dotnet-sdk, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyV17rawRepresentation10Foundation4DataVvg` | 3 | cmux, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyVMn` | 3 | cmux, openclaw, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit12HashFunctionPAAE4hash4data6DigestQzqd___t10Foundation12DataProtocolRd__lFZ` | 3 | dotnet-sdk, orbstack, whatsapp |
 | CryptoKit.framework | `_$s9CryptoKit12SHA256DigestV9byteCountSivgZ` | 3 | cmux, github, visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit12SHA256DigestVAA0D0AAMc` | 3 | cmux, orbstack, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyV4sizeAcA0cD4SizeV_tcfC` | 3 | cmux, whatsapp, zoom |
-| CryptoKit.framework | `_$s9CryptoKit16SymmetricKeySizeVMa` | 3 | cmux, whatsapp, zoom |
-| CryptoKit.framework | `_$s9CryptoKit24HashedAuthenticationCodeVyxGSTAAMc` | 3 | cmux, iterm2, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO5NonceV4dataAGx_tKc10Foundation12DataProtocolRzlufC` | 3 | github, visual-studio-code, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV10ciphertext10Foundation4DataVvg` | 3 | github, visual-studio-code, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV3tag10Foundation4DataVvg` | 3 | github, visual-studio-code, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV5nonce10ciphertext3tagAgE5NonceV_xq_tKc10Foundation12DataProtocolRzAmNR_r0_lufC` | 3 | github, visual-studio-code, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit12SHA384DigestVMa` | 3 | dotnet-sdk, orbstack, qlmarkdown |
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV8combinedAG10Foundation4DataV_tcfC` | 3 | cmux, iterm2, zoom |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxVMn` | 3 | github, visual-studio-code, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMOMn` | 3 | github, orbstack, visual-studio-code |
-| Intents.framework | `_OBJC_CLASS_$_INStringResolutionResult` | 3 | hammerspoon, tailscale-app, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMOMa` | 3 | dotnet-sdk, github, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit6SHA256V9byteCountSivgZ` | 3 | cmux, dotnet-sdk, vorssaint |
+| CryptoKit.framework | `_$s9CryptoKit6SHA384VAA12HashFunctionAAMc` | 3 | dotnet-sdk, orbstack, qlmarkdown |
+| CryptoKit.framework | `_$s9CryptoKit6SHA384VMn` | 3 | dotnet-sdk, orbstack, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit6SHA512VMa` | 3 | dotnet-sdk, orbstack, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit6SHA512VMn` | 3 | dotnet-sdk, orbstack, visual-studio-code |
+| EventKit.framework | `_EKEventStoreChangedNotification` | 3 | raycast, vorssaint, zoom |
+| Intents.framework | `_OBJC_CLASS_$_INIntent` | 3 | hammerspoon, swiftbar, tailscale-app |
+| Intents.framework | `_OBJC_CLASS_$_INIntentResponse` | 3 | hammerspoon, swiftbar, tailscale-app |
+| Intents.framework | `_OBJC_METACLASS_$_INIntent` | 3 | hammerspoon, swiftbar, tailscale-app |
+| Intents.framework | `_OBJC_METACLASS_$_INIntentResponse` | 3 | hammerspoon, swiftbar, tailscale-app |
 | Security.framework | `_CMSDecoderCopySignerStatus` | 3 | bitwarden, localsend, zoom |
 | Security.framework | `_CMSDecoderCopySignerTimestampWithPolicy` | 3 | bitwarden, localsend, zoom |
 | Security.framework | `_CMSDecoderCreate` | 3 | bitwarden, localsend, zoom |
@@ -367,32 +418,34 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Security.framework | `_CMSDecoderSetDetachedContent` | 3 | bitwarden, localsend, zoom |
 | Security.framework | `_CMSDecoderUpdateMessage` | 3 | bitwarden, localsend, zoom |
 | Security.framework | `_CSSMOID_APPLE_TP_REVOCATION_OCSP` | 3 | pencil, webtorrent, zoom |
-| Security.framework | `_CSSMOID_APPLE_X509_BASIC` | 3 | android-studio, cyberduck, dbeaver-community |
 | Security.framework | `_SecCertificateCopyNormalizedIssuerContent` | 3 | orbstack, pencil, webtorrent |
 | Security.framework | `_SecCertificateCreateFromData` | 3 | pencil, webtorrent, zoom |
 | Security.framework | `_SecCertificateGetSubject` | 3 | pencil, webtorrent, zoom |
 | Security.framework | `_SecKeychainItemCopyAttributesAndData` | 3 | kicad, prusaslicer, vlc |
 | Security.framework | `_SecKeychainItemFreeAttributesAndData` | 3 | kicad, prusaslicer, vlc |
-| Security.framework | `_SecKeychainItemModifyContent` | 3 | android-studio, cyberduck, dbeaver-community |
 | Security.framework | `_SecPolicySetValue` | 3 | pencil, webtorrent, zoom |
 | Security.framework | `_SecTrustGetCssmResultCode` | 3 | pencil, webtorrent, zoom |
 | Security.framework | `_SecTrustSetParameters` | 3 | pencil, webtorrent, zoom |
-| Security.framework | `_cssmPerror` | 3 | android-studio, cyberduck, dbeaver-community |
 | Security.framework | `_kSecOIDBasicConstraints` | 3 | betterdisplay, hammerspoon, orbstack |
 | Security.framework | `_kSecOIDExtendedKeyUsage` | 3 | cmux, hammerspoon, orbstack |
 | Security.framework | `_kSecOIDMS_NTPrincipalName` | 3 | betterdisplay, hammerspoon, orbstack |
 | Security.framework | `_kSecOIDSubjectAltName` | 3 | betterdisplay, hammerspoon, orbstack |
-| Security.framework | `_sec_protocol_options_add_tls_application_protocol` | 3 | git-credential-manager, github, orbstack |
-| Security.framework | `_sec_protocol_options_set_challenge_block` | 3 | git-credential-manager, github, utm |
+| Security.framework | `_sec_protocol_metadata_access_distinguished_names` | 3 | dotnet-sdk, git-credential-manager, github |
+| Security.framework | `_sec_protocol_metadata_get_negotiated_tls_ciphersuite` | 3 | dotnet-sdk, git-credential-manager, github |
+| Security.framework | `_sec_protocol_metadata_get_negotiated_tls_protocol_version` | 3 | dotnet-sdk, git-credential-manager, github |
+| Security.framework | `_sec_protocol_options_set_local_identity` | 3 | dotnet-sdk, orbstack, utm |
+| Security.framework | `_sec_release` | 3 | dotnet-sdk, git-credential-manager, github |
 | SystemExtensions.framework | `_OBJC_CLASS_$_OSSystemExtensionManager` | 3 | cmux, obs, tailscale-app |
 | SystemExtensions.framework | `_OBJC_CLASS_$_OSSystemExtensionRequest` | 3 | cmux, obs, tailscale-app |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers10UTTagClassV17filenameExtensionACvgZ` | 3 | coteditor, iina, raycast |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV12propertyListACvgZ` | 3 | alt-tab, betterdisplay, coteditor |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10executableACvgZ` | 3 | ghostty, pearcleaner, vorssaint |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV13utf8PlainTextACvgZ` | 3 | iterm2, openclaw, whatsapp |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV18audiovisualContentACvgZ` | 3 | cmux, coteditor, vorssaint |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV20localizedDescriptionSSSgvg` | 3 | chatgpt, coteditor, raycast |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3bmpACvgZ` | 3 | cmux, raycast, whatsapp |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3tag0E5Class12conformingToACSgSS_AA05UTTagF0VAGtcfC` | 3 | betterdisplay, raycast, utm |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4htmlACvgZ` | 3 | raycast, sequel-ace, tailscale-app |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3xmlACvgZ` | 3 | clipy, coteditor, vorssaint |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV5types3tag0F5Class12conformingToSayACGSS_AA05UTTagG0VACSgtFZ` | 3 | iina, raycast, whatsapp |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV7archiveACvgZ` | 3 | coteditor, openclaw, vorssaint |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV9isDynamicSbvg` | 3 | cmux, raycast, whatsapp |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeVSQAAMc` | 3 | cmux, coteditor, raycast |
 | AddressBook.framework | `_kABAddressProperty` | 2 | libreoffice, thunderbird |
@@ -419,12 +472,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppIntents.framework | `_$s10AppIntents0A16ShortcutsBuilderO10buildBlockySayAA0A8ShortcutVGAFd_tFZ` | 2 | raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents0A16ShortcutsBuilderO15buildExpressionyAA0A8ShortcutVAFFZ` | 2 | raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents0A6IntentP14supportedModesAA0cE0VvgZTq` | 2 | coteditor, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents0A6IntentPAAE14isDiscoverableSbvgZ` | 2 | coteditor, maccy |
 | AppIntents.framework | `_$s10AppIntents0A6IntentPAAE14supportedModesAA0cE0VvgZ` | 2 | coteditor, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents0A8ShortcutV6intent7phrases10shortTitle15systemImageNameACx_SayAA0aC6PhraseVyxGG10Foundation23LocalizedStringResourceVSgSSSgYttcAA0A6IntentRzlufC` | 2 | raycast, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents10IntentFileV7fileURL10Foundation0F0VSgvg` | 2 | ghostty, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents10IntentFileVMa` | 2 | ghostty, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents10IntentFileVMn` | 2 | ghostty, tailscale-app |
+| AppIntents.framework | `_$s10AppIntents0aB9ExtensionMp` | 2 | qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents0aB9ExtensionP0C10Foundation0aC0Tb` | 2 | qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents0aB9ExtensionPAAE13configurationQrvg` | 2 | qlmarkdown, raycast |
+| AppIntents.framework | `_$s10AppIntents0aB9ExtensionPAAE13configurationQrvpQOMQ` | 2 | qlmarkdown, raycast |
 | AppIntents.framework | `_$s10AppIntents14EntityPropertyC12wrappedValuexvg` | 2 | ghostty, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents14EntityPropertyCAA10Foundation3URLV9ValueTypeRtzrlE5titleACyxGAD23LocalizedStringResourceV_tcfC` | 2 | maccy, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents15IntentParameterC15IntControlStyleO7stepperyAEyx_GAGmAA01_C5ValueRzs8SendableRzlFWC` | 2 | betterdisplay, maccy |
@@ -434,8 +487,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppIntents.framework | `_$s10AppIntents17IntentDescriptionVMa` | 2 | raycast, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents17ShortcutTileColorOMa` | 2 | coteditor, raycast |
 | AppIntents.framework | `_$s10AppIntents21DisplayRepresentationV5ImageV4data10isTemplateAE10Foundation4DataV_SbSgtcfC` | 2 | ghostty, tailscale-app |
-| AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryV0D15KeyPathsBuilderO10buildBlockySays07PartialF4PathCyxGGAId_tFZ` | 2 | betterdisplay, maccy |
-| AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryV0D15KeyPathsBuilderO15buildExpressionys07PartialF4PathCyxGs0fL0CyxAA0cD0Cyqd__GGAA01_C5ValueRd__s8SendableRd__lFZ` | 2 | betterdisplay, maccy |
+| AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryV_5table_ACyxGAA0dE6StringVyxG_SSSgSays14PartialKeyPathCyxGGyXEtcfC` | 2 | betterdisplay, qlmarkdown |
 | AppIntents.framework | `_$s10AppIntents23ParameterSummaryBuilderO10buildBlockyqd__qd__6IntentQyd__RszAA0cD0Rd__lFZ` | 2 | maccy, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents23ParameterSummaryBuilderO15buildExpressionyqd__qd__6IntentQyd__RszAA0cD0Rd__lFZ` | 2 | maccy, tailscale-app |
 | AppIntents.framework | `_$s10AppIntents25TypeDisplayRepresentationV13stringLiteralACSS_tcfC` | 2 | raycast, tailscale-app |
@@ -465,13 +517,10 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CloudKit.framework | `_OBJC_CLASS_$_CKModifyRecordZonesOperation` | 2 | flycut, whatsapp |
 | CloudKit.framework | `_OBJC_CLASS_$_CKNotificationInfo` | 2 | flycut, whatsapp |
 | CoreServices.framework | `_AECoerceDesc` | 2 | deluge, flycut |
-| CoreServices.framework | `_AECoercePtr` | 2 | deluge, flycut |
 | CoreServices.framework | `_AECreateList` | 2 | deluge, flycut |
 | CoreServices.framework | `_AEDuplicateDesc` | 2 | deluge, microsoft-edge |
-| CoreServices.framework | `_AEGetAttributePtr` | 2 | deluge, kicad |
 | CoreServices.framework | `_AEGetEventHandler` | 2 | deluge, microsoft-edge |
 | CoreServices.framework | `_AEGetNthDesc` | 2 | deluge, flycut |
-| CoreServices.framework | `_AEGetNthPtr` | 2 | deluge, kicad |
 | CoreServices.framework | `_CSBackupIsItemExcluded` | 2 | pencil, webtorrent |
 | CoreServices.framework | `_CloseComponent` | 2 | deluge, lmms |
 | CoreServices.framework | `_DisposeHandle` | 2 | deluge, vlc |
@@ -497,6 +546,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreServices.framework | `_HUnlock` | 2 | deluge, vlc |
 | CoreServices.framework | `_LSCopyDisplayNameForURL` | 2 | pencil, webtorrent |
 | CoreServices.framework | `_LSSharedFileListItemCopyDisplayName` | 2 | alt-tab, ollama-app |
+| CoreServices.framework | `_MDQuerySetMaxCount` | 2 | raycast, vorssaint |
 | CoreServices.framework | `_NewPtr` | 2 | deluge, lmms |
 | CoreServices.framework | `_NewPtrClear` | 2 | deluge, lmms |
 | CoreServices.framework | `_OpenAComponent` | 2 | deluge, lmms |
@@ -517,30 +567,24 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreServices.framework | `_kUTTypeText` | 2 | git-credential-manager, hammerspoon |
 | CoreServices.framework | `_kUTTypeUTF16ExternalPlainText` | 2 | kicad, prusaslicer |
 | CoreServices.framework | `_kUTTypeUTF16PlainText` | 2 | kicad, prusaslicer |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO4open_5using14authenticating10Foundation4DataVAC9SealedBoxV_AA12SymmetricKeyVxtKAG0I8ProtocolRzlFZ` | 2 | github, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO4seal_5using5nonce14authenticatingAC9SealedBoxVx_AA12SymmetricKeyVAC5NonceVSgq_tK10Foundation12DataProtocolRzAoPR_r0_lFZ` | 2 | github, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO5NonceV4dataAEx_tKc10Foundation12DataProtocolRzlufC` | 2 | github, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO9SealedBoxV10ciphertext10Foundation4DataVvg` | 2 | github, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO9SealedBoxV3tag10Foundation4DataVvg` | 2 | github, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO9SealedBoxV5nonce10ciphertext3tagAeC5NonceV_xq_tKc10Foundation12DataProtocolRzAkLR_r0_lufC` | 2 | github, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO9SealedBoxVMn` | 2 | github, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyOMa` | 2 | github, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyOMn` | 2 | github, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO06PublicD0V17rawRepresentation10Foundation4DataVvg` | 2 | cmux, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO06PublicD0V17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 2 | cmux, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO06PublicD0VMa` | 2 | cmux, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0V06publicD0AE06PublicD0Vvg` | 2 | cmux, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0V17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 2 | cmux, visual-studio-code |
+| CryptoKit.framework | `_$s6Digest9CryptoKit12HashFunctionPTl` | 2 | dotnet-sdk, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO06PublicD0VMn` | 2 | cmux, dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0V016sharedSecretFromdE04withAA06SharedH0VAE06PublicD0V_tKF` | 2 | dotnet-sdk, visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0VAA017HPKEDiffieHellmanfD0AAMc` | 2 | cmux, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0VAGycfC` | 2 | cmux, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0VMa` | 2 | cmux, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyV17rawRepresentation10Foundation4DataVvg` | 2 | cmux, orbstack |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyVMn` | 2 | cmux, orbstack |
-| CryptoKit.framework | `_$s9CryptoKit12HashFunctionPAAE4hash4data6DigestQzqd___t10Foundation12DataProtocolRd__lFZ` | 2 | orbstack, whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0VMn` | 2 | cmux, dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyVAGycfC` | 2 | cmux, openclaw |
+| CryptoKit.framework | `_$s9CryptoKit12HashFunctionMp` | 2 | dotnet-sdk, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit12HashFunctionP6DigestAC_AaDTn` | 2 | dotnet-sdk, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit12HashFunctionTL` | 2 | dotnet-sdk, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit12SHA256DigestV15withUnsafeBytesyxxSWKXEKlF` | 2 | dotnet-sdk, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit12SHA384DigestV10Foundation15ContiguousBytesAAMc` | 2 | orbstack, qlmarkdown |
+| CryptoKit.framework | `_$s9CryptoKit12SHA512DigestVMa` | 2 | dotnet-sdk, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit12SharedSecretV15withUnsafeBytesyxxSWKXEKlF` | 2 | dotnet-sdk, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit12SharedSecretVMa` | 2 | dotnet-sdk, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyV10Foundation15ContiguousBytesAAMc` | 2 | dotnet-sdk, orbstack |
 | CryptoKit.framework | `_$s9CryptoKit16SymmetricKeySizeV7bits128ACvgZ` | 2 | cmux, whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit16SymmetricKeySizeV7bits256ACvgZ` | 2 | whatsapp, zoom |
-| CryptoKit.framework | `_$s9CryptoKit3AESO3GCMOMa` | 2 | github, visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit4HKDFV9deriveKey05inputE8Material4info15outputByteCountAA09SymmetricE0VAI_qd__Sit10Foundation12DataProtocolRd__lFZ` | 2 | cmux, iterm2 |
+| CryptoKit.framework | `_$s9CryptoKit4HKDFV9deriveKey05inputE8Material4salt4info15outputByteCountAA09SymmetricE0VAJ_qd__qd_0_Sit10Foundation12DataProtocolRd__AkLRd_0_r0_lFZ` | 2 | dotnet-sdk, whatsapp |
 | CryptoKit.framework | `_$s9CryptoKit4HPKEO11CiphersuiteVMa` | 2 | cmux, visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit4HPKEO6SenderV15encapsulatedKey10Foundation4DataVvg` | 2 | cmux, visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit4HPKEO6SenderV4seal_14authenticating10Foundation4DataVx_q_tKAH0H8ProtocolRzAhKR_r0_lF` | 2 | cmux, visual-studio-code |
@@ -550,18 +594,18 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit4P256O7SigningO10PrivateKeyV06publicF0AE06PublicF0Vvg` | 2 | orbstack, sequel-ace |
 | CryptoKit.framework | `_$s9CryptoKit4P256O7SigningO9PublicKeyV17rawRepresentation10Foundation4DataVvg` | 2 | orbstack, sequel-ace |
 | CryptoKit.framework | `_$s9CryptoKit4P256O7SigningO9PublicKeyVMa` | 2 | orbstack, sequel-ace |
-| CryptoKit.framework | `_$s9CryptoKit6SHA384VMa` | 2 | orbstack, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit6SHA384VMn` | 2 | orbstack, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit6SHA512VMa` | 2 | orbstack, visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit6SHA512VMn` | 2 | orbstack, visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit6SHA512VAA12HashFunctionAAMc` | 2 | dotnet-sdk, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO10SHA1DigestV15withUnsafeBytesyxxSWKXEKlF` | 2 | dotnet-sdk, visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO10SHA1DigestVAA0E0AAMc` | 2 | orbstack, raycast |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO10SHA1DigestVSTAAMc` | 2 | cmux, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1VAEycfC` | 2 | dotnet-sdk, orbstack |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1VMn` | 2 | cmux, dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO9MD5DigestV15withUnsafeBytesyxxSWKXEKlF` | 2 | clipy, dotnet-sdk |
 | DeviceCheck.framework | `_OBJC_CLASS_$_DCAppAttestService` | 2 | iterm2, whatsapp |
-| EventKit.framework | `_EKEventStoreChangedNotification` | 2 | raycast, zoom |
-| Intents.framework | `_OBJC_CLASS_$_INIntent` | 2 | hammerspoon, tailscale-app |
-| Intents.framework | `_OBJC_CLASS_$_INIntentResponse` | 2 | hammerspoon, tailscale-app |
-| Intents.framework | `_OBJC_METACLASS_$_INIntent` | 2 | hammerspoon, tailscale-app |
-| Intents.framework | `_OBJC_METACLASS_$_INIntentResponse` | 2 | hammerspoon, tailscale-app |
+| Intents.framework | `_OBJC_CLASS_$_INObject` | 2 | swiftbar, tailscale-app |
+| Intents.framework | `_OBJC_CLASS_$_INObjectResolutionResult` | 2 | swiftbar, tailscale-app |
+| Intents.framework | `_OBJC_METACLASS_$_INObject` | 2 | swiftbar, tailscale-app |
+| Intents.framework | `_OBJC_METACLASS_$_INObjectResolutionResult` | 2 | swiftbar, tailscale-app |
 | OSAKit.framework | `_OBJC_CLASS_$_OSAScript` | 2 | coteditor, hammerspoon |
 | OpenDirectory.framework | `_kODAttributeTypeUserShell` | 2 | iterm2, sublime-text |
 | Security.framework | `_AuthorizationFreeItemSet` | 2 | orbstack, zoom |
@@ -618,6 +662,11 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Security.framework | `_CSSM_DeleteContext` | 2 | pencil, webtorrent |
 | Security.framework | `_CSSM_SignData` | 2 | pencil, webtorrent |
 | Security.framework | `_CSSM_UpdateContextAttributes` | 2 | pencil, webtorrent |
+| Security.framework | `_SSLSetAllowsAnyRoot` | 2 | telegram, vlc |
+| Security.framework | `_SSLSetAllowsExpiredCerts` | 2 | telegram, vlc |
+| Security.framework | `_SSLSetAllowsExpiredRoots` | 2 | telegram, vlc |
+| Security.framework | `_SSLSetEnableCertVerify` | 2 | telegram, vlc |
+| Security.framework | `_SSLSetProtocolVersionEnabled` | 2 | telegram, vlc |
 | Security.framework | `_SecCertificateGetCLHandle` | 2 | pencil, webtorrent |
 | Security.framework | `_SecDecryptTransformCreate` | 2 | bitwarden, localsend |
 | Security.framework | `_SecEncryptTransformCreate` | 2 | bitwarden, localsend |
@@ -632,6 +681,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Security.framework | `_kSecAttrSecurityDomain` | 2 | bitwarden, localsend |
 | Security.framework | `_kSecCodeInfoFormat` | 2 | orbstack, raycast |
 | Security.framework | `_kSecCodeInfoRequirements` | 2 | orbstack, raycast |
+| Security.framework | `_kSecCodeInfoTrust` | 2 | orbstack, telegram |
 | Security.framework | `_kSecDigestHMACKeyAttribute` | 2 | bitwarden, localsend |
 | Security.framework | `_kSecEncryptionMode` | 2 | bitwarden, localsend |
 | Security.framework | `_kSecIVKey` | 2 | bitwarden, localsend |
@@ -740,12 +790,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Security.framework | `_kSecOIDX509V3SignedCertificate` | 2 | hammerspoon, orbstack |
 | Security.framework | `_kSecOIDX509V3SignedCertificateCStruct` | 2 | hammerspoon, orbstack |
 | Security.framework | `_kSecUseAuthenticationUIFail` | 2 | claude, kitty |
-| Security.framework | `_sec_protocol_metadata_access_distinguished_names` | 2 | git-credential-manager, github |
-| Security.framework | `_sec_protocol_metadata_get_negotiated_tls_ciphersuite` | 2 | git-credential-manager, github |
-| Security.framework | `_sec_protocol_metadata_get_negotiated_tls_protocol_version` | 2 | git-credential-manager, github |
-| Security.framework | `_sec_protocol_options_set_local_identity` | 2 | orbstack, utm |
 | Security.framework | `_sec_protocol_options_set_peer_authentication_required` | 2 | orbstack, utm |
-| Security.framework | `_sec_release` | 2 | git-credential-manager, github |
 | StoreKit.framework | `_$s8StoreKit0aB5ErrorO07networkC0yAC10Foundation8URLErrorVcACmFWC` | 2 | coteditor, whatsapp |
 | StoreKit.framework | `_$s8StoreKit0aB5ErrorO13userCancelledyA2CmFWC` | 2 | coteditor, whatsapp |
 | StoreKit.framework | `_$s8StoreKit0aB5ErrorOMa` | 2 | coteditor, whatsapp |
@@ -773,18 +818,17 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | StoreKit.framework | `_$s8StoreKit7ProductVMa` | 2 | coteditor, whatsapp |
 | StoreKit.framework | `_$s8StoreKit7ProductVMn` | 2 | coteditor, whatsapp |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers10UTTagClassV8rawValueACSS_tcfC` | 2 | betterdisplay, utm |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10isDeclaredSbvg` | 2 | raycast, vorssaint |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10javaScriptACvgZ` | 2 | coteditor, raycast |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10mpeg4MovieACvgZ` | 2 | claude, whatsapp |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10sourceCodeACvgZ` | 2 | cmux, raycast |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV13utf8PlainTextACvgZ` | 2 | iterm2, whatsapp |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV18audiovisualContentACvgZ` | 2 | cmux, coteditor |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV18commaSeparatedTextACvgZ` | 2 | openclaw, whatsapp |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV20mpeg2TransportStreamACvgZ` | 2 | coteditor, raycast |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV2eeoiySbAC_ACtFZ` | 2 | cmux, coteditor |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3pdfACvgZ` | 2 | cmux, raycast |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3xmlACvgZ` | 2 | clipy, coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4yamlACvgZ` | 2 | coteditor, orbstack |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV5vCardACvgZ` | 2 | claude, cmux |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV6bundleACvgZ` | 2 | iterm2, raycast |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV8rawImageACvgZ` | 2 | raycast, vorssaint |
 | AddressBook.framework | `_ABCopyArrayOfAllGroups` | 1 | libreoffice |
 | AddressBook.framework | `_ABCopyArrayOfAllPeople` | 1 | libreoffice |
 | AddressBook.framework | `_ABCopyArrayOfPropertiesForRecordType` | 1 | libreoffice |
@@ -834,11 +878,10 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppIntents.framework | `_$s10AppIntents0A6IntentPAAE19requestConfirmationyyYaKF` | 1 | maccy |
 | AppIntents.framework | `_$s10AppIntents0A6IntentPAAE19requestConfirmationyyYaKFTu` | 1 | maccy |
 | AppIntents.framework | `_$s10AppIntents0A8ShortcutV6intent7phrases10shortTitle15systemImageNameACx_SayAA0aC6PhraseVyxGG10Foundation23LocalizedStringResourceVSSYttcAA0A6IntentRzlufC` | 1 | coteditor |
-| AppIntents.framework | `_$s10AppIntents0aB9ExtensionMp` | 1 | raycast |
-| AppIntents.framework | `_$s10AppIntents0aB9ExtensionP0C10Foundation0aC0Tb` | 1 | raycast |
-| AppIntents.framework | `_$s10AppIntents0aB9ExtensionPAAE13configurationQrvg` | 1 | raycast |
-| AppIntents.framework | `_$s10AppIntents0aB9ExtensionPAAE13configurationQrvpQOMQ` | 1 | raycast |
+| AppIntents.framework | `_$s10AppIntents10IntentFileV4data10Foundation4DataVvg` | 1 | qlmarkdown |
+| AppIntents.framework | `_$s10AppIntents10IntentFileV4data8filename4typeAC10Foundation4DataV_SS22UniformTypeIdentifiers6UTTypeVSgtcfC` | 1 | qlmarkdown |
 | AppIntents.framework | `_$s10AppIntents10IntentFileV8filenameSSvg` | 1 | tailscale-app |
+| AppIntents.framework | `_$s10AppIntents10IntentFileVAA01_C5ValueAAMc` | 1 | qlmarkdown |
 | AppIntents.framework | `_$s10AppIntents12IntentDialogV19stringInterpolationACSS10FoundationE17LocalizationValueV06StringF0V_tcfC` | 1 | tailscale-app |
 | AppIntents.framework | `_$s10AppIntents12IntentResultP5value5ValueQzSgvgTj` | 1 | tailscale-app |
 | AppIntents.framework | `_$s10AppIntents12IntentResultPAAE6result5value6dialogAA0cD9ContainerVyqd__s5NeverOAjA0C6DialogVGqd___ALtAMRszAA01_C5ValueRd__lFZ` | 1 | tailscale-app |
@@ -856,6 +899,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppIntents.framework | `_$s10AppIntents15IntentParameterC18DoubleControlStyleO6slideryAEyx_GAGmAA01_C5ValueRzs8SendableRzlFWC` | 1 | betterdisplay |
 | AppIntents.framework | `_$s10AppIntents15IntentParameterCA2A0A6Entity9ValueTypeRpzrlE5title11description07requestF6Dialog0j14DisambiguationK023inputConnectionBehavior15optionsProviderACyxG10Foundation23LocalizedStringResourceV_APSgAA0cK0VSgAtA05InputnO0OYtqd__tcAA014DynamicOptionsQ0Rd__07DefaultF0_AEQYd__AFRSlufC` | 1 | ghostty |
 | AppIntents.framework | `_$s10AppIntents15IntentParameterCA2A0C4FileV9ValueTypeRtzrlE5title11description7default09supportedG11Identifiers07requestF6Dialog23inputConnectionBehaviorACyxG10Foundation23LocalizedStringResourceV_AQSg09UnwrappedG0QzSgYtSaySSGYtAA0cN0VSgAA05InputpQ0OYttcfC` | 1 | tailscale-app |
+| AppIntents.framework | `_$s10AppIntents15IntentParameterCA2A0C4FileV9ValueTypeRtzrlE5title11description7default21supportedContentTypes07requestF6Dialog23inputConnectionBehaviorACyxG10Foundation23LocalizedStringResourceV_AQSg09UnwrappedG0QzSgSay07UniformG11Identifiers6UTTypeVGAA0cO0VSgAA05InputqR0OYttcfC` | 1 | qlmarkdown |
 | AppIntents.framework | `_$s10AppIntents15IntentParameterCAASS9ValueTypeRtzrlE5title11description12inputOptions07requestE6Dialog0I18ConnectionBehavior15optionsProviderACyxG10Foundation23LocalizedStringResourceV_AOSgSSAAE0c5InputJ0VSgAA0cL0VSgAA0umN0OYtqd__tcAA07DynamicjP0Rd__SS07DefaultE0_ADRTd__lufC` | 1 | tailscale-app |
 | AppIntents.framework | `_$s10AppIntents15IntentParameterCyxGAA03AnyC5ValueAAMc` | 1 | maccy |
 | AppIntents.framework | `_$s10AppIntents17EqualToComparatorC16mappingTransformACyxq_q0_Gq0_q_c_tcfc` | 1 | tailscale-app |
@@ -890,7 +934,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppIntents.framework | `_$s10AppIntents21IntentDonationManagerV6sharedACvgZ` | 1 | tailscale-app |
 | AppIntents.framework | `_$s10AppIntents21IntentDonationManagerVMa` | 1 | tailscale-app |
 | AppIntents.framework | `_$s10AppIntents21IntentResultContainerVyxq_q0_q1_GAA14ProvidesDialogA2A0cG0VRs1_rlMc` | 1 | tailscale-app |
-| AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryV_5table_ACyxGAA0dE6StringVyxG_SSSgSays14PartialKeyPathCyxGGyXEtcfC` | 1 | betterdisplay |
 | AppIntents.framework | `_$s10AppIntents22IntentParameterSummaryVyACyxGSays14PartialKeyPathCyxGGyXEcfC` | 1 | maccy |
 | AppIntents.framework | `_$s10AppIntents24AnyEntityQueryComparatorVMn` | 1 | tailscale-app |
 | AppIntents.framework | `_$s10AppIntents24IntentDonationIdentifierVMa` | 1 | tailscale-app |
@@ -1017,10 +1060,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CloudKit.framework | `_OBJC_CLASS_$_CKShare` | 1 | clipy |
 | CloudKit.framework | `_OBJC_CLASS_$_CKShareMetadata` | 1 | clipy |
 | CloudKit.framework | `_OBJC_CLASS_$_CKSubscription` | 1 | whatsapp |
+| Contacts.framework | `_OBJC_CLASS_$_CNContactVCardSerialization` | 1 | telegram |
 | CoreLocation.framework | `_OBJC_CLASS_$_CLCircularRegion` | 1 | hammerspoon |
 | CoreLocation.framework | `_OBJC_CLASS_$_CLFloor` | 1 | clipy |
 | CoreLocation.framework | `_OBJC_CLASS_$_CLLocationSourceInformation` | 1 | clipy |
 | CoreLocation.framework | `_kCLLocationAccuracyReduced` | 1 | raycast |
+| CoreServices.framework | `_AEBuildAppleEvent` | 1 | keka |
 | CoreServices.framework | `_AECallObjectAccessor` | 1 | deluge |
 | CoreServices.framework | `_AEDeleteItem` | 1 | deluge |
 | CoreServices.framework | `_AEDeleteParam` | 1 | deluge |
@@ -1028,6 +1073,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreServices.framework | `_AEGetAttributeDesc` | 1 | deluge |
 | CoreServices.framework | `_AEGetDescData` | 1 | deluge |
 | CoreServices.framework | `_AEGetDescDataSize` | 1 | deluge |
+| CoreServices.framework | `_AEInitializeDesc` | 1 | keka |
 | CoreServices.framework | `_AEInstallSpecialHandler` | 1 | deluge |
 | CoreServices.framework | `_AEManagerInfo` | 1 | deluge |
 | CoreServices.framework | `_AEObjectInit` | 1 | deluge |
@@ -1109,12 +1155,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreServices.framework | `_HSetState` | 1 | deluge |
 | CoreServices.framework | `_HomeResFile` | 1 | deluge |
 | CoreServices.framework | `_InsertResourceFile` | 1 | deluge |
+| CoreServices.framework | `_LSCopyKindStringForRef` | 1 | steam |
 | CoreServices.framework | `_LSCopyKindStringForTypeInfo` | 1 | cyberduck |
 | CoreServices.framework | `_LSOpenApplication` | 1 | flycut |
 | CoreServices.framework | `_LSOpenURLsWithRole` | 1 | android-studio |
 | CoreServices.framework | `_LSSetItemAttribute` | 1 | cyberduck |
 | CoreServices.framework | `_LoadResource` | 1 | deluge |
-| CoreServices.framework | `_MDQuerySetMaxCount` | 1 | raycast |
 | CoreServices.framework | `_MemError` | 1 | deluge |
 | CoreServices.framework | `_NewHandle` | 1 | deluge |
 | CoreServices.framework | `_OpenDefaultComponent` | 1 | macfuse |
@@ -1153,32 +1199,21 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreServices.framework | `_kMDItemLayerNames` | 1 | krita |
 | CoreServices.framework | `_kMDItemPixelCount` | 1 | krita |
 | CoreServices.framework | `_kUTTypeDirectory` | 1 | musescore |
-| CryptoKit.framework | `_$s6Digest9CryptoKit12HashFunctionPTl` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit03ChaC4PolyO5NonceVMa` | 1 | iterm2 |
 | CryptoKit.framework | `_$s9CryptoKit0aB5ErrorO014underlyingCoreaC0yACs5Int32V_tcACmFWC` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit0aB5ErrorO16incorrectKeySizeyA2CmFWC` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO06PublicD0VAA017HPKEDiffieHellmanfD0AAMc` | 1 | visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO06PublicD0VMn` | 1 | cmux |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0V016sharedSecretFromdE04withAA06SharedH0VAE06PublicD0V_tKF` | 1 | visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O12KeyAgreementO07PrivateD0VMn` | 1 | cmux |
-| CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO10PrivateKeyVAGycfC` | 1 | cmux |
 | CryptoKit.framework | `_$s9CryptoKit10Curve25519O7SigningO9PublicKeyVMn` | 1 | orbstack |
-| CryptoKit.framework | `_$s9CryptoKit12HashFunctionMp` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit12HashFunctionP14blockByteCountSivgZTj` | 1 | orbstack |
-| CryptoKit.framework | `_$s9CryptoKit12HashFunctionP6DigestAC_AaDTn` | 1 | orbstack |
-| CryptoKit.framework | `_$s9CryptoKit12HashFunctionTL` | 1 | orbstack |
+| CryptoKit.framework | `_$s9CryptoKit12HashFunctionPAAE6update4datayqd___t10Foundation12DataProtocolRd__lF` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit12SHA256DigestV11descriptionSSvg` | 1 | whatsapp |
-| CryptoKit.framework | `_$s9CryptoKit12SHA256DigestV15withUnsafeBytesyxxSWKXEKlF` | 1 | visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit12SHA384DigestV10Foundation15ContiguousBytesAAMc` | 1 | orbstack |
+| CryptoKit.framework | `_$s9CryptoKit12SHA384DigestV15withUnsafeBytesyxxSWKXEKlF` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit12SHA384DigestVAA0D0AAMc` | 1 | orbstack |
-| CryptoKit.framework | `_$s9CryptoKit12SHA384DigestVMa` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit12SHA384DigestVMn` | 1 | orbstack |
+| CryptoKit.framework | `_$s9CryptoKit12SHA512DigestV15withUnsafeBytesyxxSWKXEKlF` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit12SHA512DigestVAA0D0AAMc` | 1 | orbstack |
-| CryptoKit.framework | `_$s9CryptoKit12SHA512DigestVMa` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit12SHA512DigestVMn` | 1 | orbstack |
-| CryptoKit.framework | `_$s9CryptoKit12SharedSecretV15withUnsafeBytesyxxSWKXEKlF` | 1 | visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit12SharedSecretVMa` | 1 | visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyV10Foundation15ContiguousBytesAAMc` | 1 | orbstack |
+| CryptoKit.framework | `_$s9CryptoKit12SharedSecretVMn` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit12SymmetricKeyV8bitCountSivg` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit13SecureEnclaveO4P256O7SigningO10PrivateKeyV06publicH0AaDOAFO06PublicH0Vvg` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit13SecureEnclaveO4P256O7SigningO10PrivateKeyV18dataRepresentation10Foundation4DataVvg` | 1 | orbstack |
@@ -1200,8 +1235,11 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO5NonceVAGycfC` | 1 | whatsapp |
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV5nonceAE5NonceVvg` | 1 | whatsapp |
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV8combinedAGx_tKc10Foundation12DataProtocolRzlufC` | 1 | whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit3AESO7KeyWrapO4wrap_5using10Foundation4DataVAA09SymmetricD0V_ALtKFZ` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit3AESO7KeyWrapO6unwrap_5usingAA09SymmetricD0Vx_AItK10Foundation12DataProtocolRzlFZ` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit3AESOMn` | 1 | orbstack |
-| CryptoKit.framework | `_$s9CryptoKit4HKDFV9deriveKey05inputE8Material4salt4info15outputByteCountAA09SymmetricE0VAJ_qd__qd_0_Sit10Foundation12DataProtocolRd__AkLRd_0_r0_lFZ` | 1 | whatsapp |
+| CryptoKit.framework | `_$s9CryptoKit4HKDFV6expand15pseudoRandomKey4info15outputByteCountAA09SymmetricG0Vqd___qd_0_SgSit10Foundation15ContiguousBytesRd__AK12DataProtocolRd_0_r0_lFZ` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4HKDFV7extract16inputKeyMaterial4saltAA24HashedAuthenticationCodeVyxGAA09SymmetricF0V_qd__Sgt10Foundation12DataProtocolRd__lFZ` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit4HMACV25isValidAuthenticationCode_14authenticating5usingSbqd___qd_0_AA12SymmetricKeyVt10Foundation15ContiguousBytesRd__AI12DataProtocolRd_0_r0_lFZ` | 1 | cmux |
 | CryptoKit.framework | `_$s9CryptoKit4HMACVMa` | 1 | visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit4HMACVMn` | 1 | visual-studio-code |
@@ -1217,6 +1255,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit4HPKEO6SenderV12recipientKey11ciphersuite4infoAEx_AC11CiphersuiteV10Foundation4DataVtKcAA023HPKEDiffieHellmanPublicF0RzlufC` | 1 | visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit4HPKEO9RecipientV10privateKey11ciphersuite4info012encapsulatedF015authenticatedByAEx_AC11CiphersuiteV10Foundation4DataVAO06PublicF0QztKcAA024HPKEDiffieHellmanPrivateF0RzlufC` | 1 | cmux |
 | CryptoKit.framework | `_$s9CryptoKit4HPKEO9RecipientV10privateKey11ciphersuite4info012encapsulatedF0AEx_AC11CiphersuiteV10Foundation4DataVANtKcAA024HPKEDiffieHellmanPrivateF0RzlufC` | 1 | visual-studio-code |
+| CryptoKit.framework | `_$s9CryptoKit4P256O12KeyAgreementO06PublicD0V18x963Representation10Foundation4DataVvg` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P256O12KeyAgreementO06PublicD0VMa` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P256O12KeyAgreementO07PrivateD0V06publicD0AE06PublicD0Vvg` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P256O12KeyAgreementO07PrivateD0V17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P256O12KeyAgreementO07PrivateD0VMa` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P256O12KeyAgreementO07PrivateD0VMn` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit4P256O7SigningO10PrivateKeyV17derRepresentation10Foundation4DataVvg` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit4P256O7SigningO10PrivateKeyV17pemRepresentationSSvg` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit4P256O7SigningO10PrivateKeyV17rawRepresentation10Foundation4DataVvg` | 1 | orbstack |
@@ -1229,6 +1273,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit4P256O7SigningO9PublicKeyV18x963Representation10Foundation4DataVvg` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit4P256O7SigningO9PublicKeyV18x963RepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit4P256O7SigningO9PublicKeyVMn` | 1 | orbstack |
+| CryptoKit.framework | `_$s9CryptoKit4P384O12KeyAgreementO06PublicD0V18x963Representation10Foundation4DataVvg` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P384O12KeyAgreementO06PublicD0VMa` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P384O12KeyAgreementO07PrivateD0V06publicD0AE06PublicD0Vvg` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P384O12KeyAgreementO07PrivateD0V17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P384O12KeyAgreementO07PrivateD0VMa` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P384O12KeyAgreementO07PrivateD0VMn` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit4P384O7SigningO10PrivateKeyV06publicF0AE06PublicF0Vvg` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit4P384O7SigningO10PrivateKeyV17derRepresentation10Foundation4DataVvg` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit4P384O7SigningO10PrivateKeyV17derRepresentationAGx_tKcSkRzs5UInt8V7ElementRtzlufC` | 1 | orbstack |
@@ -1261,6 +1311,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit4P384O7SigningO9PublicKeyVMa` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit4P384O7SigningO9PublicKeyVMn` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit4P384OMn` | 1 | orbstack |
+| CryptoKit.framework | `_$s9CryptoKit4P521O12KeyAgreementO06PublicD0V18x963Representation10Foundation4DataVvg` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P521O12KeyAgreementO06PublicD0VMa` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P521O12KeyAgreementO07PrivateD0V06publicD0AE06PublicD0Vvg` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P521O12KeyAgreementO07PrivateD0V17rawRepresentationAGx_tKc10Foundation15ContiguousBytesRzlufC` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P521O12KeyAgreementO07PrivateD0VMa` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit4P521O12KeyAgreementO07PrivateD0VMn` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit4P521O7SigningO10PrivateKeyV06publicF0AE06PublicF0Vvg` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit4P521O7SigningO10PrivateKeyV17derRepresentation10Foundation4DataVvg` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit4P521O7SigningO10PrivateKeyV17pemRepresentationSSvg` | 1 | orbstack |
@@ -1285,17 +1341,18 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit6DigestP9byteCountSivgZTj` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit6DigestPAAE2eeoiySbx_qd__t10Foundation12DataProtocolRd__lFZ` | 1 | orbstack |
 | CryptoKit.framework | `_$s9CryptoKit6SHA256V6update13bufferPointerySW_tF` | 1 | visual-studio-code |
-| CryptoKit.framework | `_$s9CryptoKit6SHA256V9byteCountSivgZ` | 1 | cmux |
-| CryptoKit.framework | `_$s9CryptoKit6SHA384VAA12HashFunctionAAMc` | 1 | orbstack |
-| CryptoKit.framework | `_$s9CryptoKit6SHA512VAA12HashFunctionAAMc` | 1 | orbstack |
+| CryptoKit.framework | `_$s9CryptoKit6SHA384V9byteCountSivgZ` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit6SHA384VACycfC` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit6SHA512V9byteCountSivgZ` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit6SHA512VACycfC` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO10SHA1DigestV10Foundation15ContiguousBytesAAMc` | 1 | betterdisplay |
-| CryptoKit.framework | `_$s9CryptoKit8InsecureO10SHA1DigestV15withUnsafeBytesyxxSWKXEKlF` | 1 | visual-studio-code |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO10SHA1DigestVMn` | 1 | orbstack |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO3MD5V9byteCountSivgZ` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO3MD5VAEycfC` | 1 | dotnet-sdk |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO3MD5VMn` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1V8finalizeAC0D6DigestVyF` | 1 | orbstack |
-| CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1VAEycfC` | 1 | orbstack |
-| CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1VMn` | 1 | cmux |
+| CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1V9byteCountSivgZ` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO9MD5DigestV10Foundation15ContiguousBytesAAMc` | 1 | raycast |
-| CryptoKit.framework | `_$s9CryptoKit8InsecureO9MD5DigestV15withUnsafeBytesyxxSWKXEKlF` | 1 | clipy |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureOMn` | 1 | orbstack |
 | EventKit.framework | `_OBJC_CLASS_$_EKSource` | 1 | raycast |
 | Intents.framework | `_OBJC_CLASS_$_INCallRecord` | 1 | whatsapp |
@@ -1303,8 +1360,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Intents.framework | `_OBJC_CLASS_$_INDateRelevanceProvider` | 1 | whatsapp |
 | Intents.framework | `_OBJC_CLASS_$_INExtension` | 1 | whatsapp |
 | Intents.framework | `_OBJC_CLASS_$_INMessage` | 1 | whatsapp |
-| Intents.framework | `_OBJC_CLASS_$_INObject` | 1 | tailscale-app |
-| Intents.framework | `_OBJC_CLASS_$_INObjectResolutionResult` | 1 | tailscale-app |
+| Intents.framework | `_OBJC_CLASS_$_INObjectCollection` | 1 | swiftbar |
 | Intents.framework | `_OBJC_CLASS_$_INPersonResolutionResult` | 1 | whatsapp |
 | Intents.framework | `_OBJC_CLASS_$_INRelevanceProvider` | 1 | whatsapp |
 | Intents.framework | `_OBJC_CLASS_$_INRelevantShortcut` | 1 | whatsapp |
@@ -1325,10 +1381,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Intents.framework | `_OBJC_CLASS_$_INStartCallIntentResponse` | 1 | whatsapp |
 | Intents.framework | `_OBJC_CLASS_$_INStartVideoCallIntent` | 1 | whatsapp |
 | Intents.framework | `_OBJC_CLASS_$_INStartVideoCallIntentResponse` | 1 | whatsapp |
+| Intents.framework | `_OBJC_CLASS_$_INTimeIntervalResolutionResult` | 1 | swiftbar |
 | Intents.framework | `_OBJC_CLASS_$_INVocabulary` | 1 | whatsapp |
 | Intents.framework | `_OBJC_METACLASS_$_INExtension` | 1 | whatsapp |
-| Intents.framework | `_OBJC_METACLASS_$_INObject` | 1 | tailscale-app |
-| Intents.framework | `_OBJC_METACLASS_$_INObjectResolutionResult` | 1 | tailscale-app |
 | Intents.framework | `_OBJC_METACLASS_$_INStringResolutionResult` | 1 | hammerspoon |
 | LocalAuthentication.framework | `_OBJC_CLASS_$_LAAuthenticationRequirement` | 1 | docker-desktop |
 | LocalAuthentication.framework | `_OBJC_CLASS_$_LABiometryFallbackRequirement` | 1 | docker-desktop |
@@ -1345,11 +1400,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Security.framework | `_SSLCopyCertificateAuthorities` | 1 | localsend |
 | Security.framework | `_SSLGetDiffieHellmanParams` | 1 | localsend |
 | Security.framework | `_SSLGetPeerID` | 1 | localsend |
-| Security.framework | `_SSLSetAllowsAnyRoot` | 1 | vlc |
-| Security.framework | `_SSLSetAllowsExpiredCerts` | 1 | vlc |
-| Security.framework | `_SSLSetAllowsExpiredRoots` | 1 | vlc |
-| Security.framework | `_SSLSetEnableCertVerify` | 1 | vlc |
-| Security.framework | `_SSLSetProtocolVersionEnabled` | 1 | vlc |
+| Security.framework | `_SSLSetError` | 1 | dotnet-sdk |
 | Security.framework | `_SecACLGetTypeID` | 1 | musescore |
 | Security.framework | `_SecCertificateCopyNormalizedSubjectContent` | 1 | orbstack |
 | Security.framework | `_SecCertificateSetPreferred` | 1 | hammerspoon |
@@ -1376,7 +1427,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Security.framework | `_kSecCodeInfoSource` | 1 | orbstack |
 | Security.framework | `_kSecCodeInfoTime` | 1 | orbstack |
 | Security.framework | `_kSecCodeInfoTimestamp` | 1 | orbstack |
-| Security.framework | `_kSecCodeInfoTrust` | 1 | orbstack |
 | Security.framework | `_kSecMatchSubjectStartsWith` | 1 | utm |
 | Security.framework | `_kSecOIDAPPLE_EXTENSION_AAI_INTERMEDIATE` | 1 | orbstack |
 | Security.framework | `_kSecOIDAPPLE_EXTENSION_APPLEID_INTERMEDIATE` | 1 | orbstack |
@@ -1592,30 +1642,29 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers10UTTagClassV04mimeB0ACvgZ` | 1 | whatsapp |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers10UTTagClassVSHAAMc` | 1 | coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers10UTTagClassVSQAAMc` | 1 | coteditor |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10executableACvgZ` | 1 | ghostty |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10importedAs12conformingToACSS_ACSgtcfC` | 1 | cmux |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10isDeclaredSbvg` | 1 | raycast |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10mpeg4AudioACvgZ` | 1 | cmux |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10perlScriptACvgZ` | 1 | coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10resolvableACvgZ` | 1 | coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV10rubyScriptACvgZ` | 1 | coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV11appleScriptACvgZ` | 1 | coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV11shellScriptACvgZ` | 1 | coteditor |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV11spreadsheetACvgZ` | 1 | openclaw |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV11swiftSourceACvgZ` | 1 | coteditor |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV12presentationACvgZ` | 1 | openclaw |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV12pythonScriptACvgZ` | 1 | coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV12symbolicLinkACvgZ` | 1 | raycast |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV14quickTimeMovieACvgZ` | 1 | claude |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV14utf16PlainTextACvgZ` | 1 | whatsapp |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV15osaScriptBundleACvgZ` | 1 | coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV16tabSeparatedTextACvgZ` | 1 | coteditor |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV18commaSeparatedTextACvgZ` | 1 | whatsapp |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV22utf16ExternalPlainTextACvgZ` | 1 | whatsapp |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3zipACvgZ` | 1 | whatsapp |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4rtfdACvgZ` | 1 | vorssaint |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV4tagsSDyAA10UTTagClassVSaySSGGvg` | 1 | coteditor |
+| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV5videoACvgZ` | 1 | vorssaint |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV6scriptACvgZ` | 1 | ghostty |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV7archiveACvgZ` | 1 | coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV7contentACvgZ` | 1 | raycast |
-| libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV8rawImageACvgZ` | 1 | raycast |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV9aliasFileACvgZ` | 1 | orbstack |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV9directoryACvgZ` | 1 | raycast |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV9livePhotoACvgZ` | 1 | raycast |

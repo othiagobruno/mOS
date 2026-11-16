@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Larissa (plataforma: IOKit, USB, áudio HW) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**127** símbolos distintos.
+**135** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -20,9 +20,15 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | IOKit.framework | `_IOHIDElementGetChildren` | 8 | dolphin, godot, krita, love |
 | IOKit.framework | `_IOHIDElementGetCookie` | 8 | dolphin, godot, krita, love |
 | IOKit.framework | `_IONotificationPortGetMachPort` | 8 | dolphin, godot, krita, love |
-| IOKit.framework | `_IOObjectGetClass` | 7 | firefox, floorp, libreoffice, orbstack |
-| IOKit.framework | `_IOIteratorReset` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| IOKit.framework | `_IOServiceNameMatching` | 4 | hammerspoon, monitorcontrol, obs, stats |
+| IOKit.framework | `_IOObjectGetClass` | 8 | firefox, floorp, libreoffice, librewolf |
+| IOKit.framework | `_IOIteratorReset` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| IOKit.framework | `_IOServiceNameMatching` | 5 | hammerspoon, karabiner-elements, monitorcontrol, obs |
+| IOKit.framework | `_IOHIDServiceClientConformsTo` | 4 | linearmouse, raycast, utm, vorssaint |
+| IOKit.framework | `_IOHIDServiceClientSetProperty` | 4 | linearmouse, raycast, utm, vorssaint |
+| IOKit.framework | `_IOHIDSetModifierLockState` | 4 | android-studio, hammerspoon, raycast, vorssaint |
+| IOKit.framework | `_IORegistryEntryGetChildIterator` | 4 | betterdisplay, orbstack, stats, vorssaint |
+| IOKit.framework | `_IORegistryEntryGetParentIterator` | 4 | karabiner-elements, orbstack, stats, vlc |
+| IOKit.framework | `_IORegistryEntryGetPath` | 4 | betterdisplay, openscad, vorssaint, zoom |
 | Hypervisor.framework | `_hv_vcpu_create` | 3 | docker-desktop, orbstack, utm |
 | Hypervisor.framework | `_hv_vcpu_enable_native_msr` | 3 | docker-desktop, orbstack, utm |
 | Hypervisor.framework | `_hv_vcpu_interrupt` | 3 | docker-desktop, orbstack, utm |
@@ -35,13 +41,11 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Hypervisor.framework | `_hv_vmx_vcpu_read_vmcs` | 3 | docker-desktop, orbstack, utm |
 | Hypervisor.framework | `_hv_vmx_vcpu_write_vmcs` | 3 | docker-desktop, orbstack, utm |
 | IOKit.framework | `_IOConnectCallScalarMethod` | 3 | android-studio, obs, vlc |
+| IOKit.framework | `_IOHIDDeviceConformsTo` | 3 | hammerspoon, karabiner-elements, zoom |
 | IOKit.framework | `_IOHIDDeviceRegisterInputValueCallback` | 3 | hammerspoon, linearmouse, zoom |
-| IOKit.framework | `_IOHIDServiceClientConformsTo` | 3 | linearmouse, raycast, utm |
-| IOKit.framework | `_IOHIDServiceClientSetProperty` | 3 | linearmouse, raycast, utm |
-| IOKit.framework | `_IOHIDSetModifierLockState` | 3 | android-studio, hammerspoon, raycast |
-| IOKit.framework | `_IORegistryEntryGetChildIterator` | 3 | betterdisplay, orbstack, stats |
-| IOKit.framework | `_IORegistryEntryGetParentIterator` | 3 | orbstack, stats, vlc |
-| IOKit.framework | `_IORegistryEntryGetPath` | 3 | betterdisplay, openscad, zoom |
+| IOKit.framework | `_IOHIDEventSystemClientCreateSimpleClient` | 3 | raycast, utm, vorssaint |
+| IOKit.framework | `_IOHIDValueGetTimeStamp` | 3 | karabiner-elements, linearmouse, orbstack |
+| IOKit.framework | `_IOPSCopyExternalPowerAdapterDetails` | 3 | hammerspoon, keka, stats |
 | Hypervisor.framework | `_hv_vcpu_destroy` | 2 | orbstack, utm |
 | Hypervisor.framework | `_hv_vcpu_invalidate_tlb` | 2 | docker-desktop, utm |
 | Hypervisor.framework | `_hv_vcpu_read_msr` | 2 | orbstack, utm |
@@ -52,16 +56,17 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | IOKit.framework | `_IODestroyPlugInInterface` | 2 | stats, zoom |
 | IOKit.framework | `_IOFBCopyI2CInterfaceForBus` | 2 | betterdisplay, monitorcontrol |
 | IOKit.framework | `_IOFBGetI2CInterfaceCount` | 2 | betterdisplay, monitorcontrol |
-| IOKit.framework | `_IOHIDDeviceConformsTo` | 2 | hammerspoon, zoom |
 | IOKit.framework | `_IOHIDDeviceSetValue` | 2 | hammerspoon, zoom |
-| IOKit.framework | `_IOHIDEventSystemClientCreateSimpleClient` | 2 | raycast, utm |
+| IOKit.framework | `_IOHIDGetModifierLockState` | 2 | hammerspoon, vorssaint |
+| IOKit.framework | `_IOHIDServiceClientGetRegistryID` | 2 | linearmouse, vorssaint |
 | IOKit.framework | `_IOHIDValueCreateWithIntegerValue` | 2 | hammerspoon, zoom |
-| IOKit.framework | `_IOHIDValueGetTimeStamp` | 2 | linearmouse, orbstack |
 | IOKit.framework | `_IOI2CInterfaceClose` | 2 | betterdisplay, monitorcontrol |
 | IOKit.framework | `_IOI2CInterfaceOpen` | 2 | betterdisplay, monitorcontrol |
 | IOKit.framework | `_IOI2CSendRequest` | 2 | betterdisplay, monitorcontrol |
 | IOKit.framework | `_IOKitWaitQuiet` | 2 | dolphin, utm |
-| IOKit.framework | `_IOPSCopyExternalPowerAdapterDetails` | 2 | hammerspoon, stats |
+| IOKit.framework | `_IOPMAssertionSetProperty` | 2 | hammerspoon, openclaw |
+| IOKit.framework | `_IOPMFindPowerManagement` | 2 | hammerspoon, vorssaint |
+| IOKit.framework | `_IOPMSleepSystem` | 2 | hammerspoon, vorssaint |
 | IOKit.framework | `_IOPSGetProvidingPowerSourceType` | 2 | hammerspoon, iterm2 |
 | IOKit.framework | `_IORegistryEntryGetChildEntry` | 2 | dolphin, utm |
 | IOKit.framework | `_IOServiceAuthorize` | 2 | dolphin, utm |
@@ -112,17 +117,20 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | IOKit.framework | `_IOHIDEventSystemClientUnregisterDeviceMatchingBlock` | 1 | linearmouse |
 | IOKit.framework | `_IOHIDEventSystemClientUnscheduleFromDispatchQueue` | 1 | linearmouse |
 | IOKit.framework | `_IOHIDGetAccelerationWithKey` | 1 | hammerspoon |
-| IOKit.framework | `_IOHIDGetModifierLockState` | 1 | hammerspoon |
 | IOKit.framework | `_IOHIDPostEvent` | 1 | linearmouse |
-| IOKit.framework | `_IOHIDServiceClientGetRegistryID` | 1 | linearmouse |
+| IOKit.framework | `_IOHIDQueueAddElement` | 1 | karabiner-elements |
+| IOKit.framework | `_IOHIDQueueCopyNextValueWithTimeout` | 1 | karabiner-elements |
+| IOKit.framework | `_IOHIDQueueCreate` | 1 | karabiner-elements |
+| IOKit.framework | `_IOHIDQueueRegisterValueAvailableCallback` | 1 | karabiner-elements |
+| IOKit.framework | `_IOHIDQueueScheduleWithRunLoop` | 1 | karabiner-elements |
+| IOKit.framework | `_IOHIDQueueStart` | 1 | karabiner-elements |
+| IOKit.framework | `_IOHIDQueueStop` | 1 | karabiner-elements |
+| IOKit.framework | `_IOHIDQueueUnscheduleFromRunLoop` | 1 | karabiner-elements |
 | IOKit.framework | `_IOHIDServiceClientRegisterRemovalBlock` | 1 | linearmouse |
 | IOKit.framework | `_IOHIDSetAccelerationWithKey` | 1 | hammerspoon |
 | IOKit.framework | `_IOHIDValueCreateWithBytes` | 1 | zoom |
-| IOKit.framework | `_IOPMAssertionSetProperty` | 1 | hammerspoon |
 | IOKit.framework | `_IOPMCopyAssertionsStatus` | 1 | stats |
 | IOKit.framework | `_IOPMCopyBatteryInfo` | 1 | hammerspoon |
-| IOKit.framework | `_IOPMFindPowerManagement` | 1 | hammerspoon |
-| IOKit.framework | `_IOPMSleepSystem` | 1 | hammerspoon |
 | IOKit.framework | `_IOPSCreateLimitedPowerNotification` | 1 | iterm2 |
 | IOKit.framework | `_IOPSGetBatteryWarningLevel` | 1 | hammerspoon |
 | IOKit.framework | `_IOPSGetTimeRemainingEstimate` | 1 | hammerspoon |

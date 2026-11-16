@@ -55,7 +55,7 @@ dispositivos vazia; `startRunning` com câmera concedida fica `isRunning` sem qu
 `AVCaptureScreenInput` só muda o portão para `kTCCServiceScreenCapture`; não fabrica quadro.
 A captura contínua (`SCStream`, `CGDisplayStream`) lê `DEV_SCREEN_CAPTURE` depois de `cx_tcc_preflight` e
 embrulha o ARGB em IOSurface, CVPixelBuffer e CMSampleBuffer. H.264 no VideoToolbox é software
-(decodificador Baseline/Main/High via OpenH264 corrigido, ordem de decodificação ou de exibição, pts por quadro, saída 420v/420f/BGRA com a cor do VUI; codificador ainda I_PCM). HEVC continua stub, -12906/-12908. `VTPixelTransferSession` copia o buffer quando formato e tamanho coincidem.
+(decodificador Baseline/Main/High via OpenH264 corrigido, ordem de decodificação ou de exibição, pts por quadro, saída 420v/420f/BGRA com a cor do VUI; codificador H.264 do OpenH264 com bitrate/fps/intervalo de IDR/perfil, ForceKeyFrame e VUI de cor). HEVC continua stub, -12906/-12908. `VTPixelTransferSession` copia o buffer quando formato e tamanho coincidem.
 
 ## 4. `.metallib` (AIR) — opcodes emitidos e conferidos no host contra o fonte
 

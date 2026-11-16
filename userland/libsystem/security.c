@@ -161,6 +161,9 @@ static u32 next_id = 1;
 static int loaded;
 static int kc_blocked; /* versão 2 com MAC ruim: não sobrescreve o arquivo */
 #include "kcseal.inc"
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryKeyCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 static volatile int klock;
 static void lock(void) { while (__sync_lock_test_and_set(&klock, 1)) ; }
 static void unlock(void) { __sync_lock_release(&klock); }
@@ -514,7 +517,7 @@ static id_ item_object(kitem_t *it) {
     return item_ref(it);
 }
 static id_ item_attrs(kitem_t *it, int with_data, int with_ref) {
-    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     id_ c = str_n(it->cls, 4);
     CFDictionarySetValue(d, K_(kSecClass), c);
     CFRelease(c);
@@ -544,7 +547,7 @@ OSStatus SecItemCopyMatching(id_ query, id_ *result) {
     int rp = flag(query, kSecReturnPersistentRef);
     id_ lim = CFDictionaryGetValue(query, K_(kSecMatchLimit));
     int all = lim && CFEqual(lim, K_(kSecMatchLimitAll));
-    id_ arr = all ? CFArrayCreateMutable(0, 0, 0) : 0, one = 0;
+    id_ arr = all ? CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks) : 0, one = 0;
     int found = 0;
     for (int i = 0; i < nitems; i++) {
         kitem_t *it = &items[i];
@@ -921,7 +924,7 @@ OSStatus SecCodeCopyPath(id_ code, u32 flags, id_ *path) {
 OSStatus SecCodeCopySigningInformation(id_ code, u32 flags, id_ *info) {
     (void)code; (void)flags;
     if (!info) return errSecParam;
-    *info = CFDictionaryCreateMutable(0, 0, 0, 0);
+    *info = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     return errSecSuccess;
 }
 OSStatus SecRequirementCreateWithString(id_ text, u32 flags, id_ *req) { (void)flags; if (!req) return errSecParam; *req = text ? CFRetain(text) : 0; return text ? errSecSuccess : errSecParam; }
@@ -1009,7 +1012,7 @@ static int policy_kind(id_ p, char *host, size_t hn) {   /* -1 = não é políti
     return k;
 }
 id_ SecPolicyCopyProperties(id_ policy) {
-    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     char host[256];
     int k = policy_kind(policy, host, sizeof host);
     CFDictionarySetValue(d, K_(kSecPolicyOid), k == 1 || k == 2 ? K_(kSecPolicyAppleSSL) : k == 3 ? K_(kSecPolicyAppleRevocation)
@@ -1073,7 +1076,7 @@ OSStatus SecTrustCreateWithCertificates(id_ certs, id_ policies, id_ *trust) {
     if (!trust) return errSecParam;
     *trust = 0;
     if (!certs) return errSecParam;
-    id_ arr = CFArrayCreateMutable(0, 0, 0);
+    id_ arr = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     if (CFGetTypeID(certs) == CFDataGetTypeID()) CFArrayAppendValue(arr, certs);   /* um certificado só */
     else for (long i = 0; i < CFArrayGetCount(certs); i++) CFArrayAppendValue(arr, CFArrayGetValueAtIndex(certs, i));
     trust_unmark(arr);                                /* endereço reaproveitado de uma confiança antiga */
@@ -1092,7 +1095,7 @@ long SecTrustGetCertificateCount(id_ trust) { return trust ? CFArrayGetCount(tru
 id_ SecTrustGetCertificateAtIndex(id_ trust, long i) { return trust && i >= 0 && i < CFArrayGetCount(trust) ? CFArrayGetValueAtIndex(trust, i) : 0; }
 id_ SecTrustCopyCertificateChain(id_ trust) {
     if (!trust) return 0;
-    id_ arr = CFArrayCreateMutable(0, 0, 0);
+    id_ arr = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     for (long i = 0; i < CFArrayGetCount(trust); i++) CFArrayAppendValue(arr, CFArrayGetValueAtIndex(trust, i));
     return arr;
 }
@@ -1109,8 +1112,8 @@ OSStatus SecTrustCopyPolicies(id_ trust, id_ *out) {
     id_ p = st && st->policies ? st->policies : 0;
     if (p) CFRetain(p);
     ts_unlock();
-    if (!p) { id_ a = CFArrayCreateMutable(0, 0, 0); id_ b = SecPolicyCreateBasicX509(); CFArrayAppendValue(a, b); CFRelease(b); p = a; }
-    else if (CFGetTypeID(p) != CFArrayGetTypeID()) { id_ a = CFArrayCreateMutable(0, 0, 0); CFArrayAppendValue(a, p); CFRelease(p); p = a; }
+    if (!p) { id_ a = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks); id_ b = SecPolicyCreateBasicX509(); CFArrayAppendValue(a, b); CFRelease(b); p = a; }
+    else if (CFGetTypeID(p) != CFArrayGetTypeID()) { id_ a = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks); CFArrayAppendValue(a, p); CFRelease(p); p = a; }
     *out = p;
     return errSecSuccess;
 }
@@ -1335,7 +1338,7 @@ OSStatus SecTrustGetTrustResult(id_ trust, u32 *result) {
 id_ CFErrorCreate(void *alloc, id_ domain, long code, id_ info);
 extern const void *kCFErrorDomainOSStatus, *kCFErrorLocalizedDescriptionKey;
 static id_ trust_error(int xerr, const char *msg) {
-    id_ info = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ info = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     id_ m = str_n(msg && msg[0] ? msg : "certificado não confiável", strlen(msg && msg[0] ? msg : "certificado não confiável"));
     CFDictionarySetValue(info, K_(kCFErrorLocalizedDescriptionKey), m);
     CFRelease(m);
@@ -1363,7 +1366,7 @@ id_ SecTrustCopyResult(id_ trust) {
     u32 r = 0;
     SecTrustGetTrustResult(trust, &r);
     if (r == kSecTrustResultInvalid) trust_eval_cached(trust, &r, 0, 0, 0);
-    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     id_ n = cx_num_i(r);
     CFDictionarySetValue(d, K_(kSecTrustResultValue), n);
     objc_release(n);
@@ -1377,9 +1380,9 @@ id_ SecTrustCopyProperties(id_ trust) {
     u32 r = 0;
     char msg[160];
     trust_eval_cached(trust, &r, 0, msg, sizeof msg);
-    id_ a = CFArrayCreateMutable(0, 0, 0);
+    id_ a = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     if (r != kSecTrustResultUnspecified && r != kSecTrustResultProceed) {
-        id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+        id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
         id_ m = str_n(msg, strlen(msg));
         CFDictionarySetValue(d, K_(kSecPropertyKeyType), K_(kSecPropertyTypeError));
         CFDictionarySetValue(d, K_(kSecPropertyKeyValue), m);
@@ -1513,7 +1516,7 @@ static int tr_tipo(id_ t) {                             /* 64, 32 ou 0 */
 static id_ tr_novo(id_ attr, id_ type, id_ *err) {
     if (err) *err = 0;
     if (!tr_tipo(type)) { tr_erro(err, errSecUnimplemented); return 0; }
-    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CFDictionarySetValue(d, (id_)&tr_marca_cs, attr);
     CFDictionarySetValue(d, attr, type);
     return d;

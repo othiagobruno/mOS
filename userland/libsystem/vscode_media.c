@@ -4,13 +4,15 @@
  *  - Accelerate/vDSP: implementado de verdade (o WebAudio do Chromium faz convolução, FFT real e
  *    filtros biquad com ele). FFT real com o empacotamento e a escala da Apple (direta multiplica por 2).
  *  - CoreMedia: CMTime aqui; bloco, formato e sample buffer em openbot_cm.c.
- *  - VideoToolbox: H.264 Baseline/Main/High em software (OpenH264 corrigido). O codificador ainda é I_PCM. HEVC: -12906/-12908.
+ *  - VideoToolbox: H.264 Baseline/Main/High em software (OpenH264), decodificação e codificação. HEVC: -12906/-12908.
  *  - CoreAudio/AudioToolbox: coreaudio.c; CoreMIDI: coremidi.c.
  *  - CUPS: nenhuma impressora. GSS/Kerberos: sem credenciais (autenticação Negotiate falha limpa).
  *  - UniformTypeIdentifiers: objetos UTType com identificador, extensão e MIME.
  *  - ServiceManagement: itens de login aceitos; sem launchd para jobs.
  */
 #include "foundation.h"
+extern const char kCFTypeDictionaryKeyCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 void *malloc(size_t n);
 void *calloc(size_t n, size_t s);
@@ -18,6 +20,9 @@ void free(void *p);
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
 int memcmp(const void *a, const void *b, size_t n);
+size_t strlen(const char *s);
+void *realloc(void *p, size_t n);
+int strncmp(const char *a, const char *b, size_t n);
 int strcmp(const char *a, const char *b);
 double sin(double), cos(double), sqrt(double), fabs(double);
 id objc_retain(id o);
@@ -147,7 +152,7 @@ u64 CMClockConvertHostTimeToSystemUnits(cm_time_t t) {
 OSStatus CMIOObjectGetPropertyData(u32 obj, const void *addr, u32 qs, const void *q, u32 sz, u32 *used, void *data) { (void)obj; (void)addr; (void)qs; (void)q; (void)sz; (void)data; if (used) *used = 0; return 0x77686F3F; /* kCMIOHardwareUnknownPropertyError 'who?' */ }
 
 /* ================================================================ VideoToolbox
- * H.264: decodificador Baseline/Main/High (OpenH264, host-audio/h264_glue.cpp) e codificador I_PCM. HEVC (-12906/-12908):
+ * H.264: decodificador e codificador do OpenH264 (host-audio/h264_glue.cpp, h264enc_glue.cpp). HEVC (-12906/-12908):
  * não há par encoder/decoder permissivo que caiba aqui. Sem FairPlay.
  * VTIsHardwareDecodeSupported continua 0. */
 #define kVTCouldNotFindVideoDecoderErr (-12906)
@@ -175,6 +180,14 @@ typedef struct {
     int ps_n;
     u64 seq;
     struct vt_pend { u64 tag; vt_dec_fn fn; void *ref, *frame_ref; cm_time_t pts, dur; u32 flags; int used; } pend[64];
+    /* codificação: cx_h264enc (OpenH264, host-audio/h264enc_glue.cpp) */
+    void *henc;
+    double e_bitrate, e_fps, e_keydur, e_quality, e_last_idr;
+    int e_keyint, e_profile, e_realtime, e_entropy, e_reopen, e_has_idr;
+    u8 *e_ps; int e_ps_n;      /* SPS + PPS do último format description (comprimento de 2 bytes + bytes, em sequência) */
+    void *e_fd;
+    u8 *e_au; int e_au_n, e_au_cap;
+    u8 *e_sps, *e_pps; int e_sps_n, e_pps_n;
 } vts_t;
 static cx_class_t VTS_c, VTS_m;
 static int vts_ready;
@@ -188,6 +201,8 @@ static void vts_dealloc(id s, SEL c) {
     vts_t *v = (vts_t *)s;
     if (v && v->dec_st) { cx_h264_close(v->dec_st); v->dec_st = 0; }
     if (v) { free(v->ps); v->ps = 0; }
+    if (v && v->henc) { extern void cx_h264enc_close(void *e); cx_h264enc_close(v->henc); v->henc = 0; }
+    if (v) { free(v->e_au); free(v->e_sps); free(v->e_pps); v->e_au = v->e_sps = v->e_pps = 0; if (v->e_fd) { objc_release((id)v->e_fd); v->e_fd = 0; } }
     IMP sup = cx_lookup(cx_class_named("NSObject"), c);
     if (sup) ((void (*)(id, SEL))sup)(s, c);
 }
@@ -233,16 +248,8 @@ void *CMSampleBufferGetDataBuffer(void *s);
 void *CMSampleBufferGetFormatDescription(void *s);
 int CMBlockBufferGetDataPointer(void *b, size_t off, size_t *lenAt, size_t *total, char **ptr);
 int CMVideoFormatDescriptionGetH264ParameterSetAtIndex(void *d, size_t i, const u8 **p, size_t *s, size_t *n, int *nal);
-typedef struct { u8 *sps, *pps, *sample, *annexb; int sps_n, pps_n, sample_n, annexb_n, w, h; } h264_au;
-int h264_encode_i420(const u8 *y, const u8 *u, const u8 *v, int w, int h, int sy, int su, int sv, int qp, h264_au *o);
-void h264_au_free(h264_au *o);
-int h264_decode_avcc(const u8 *sps, int sps_n, const u8 *pps, int pps_n, const u8 *sample, int sample_n,
-                     u8 *y, u8 *u, u8 *v, int sy, int su, int sv, int *w, int *h);
 int h264_sps_wh(const u8 *nal, int n, int *w, int *h);
-void h264_bgra_to_i420(const u8 *bgra, int w, int h, int sb, u8 *y, u8 *u, u8 *v, int sy, int su, int sv);
-void h264_i420_to_bgra(const u8 *y, const u8 *u, const u8 *v, int w, int h, int sy, int su, int sv, u8 *bgra, int sb);
 void h264_nv12_to_i420(const u8 *yp, int sy, const u8 *uv, int suv, int w, int h, u8 *y, u8 *u, u8 *v, int dy, int du, int dv);
-void h264_i420_to_nv12(const u8 *y, const u8 *u, const u8 *v, int w, int h, int sy, int su, int sv, u8 *yp, int dy, u8 *uv, int duv);
 
 
 #define kVTVideoDecoderBadDataErr (-12909)
@@ -554,91 +561,254 @@ void VTDecompressionSessionInvalidate(void *s) {
     v->dead = 1;
 }
 
+/* ================================================================ VTCompressionSession: H.264 pelo OpenH264
+ * Sem quadros B (como o codificador do macOS em tempo real): pts = dts, uma amostra por quadro, na hora. As
+ * propriedades AverageBitRate, DataRateLimits, ExpectedFrameRate, MaxKeyFrameInterval(Duration), ProfileLevel,
+ * H264EntropyMode, RealTime e Quality valem; ForceKeyFrame nas opções do quadro força IDR. */
+typedef struct { int width, height; double fps; int bitrate, qp, keyint, profile, realtime, entropy; } cx_h264enc_cfg;
+typedef void (*cx_h264enc_nal)(void *ctx, const u8 *nal, int n, int type);
+void *cx_h264enc_open(const cx_h264enc_cfg *cfg);
+int cx_h264enc_encode(void *e, const u8 *y, const u8 *u, const u8 *v, int sy, int suv, u64 ts_ms, int force_idr, cx_h264enc_nal nal, void *ctx, int *idr);
+int cx_h264enc_set_bitrate(void *e, int bitrate);
+int cx_h264enc_set_fps(void *e, double fps);
+void cx_h264enc_close(void *e);
+id CMSampleBufferGetSampleAttachmentsArray(void *s, u8 create);
+extern const void *kCMSampleAttachmentKey_NotSync, *kCFBooleanTrue, *kCFBooleanFalse;
+#define kVTParameterErr (-12902)
+#define kVTVideoEncoderMalfunctionErr (-12911)
+
 OSStatus VTCompressionSessionCreate(void *a, i32 w, i32 h, u32 codec, id spec, id src, void *ca, void *cb, void *ref, void **out) {
     (void)a; (void)spec; (void)src; (void)ca;
     if (out) *out = 0;
-    if (!out || w < 2 || h < 2) return kVTCouldNotFindVideoEncoderErr;
+    if (!out || w < 16 || h < 16 || (w & 1) || (h & 1)) return kVTCouldNotFindVideoEncoderErr;
     if (hevc_codec(codec) || !h264_codec(codec)) return kVTCouldNotFindVideoEncoderErr;
     vts_t *s = vts_new(VT_ENC);
     if (!s) return kVTCouldNotFindVideoEncoderErr;
     s->w = w; s->h = h; s->codec = codec; s->enc = (vt_enc_fn)cb; s->enc_ref = ref;
+    s->e_profile = 77;   /* sem ProfileLevel: Main, nível automático */
+    s->e_last_idr = -1e300;
     *out = s;
     return 0;
 }
-typedef struct { void *isa; int flags, reserved; void (*invoke)(void *block, OSStatus st, u32 flags, void *sb); } vt_out_blk;
-static OSStatus vt_encode_one(vts_t *v, void *img, cm_time_t pts, cm_time_t dur, void *ref, void **sb_out) {
+/* nome da chave sem o prefixo (as constantes do libSystem valem "AverageBitRate" ou "kVTCompressionPropertyKey_AverageBitRate") */
+static const char *vt_key(id key) {
+    const char *k = key ? cx_cstr(key) : 0;
+    if (!k) return "";
+    const char *pre[] = {"kVTCompressionPropertyKey_", "kVTEncodeFrameOptionKey_", "kVTVideoEncoderSpecification_"};
+    for (int i = 0; i < 3; i++) { size_t n = strlen(pre[i]); if (!strncmp(k, pre[i], n)) return k + n; }
+    return k;
+}
+static double vt_num(id v) { return v ? MSG0(double, v, "doubleValue") : 0; }
+static int vt_bool(id v) { return v && MSG0(BOOL, v, "boolValue"); }
+static int vt_contains(const char *s, const char *w) { for (; s && *s; s++) if (!strncmp(s, w, strlen(w))) return 1; return 0; }
+OSStatus VTSessionSetProperty(void *s, id key, id val) {
+    if (vts_as(s, VT_DEC)) return 0;   /* o decodificador não tem propriedade ajustável no mOS (formato vem dos atributos) */
+    vts_t *v = vts_as(s, VT_ENC);
+    if (!v) return kVTInvalidSessionErr;
+    const char *k = vt_key(key);
+    if (!strcmp(k, "AverageBitRate")) { v->e_bitrate = vt_num(val); if (v->henc && v->e_bitrate > 0) cx_h264enc_set_bitrate(v->henc, (int)v->e_bitrate); else v->e_reopen = 1; return 0; }
+    if (!strcmp(k, "DataRateLimits")) {   /* [bytes, segundos, ...]: o limite vira a taxa quando não há AverageBitRate */
+        u64 n = val ? MSG0(u64, val, "count") : 0;
+        if (n >= 2 && v->e_bitrate <= 0) {
+            double bytes = vt_num(MSG(id, val, "objectAtIndex:", (u64)0)), secs = vt_num(MSG(id, val, "objectAtIndex:", (u64)1));
+            if (secs > 0) { v->e_bitrate = bytes * 8 / secs; v->e_reopen = 1; }
+        }
+        return 0;
+    }
+    if (!strcmp(k, "ExpectedFrameRate")) { v->e_fps = vt_num(val); if (v->henc && v->e_fps > 0) cx_h264enc_set_fps(v->henc, v->e_fps); return 0; }
+    if (!strcmp(k, "MaxKeyFrameInterval")) { v->e_keyint = (int)vt_num(val); v->e_reopen = 1; return 0; }
+    if (!strcmp(k, "MaxKeyFrameIntervalDuration")) { v->e_keydur = vt_num(val); return 0; }
+    if (!strcmp(k, "RealTime")) { v->e_realtime = vt_bool(val); v->e_reopen = 1; return 0; }
+    if (!strcmp(k, "Quality")) { v->e_quality = vt_num(val); v->e_reopen = 1; return 0; }
+    if (!strcmp(k, "AllowFrameReordering") || !strcmp(k, "AllowTemporalCompression") || !strcmp(k, "AllowOpenGOP")) return 0;   /* sem B: sempre atende */
+    if (!strcmp(k, "H264EntropyMode")) { const char *m = val ? cx_cstr(val) : ""; v->e_entropy = vt_contains(m, "CAVLC") ? 1 : vt_contains(m, "CABAC") ? 2 : 0; v->e_reopen = 1; return 0; }
+    if (!strcmp(k, "ProfileLevel")) {
+        const char *m = val ? cx_cstr(val) : "";
+        if (!vt_contains(m, "H264")) return kVTPropertyNotSupportedErr;
+        v->e_profile = vt_contains(m, "High") ? 100 : vt_contains(m, "Main") ? 77 : 66;
+        v->e_reopen = 1;
+        return 0;
+    }
+    return kVTPropertyNotSupportedErr;
+}
+OSStatus VTSessionSetProperties(void *s, id props) {
+    if (!vts_as(s, VT_ENC) && !vts_as(s, VT_DEC)) return kVTInvalidSessionErr;
+    if (!props) return 0;
+    id keys = MSG0(id, props, "allKeys");
+    u64 n = keys ? MSG0(u64, keys, "count") : 0;
+    for (u64 i = 0; i < n; i++) {
+        id k = MSG(id, keys, "objectAtIndex:", i);
+        VTSessionSetProperty(s, k, MSG(id, props, "objectForKey:", k));   /* chaves sem suporte não impedem as outras */
+    }
+    return 0;
+}
+OSStatus VTSessionCopyProperty(void *s, id key, void *a, void *out) {
+    (void)a;
+    if (out) *(void **)out = 0;
+    vts_t *v = vts_as(s, VT_ENC);
+    if (!v || !out) return vts_as(s, VT_DEC) ? kVTPropertyNotSupportedErr : kVTInvalidSessionErr;
+    const char *k = vt_key(key);
+    id r = 0;
+    cx_class_t *num = cx_class_named("NSNumber");
+    if (!strcmp(k, "AverageBitRate")) r = MSG(id, (id)num, "numberWithDouble:", v->e_bitrate);
+    else if (!strcmp(k, "ExpectedFrameRate")) r = MSG(id, (id)num, "numberWithDouble:", v->e_fps);
+    else if (!strcmp(k, "MaxKeyFrameInterval")) r = MSG(id, (id)num, "numberWithInt:", v->e_keyint);
+    else if (!strcmp(k, "MaxKeyFrameIntervalDuration")) r = MSG(id, (id)num, "numberWithDouble:", v->e_keydur);
+    else if (!strcmp(k, "RealTime")) r = (id)(v->e_realtime ? kCFBooleanTrue : kCFBooleanFalse);
+    else if (!strcmp(k, "AllowFrameReordering")) r = (id)kCFBooleanFalse;   /* este codificador não reordena */
+    else if (!strcmp(k, "NumberOfPendingFrames")) r = MSG(id, (id)num, "numberWithInt:", 0);
+    else if (!strcmp(k, "ProfileLevel")) r = cx_str(v->e_profile >= 100 ? "H264_High_AutoLevel" : v->e_profile >= 77 ? "H264_Main_AutoLevel" : "H264_Baseline_AutoLevel");
+    else return kVTPropertyNotSupportedErr;
+    *(void **)out = objc_retain(r);
+    return 0;
+}
+/* origem -> I420 de vídeo (16..235), BT.709 em HD e BT.601 em SD, como o decodificador lê */
+static void vt_rgb_to_i420(const u8 *bgra, int w, int h, int sb, u8 *y, u8 *u, u8 *v) {
+    double kr = h >= 720 ? 0.2126 : 0.299, kb = h >= 720 ? 0.0722 : 0.114, kg = 1 - kr - kb;
+    int yr = (int)(kr * 219 / 255 * 65536 + 0.5), yg = (int)(kg * 219 / 255 * 65536 + 0.5), yb = (int)(kb * 219 / 255 * 65536 + 0.5);
+    double cbs = 224.0 / 255 / (2 * (1 - kb)), crs = 224.0 / 255 / (2 * (1 - kr));
+    int ur = (int)(-kr * cbs * 65536), ug = (int)(-kg * cbs * 65536), ub = (int)((1 - kb) * cbs * 65536);
+    int vr = (int)((1 - kr) * crs * 65536), vg = (int)(-kg * crs * 65536), vb = (int)(-kb * crs * 65536);
+    for (int r = 0; r < h; r++) for (int x = 0; x < w; x++) {
+        const u8 *p = bgra + (u64)r * sb + (u64)x * 4;
+        y[(u64)r * w + x] = (u8)(((yr * p[2] + yg * p[1] + yb * p[0] + 32768) >> 16) + 16);
+    }
+    for (int r = 0; r < h / 2; r++) for (int x = 0; x < w / 2; x++) {
+        int R = 0, G = 0, B = 0;
+        for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) { const u8 *p = bgra + (u64)(2 * r + dy) * sb + (u64)(2 * x + dx) * 4; R += p[2]; G += p[1]; B += p[0]; }
+        int cu = ((ur * R + ug * G + ub * B) / 4 + 32768) >> 16, cv = ((vr * R + vg * G + vb * B) / 4 + 32768) >> 16;
+        u[(u64)r * (w / 2) + x] = (u8)(cu + 128 < 16 ? 16 : cu + 128 > 240 ? 240 : cu + 128);
+        v[(u64)r * (w / 2) + x] = (u8)(cv + 128 < 16 ? 16 : cv + 128 > 240 ? 240 : cv + 128);
+    }
+}
+static void vt_on_nal(void *ctx, const u8 *nal, int n, int type) {
+    vts_t *v = ctx;
+    if (type == 7 || type == 8) {   /* parâmetros: format description */
+        u8 **dst = type == 7 ? &v->e_sps : &v->e_pps;
+        int *dn = type == 7 ? &v->e_sps_n : &v->e_pps_n;
+        if (*dst && *dn == n && !memcmp(*dst, nal, (size_t)n)) return;
+        free(*dst);
+        *dst = malloc((size_t)n);
+        if (*dst) { memcpy(*dst, nal, (size_t)n); *dn = n; }
+        if (v->e_fd) { objc_release((id)v->e_fd); v->e_fd = 0; }
+        return;
+    }
+    if (v->e_au_n + n + 4 > v->e_au_cap) {
+        int nc = (v->e_au_n + n + 4) * 2;
+        u8 *b = realloc(v->e_au, (size_t)nc);
+        if (!b) return;
+        v->e_au = b;
+        v->e_au_cap = nc;
+    }
+    u8 *d = v->e_au + v->e_au_n;   /* AVCC: tamanho de 4 bytes */
+    d[0] = (u8)(n >> 24); d[1] = (u8)(n >> 16); d[2] = (u8)(n >> 8); d[3] = (u8)n;
+    memcpy(d + 4, nal, (size_t)n);
+    v->e_au_n += n + 4;
+}
+/* um quadro: *sb_out com a amostra (0 = quadro descartado pelo controle de taxa) */
+static OSStatus vt_encode_one(vts_t *v, void *img, cm_time_t pts, cm_time_t dur, id props, void **sb_out) {
     if (sb_out) *sb_out = 0;
-    if (!v || !img) return kVTCouldNotFindVideoEncoderErr;
+    if (!v || !img) return kVTParameterErr;
     int w = (int)CVPixelBufferGetWidth(img), h = (int)CVPixelBufferGetHeight(img);
-    if (w < 2 || h < 2 || (w & 1) || (h & 1)) return kVTCouldNotFindVideoEncoderErr;
+    if (w != v->w || h != v->h) return kVTParameterErr;   /* o mOS não escala a origem */
+    if (v->henc && v->e_reopen) { cx_h264enc_close(v->henc); v->henc = 0; }
+    if (!v->henc) {
+        double fps = v->e_fps > 0 ? v->e_fps : 30;
+        int q = v->e_quality > 0 ? (int)(40 - v->e_quality * 25 + 0.5) : 24;
+        cx_h264enc_cfg c = {w, h, fps, v->e_bitrate > 0 ? (int)v->e_bitrate : 0, q, v->e_keyint > 0 ? v->e_keyint : 0, v->e_profile, v->e_realtime, v->e_entropy};
+        if (!(v->henc = cx_h264enc_open(&c))) return kVTVideoEncoderMalfunctionErr;
+        v->e_reopen = 0;
+        v->e_has_idr = 0;
+    }
     u8 *y = malloc((size_t)w * h), *u = malloc((size_t)w * h / 4), *vv = malloc((size_t)w * h / 4);
-    if (!y || !u || !vv) { free(y); free(u); free(vv); return kVTCouldNotFindVideoEncoderErr; }
+    if (!y || !u || !vv) { free(y); free(u); free(vv); return kVTVideoEncoderMalfunctionErr; }
     CVPixelBufferLockBaseAddress(img, 1);
     u32 fmt = CVPixelBufferGetPixelFormatType(img);
-    if (CVPixelBufferGetPlaneCount(img) >= 2 && (fmt == 0x34323076u || fmt == 0x34323066u)) {
+    int full = fmt == 0x34323066u;
+    if (CVPixelBufferGetPlaneCount(img) >= 2 && (fmt == 0x34323076u || full)) {
         h264_nv12_to_i420(CVPixelBufferGetBaseAddressOfPlane(img, 0), (int)CVPixelBufferGetBytesPerRowOfPlane(img, 0),
                           CVPixelBufferGetBaseAddressOfPlane(img, 1), (int)CVPixelBufferGetBytesPerRowOfPlane(img, 1),
                           w, h, y, u, vv, w, w / 2, w / 2);
+        if (full) {   /* '420f': para a faixa de vídeo que o fluxo declara */
+            for (int i = 0; i < w * h; i++) y[i] = (u8)((y[i] * 219 + 127) / 255 + 16);
+            for (int i = 0; i < w * h / 4; i++) { u[i] = (u8)(((u[i] - 128) * 224 + (u[i] >= 128 ? 127 : -127)) / 255 + 128); vv[i] = (u8)(((vv[i] - 128) * 224 + (vv[i] >= 128 ? 127 : -127)) / 255 + 128); }
+        }
+    } else if (fmt == 0x42475241u) {
+        vt_rgb_to_i420(CVPixelBufferGetBaseAddress(img), w, h, (int)CVPixelBufferGetBytesPerRow(img), y, u, vv);
     } else {
-        h264_bgra_to_i420(CVPixelBufferGetBaseAddress(img), w, h, (int)CVPixelBufferGetBytesPerRow(img), y, u, vv, w, w / 2, w / 2);
+        CVPixelBufferUnlockBaseAddress(img, 1);
+        free(y); free(u); free(vv);
+        return kVTParameterErr;   /* formato de origem sem conversão no mOS */
     }
     CVPixelBufferUnlockBaseAddress(img, 1);
-    h264_au au;
-    int erc = h264_encode_i420(y, u, vv, w, h, w, w / 2, w / 2, 16, &au);
-    free(y); free(u); free(vv);
-    if (erc) { h264_au_free(&au); return kVTCouldNotFindVideoEncoderErr; }
-    void *bb = 0, *fd = 0, *sb = 0;
-    const u8 *sets[2] = {au.sps, au.pps};
-    size_t slen[2] = {(size_t)au.sps_n, (size_t)au.pps_n};
-    size_t sample_n = (size_t)au.sample_n;
-    if (CMBlockBufferCreateWithMemoryBlock(0, au.sample, sample_n, 0, 0, 0, sample_n, 0, &bb) ||
-        CMVideoFormatDescriptionCreateFromH264ParameterSets(0, 2, sets, slen, 4, &fd)) {
-        h264_au_free(&au); if (bb) objc_release((id)bb);
-        return kVTCouldNotFindVideoEncoderErr;
+    double t = pts.timescale > 0 ? (double)pts.value / pts.timescale : 0;
+    int force = props && vt_bool(MSG(id, props, "objectForKey:", cx_str("ForceKeyFrame")));
+    if (!force && props) {   /* a constante do libSystem pode valer o nome completo */
+        id ks = MSG0(id, props, "allKeys");
+        u64 nk = ks ? MSG0(u64, ks, "count") : 0;
+        for (u64 i = 0; i < nk; i++) { id k = MSG(id, ks, "objectAtIndex:", i); if (!strcmp(vt_key(k), "ForceKeyFrame") && vt_bool(MSG(id, props, "objectForKey:", k))) force = 1; }
     }
+    if (v->e_keydur > 0 && v->e_has_idr && t - v->e_last_idr >= v->e_keydur) force = 1;
+    v->e_au_n = 0;
+    int idr = 0;
+    int rc = cx_h264enc_encode(v->henc, y, u, vv, w, w / 2, (u64)(t * 1000 + 0.5), force, vt_on_nal, v, &idr);
+    free(y); free(u); free(vv);
+    if (rc) return kVTVideoEncoderMalfunctionErr;
+    if (!v->e_au_n) return 0;   /* descartado pelo controle de taxa */
+    if (idr) { v->e_last_idr = t; v->e_has_idr = 1; }
+    if (!v->e_fd) {
+        const u8 *sets[2] = {v->e_sps, v->e_pps};
+        size_t slen[2] = {(size_t)v->e_sps_n, (size_t)v->e_pps_n};
+        if (!v->e_sps || !v->e_pps || CMVideoFormatDescriptionCreateFromH264ParameterSets(0, 2, sets, slen, 4, &v->e_fd)) return kVTVideoEncoderMalfunctionErr;
+    }
+    void *bb = 0, *sb = 0;
+    size_t sample_n = (size_t)v->e_au_n;
+    if (CMBlockBufferCreateWithMemoryBlock(0, v->e_au, sample_n, 0, 0, 0, sample_n, 0, &bb)) return kVTVideoEncoderMalfunctionErr;
     vt_timing_t tm;
     tm.duration = dur; tm.presentationTimeStamp = pts; tm.decodeTimeStamp = pts;
-    int crc = CMSampleBufferCreate(0, bb, 1, 0, 0, fd, 1, 1, &tm, 1, &sample_n, &sb);
-    objc_release((id)bb); objc_release((id)fd); h264_au_free(&au);
-    if (crc || !sb) return kVTCouldNotFindVideoEncoderErr;
-    (void)ref;
+    int crc = CMSampleBufferCreate(0, bb, 1, 0, 0, v->e_fd, 1, 1, &tm, 1, &sample_n, &sb);
+    objc_release((id)bb);
+    if (crc || !sb) return kVTVideoEncoderMalfunctionErr;
+    if (!idr) {
+        id arr = CMSampleBufferGetSampleAttachmentsArray(sb, 1);
+        id d = arr && MSG0(u64, arr, "count") ? MSG(id, arr, "objectAtIndex:", (u64)0) : 0;
+        if (d) MSG(void, d, "setObject:forKey:", (id)kCFBooleanTrue, (id)kCMSampleAttachmentKey_NotSync);
+    }
     if (sb_out) *sb_out = sb;
     return 0;
 }
+typedef struct { void *isa; int flags, reserved; void (*invoke)(void *block, OSStatus st, u32 flags, void *sb); } vt_out_blk;
 OSStatus VTCompressionSessionEncodeFrame(void *s, void *img, cm_time_t pts, cm_time_t dur, id props, void *ref, u32 *info) {
-    (void)props;
-    if (info) *info = 0;
+    if (info) *info = 0;   /* síncrono */
     vts_t *v = vts_as(s, VT_ENC);
+    if (!v) return kVTInvalidSessionErr;
     void *sb = 0;
-    OSStatus st = vt_encode_one(v, img, pts, dur, ref, &sb);
-    if (st) return st;
-    if (v->enc) v->enc(v->enc_ref, ref, 0, 0, sb);
-    objc_release((id)sb);
-    return 0;
+    OSStatus st = vt_encode_one(v, img, pts, dur, props, &sb);
+    if (v->enc) v->enc(v->enc_ref, ref, st, st || sb ? 0 : 2 /* kVTEncodeInfo_FrameDropped */, sb);
+    if (sb) objc_release((id)sb);
+    return st;
 }
 OSStatus VTCompressionSessionEncodeFrameWithOutputHandler(void *s, void *img, cm_time_t pts, cm_time_t dur, id props, u32 *info, void *handler) {
-    (void)props;
     if (info) *info = 0;
     vts_t *v = vts_as(s, VT_ENC);
     vt_out_blk *blk = handler;
-    if (!blk || !blk->invoke) return kVTCouldNotFindVideoEncoderErr;
+    if (!v) return kVTInvalidSessionErr;
+    if (!blk || !blk->invoke) return kVTParameterErr;
     void *sb = 0;
-    OSStatus st = vt_encode_one(v, img, pts, dur, 0, &sb);
-    if (st) { blk->invoke(handler, st, 0, 0); return st; }
-    blk->invoke(handler, 0, 0, sb);
-    objc_release((id)sb);
-    return 0;
+    OSStatus st = vt_encode_one(v, img, pts, dur, props, &sb);
+    blk->invoke(handler, st, st || sb ? 0 : 2, sb);
+    if (sb) objc_release((id)sb);
+    return st;
 }
-OSStatus VTCompressionSessionCompleteFrames(void *s, cm_time_t until) { (void)s; (void)until; return 0; }
-OSStatus VTSessionSetProperties(void *s, id props) {
-    if (!vts_as(s, VT_ENC) && !vts_as(s, VT_DEC)) return kVTPropertyNotSupportedErr;
-    (void)props;
-    return 0;
+/* sem reordenação nem fila: nada pendente */
+OSStatus VTCompressionSessionCompleteFrames(void *s, cm_time_t until) { (void)until; return vts_as(s, VT_ENC) ? 0 : kVTInvalidSessionErr; }
+void VTCompressionSessionInvalidate(void *s) {
+    vts_t *v = vts_as(s, VT_ENC);
+    if (!v) return;
+    if (v->henc) { cx_h264enc_close(v->henc); v->henc = 0; }
+    v->dead = 1;
 }
-void VTCompressionSessionInvalidate(void *s) { vts_t *v = vts_as(s, VT_ENC); if (v) v->dead = 1; }
-OSStatus VTSessionSetProperty(void *s, id key, id val) { (void)s; (void)key; (void)val; return 0; }
-OSStatus VTSessionCopyProperty(void *s, id key, void *a, void *out) { (void)s; (void)key; (void)a; if (out) *(void **)out = 0; return kVTPropertyNotSupportedErr; }
-OSStatus VTSessionCopySupportedPropertyDictionary(void *s, id *out) { (void)s; if (out) *out = CFDictionaryCreateMutable(0, 0, 0, 0); return 0; }
+OSStatus VTSessionCopySupportedPropertyDictionary(void *s, id *out) { (void)s; if (out) *out = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks); return 0; }
 /* VTPixelTransferSession*: openbot_vt.c copia o quadro quando o formato coincide. */
 
 /* CoreAudio, AudioUnit, AudioQueue, AudioConverter, AudioFile e AudioServices: coreaudio.c */

@@ -6,6 +6,7 @@
 #include "sys.h"
 #include "../../kernel/include/compat_gui.h"
 #include "computeruse_win.h"
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 id objc_retain(id o);
 void objc_release(id o);
@@ -132,7 +133,7 @@ static id collect_apps(void) {
         app = ra_get((int)pi.pid, name, bundle);
         if (app) tmp[n++] = app;
     }
-    return CFArrayCreate(0, tmp, n, 0);
+    return CFArrayCreate(0, tmp, n, &kCFTypeArrayCallBacks);
 }
 
 static id ws_running(id self, SEL c) { (void)self; (void)c; return collect_apps(); }

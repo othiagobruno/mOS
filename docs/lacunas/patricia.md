@@ -3,39 +3,62 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Patricia (rede para apps) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**362** símbolos distintos.
+**398** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
 | CFNetwork.framework | `_kCFProxyPasswordKey` | 15 | 1password, audacity, db-browser-for-sqlite, hammerspoon |
 | CFNetwork.framework | `_kCFProxyUsernameKey` | 15 | 1password, audacity, db-browser-for-sqlite, hammerspoon |
 | CFNetwork.framework | `_kCFProxyTypeFTP` | 12 | audacity, db-browser-for-sqlite, keepassxc, krita |
-| SystemConfiguration.framework | `_kSCPropNetProxiesGopherEnable` | 10 | android-studio, blender, deluge, gimp |
-| SystemConfiguration.framework | `_kSCPropNetProxiesGopherPort` | 10 | android-studio, blender, deluge, gimp |
-| SystemConfiguration.framework | `_kSCPropNetProxiesGopherProxy` | 10 | android-studio, blender, deluge, gimp |
+| SystemConfiguration.framework | `_kSCPropNetProxiesGopherEnable` | 11 | android-studio, blender, deluge, gimp |
+| SystemConfiguration.framework | `_kSCPropNetProxiesGopherPort` | 11 | android-studio, blender, deluge, gimp |
+| SystemConfiguration.framework | `_kSCPropNetProxiesGopherProxy` | 11 | android-studio, blender, deluge, gimp |
 | CFNetwork.framework | `_kCFNetworkProxiesSOCKSPort` | 9 | audacity, cmux, keepassxc, musescore |
 | CFNetwork.framework | `_kCFNetworkProxiesSOCKSProxy` | 9 | audacity, cmux, keepassxc, musescore |
+| SystemConfiguration.framework | `_kSCCompAnyRegex` | 9 | firefox, floorp, librewolf, mullvad-browser |
 | CFNetwork.framework | `_kCFNetworkProxiesExcludeSimpleHostnames` | 8 | audacity, cmux, keepassxc, musescore |
-| SystemConfiguration.framework | `_kSCCompAnyRegex` | 8 | firefox, floorp, mullvad-browser, qbittorrent |
+| Network.framework | `_nw_release` | 8 | audacity, dotnet-sdk, git-credential-manager, github |
 | CFNetwork.framework | `_kCFNetworkProxiesFTPEnable` | 7 | audacity, keepassxc, musescore, obs |
 | CFNetwork.framework | `_kCFNetworkProxiesFTPPort` | 7 | audacity, keepassxc, musescore, obs |
 | CFNetwork.framework | `_kCFNetworkProxiesFTPProxy` | 7 | audacity, keepassxc, musescore, obs |
-| Network.framework | `_nw_release` | 7 | audacity, git-credential-manager, github, keepassxc |
-| SystemConfiguration.framework | `_kSCDynamicStoreDomainSetup` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| SystemConfiguration.framework | `_kSCEntNetDNS` | 6 | firefox, floorp, mullvad-browser, thunderbird |
+| SystemConfiguration.framework | `_kSCDynamicStoreDomainSetup` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| SystemConfiguration.framework | `_kSCEntNetDNS` | 7 | firefox, floorp, librewolf, mullvad-browser |
 | libresolv.9.dylib | `_res_9_nmkquery` | 6 | audacity, keepassxc, musescore, obs |
 | libresolv.9.dylib | `_res_9_nsend` | 6 | audacity, keepassxc, musescore, obs |
 | libresolv.9.dylib | `_res_9_setservers` | 6 | audacity, keepassxc, musescore, obs |
 | Network.framework | `_nw_path_monitor_set_cancel_handler` | 5 | audacity, keepassxc, musescore, qbittorrent |
-| SystemConfiguration.framework | `_SCNetworkInterfaceGetInterfaceType` | 4 | cmux, stats, wireshark-app, zoom |
-| SystemConfiguration.framework | `_SCNetworkInterfaceGetLocalizedDisplayName` | 4 | cmux, stats, wireshark-app, zoom |
+| SystemConfiguration.framework | `_SCNetworkInterfaceGetInterfaceType` | 5 | cmux, rustdesk, stats, wireshark-app |
+| SystemConfiguration.framework | `_SCNetworkInterfaceGetLocalizedDisplayName` | 5 | cmux, stats, vorssaint, wireshark-app |
+| Kerberos.framework | `_com_err_va` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| Kerberos.framework | `_krb5_cc_default` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| Kerberos.framework | `_krb5_cc_end_seq_get` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| Kerberos.framework | `_krb5_cc_next_cred` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| Kerberos.framework | `_krb5_cc_set_flags` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| Kerberos.framework | `_krb5_cc_start_seq_get` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
 | IOKit.framework | `_SCPreferencesCreate` | 3 | hammerspoon, stats, tailscale-app |
-| Kerberos.framework | `_com_err_va` | 3 | android-studio, cyberduck, dbeaver-community |
-| Kerberos.framework | `_krb5_cc_default` | 3 | android-studio, cyberduck, dbeaver-community |
-| Kerberos.framework | `_krb5_cc_end_seq_get` | 3 | android-studio, cyberduck, dbeaver-community |
-| Kerberos.framework | `_krb5_cc_next_cred` | 3 | android-studio, cyberduck, dbeaver-community |
-| Kerberos.framework | `_krb5_cc_set_flags` | 3 | android-studio, cyberduck, dbeaver-community |
-| Kerberos.framework | `_krb5_cc_start_seq_get` | 3 | android-studio, cyberduck, dbeaver-community |
+| Network.framework | `_$s7Network10NWEndpointO4PortV8rawValues6UInt16Vvg` | 3 | cmux, openclaw, orbstack |
+| Network.framework | `_$s7Network10NWListenerC4portAA10NWEndpointO4PortVSgvg` | 3 | cmux, openclaw, orbstack |
+| Network.framework | `_$s7Network10NWListenerCMn` | 3 | cmux, openclaw, orbstack |
+| Network.framework | `_$s7Network11IPv4AddressV8rawValue10Foundation4DataVvg` | 3 | cmux, openclaw, orbstack |
+| Network.framework | `_$s7Network11IPv6AddressV8rawValue10Foundation4DataVvg` | 3 | cmux, openclaw, orbstack |
+| Network.framework | `_$s7Network11IPv6AddressVMa` | 3 | cmux, openclaw, orbstack |
+| Network.framework | `_$s7Network11IPv6AddressVMn` | 3 | cmux, openclaw, orbstack |
+| Network.framework | `_nw_connection_copy_protocol_metadata` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_framer_async` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_framer_create_definition` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_framer_create_options` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_framer_deliver_input` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_framer_message_create` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_framer_parse_output` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_framer_set_cleanup_handler` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_framer_set_output_handler` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_framer_set_stop_handler` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_parameters_copy_default_protocol_stack` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_parameters_create_secure_udp` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_protocol_copy_tls_definition` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_protocol_stack_prepend_application_protocol` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_tls_copy_sec_protocol_metadata` | 3 | dotnet-sdk, git-credential-manager, github |
+| Network.framework | `_nw_tls_create_options` | 3 | dotnet-sdk, git-credential-manager, github |
 | NetworkExtension.framework | `_NEVPNStatusDidChangeNotification` | 3 | brave-browser, cmux, tailscale-app |
 | SystemConfiguration.framework | `_SCNetworkServiceGetInterface` | 3 | stats, tailscale-app, zoom |
 | SystemConfiguration.framework | `_kSCNetworkInterfaceTypeBluetooth` | 3 | stats, wireshark-app, zoom |
@@ -45,6 +68,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_DNSServiceResolve` | 3 | cmux, cyberduck, zoom |
 | libSystem.B.dylib | `_DNSServiceSetDispatchQueue` | 3 | cmux, spotify, utm |
 | libresolv.9.dylib | `_res_9_init` | 3 | deluge, dolphin, microsoft-edge |
+| libresolv.9.dylib | `_res_9_ns_initparse` | 3 | microsoft-edge, pgadmin4, sequel-ace |
+| libresolv.9.dylib | `_res_9_ns_parserr` | 3 | microsoft-edge, pgadmin4, sequel-ace |
 | libswiftNetwork.dylib | `_$s7Network10NWListenerCMn` | 3 | iina, raycast, sequel-ace |
 | libswiftNetwork.dylib | `_$s7Network12NWConnectionC14receiveMessage10completionyy10Foundation4DataVSg_AC14ContentContextCSgSbAA7NWErrorOSgtc_tF` | 3 | iina, raycast, utm |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC13ProtocolStackC20applicationProtocolsSayAA17NWProtocolOptionsCGvMTj` | 3 | iina, raycast, utm |
@@ -65,38 +90,21 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CFNetwork.framework | `_kCFStreamPropertySSLPeerTrust` | 2 | hammerspoon, raycast |
 | Network.framework | `_$s7Network10NWEndpointO4HostO2eeoiySbAE_AEtFZ` | 2 | cmux, orbstack |
 | Network.framework | `_$s7Network10NWEndpointO4HostO4ipv6yAeA11IPv6AddressVcAEmFWC` | 2 | cmux, orbstack |
-| Network.framework | `_$s7Network10NWEndpointO4PortV8rawValues6UInt16Vvg` | 2 | cmux, orbstack |
 | Network.framework | `_$s7Network10NWEndpointO4unixyACSS_tcACmFWC` | 2 | cmux, orbstack |
-| Network.framework | `_$s7Network10NWListenerC4portAA10NWEndpointO4PortVSgvg` | 2 | cmux, orbstack |
-| Network.framework | `_$s7Network10NWListenerCMn` | 2 | cmux, orbstack |
-| Network.framework | `_$s7Network11IPv4AddressV8rawValue10Foundation4DataVvg` | 2 | cmux, orbstack |
 | Network.framework | `_$s7Network11IPv4AddressVyACSg10Foundation4DataV_AA11NWInterfaceVSgtcfC` | 2 | cmux, orbstack |
-| Network.framework | `_$s7Network11IPv6AddressV8rawValue10Foundation4DataVvg` | 2 | cmux, orbstack |
-| Network.framework | `_$s7Network11IPv6AddressVMa` | 2 | cmux, orbstack |
-| Network.framework | `_$s7Network11IPv6AddressVMn` | 2 | cmux, orbstack |
 | Network.framework | `_$s7Network11IPv6AddressVyACSg10Foundation4DataV_AA11NWInterfaceVSgtcfC` | 2 | cmux, orbstack |
+| Network.framework | `_$s7Network11IPv6AddressVyACSgSScfC` | 2 | cmux, openclaw |
 | Network.framework | `_$s7Network12NWConnectionC10parametersAA12NWParametersCvg` | 2 | cmux, orbstack |
 | Network.framework | `_$s7Network12NWConnectionC14ContentContextC12finalMessageAEvgZ` | 2 | cmux, orbstack |
 | Network.framework | `_$s7Network12NWConnectionC17pathUpdateHandleryAA6NWPathVcSgvs` | 2 | cmux, orbstack |
 | Network.framework | `_$s7Network12NWParametersC21requiredLocalEndpointAA10NWEndpointOSgvs` | 2 | cmux, orbstack |
 | Network.framework | `_$s7Network12NWParametersC23allowLocalEndpointReuseSbvs` | 2 | cmux, orbstack |
 | Network.framework | `_$s7Network13NWProtocolTCPC7OptionsC7noDelaySbvsTj` | 2 | cmux, orbstack |
-| Network.framework | `_nw_connection_copy_protocol_metadata` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_framer_async` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_framer_create_definition` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_framer_create_options` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_framer_deliver_input` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_framer_message_create` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_framer_parse_output` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_framer_set_cleanup_handler` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_framer_set_output_handler` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_framer_set_stop_handler` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_parameters_copy_default_protocol_stack` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_parameters_create_secure_udp` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_protocol_copy_tls_definition` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_protocol_stack_prepend_application_protocol` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_tls_copy_sec_protocol_metadata` | 2 | git-credential-manager, github |
-| Network.framework | `_nw_tls_create_options` | 2 | git-credential-manager, github |
+| Network.framework | `_nw_listener_cancel` | 2 | dotnet-sdk, spotify |
+| Network.framework | `_nw_listener_create` | 2 | dotnet-sdk, spotify |
+| Network.framework | `_nw_listener_set_new_connection_handler` | 2 | dotnet-sdk, spotify |
+| Network.framework | `_nw_listener_set_queue` | 2 | dotnet-sdk, spotify |
+| Network.framework | `_nw_listener_start` | 2 | dotnet-sdk, spotify |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEOnDemandRuleConnect` | 2 | brave-browser, tailscale-app |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NETunnelProviderManager` | 2 | cmux, tailscale-app |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NETunnelProviderProtocol` | 2 | cmux, tailscale-app |
@@ -112,8 +120,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_TXTRecordGetBytesPtr` | 2 | spotify, zoom |
 | libSystem.B.dylib | `_TXTRecordGetLength` | 2 | spotify, zoom |
 | libSystem.B.dylib | `_TXTRecordSetValue` | 2 | spotify, zoom |
-| libresolv.9.dylib | `_res_9_ns_initparse` | 2 | microsoft-edge, sequel-ace |
-| libresolv.9.dylib | `_res_9_ns_parserr` | 2 | microsoft-edge, sequel-ace |
 | libswiftNetwork.dylib | `_$s7Network11IPv6AddressVMa` | 2 | tailscale-app, utm |
 | libswiftNetwork.dylib | `_$s7Network12NWConnectionC14ContentContextC16protocolMetadataSayAA010NWProtocolF0CGvgTj` | 2 | iina, raycast |
 | libswiftNetwork.dylib | `_$s7Network12NWConnectionC14SendCompletionO10idempotentyA2EmFWC` | 2 | iina, raycast |
@@ -152,8 +158,21 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CFNetwork.framework | `_kCFStreamErrorDomainSystemConfiguration` | 1 | hammerspoon |
 | CFNetwork.framework | `_kCFStreamErrorDomainWinSock` | 1 | hammerspoon |
 | CFNetwork.framework | `_kCFStreamPropertySSLContext` | 1 | raycast |
+| GSS.framework | `___ApplePrivate_gss_krb5_get_tkt_flags` | 1 | pgadmin4 |
+| GSS.framework | `___ApplePrivate_gss_krb5_import_cred` | 1 | pgadmin4 |
+| GSS.framework | `___ApplePrivate_gss_release_iov_buffer` | 1 | pgadmin4 |
+| GSS.framework | `___ApplePrivate_gss_unwrap_iov` | 1 | pgadmin4 |
+| GSS.framework | `___ApplePrivate_gss_wrap_iov` | 1 | pgadmin4 |
+| GSS.framework | `___ApplePrivate_gss_wrap_iov_length` | 1 | pgadmin4 |
+| GSS.framework | `___ApplePrivate_gsskrb5_extract_authtime_from_sec_context` | 1 | pgadmin4 |
+| GSS.framework | `___gss_c_nt_anonymous_oid_desc` | 1 | pgadmin4 |
+| GSS.framework | `___gss_c_nt_export_name_oid_desc` | 1 | pgadmin4 |
+| GSS.framework | `___gss_c_nt_machine_uid_name_oid_desc` | 1 | pgadmin4 |
+| GSS.framework | `___gss_c_nt_string_uid_name_oid_desc` | 1 | pgadmin4 |
+| GSS.framework | `___gss_krb5_nt_principal_name_oid_desc` | 1 | pgadmin4 |
 | IOKit.framework | `_SCPreferencesApplyChanges` | 1 | hammerspoon |
 | IOKit.framework | `_SCPreferencesCommitChanges` | 1 | hammerspoon |
+| Kerberos.framework | `_cc_initialize` | 1 | pgadmin4 |
 | Kerberos.framework | `_gss_add_oid_set_member` | 1 | wireshark-app |
 | Kerberos.framework | `_gss_create_empty_oid_set` | 1 | wireshark-app |
 | Kerberos.framework | `_gss_inquire_cred` | 1 | wireshark-app |
@@ -169,6 +188,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Network.framework | `_$s7Network10NWEndpointO4PortVSHAAMc` | 1 | cmux |
 | Network.framework | `_$s7Network10NWEndpointO4PortVSQAAMc` | 1 | cmux |
 | Network.framework | `_$s7Network10NWEndpointO4PortVyAESgSScfC` | 1 | cmux |
+| Network.framework | `_$s7Network10NWEndpointO9txtRecordAA11NWTXTRecordVSgvg` | 1 | openclaw |
 | Network.framework | `_$s7Network10NWEndpointOSQAAMc` | 1 | cmux |
 | Network.framework | `_$s7Network10NWListenerC10parametersAA12NWParametersCvg` | 1 | orbstack |
 | Network.framework | `_$s7Network10NWListenerC5StateOMn` | 1 | cmux |
@@ -179,9 +199,11 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Network.framework | `_$s7Network11IPv6AddressV16debugDescriptionSSvg` | 1 | orbstack |
 | Network.framework | `_$s7Network11IPv6AddressVAA9IPAddressAAMc` | 1 | cmux |
 | Network.framework | `_$s7Network11IPv6AddressVSQAAMc` | 1 | cmux |
-| Network.framework | `_$s7Network11IPv6AddressVyACSgSScfC` | 1 | cmux |
 | Network.framework | `_$s7Network11NWInterfaceV13InterfaceTypeOSQAAMc` | 1 | cmux |
 | Network.framework | `_$s7Network11NWInterfaceV5indexSivg` | 1 | cmux |
+| Network.framework | `_$s7Network11NWTXTRecordV10dictionarySDyS2SGvg` | 1 | openclaw |
+| Network.framework | `_$s7Network11NWTXTRecordVMa` | 1 | openclaw |
+| Network.framework | `_$s7Network11NWTXTRecordVMn` | 1 | openclaw |
 | Network.framework | `_$s7Network12NWConnectionC19EstablishmentReportVMa` | 1 | orbstack |
 | Network.framework | `_$s7Network12NWConnectionC19EstablishmentReportVMn` | 1 | orbstack |
 | Network.framework | `_$s7Network12NWConnectionC23startDataTransferReportAC07PendingdeF0CyF` | 1 | orbstack |
@@ -243,17 +265,26 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Network.framework | `_$s7Network6NWPathV8gatewaysSayAA10NWEndpointOGvg` | 1 | cmux |
 | Network.framework | `_$s7Network9IPAddressMp` | 1 | cmux |
 | Network.framework | `_$s7Network9IPAddressP8rawValue10Foundation4DataVvgTj` | 1 | cmux |
+| Network.framework | `_$s7Network9NWBrowserC5StateOMn` | 1 | openclaw |
+| Network.framework | `_$s7Network9NWBrowserC6ResultV8MetadataO7bonjouryAgA11NWTXTRecordVcAGmFWC` | 1 | openclaw |
+| Network.framework | `_$s7Network9NWBrowserC6ResultV8MetadataOMa` | 1 | openclaw |
+| Network.framework | `_$s7Network9NWBrowserC6ResultV8metadataAE8MetadataOvg` | 1 | openclaw |
+| Network.framework | `_$s7Network9NWBrowserC6ResultVSHAAMc` | 1 | openclaw |
+| Network.framework | `_$s7Network9NWBrowserC6ResultVSQAAMc` | 1 | openclaw |
+| Network.framework | `_$s7Network9NWBrowserCMn` | 1 | openclaw |
 | Network.framework | `_$sSo25NSURLSessionConfigurationC7NetworkE19proxyConfigurationsSayAC05ProxyB0VGvs` | 1 | cmux |
 | Network.framework | `_nw_advertise_descriptor_create_bonjour_service` | 1 | spotify |
 | Network.framework | `_nw_advertise_descriptor_set_txt_record_object` | 1 | spotify |
 | Network.framework | `_nw_browse_descriptor_set_include_txt_record` | 1 | spotify |
 | Network.framework | `_nw_browse_result_copy_txt_record_object` | 1 | spotify |
-| Network.framework | `_nw_listener_cancel` | 1 | spotify |
-| Network.framework | `_nw_listener_create` | 1 | spotify |
+| Network.framework | `_nw_framer_copy_options` | 1 | dotnet-sdk |
+| Network.framework | `_nw_framer_options_copy_object_value` | 1 | dotnet-sdk |
+| Network.framework | `_nw_framer_options_set_object_value` | 1 | dotnet-sdk |
+| Network.framework | `_nw_listener_get_port` | 1 | dotnet-sdk |
 | Network.framework | `_nw_listener_set_advertise_descriptor` | 1 | spotify |
-| Network.framework | `_nw_listener_set_new_connection_handler` | 1 | spotify |
-| Network.framework | `_nw_listener_set_queue` | 1 | spotify |
-| Network.framework | `_nw_listener_start` | 1 | spotify |
+| Network.framework | `_nw_listener_set_state_changed_handler` | 1 | dotnet-sdk |
+| Network.framework | `_nw_parameters_set_local_endpoint` | 1 | dotnet-sdk |
+| Network.framework | `_nw_retain` | 1 | dotnet-sdk |
 | Network.framework | `_nw_txt_record_access_key` | 1 | spotify |
 | Network.framework | `_nw_txt_record_create_dictionary` | 1 | spotify |
 | Network.framework | `_nw_txt_record_set_key` | 1 | spotify |
@@ -306,6 +337,11 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_DNSServiceUpdateRecord` | 1 | cyberduck |
 | libSystem.B.dylib | `_TXTRecordGetCount` | 1 | zoom |
 | libSystem.B.dylib | `_TXTRecordGetItemAtIndex` | 1 | zoom |
+| libresolv.9.dylib | `_dns_free` | 1 | pgadmin4 |
+| libresolv.9.dylib | `_dns_open` | 1 | pgadmin4 |
+| libresolv.9.dylib | `_dns_search` | 1 | pgadmin4 |
+| libresolv.9.dylib | `_dns_search_list_domain` | 1 | pgadmin4 |
+| libresolv.9.dylib | `_res_9_ns_name_uncompress` | 1 | pgadmin4 |
 | libresolv.9.dylib | `_res_9_query` | 1 | deluge |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO16debugDescriptionSSvg` | 1 | iina |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO4HostO4ipv6yAeA11IPv6AddressVcAEmFWC` | 1 | utm |

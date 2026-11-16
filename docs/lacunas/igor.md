@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Igor (sem dono claro: triagem) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**174** símbolos distintos.
+**230** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -15,29 +15,35 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraDevice` | 5 | bruno, pencil, postman, vnote |
 | ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraFile` | 5 | bruno, pencil, postman, vnote |
 | ImageCaptureCore.framework | `_OBJC_CLASS_$_ICDeviceBrowser` | 5 | bruno, pencil, postman, vnote |
-| JavaRuntimeSupport.framework | `_JRSUIControlCreate` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlDraw` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlGetHitPart` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarOffsetFor` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarPartBounds` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlRelease` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentHorizontal` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentVertical` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetAnimating` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetDirection` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetOrientation` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetScrollBarPart` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetSegmentPosition` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetShowArrows` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetSize` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetState` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetValueByKey` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetVariant` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetWidget` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlSetWindowType` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIControlShouldScrollToClick` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIGetKey` | 3 | android-studio, cyberduck, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSUIRendererCreate` | 3 | android-studio, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlCreate` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlDraw` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetHitPart` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarOffsetFor` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarPartBounds` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlRelease` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentHorizontal` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentVertical` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAnimating` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetDirection` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetOrientation` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetScrollBarPart` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetSegmentPosition` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetShowArrows` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetSize` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetState` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetValueByKey` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetVariant` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetWidget` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetWindowType` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIControlShouldScrollToClick` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIGetKey` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSUIRendererCreate` | 4 | android-studio, cyberduck, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSFontAlignStyleForFractionalMeasurement` | 3 | android-studio, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSFontCreateFallbackFontForCharacters` | 3 | android-studio, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSFontGetBoundingBoxesForGlyphsAndStyle` | 3 | android-studio, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSFontGetRenderingStyleForHints` | 3 | android-studio, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSFontSetRenderingStyleOnContext` | 3 | android-studio, dbeaver-community, temurin |
+| JavaRuntimeSupport.framework | `_JRSFontStyleUsesFractionalMetrics` | 3 | android-studio, dbeaver-community, temurin |
 | MetricKit.framework | `_OBJC_CLASS_$_MXMetricManager` | 3 | hammerspoon, tailscale-app, whatsapp |
 | vmnet.framework | `_vmnet_interface_set_event_callback` | 3 | docker-desktop, orbstack, utm |
 | vmnet.framework | `_vmnet_max_packet_size_key` | 3 | docker-desktop, orbstack, utm |
@@ -46,12 +52,10 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | vmnet.framework | `_vmnet_read` | 3 | docker-desktop, orbstack, utm |
 | vmnet.framework | `_vmnet_start_interface` | 3 | docker-desktop, orbstack, utm |
 | vmnet.framework | `_vmnet_write` | 3 | docker-desktop, orbstack, utm |
-| JavaRuntimeSupport.framework | `_JRSFontAlignStyleForFractionalMeasurement` | 2 | android-studio, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSFontCreateFallbackFontForCharacters` | 2 | android-studio, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSFontGetBoundingBoxesForGlyphsAndStyle` | 2 | android-studio, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSFontGetRenderingStyleForHints` | 2 | android-studio, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSFontSetRenderingStyleOnContext` | 2 | android-studio, dbeaver-community |
-| JavaRuntimeSupport.framework | `_JRSFontStyleUsesFractionalMetrics` | 2 | android-studio, dbeaver-community |
+| FinderSync.framework | `_OBJC_CLASS_$_FIFinderSync` | 2 | keka, pearcleaner |
+| FinderSync.framework | `_OBJC_CLASS_$_FIFinderSyncController` | 2 | keka, pearcleaner |
+| FinderSync.framework | `_OBJC_METACLASS_$_FIFinderSync` | 2 | keka, pearcleaner |
+| LinkPresentation.framework | `_OBJC_CLASS_$_LPLinkMetadata` | 2 | vorssaint, whatsapp |
 | MetricKit.framework | `_OBJC_CLASS_$_MXCPUExceptionDiagnostic` | 2 | hammerspoon, tailscale-app |
 | MetricKit.framework | `_OBJC_CLASS_$_MXCrashDiagnostic` | 2 | hammerspoon, tailscale-app |
 | MetricKit.framework | `_OBJC_CLASS_$_MXDiagnosticPayload` | 2 | hammerspoon, tailscale-app |
@@ -85,16 +89,21 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | vmnet.framework | `_vmnet_stop_interface` | 2 | orbstack, utm |
 | AdServices.framework | `_OBJC_CLASS_$_AAAttribution` | 1 | whatsapp |
 | BezelServices.framework | `_ALCALSCopyALSServiceClient` | 1 | betterdisplay |
+| CommerceKit.framework | `_CKDownloadDirectory` | 1 | pearcleaner |
+| CommerceKit.framework | `_OBJC_CLASS_$_CKDownloadQueue` | 1 | pearcleaner |
+| CommerceKit.framework | `_OBJC_CLASS_$_CKPurchaseController` | 1 | pearcleaner |
 | CoreAnalytics.framework | `_AnalyticsSendEventLazy` | 1 | utm |
 | CoreBrightness.framework | `_OBJC_CLASS_$_CBBlueLightClient` | 1 | betterdisplay |
 | CoreBrightness.framework | `_OBJC_CLASS_$_CBTrueToneClient` | 1 | betterdisplay |
+| CoreML.framework | `_MLModelCreatorDefinedKey` | 1 | openclaw |
+| CoreML.framework | `_MLModelDescriptionKey` | 1 | openclaw |
+| CoreML.framework | `_OBJC_CLASS_$_MLFeatureDescription` | 1 | openclaw |
 | CoreMotion.framework | `_OBJC_CLASS_$_CMAltimeter` | 1 | whatsapp |
 | CoreMotion.framework | `_OBJC_CLASS_$_CMMotionManager` | 1 | whatsapp |
 | EventKitUI.framework | `_OBJC_CLASS_$_EKEventEditViewController` | 1 | whatsapp |
 | ExtensionKit.framework | `_OBJC_CLASS_$_EXAppExtensionBrowserViewController` | 1 | cmux |
 | ExtensionKit.framework | `_OBJC_CLASS_$_EXHostViewController` | 1 | cmux |
 | IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostDevice` | 1 | orbstack |
-| LinkPresentation.framework | `_OBJC_CLASS_$_LPLinkMetadata` | 1 | whatsapp |
 | LinkPresentation.framework | `_OBJC_CLASS_$_LPMetadataProvider` | 1 | raycast |
 | MapKit.framework | `_OBJC_CLASS_$_MKGeodesicPolyline` | 1 | raycast |
 | MapKit.framework | `_OBJC_CLASS_$_MKPolylineRenderer` | 1 | raycast |
@@ -104,7 +113,38 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | MessageUI.framework | `_OBJC_METACLASS_$_MFMessageComposeViewController` | 1 | whatsapp |
 | MetalFX.framework | `_OBJC_CLASS_$_MTLFXSpatialScalerDescriptor` | 1 | utm |
 | MetalFX.framework | `_OBJC_CLASS_$_MTLFXTemporalScalerDescriptor` | 1 | utm |
+| NaturalLanguage.framework | `_NLTagAdjective` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagAdverb` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagClassifier` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagCloseParenthesis` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagCloseQuote` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagConjunction` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagDash` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagDeterminer` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagIdiom` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagInterjection` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagNoun` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagNumber` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagOpenParenthesis` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagOpenQuote` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagOrganizationName` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagOtherPunctuation` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagOtherWord` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagParagraphBreak` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagParticle` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagPersonalName` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagPlaceName` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagPreposition` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagPronoun` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagPunctuation` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagSchemeNameTypeOrLexicalClass` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagSentenceTerminator` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagVerb` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagWhitespace` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagWord` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagWordJoiner` | 1 | openclaw |
 | NaturalLanguage.framework | `_OBJC_CLASS_$_NLEmbedding` | 1 | whatsapp |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLTagger` | 1 | openclaw |
 | OSLog.framework | `_OBJC_CLASS_$_OSLogEntryLog` | 1 | linearmouse |
 | PCSC.framework | `_SCardBeginTransaction` | 1 | keepassxc |
 | PCSC.framework | `_SCardConnect` | 1 | keepassxc |
@@ -119,6 +159,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | PCSC.framework | `_SCardTransmit` | 1 | keepassxc |
 | PCSC.framework | `_g_rgSCardT0Pci` | 1 | keepassxc |
 | PCSC.framework | `_g_rgSCardT1Pci` | 1 | keepassxc |
+| PackageKit.framework | `_OBJC_CLASS_$_PKBOM` | 1 | pearcleaner |
+| PackageKit.framework | `_OBJC_CLASS_$_PKReceipt` | 1 | pearcleaner |
 | ParavirtualizedGraphics.framework | `_OBJC_CLASS_$_PGDeviceDescriptor` | 1 | utm |
 | ParavirtualizedGraphics.framework | `_OBJC_CLASS_$_PGDisplayDescriptor` | 1 | utm |
 | ParavirtualizedGraphics.framework | `_OBJC_CLASS_$_PGDisplayMode` | 1 | utm |
@@ -154,9 +196,23 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Photos.framework | `_PHPhotosErrorDomain` | 1 | whatsapp |
 | PushKit.framework | `_OBJC_CLASS_$_PKPushRegistry` | 1 | whatsapp |
 | ReplayKit.framework | `_OBJC_CLASS_$_RPSystemBroadcastPickerView` | 1 | whatsapp |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNAction` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNMaterial` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNNode` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNParticlePropertyController` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNParticleSystem` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNScene` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNTransaction` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNView` | 1 | telegram |
+| SceneKit.framework | `_SCNParticlePropertyColor` | 1 | telegram |
+| SceneKit.framework | `_SCNParticlePropertyOpacity` | 1 | telegram |
+| SceneKit.framework | `_SCNParticlePropertySize` | 1 | telegram |
 | SidecarCore.framework | `_OBJC_CLASS_$_SidecarDevice` | 1 | betterdisplay |
 | SidecarCore.framework | `_OBJC_CLASS_$_SidecarDisplayConfig` | 1 | betterdisplay |
 | SidecarCore.framework | `_OBJC_CLASS_$_SidecarDisplayManager` | 1 | betterdisplay |
+| StoreFoundation.framework | `_OBJC_CLASS_$_SSDownload` | 1 | pearcleaner |
+| StoreFoundation.framework | `_OBJC_CLASS_$_SSDownloadMetadata` | 1 | pearcleaner |
+| StoreFoundation.framework | `_OBJC_CLASS_$_SSPurchase` | 1 | pearcleaner |
 | Virtualization.framework | `_OBJC_CLASS_$_VZAudioDeviceConfiguration` | 1 | orbstack |
 | Virtualization.framework | `_OBJC_CLASS_$_VZBridgedNetworkDeviceAttachment` | 1 | docker-desktop |
 | Virtualization.framework | `_OBJC_CLASS_$_VZFileSerialPortAttachment` | 1 | docker-desktop |

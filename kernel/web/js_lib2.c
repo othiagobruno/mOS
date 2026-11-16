@@ -994,7 +994,6 @@ jsv js_regexp_search(jsobj *re, jsstr *s) {
 }
 
 /* ============================================================ Promise */
-enum { JOB_CALL, JOB_REACTION, JOB_THENABLE };
 enum { PS_PENDING, PS_FULFILLED, PS_REJECTED };
 
 static jsobj *unhandled;   /* promessas rejeitadas sem tratador (verificadas após as microtarefas) */

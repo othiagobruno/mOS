@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Vinicius (arquivos e volumes) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**36** símbolos distintos.
+**37** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -17,6 +17,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | DiskArbitration.framework | `_DAApprovalSessionScheduleWithRunLoop` | 1 | spotify |
 | DiskArbitration.framework | `_DAApprovalSessionUnscheduleFromRunLoop` | 1 | spotify |
 | DiskArbitration.framework | `_DARegisterDiskUnmountApprovalCallback` | 1 | spotify |
+| DiskArbitration.framework | `_DASessionSetDispatchQueue` | 1 | vorssaint |
 | DiskArbitration.framework | `_DAUnregisterApprovalCallback` | 1 | spotify |
 | DiskArbitration.framework | `_kDADiskDescriptionBusNameKey` | 1 | hex-fiend |
 | DiskArbitration.framework | `_kDADiskDescriptionMediaEjectableKey` | 1 | prusaslicer |

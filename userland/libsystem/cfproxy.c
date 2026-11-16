@@ -7,6 +7,9 @@
 #include "foundation.h"
 #include "libc.h"
 #include "mnet.h"
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryKeyCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
 typedef struct { void *isa; u64 flags; const char *s; u64 n; } cfconst_t;
@@ -91,7 +94,7 @@ void cx_proxy_cfg_from_dict(id d, mnet_proxy_cfg_t *c) {
     }
 }
 static id entry(const mnet_proxy_t *p, const mnet_proxy_cfg_t *c) {
-    id d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     const void *type = p->type == MNET_PX_HTTP ? kCFProxyTypeHTTP : p->type == MNET_PX_HTTPS ? kCFProxyTypeHTTPS :
                        p->type == MNET_PX_SOCKS ? kCFProxyTypeSOCKS : p->type == MNET_PX_PAC_URL ? kCFProxyTypeAutoConfigurationURL :
                        p->type == MNET_PX_PAC_JS ? kCFProxyTypeAutoConfigurationJavaScript : kCFProxyTypeNone;
@@ -119,7 +122,7 @@ id CFNetworkCopyProxiesForURL(id url, id settings) {
     mnet_proxy_t list[8];
     const char *u = url ? cx_cstr(MSG0(id, url, "absoluteString")) : "";
     int n = mnet_proxy_for_url(&c, u ? u : "", list, 8);
-    id a = CFArrayCreateMutable(0, 0, 0);
+    id a = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     for (int i = 0; i < n; i++) { id d = entry(&list[i], &c); CFArrayAppendValue(a, d); objc_release(d); }
     mnet_proxy_cfg_free(&c);
     return a;
@@ -128,7 +131,7 @@ id CFNetworkCopyProxiesForURL(id url, id settings) {
 id cx_proxies_from_pac_result(const char *res) {
     mnet_proxy_t list[8];
     int n = mnet_proxy_parse_pac_result(res, list, 8);
-    id a = CFArrayCreateMutable(0, 0, 0);
+    id a = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     for (int i = 0; i < n; i++) { id d = entry(&list[i], 0); CFArrayAppendValue(a, d); objc_release(d); }
     return a;
 }

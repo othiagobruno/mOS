@@ -37,28 +37,7 @@ void CFStringAppendFormat(id m, void *opts, id fmt, ...) {
 }
 /* tira as repetições de `trim` do começo e do fim */
 
-/* ---- CFArraySortValues: CFComparatorFunction(a, b, ctx) -> -1/0/1 */
-typedef struct { long location, length; } cf_range_t;
-typedef long (*cf_cmp_fn)(const void *, const void *, void *);
-typedef struct { cf_cmp_fn fn; void *ctx; } sort_ctx_t;
-static int sort_thunk(void *t, const void *a, const void *b) {
-    sort_ctx_t *c = t;
-    long r = c->fn(*(const void *const *)a, *(const void *const *)b, c->ctx);
-    return r < 0 ? -1 : r > 0;
-}
-void CFArraySortValues(id arr, cf_range_t range, cf_cmp_fn cmp, void *ctx) {
-    if (!arr || !cmp || range.length <= 1) return;
-    id *v = malloc((size_t)range.length * sizeof *v);
-    if (!v) return;
-    for (long i = 0; i < range.length; i++) v[i] = objc_retain(MSG(id, arr, "objectAtIndex:", (unsigned long)(range.location + i)));
-    sort_ctx_t c = {cmp, ctx};
-    qsort_r(v, (size_t)range.length, sizeof *v, &c, sort_thunk);
-    for (long i = 0; i < range.length; i++) {
-        MSG(void, arr, "replaceObjectAtIndex:withObject:", (unsigned long)(range.location + i), v[i]);
-        objc_release(v[i]);
-    }
-    free(v);
-}
+/* CFArraySortValues: cfcollections.c (troca só os ponteiros, vale para ponteiros crus) */
 
 /* ---- CFBitVector: um NSMutableData com a contagem de bits nos 8 primeiros bytes */
 static u64 *bv_count(id bv) { return (u64 *)MSG0(void *, bv, "mutableBytes"); }

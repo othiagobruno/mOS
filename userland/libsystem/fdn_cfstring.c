@@ -247,3 +247,34 @@ id CFStringCreateArrayBySeparatingStrings(void *alloc, id s, id sep) {
     id r = s && sep ? MSG(id, s, "componentsSeparatedByString:", sep) : 0;
     return r ? MSG0(id, r, "copy") : 0;
 }
+
+/* CFArray de ponteiros para CFRange (como no CF): cada faixa é malloc e o callback de release a libera.
+ * NULL quando não há ocorrência. */
+id CFArrayCreateMutable(void *alloc, long cap, const void *cb);
+void CFArrayAppendValue(id a, const void *v);
+static void range_free(const void *alloc, const void *v) { (void)alloc; free((void *)v); }
+static u8 range_eq(const void *a, const void *b) { const CFRange *x = a, *y = b; return x->loc == y->loc && x->len == y->len; }
+static const struct { long version; void *retain, *release, *desc, *equal; } RANGE_CB = { 0, 0, (void *)range_free, 0, (void *)range_eq };
+id CFStringCreateArrayWithFindResults(void *alloc, id s, id find, CFRange r, u64 opts) {
+    (void)alloc;
+    int32_t n, fn;
+    UChar *u = U16(s, &n), *f = U16(find, &fn);
+    id arr = 0;
+    if (clip(&r, n) && fn > 0) {
+        unsigned o = tx_opts(opts);
+        int back = (opts & 4) != 0;
+        int32_t lo = (int32_t)r.loc, hi = (int32_t)(r.loc + r.len);
+        while (lo < hi) {
+            int32_t l = 0, m = 0;
+            if (!tx_search(u + lo, hi - lo, f, fn, o, &l, &m) || m <= 0) break;
+            if (!arr) arr = CFArrayCreateMutable(0, 0, &RANGE_CB);
+            CFRange *x = malloc(sizeof *x);
+            x->loc = lo + l; x->len = m;
+            CFArrayAppendValue(arr, x);
+            if (back) hi = lo + l; else lo = lo + l + m;
+            if (opts & 8) break;    /* âncora: no máximo uma */
+        }
+    }
+    free(u); free(f);
+    return arr;
+}

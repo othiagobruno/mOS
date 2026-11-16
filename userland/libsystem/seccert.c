@@ -27,6 +27,9 @@ size_t strlen(const char *s);
 int cx_snprintf(char *buf, size_t n, const char *fmt, ...);
 
 #include "seccert_core.inc"
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryKeyCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 /* ---- ponte CF */
 id_ objc_msgSend(id_ self, void *op, ...);
@@ -124,7 +127,7 @@ OSStatus SecCertificateCopyEmailAddresses(id_ cert, id_ *out) {
     if (!out) return errSecParam;
     *out = 0;
     if (parse_cert(cert, &x)) return errSecParam;
-    id_ a = CFArrayCreateMutable(0, 0, 0);
+    id_ a = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     char b[256];
     for (int i = 0; sc_name_attr_n(x.subject, x.subject_len, OIDS_EMAIL, sizeof OIDS_EMAIL, i, b, sizeof b); i++) {
         id_ s = nsstr(b); CFArrayAppendValue(a, s); CFRelease(s);
@@ -154,7 +157,7 @@ id_ SecCertificateCopyLongDescription(void *alloc, id_ cert, id_ *err) { (void)a
 
 /* SecCertificateCopyValues: dicionário OID -> {label, type, value}, no formato do macOS */
 static id_ prop(const char *label, id_ type, id_ value) {
-    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     id_ l = nsstr(label);
     CFDictionarySetValue(d, K_(kSecPropertyKeyLabel), l);
     CFDictionarySetValue(d, K_(kSecPropertyKeyType), type);
@@ -163,7 +166,7 @@ static id_ prop(const char *label, id_ type, id_ value) {
     return d;
 }
 static id_ name_section(const char *label, const u8 *name, u32 n) {
-    id_ arr = CFArrayCreateMutable(0, 0, 0);
+    id_ arr = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     sc_attr_iter it;
     sc_attr_begin(&it, name, n);
     char oid[64], val[256];
@@ -185,7 +188,7 @@ id_ SecCertificateCopyValues(id_ cert, id_ keys, id_ *err) {
     x509_cert_t x;
     if (err) *err = 0;
     if (parse_cert(cert, &x)) { if (err) *err = CFErrorCreate(0, K_(kCFErrorDomainOSStatus), errSecParam, 0); return 0; }
-    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0), v;
+    id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks), v;
     if (wants(keys, kSecOIDX509V1SubjectName)) { v = name_section("Subject Name", x.subject, x.subject_len); CFDictionarySetValue(d, K_(kSecOIDX509V1SubjectName), v); CFRelease(v); }
     if (wants(keys, kSecOIDX509V1IssuerName)) { v = name_section("Issuer Name", x.issuer, x.issuer_len); CFDictionarySetValue(d, K_(kSecOIDX509V1IssuerName), v); CFRelease(v); }
     if (wants(keys, kSecOIDX509V1SerialNumber)) {
@@ -234,7 +237,7 @@ enum { kSecItemPemArmour = 1 };
 typedef struct { u32 version, flags; id_ passphrase, title, prompt, access, usage, attrs; } kparams_t;
 
 static void add_to_keychain(id_ item, int cert) {
-    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CFDictionarySetValue(d, K_(kSecClass), cert ? K_(kSecClassCertificate) : K_(kSecClassKey));
     CFDictionarySetValue(d, K_(kSecValueRef), item);
     SecItemAdd(d, 0);                                      /* duplicata não é erro na importação */
@@ -263,7 +266,7 @@ OSStatus SecItemImport(id_ data, id_ ext, u32 *fmt, u32 *type, u32 flags, const 
     const kparams_t *kp = params;
     id_ pass = kp ? kp->passphrase : 0;
     u32 want = fmt ? *fmt : kSecFormatUnknown;
-    id_ arr = CFArrayCreateMutable(0, 0, 0);
+    id_ arr = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     int ty = kSecItemTypeUnknown, nitems = 0;
     u32 got_fmt = want;
     if (want == kSecFormatPKCS12 || (want == kSecFormatUnknown && sc_is_pkcs12(b, n))) {
@@ -382,8 +385,8 @@ static OSStatus pkcs12_import(const u8 *b, u32 n, id_ pass, id_ *items, int add_
     if (r == P12_E_MAC) return errSecAuthFailed;
     if (r == P12_E_UNSUPPORTED) return errSecUnimplemented;
     if (r) return errSecDecode;
-    id_ list = CFArrayCreateMutable(0, 0, 0);
-    id_ chain = CFArrayCreateMutable(0, 0, 0);
+    id_ list = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
+    id_ chain = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     /* a folha é o certificado cujo localKeyId (ou chave pública) bate com a chave; os demais formam a cadeia */
     int leaf = -1, key = -1;
     for (int k = 0; k < res.nkeys && leaf < 0; k++)
@@ -405,7 +408,7 @@ static OSStatus pkcs12_import(const u8 *b, u32 n, id_ pass, id_ *items, int add_
         if (add_kc) add_to_keychain(d, 1);
         CFRelease(d);
     }
-    id_ dict = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ dict = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     const char *fname = key >= 0 && res.keys[key].name[0] ? res.keys[key].name : leaf >= 0 ? res.certs[leaf].name : "";
     if (fname && fname[0]) { id_ l = nsstr(fname); CFDictionarySetValue(dict, K_(kSecImportItemLabel), l); CFRelease(l); }
     if (key >= 0 && res.keys[key].idn) {
@@ -424,7 +427,7 @@ static OSStatus pkcs12_import(const u8 *b, u32 n, id_ pass, id_ *items, int add_
         id_ ext = sk ? SecKeyCopyExternalRepresentation(sk, 0) : 0;
         if (ext) {
             /* a identidade do mOS é um item kSecClassIdentity no Keychain: o DER do certificado e a chave */
-            id_ attrs = CFDictionaryCreateMutable(0, 0, 0, 0);
+            id_ attrs = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
             id_ cd = cx_data_new(res.certs[leaf].der, res.certs[leaf].n);
             CFDictionarySetValue(attrs, K_(kSecClass), K_(kSecClassIdentity));
             CFDictionarySetValue(attrs, K_(kSecValueData), cd);
@@ -596,7 +599,7 @@ OSStatus cx_ts_copy_certs(int domain, id_ *certs) {
     ts_ent *a;
     int n = ts_load(domain, &a);
     if (!n) { ts_free(a, n); return errSecNoTrustSettings; }
-    id_ arr = CFArrayCreateMutable(0, 0, 0);
+    id_ arr = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     for (int i = 0; i < n; i++) { id_ d = cx_data_new(a[i].der, a[i].n); CFArrayAppendValue(arr, d); CFRelease(d); }
     ts_free(a, n);
     if (certs) *certs = arr; else CFRelease(arr);
@@ -610,9 +613,9 @@ OSStatus cx_ts_copy_settings(id_ cert, int domain, id_ *settings) {
     int r = i >= 0 ? a[i].result : 0;
     ts_free(a, n);
     if (i < 0) return errSecItemNotFound;
-    id_ arr = CFArrayCreateMutable(0, 0, 0);
+    id_ arr = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     if (r != 1) {                                           /* TrustRoot = array vazio, como o macOS */
-        id_ d = CFDictionaryCreateMutable(0, 0, 0, 0), num = cx_num_i(r);
+        id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks), num = cx_num_i(r);
         CFDictionarySetValue(d, K_(kSecTrustSettingsResult), num);
         objc_release(num);
         CFArrayAppendValue(arr, d);
@@ -648,7 +651,7 @@ int cx_ts_denied(const u8 *der, u32 n) {
 OSStatus SecCertificateAddToKeychain(id_ cert, void *kc) {
     (void)kc;
     if (!is_cert(cert)) return errSecParam;
-    id_ d = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CFDictionarySetValue(d, K_(kSecClass), K_(kSecClassCertificate));
     CFDictionarySetValue(d, K_(kSecValueRef), cert);
     OSStatus st = SecItemAdd(d, 0);

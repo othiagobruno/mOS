@@ -28,6 +28,7 @@
  */
 #include "foundation.h"
 #include "libc.h"
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 typedef int OSStatus;
 typedef unsigned char Boolean;
@@ -297,7 +298,7 @@ OSStatus SSLSetALPNProtocols(void *ctx, id protos) {
 OSStatus SSLCopyALPNProtocols(void *ctx, id *protos) {
     ssl_t *s = S(ctx);
     if (!s || !protos) return errSecParam;
-    id a = CFArrayCreateMutable(0, 0, 0);
+    id a = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     if (s->state == kSSLConnected && s->info.alpn[0]) {
         id str = CFStringCreateWithCString(0, s->info.alpn, 0x08000100);
         if (str) { CFArrayAppendValue(a, str); CFRelease(str); }
@@ -328,7 +329,7 @@ OSStatus SSLCopyPeerTrust(void *ctx, id *trust) {
     if (!buf) return errSecAllocate;
     if (net(MOS_NET_TLS_CERTS, s->h, (long)buf, need) != need) { free(buf); return errSSLInternal; }
     u32 count = (u32)buf[0] | (u32)buf[1] << 8 | (u32)buf[2] << 16 | (u32)buf[3] << 24;
-    id t = CFArrayCreateMutable(0, 0, 0);
+    id t = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     u32 o = 4;
     for (u32 i = 0; t && i < count && o + 4 <= (u32)need; i++) {
         u32 L = (u32)buf[o] | (u32)buf[o + 1] << 8 | (u32)buf[o + 2] << 16 | (u32)buf[o + 3] << 24;
@@ -349,7 +350,7 @@ OSStatus SSLCopyPeerTrust(void *ctx, id *trust) {
 }
 OSStatus SSLCopyPeerCertificates(void *ctx, id *certs) {
     if (!S(ctx) || !certs) return errSecParam;
-    *certs = CFArrayCreateMutable(0, 0, 0);
+    *certs = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     return errSecSuccess;
 }
 
@@ -577,7 +578,7 @@ static id system_roots(void) {
     if (net(MOS_NET_TLS_ROOTS, (long)pem, len, 0) != len) { free(pem); free(der); return 0; }
     pem[len] = 0;
     static const char BEGIN[] = "-----BEGIN CERTIFICATE-----", END[] = "-----END CERTIFICATE-----";
-    id arr = CFArrayCreateMutable(0, 0, 0);
+    id arr = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     char *p = pem;
     while ((p = strstr(p, BEGIN))) {
         p += sizeof BEGIN - 1;
@@ -612,7 +613,7 @@ OSStatus SecTrustSettingsCopyCertificates(int domain, id *certs) {
     id roots = system_roots();
     if (!roots || !CFArrayGetCount(roots)) return errSecNoTrustSettings;
     if (certs) {
-        id copy = CFArrayCreateMutable(0, 0, 0);
+        id copy = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
         for (long i = 0; i < CFArrayGetCount(roots); i++) CFArrayAppendValue(copy, CFArrayGetValueAtIndex(roots, i));
         *certs = copy;
     }
@@ -623,7 +624,7 @@ OSStatus SecTrustCopyAnchorCertificates(id *anchors) {
     if (!anchors) return errSecParam;
     *anchors = 0;
     OSStatus r = SecTrustSettingsCopyCertificates(kSecTrustSettingsDomainSystem, anchors);
-    if (r == errSecNoTrustSettings) { *anchors = CFArrayCreateMutable(0, 0, 0); return errSecSuccess; }
+    if (r == errSecNoTrustSettings) { *anchors = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks); return errSecSuccess; }
     return r;
 }
 /* raiz do sistema sem ajuste específico = array vazio ("confiar como raiz"), o que o rustls-native-certs espera */
@@ -631,6 +632,6 @@ OSStatus SecTrustSettingsCopyTrustSettings(id cert, int domain, id *settings) {
     if (settings) *settings = 0;
     if (cert && domain != kSecTrustSettingsDomainSystem) return cx_ts_copy_settings(cert, domain, settings);
     if (!cert) return errSecNoTrustSettings;
-    if (settings) *settings = CFArrayCreateMutable(0, 0, 0);
+    if (settings) *settings = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
     return errSecSuccess;
 }

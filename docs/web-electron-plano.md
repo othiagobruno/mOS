@@ -106,6 +106,16 @@ Cada item fecha com teste de host (`tools/web_host.sh`) ou, quando depende da VM
    X25519, verificação RSASSA-PKCS1-v1_5 e RSA-PSS, formatos raw/jwk/spki/pkcs8, wrapKey/unwrapKey.
    Teste: `tools/web_host_plat.c` (vetores FIPS 180, RFC 2202/4231/6070/5869/8032, NIST SP 800-38A e OpenSSL).
    Falta: geração e assinatura RSA, AES-CBC e AES-KW (o kernel só tem a cifra direta do AES).
+6f. ✅ **Observadores** (`web_obs.c`): MutationObserver (childList com um registro por innerHTML/textContent,
+   attributes com oldValue e attributeFilter, characterData, subtree, microtarefa, takeRecords, disconnect),
+   ResizeObserver (content-box/border-box, só quando muda) e IntersectionObserver (viewport ou elemento raiz,
+   rootMargin, limiares, rolagem). Teste: `tools/web_host_obs.c`. Falta: registro transitório de subárvores
+   removidas e recorte por overflow dos ancestrais no IntersectionObserver.
+6g. ✅ **Web Workers e BroadcastChannel** (`web_worker.c`): cada Worker é uma página JS própria sem DOM
+   (DedicatedWorkerGlobalScope: self, postMessage, onmessage, close, importScripts, name, WorkerLocation), rodada no
+   tick da dona; mensagens por clone estruturado; blob:/data:/file:/http; workers clássicos e de módulo; erros e 404
+   viram evento error na dona; terminate; workers aninhados; BroadcastChannel entre páginas e workers da mesma
+   origem. Teste: `tools/web_host_worker.c`. Falta: SharedWorker e ServiceWorker.
 7. **WebGL 1/2** sobre o OpenGL do mOS (frente do Otavio) com reserva por software.
 8. **`<video>`/`<audio>`**: o motor publica o elemento; o `WebKit.framework` decodifica com AVFoundation/
    VideoToolbox (frente da Isabela) e devolve quadros e relógio ao motor; controles nativos desenhados pela vista.

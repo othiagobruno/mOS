@@ -5,6 +5,7 @@
  */
 #include "mnet.h"
 #include "sys.h"
+extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 typedef int OSStatus;
 struct mos_ai { int flags, family, socktype, protocol; unsigned addrlen; char *canon; void *addr; struct mos_ai *next; };
@@ -146,7 +147,7 @@ static int c_starttls(void *e, void *cv, const char *sni, const uint8_t *alpn, s
     SSLSetConnection(c->ssl, c);
     SSLSetPeerDomainName(c->ssl, sni, strlen(sni));
     if (alpn && al) {
-        void *arr = CFArrayCreateMutable(0, 0, 0);
+        void *arr = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
         for (size_t i = 0; i < al; i += 1u + alpn[i]) {
             char nm[40];
             size_t l = alpn[i] < 39 ? alpn[i] : 39;

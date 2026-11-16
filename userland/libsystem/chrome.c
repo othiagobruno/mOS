@@ -246,7 +246,7 @@ void free(void *p);
 long CFStringGetLength(id_ s);
 void CFStringGetCharacters(id_ s, CFRange r, unsigned short *out);
 id_ CFStringCreateWithCharacters(void *alloc, const unsigned short *chars, long n);
-id_ CFStringCreateArrayWithFindResults(void *alloc, id_ s, id_ find, CFRange r, unsigned opts) { (void)alloc; (void)s; (void)find; (void)r; (void)opts; return 0; }   /* NULL = nenhuma ocorrência */
+   /* NULL = nenhuma ocorrência */
 
 /* (CFDictionaryApplyFunction e as outras coleções ficam em cfcollections.c) */
 /* (os *GetTypeID e CFCopyTypeIDDescription precisam bater com o CFGetTypeID de cfcollections.c: ficam lá) */

@@ -3,129 +3,157 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Leonardo (runtime C/C++) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**1299** símbolos distintos.
+**1530** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| libSystem.B.dylib | `_putenv` | 21 | android-studio, cyberduck, dbeaver-community, deluge |
-| libSystem.B.dylib | `_getprotobyname` | 18 | android-studio, blender, deluge, docker-desktop |
-| libSystem.B.dylib | `_getloadavg` | 14 | android-studio, blender, cyberduck, dbeaver-community |
+| libSystem.B.dylib | `_putenv` | 26 | android-studio, basictex, cyberduck, dbeaver-community |
+| libSystem.B.dylib | `_getprotobyname` | 20 | android-studio, blender, deluge, docker-desktop |
+| libSystem.B.dylib | `_getloadavg` | 19 | android-studio, blender, cyberduck, dbeaver-community |
+| libSystem.B.dylib | `_OSAtomicAdd32Barrier` | 15 | cmux, deluge, firefox, floorp |
 | libSystem.B.dylib | `_pthread_attr_getschedpolicy` | 14 | audacity, db-browser-for-sqlite, dolphin, keepassxc |
-| libSystem.B.dylib | `_OSAtomicAdd32Barrier` | 13 | cmux, deluge, firefox, floorp |
 | libSystem.B.dylib | `__os_activity_create` | 13 | audacity, bitwarden, db-browser-for-sqlite, dolphin |
+| libSystem.B.dylib | `_hstrerror` | 13 | android-studio, basictex, blender, deluge |
+| libSystem.B.dylib | `_if_freenameindex` | 13 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_if_nameindex` | 13 | android-studio, blender, gimp, inkscape |
 | libSystem.B.dylib | `_pthread_setcanceltype` | 13 | deluge, dolphin, godot, inkscape |
-| libSystem.B.dylib | `_if_freenameindex` | 12 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_if_nameindex` | 12 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_setpgrp` | 12 | android-studio, blender, deluge, gimp |
+| libSystem.B.dylib | `_wcsstr` | 12 | android-studio, audacity, dolphin, gimp |
 | libcups.2.dylib | `_ppdClose` | 12 | bruno, db-browser-for-sqlite, gimp, inkscape |
 | libcups.2.dylib | `_ppdFindOption` | 12 | bruno, db-browser-for-sqlite, gimp, inkscape |
-| libSystem.B.dylib | `_hstrerror` | 11 | android-studio, blender, deluge, gimp |
-| libSystem.B.dylib | `_wcsstr` | 11 | android-studio, audacity, dolphin, gimp |
-| libSystem.B.dylib | `_ctermid_r` | 10 | android-studio, blender, deluge, gimp |
-| libSystem.B.dylib | `_getprotobynumber` | 10 | docker-desktop, firefox, floorp, gimp |
-| libSystem.B.dylib | `_hash_create` | 10 | alt-tab, cyberduck, flycut, hex-fiend |
-| libSystem.B.dylib | `_hash_search` | 10 | alt-tab, cyberduck, flycut, hex-fiend |
-| libSystem.B.dylib | `_setpgrp` | 10 | android-studio, blender, deluge, gimp |
-| libSystem.B.dylib | `_wcsxfrm` | 10 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_ctermid_r` | 11 | android-studio, blender, deluge, gimp |
+| libSystem.B.dylib | `_getprotobynumber` | 11 | docker-desktop, firefox, floorp, gimp |
+| libSystem.B.dylib | `_hash_create` | 11 | alt-tab, cyberduck, flycut, hex-fiend |
+| libSystem.B.dylib | `_hash_search` | 11 | alt-tab, cyberduck, flycut, hex-fiend |
+| libSystem.B.dylib | `_wcsxfrm` | 11 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_sethostname` | 10 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_wcsrchr` | 10 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_wcstok` | 10 | android-studio, blender, gimp, inkscape |
+| libcups.2.dylib | `_cupsGetDests2` | 10 | bruno, firefox, floorp, librewolf |
 | libcups.2.dylib | `_ppdFindMarkedChoice` | 10 | bruno, db-browser-for-sqlite, krita, lmms |
-| libSystem.B.dylib | `_sethostname` | 9 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_wcsrchr` | 9 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_wcstok` | 9 | android-studio, blender, gimp, inkscape |
-| libcups.2.dylib | `_cupsGetDests2` | 9 | bruno, firefox, floorp, mullvad-browser |
+| libSystem.B.dylib | `_OSAtomicCompareAndSwapIntBarrier` | 9 | firefox, floorp, librewolf, mullvad-browser |
+| libSystem.B.dylib | `_dbm_clearerr` | 9 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_dbm_close` | 9 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_dbm_delete` | 9 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_dbm_error` | 9 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_dbm_fetch` | 9 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_dbm_firstkey` | 9 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_dbm_nextkey` | 9 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_dbm_open` | 9 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_dbm_store` | 9 | android-studio, blender, gimp, inkscape |
+| libSystem.B.dylib | `_gethostbyname2` | 9 | firefox, floorp, gimp, libreoffice |
+| libSystem.B.dylib | `_uuid_generate_time` | 9 | android-studio, blender, gimp, inkscape |
+| libcups.2.dylib | `_httpGetHostname` | 9 | firefox, floorp, gimp, inkscape |
 | libcups.2.dylib | `_ppdOpenFile` | 9 | db-browser-for-sqlite, inkscape, krita, lmms |
-| libSystem.B.dylib | `_OSAtomicCompareAndSwapIntBarrier` | 8 | firefox, floorp, mullvad-browser, obs |
 | libSystem.B.dylib | `__res` | 8 | audacity, dolphin, keepassxc, microsoft-edge |
-| libSystem.B.dylib | `_dbm_clearerr` | 8 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_dbm_close` | 8 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_dbm_delete` | 8 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_dbm_error` | 8 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_dbm_fetch` | 8 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_dbm_firstkey` | 8 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_dbm_nextkey` | 8 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_dbm_open` | 8 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_dbm_store` | 8 | android-studio, blender, gimp, inkscape |
-| libSystem.B.dylib | `_gethostbyname2` | 8 | firefox, floorp, gimp, libreoffice |
-| libSystem.B.dylib | `_uuid_generate_time` | 8 | android-studio, blender, gimp, inkscape |
-| libcups.2.dylib | `_httpGetHostname` | 8 | firefox, floorp, gimp, inkscape |
-| libedit.3.dylib | `_add_history` | 7 | blender, deluge, hammerspoon, kicad |
+| libedit.3.dylib | `_add_history` | 8 | blender, deluge, hammerspoon, kicad |
+| libSystem.B.dylib | `_pthread_rwlockattr_destroy` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| libSystem.B.dylib | `_pthread_rwlockattr_init` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| libcups.2.dylib | `_cupsConnectDest` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| libcups.2.dylib | `_cupsGetDestMediaByIndex` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| libcups.2.dylib | `_cupsGetDestMediaCount` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| libcups.2.dylib | `_cupsGetDestMediaDefault` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| libcups.2.dylib | `_cupsGetDests` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| libcups.2.dylib | `_cupsLocalizeDestMedia` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| libcups.2.dylib | `_httpAddrPort` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| libcups.2.dylib | `_httpGetAddress` | 7 | firefox, floorp, librewolf, mullvad-browser |
+| libedit.3.dylib | `_history_truncate_file` | 7 | blender, hammerspoon, kicad, kitty |
+| libedit.3.dylib | `_read_history` | 7 | blender, hammerspoon, kicad, kitty |
+| libedit.3.dylib | `_rl_attempted_completion_function` | 7 | blender, hammerspoon, kicad, kitty |
+| libedit.3.dylib | `_rl_attempted_completion_over` | 7 | blender, hammerspoon, kicad, kitty |
+| libedit.3.dylib | `_rl_completion_append_character` | 7 | blender, hammerspoon, kicad, kitty |
+| libedit.3.dylib | `_rl_completion_matches` | 7 | blender, hammerspoon, kicad, kitty |
+| libedit.3.dylib | `_write_history` | 7 | blender, hammerspoon, kicad, kitty |
+| libexpat.1.dylib | `_XML_ParserFree` | 7 | github, iina, inkscape, keka |
+| libexpat.1.dylib | `_XML_SetElementHandler` | 7 | github, iina, inkscape, keka |
+| libexpat.1.dylib | `_XML_SetUserData` | 7 | github, iina, inkscape, keka |
+| libicucore.A.dylib | `_u_strToLower` | 7 | bitwarden, monitorcontrol, mos, openclaw |
+| libicucore.A.dylib | `_u_strToUpper` | 7 | bitwarden, monitorcontrol, mos, openclaw |
+| libicucore.A.dylib | `_ubrk_close` | 7 | bitwarden, monitorcontrol, mos, openclaw |
+| libicucore.A.dylib | `_ubrk_following` | 7 | bitwarden, monitorcontrol, mos, openclaw |
+| libicucore.A.dylib | `_ubrk_open` | 7 | bitwarden, monitorcontrol, mos, openclaw |
+| libicucore.A.dylib | `_ubrk_setText` | 7 | bitwarden, monitorcontrol, mos, openclaw |
+| libicucore.A.dylib | `_unorm2_getNFCInstance` | 7 | bitwarden, monitorcontrol, mos, openclaw |
+| libicucore.A.dylib | `_unorm2_normalize` | 7 | bitwarden, monitorcontrol, mos, openclaw |
 | libncurses.5.4.dylib | `_setupterm` | 7 | blender, deluge, inkscape, iterm2 |
 | libncurses.5.4.dylib | `_tigetnum` | 7 | blender, deluge, inkscape, iterm2 |
 | libSystem.B.dylib | `_drand48` | 6 | clipy, gimp, iterm2, krita |
+| libSystem.B.dylib | `_exc_server` | 6 | cmux, ghostty, inkscape, openttd |
 | libSystem.B.dylib | `_getsectbynamefromheader_64` | 6 | clipy, inkscape, orbstack, pencil |
 | libSystem.B.dylib | `_getsectdatafromheader_64` | 6 | alt-tab, firefox, inkscape, pencil |
-| libSystem.B.dylib | `_pthread_rwlockattr_destroy` | 6 | firefox, floorp, mullvad-browser, obs |
-| libSystem.B.dylib | `_pthread_rwlockattr_init` | 6 | firefox, floorp, mullvad-browser, obs |
+| libSystem.B.dylib | `_swap_fat_arch` | 6 | google-chrome, kicad, microsoft-edge, orbstack |
 | libSystem.B.dylib | `_timespec_get` | 6 | docker-desktop, kicad, obs, postman |
 | libSystem.B.dylib | `_wcscasecmp` | 6 | audacity, krita, openrct2, prusaslicer |
 | libSystem.B.dylib | `_wcslcpy` | 6 | dolphin, krita, openrct2, shotcut |
-| libcups.2.dylib | `_cupsConnectDest` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| libcups.2.dylib | `_cupsGetDestMediaByIndex` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| libcups.2.dylib | `_cupsGetDestMediaCount` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| libcups.2.dylib | `_cupsGetDestMediaDefault` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| libcups.2.dylib | `_cupsGetDests` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| libcups.2.dylib | `_cupsLocalizeDestMedia` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| libcups.2.dylib | `_httpAddrPort` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| libcups.2.dylib | `_httpGetAddress` | 6 | firefox, floorp, mullvad-browser, thunderbird |
-| libedit.3.dylib | `_history_truncate_file` | 6 | blender, hammerspoon, kicad, kitty |
-| libedit.3.dylib | `_read_history` | 6 | blender, hammerspoon, kicad, kitty |
-| libedit.3.dylib | `_rl_attempted_completion_function` | 6 | blender, hammerspoon, kicad, kitty |
-| libedit.3.dylib | `_rl_attempted_completion_over` | 6 | blender, hammerspoon, kicad, kitty |
-| libedit.3.dylib | `_rl_completion_append_character` | 6 | blender, hammerspoon, kicad, kitty |
-| libedit.3.dylib | `_rl_completion_matches` | 6 | blender, hammerspoon, kicad, kitty |
-| libedit.3.dylib | `_write_history` | 6 | blender, hammerspoon, kicad, kitty |
+| libedit.3.dylib | `_clear_history` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_emacs_meta_keymap` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_history_get` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_history_get_history_state` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_remove_history` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_replace_history_entry` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_bind_key` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_bind_key_in_map` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_callback_handler_install` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_callback_handler_remove` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_callback_read_char` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_cleanup_after_signal` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_complete` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_completer_word_break_characters` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_completion_display_matches_hook` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_completion_type` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_free_line_state` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_initialize` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_insert` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_insert_text` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_instream` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_library_version` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_line_buffer` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_outstream` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_parse_and_bind` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_pre_input_hook` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_prep_terminal` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_read_init_file` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_readline_name` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_readline_version` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_redisplay` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_startup_hook` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_variable_bind` | 6 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_using_history` | 6 | blender, kicad, kitty, krita |
 | libexpat.1.dylib | `_XML_ErrorString` | 6 | github, iina, inkscape, kicad |
 | libexpat.1.dylib | `_XML_GetErrorCode` | 6 | github, iina, inkscape, kicad |
-| libexpat.1.dylib | `_XML_ParserFree` | 6 | github, iina, inkscape, kicad |
-| libexpat.1.dylib | `_XML_SetElementHandler` | 6 | github, iina, inkscape, kicad |
-| libexpat.1.dylib | `_XML_SetUserData` | 6 | github, iina, inkscape, kicad |
+| libexpat.1.dylib | `_XML_ParserCreate` | 6 | github, iina, inkscape, keka |
+| libexpat.1.dylib | `_XML_SetCharacterDataHandler` | 6 | github, iina, inkscape, keka |
 | libncurses.5.4.dylib | `_tigetflag` | 6 | blender, deluge, inkscape, iterm2 |
 | libncurses.5.4.dylib | `_tigetstr` | 6 | blender, deluge, inkscape, iterm2 |
+| libSystem.B.dylib | `_OSAtomicCompareAndSwap64Barrier` | 5 | deluge, godot, openscad, pixelorama |
+| libSystem.B.dylib | `_OSSpinLockLock` | 5 | alt-tab, kicad, telegram, webtorrent |
+| libSystem.B.dylib | `_OSSpinLockUnlock` | 5 | alt-tab, kicad, telegram, webtorrent |
+| libSystem.B.dylib | `___divdc3` | 5 | basictex, krita, libreoffice, shotcut |
+| libSystem.B.dylib | `___invert_f4` | 5 | monitorcontrol, mos, raycast, rustdesk |
 | libSystem.B.dylib | `_csqrt` | 5 | blender, gimp, inkscape, kitty |
-| libSystem.B.dylib | `_exc_server` | 5 | cmux, ghostty, inkscape, openttd |
+| libSystem.B.dylib | `_pthread_key_init_np` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
 | libSystem.B.dylib | `_wcslcat` | 5 | dolphin, krita, openrct2, shotcut |
 | libcups.2.dylib | `_httpBlocking` | 5 | bruno, gimp, inkscape, pencil |
 | libcups.2.dylib | `_httpError` | 5 | bruno, gimp, inkscape, pencil |
 | libcups.2.dylib | `_ppdFindAttr` | 5 | bruno, gimp, inkscape, pencil |
 | libcups.2.dylib | `_ppdFindChoice` | 5 | bruno, gimp, inkscape, pencil |
 | libcups.2.dylib | `_ppdMarkDefaults` | 5 | bruno, gimp, inkscape, pencil |
-| libedit.3.dylib | `_clear_history` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_emacs_meta_keymap` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_history_get` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_history_get_history_state` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_remove_history` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_replace_history_entry` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_bind_key` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_bind_key_in_map` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_callback_handler_install` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_callback_handler_remove` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_callback_read_char` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_cleanup_after_signal` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_complete` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_completer_word_break_characters` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_completion_display_matches_hook` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_completion_type` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_free_line_state` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_initialize` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_insert` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_insert_text` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_instream` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_library_version` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_line_buffer` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_outstream` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_parse_and_bind` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_pre_input_hook` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_prep_terminal` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_read_init_file` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_readline_name` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_readline_version` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_redisplay` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_startup_hook` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_rl_variable_bind` | 5 | blender, kicad, kitty, krita |
-| libedit.3.dylib | `_using_history` | 5 | blender, kicad, kitty, krita |
+| libedit.3.dylib | `_rl_basic_word_break_characters` | 5 | blender, kitty, krita, libreoffice |
 | libexpat.1.dylib | `_XML_GetBuffer` | 5 | iina, inkscape, kicad, kitty |
 | libexpat.1.dylib | `_XML_ParseBuffer` | 5 | iina, inkscape, kicad, kitty |
-| libexpat.1.dylib | `_XML_ParserCreate` | 5 | github, iina, inkscape, kicad |
-| libexpat.1.dylib | `_XML_SetCharacterDataHandler` | 5 | github, iina, inkscape, kicad |
+| libffi.dylib | `_ffi_call` | 5 | kicad, kitty, krita, libreoffice |
+| libffi.dylib | `_ffi_prep_cif` | 5 | kicad, kitty, krita, libreoffice |
 | libiconv.2.dylib | `_libiconv_set_relocation_prefix` | 5 | deluge, krita, lmms, openscad |
+| libicucore.A.dylib | `_u_charAge` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| libicucore.A.dylib | `_u_charName` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| libicucore.A.dylib | `_u_getNumericValue` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| libicucore.A.dylib | `_u_strToTitle` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| libicucore.A.dylib | `_ubrk_preceding` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| libicucore.A.dylib | `_ubrk_setUText` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| libicucore.A.dylib | `_unorm2_hasBoundaryBefore` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| libicucore.A.dylib | `_unorm2_spanQuickCheckYes` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| libicucore.A.dylib | `_utext_openUChars` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
+| libicucore.A.dylib | `_utext_openUTF8` | 5 | bitwarden, monitorcontrol, mos, rustdesk |
 | libncurses.5.4.dylib | `_COLORS` | 5 | blender, deluge, inkscape, kitty |
 | libncurses.5.4.dylib | `_COLOR_PAIRS` | 5 | blender, deluge, inkscape, kitty |
 | libncurses.5.4.dylib | `_COLS` | 5 | blender, deluge, inkscape, kitty |
@@ -258,30 +286,40 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libncurses.5.4.dylib | `_wtimeout` | 5 | blender, deluge, inkscape, kitty |
 | libncurses.5.4.dylib | `_wtouchln` | 5 | blender, deluge, inkscape, kitty |
 | libncurses.5.4.dylib | `_wvline` | 5 | blender, deluge, inkscape, kitty |
-| libSystem.B.dylib | `_OSAtomicCompareAndSwap64Barrier` | 4 | deluge, godot, openscad, pixelorama |
-| libSystem.B.dylib | `_OSSpinLockLock` | 4 | alt-tab, kicad, webtorrent, xquartz |
-| libSystem.B.dylib | `_OSSpinLockUnlock` | 4 | alt-tab, kicad, webtorrent, xquartz |
-| libSystem.B.dylib | `___divdc3` | 4 | krita, libreoffice, shotcut, tic80 |
+| libSystem.B.dylib | `___divsc3` | 4 | krita, ollama-app, openclaw, shotcut |
+| libSystem.B.dylib | `___invert_d2` | 4 | monitorcontrol, mos, rustdesk, telegram |
+| libSystem.B.dylib | `___invert_d3` | 4 | monitorcontrol, mos, rustdesk, telegram |
+| libSystem.B.dylib | `___invert_d4` | 4 | monitorcontrol, mos, rustdesk, telegram |
+| libSystem.B.dylib | `___invert_f2` | 4 | monitorcontrol, mos, rustdesk, telegram |
 | libSystem.B.dylib | `_catanh` | 4 | blender, inkscape, kicad, tic80 |
 | libSystem.B.dylib | `_cexp` | 4 | blender, inkscape, lmms, tic80 |
+| libSystem.B.dylib | `_cpow` | 4 | basictex, blender, inkscape, tic80 |
 | libSystem.B.dylib | `_csqrtf` | 4 | blender, gimp, inkscape, kitty |
 | libSystem.B.dylib | `_csqrtl` | 4 | blender, gimp, inkscape, kitty |
-| libSystem.B.dylib | `_swap_fat_arch` | 4 | google-chrome, kicad, microsoft-edge, orbstack |
+| libSystem.B.dylib | `_fputws` | 4 | audacity, keka, kicad, prusaslicer |
+| libSystem.B.dylib | `_swap_fat_header` | 4 | google-chrome, microsoft-edge, orbstack, steam |
 | libSystem.B.dylib | `_tmpnam` | 4 | deluge, google-chrome, microsoft-edge, xquartz |
 | libSystem.B.dylib | `_wcsncasecmp` | 4 | krita, openrct2, shotcut, tic80 |
 | libcups.2.dylib | `_ppdOpenFd` | 4 | bruno, gimp, inkscape, pencil |
-| libedit.3.dylib | `_rl_basic_word_break_characters` | 4 | blender, kitty, krita, libreoffice |
 | libexpat.1.dylib | `_XML_GetCurrentLineNumber` | 4 | iina, inkscape, kicad, kitty |
-| libffi.dylib | `_ffi_call` | 4 | kicad, kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_prep_cif` | 4 | kicad, kitty, krita, libreoffice |
-| libicucore.A.dylib | `_u_strToLower` | 4 | bitwarden, monitorcontrol, mos, opencode-desktop |
-| libicucore.A.dylib | `_u_strToUpper` | 4 | bitwarden, monitorcontrol, mos, opencode-desktop |
-| libicucore.A.dylib | `_ubrk_close` | 4 | bitwarden, monitorcontrol, mos, opencode-desktop |
-| libicucore.A.dylib | `_ubrk_following` | 4 | bitwarden, monitorcontrol, mos, opencode-desktop |
-| libicucore.A.dylib | `_ubrk_open` | 4 | bitwarden, monitorcontrol, mos, opencode-desktop |
-| libicucore.A.dylib | `_ubrk_setText` | 4 | bitwarden, monitorcontrol, mos, opencode-desktop |
-| libicucore.A.dylib | `_unorm2_getNFCInstance` | 4 | bitwarden, monitorcontrol, mos, opencode-desktop |
-| libicucore.A.dylib | `_unorm2_normalize` | 4 | bitwarden, monitorcontrol, mos, opencode-desktop |
+| libffi.dylib | `_ffi_closure_alloc` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_closure_free` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_prep_cif_var` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_prep_closure_loc` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_double` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_float` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_longdouble` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_pointer` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_sint16` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_sint32` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_sint64` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_sint8` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_uint16` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_uint32` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_uint64` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_uint8` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libffi.dylib | `_ffi_type_void` | 4 | kitty, krita, libreoffice, pgadmin4 |
+| libicucore.A.dylib | `_u_errorName` | 4 | iterm2, openclaw, opencode-desktop, sequel-ace |
 | libncurses.5.4.dylib | `_ESCDELAY` | 4 | blender, inkscape, kitty, krita |
 | libncurses.5.4.dylib | `_TABSIZE` | 4 | blender, inkscape, kitty, krita |
 | libncurses.5.4.dylib | `_set_escdelay` | 4 | blender, inkscape, kitty, krita |
@@ -325,8 +363,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Tcl.framework | `_Tcl_NewStringObj` | 3 | deluge, hex-fiend, inkscape |
 | Tcl.framework | `_Tcl_NewWideIntObj` | 3 | deluge, hex-fiend, inkscape |
 | Tcl.framework | `_Tcl_SetObjResult` | 3 | deluge, hex-fiend, inkscape |
-| libSystem.B.dylib | `___divsc3` | 3 | krita, ollama-app, shotcut |
-| libSystem.B.dylib | `___invert_f4` | 3 | monitorcontrol, mos, raycast |
+| libSystem.B.dylib | `_NSAddressOfSymbol` | 3 | keka, kicad, pgadmin4 |
+| libSystem.B.dylib | `_NSLinkEditError` | 3 | keka, kicad, pgadmin4 |
+| libSystem.B.dylib | `_NSLinkModule` | 3 | keka, kicad, pgadmin4 |
+| libSystem.B.dylib | `_NSLookupSymbolInModule` | 3 | keka, kicad, pgadmin4 |
+| libSystem.B.dylib | `_NSUnLinkModule` | 3 | keka, kicad, pgadmin4 |
+| libSystem.B.dylib | `_NXGetArchInfoFromName` | 3 | openttd, steam, vlc |
+| libSystem.B.dylib | `_OSAtomicIncrement64Barrier` | 3 | cmux, hex-fiend, vorssaint |
 | libSystem.B.dylib | `_cacos` | 3 | blender, inkscape, tic80 |
 | libSystem.B.dylib | `_cacosh` | 3 | blender, inkscape, tic80 |
 | libSystem.B.dylib | `_casin` | 3 | blender, inkscape, tic80 |
@@ -337,22 +380,24 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_clnt_create` | 3 | blender, inkscape, kicad |
 | libSystem.B.dylib | `_clnt_spcreateerror` | 3 | blender, inkscape, kicad |
 | libSystem.B.dylib | `_clog` | 3 | blender, inkscape, tic80 |
-| libSystem.B.dylib | `_cpow` | 3 | blender, inkscape, tic80 |
 | libSystem.B.dylib | `_csin` | 3 | blender, inkscape, tic80 |
 | libSystem.B.dylib | `_csinh` | 3 | blender, inkscape, tic80 |
 | libSystem.B.dylib | `_ctan` | 3 | blender, inkscape, tic80 |
 | libSystem.B.dylib | `_ctanh` | 3 | blender, inkscape, tic80 |
+| libSystem.B.dylib | `_dbopen` | 3 | android-studio, cyberduck, temurin |
 | libSystem.B.dylib | `_duplocale` | 3 | gimp, krita, thunderbird |
 | libSystem.B.dylib | `_errc` | 3 | brave-browser, google-chrome, microsoft-edge |
 | libSystem.B.dylib | `_fmemopen` | 3 | gimp, libreoffice, shotcut |
 | libSystem.B.dylib | `_fmtcheck` | 3 | lmms, shotcut, zoom |
-| libSystem.B.dylib | `_fputws` | 3 | audacity, kicad, prusaslicer |
 | libSystem.B.dylib | `_funopen` | 3 | gimp, libreoffice, utm |
 | libSystem.B.dylib | `_fwprintf` | 3 | audacity, kicad, prusaslicer |
+| libSystem.B.dylib | `_getpass` | 3 | basictex, keka, sequel-ace |
 | libSystem.B.dylib | `_getwchar` | 3 | android-studio, insomnia, ollama-app |
-| libSystem.B.dylib | `_pthread_key_init_np` | 3 | bitwarden, monitorcontrol, mos |
+| libSystem.B.dylib | `_readpassphrase` | 3 | keka, tor-browser, utm |
 | libSystem.B.dylib | `_swab` | 3 | krita, shotcut, vlc |
-| libSystem.B.dylib | `_swap_fat_header` | 3 | google-chrome, microsoft-edge, orbstack |
+| libSystem.B.dylib | `_swap_load_command` | 3 | google-chrome, microsoft-edge, steam |
+| libSystem.B.dylib | `_swap_mach_header` | 3 | google-chrome, microsoft-edge, steam |
+| libSystem.B.dylib | `_swap_segment_command` | 3 | google-chrome, microsoft-edge, steam |
 | libSystem.B.dylib | `_swapcontext` | 3 | blender, kicad, prusaslicer |
 | libSystem.B.dylib | `_swscanf` | 3 | audacity, kicad, prusaslicer |
 | libSystem.B.dylib | `_vfprintf_l` | 3 | inkscape, kicad, prusaslicer |
@@ -378,35 +423,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libcups.2.dylib | `_httpConnectEncrypt` | 3 | bruno, pencil, webtorrent |
 | libcups.2.dylib | `_ppdErrorString` | 3 | bruno, pencil, webtorrent |
 | libcups.2.dylib | `_ppdLastError` | 3 | bruno, pencil, webtorrent |
+| libedit.3.dylib | `_readline` | 3 | deluge, hammerspoon, pgadmin4 |
+| libexpat.1.dylib | `_XML_Parse` | 3 | github, keka, kitty |
 | libexpat.1.dylib | `_XML_SetDoctypeDeclHandler` | 3 | iina, inkscape, kicad |
-| libffi.dylib | `_ffi_closure_alloc` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_closure_free` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_prep_cif_var` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_prep_closure_loc` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_double` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_float` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_longdouble` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_pointer` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_sint16` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_sint32` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_sint64` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_sint8` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_uint16` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_uint32` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_uint64` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_uint8` | 3 | kitty, krita, libreoffice |
-| libffi.dylib | `_ffi_type_void` | 3 | kitty, krita, libreoffice |
-| libicucore.A.dylib | `_u_charAge` | 3 | bitwarden, monitorcontrol, mos |
-| libicucore.A.dylib | `_u_charName` | 3 | bitwarden, monitorcontrol, mos |
-| libicucore.A.dylib | `_u_errorName` | 3 | iterm2, opencode-desktop, sequel-ace |
-| libicucore.A.dylib | `_u_getNumericValue` | 3 | bitwarden, monitorcontrol, mos |
-| libicucore.A.dylib | `_u_strToTitle` | 3 | bitwarden, monitorcontrol, mos |
-| libicucore.A.dylib | `_ubrk_preceding` | 3 | bitwarden, monitorcontrol, mos |
-| libicucore.A.dylib | `_ubrk_setUText` | 3 | bitwarden, monitorcontrol, mos |
-| libicucore.A.dylib | `_unorm2_hasBoundaryBefore` | 3 | bitwarden, monitorcontrol, mos |
-| libicucore.A.dylib | `_unorm2_spanQuickCheckYes` | 3 | bitwarden, monitorcontrol, mos |
-| libicucore.A.dylib | `_utext_openUChars` | 3 | bitwarden, monitorcontrol, mos |
-| libicucore.A.dylib | `_utext_openUTF8` | 3 | bitwarden, monitorcontrol, mos |
 | libncurses.5.4.dylib | `_BC` | 3 | inkscape, keepassxc, lmms |
 | libncurses.5.4.dylib | `_PC` | 3 | inkscape, keepassxc, lmms |
 | libncurses.5.4.dylib | `_UP` | 3 | inkscape, keepassxc, lmms |
@@ -470,21 +489,32 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Tk.framework | `_Tk_GetNumMainWindows` | 2 | deluge, inkscape |
 | Tk.framework | `_Tk_Init` | 2 | deluge, inkscape |
 | Tk.framework | `_Tk_MainWindow` | 2 | deluge, inkscape |
+| libIOReport.dylib | `_IOReportChannelGetChannelName` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportChannelGetGroup` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportChannelGetSubGroup` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportChannelGetUnitLabel` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportCopyChannelsInGroup` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportCreateSamples` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportCreateSamplesDelta` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportCreateSubscription` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportMergeChannels` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportStateGetCount` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportStateGetNameForIndex` | 2 | figma, stats |
+| libIOReport.dylib | `_IOReportStateGetResidency` | 2 | figma, stats |
+| libSystem.B.dylib | `_NSCreateObjectFileImageFromMemory` | 2 | kicad, pgadmin4 |
+| libSystem.B.dylib | `_NSDestroyObjectFileImage` | 2 | kicad, pgadmin4 |
 | libSystem.B.dylib | `_NSLibraryNameForModule` | 2 | inkscape, kicad |
 | libSystem.B.dylib | `_NSLookupAndBindSymbol` | 2 | inkscape, kicad |
+| libSystem.B.dylib | `_NSLookupSymbolInImage` | 2 | kicad, pgadmin4 |
 | libSystem.B.dylib | `_NSModuleForSymbol` | 2 | inkscape, kicad |
-| libSystem.B.dylib | `_NXGetArchInfoFromName` | 2 | openttd, vlc |
+| libSystem.B.dylib | `_NXFindBestFatArch` | 2 | kicad, pgadmin4 |
+| libSystem.B.dylib | `_OSAtomicAdd64Barrier` | 2 | cmux, vorssaint |
 | libSystem.B.dylib | `_OSAtomicAnd32` | 2 | audacity, lmms |
 | libSystem.B.dylib | `_OSAtomicDequeue` | 2 | hex-fiend, obs |
 | libSystem.B.dylib | `_OSAtomicEnqueue` | 2 | hex-fiend, obs |
-| libSystem.B.dylib | `_OSAtomicIncrement64Barrier` | 2 | cmux, hex-fiend |
 | libSystem.B.dylib | `_OSAtomicOr32` | 2 | audacity, lmms |
 | libSystem.B.dylib | `___divxc3` | 2 | krita, shotcut |
 | libSystem.B.dylib | `___floatuntixf` | 2 | hex-fiend, kicad |
-| libSystem.B.dylib | `___invert_d2` | 2 | monitorcontrol, mos |
-| libSystem.B.dylib | `___invert_d3` | 2 | monitorcontrol, mos |
-| libSystem.B.dylib | `___invert_d4` | 2 | monitorcontrol, mos |
-| libSystem.B.dylib | `___invert_f2` | 2 | monitorcontrol, mos |
 | libSystem.B.dylib | `___mulxc3` | 2 | krita, shotcut |
 | libSystem.B.dylib | `___truncsfhf2` | 2 | raycast, zoom |
 | libSystem.B.dylib | `__os_log_create` | 2 | monitorcontrol, wireshark-app |
@@ -526,25 +556,26 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_ctanhf` | 2 | blender, inkscape |
 | libSystem.B.dylib | `_ctanhl` | 2 | blender, inkscape |
 | libSystem.B.dylib | `_ctanl` | 2 | blender, inkscape |
-| libSystem.B.dylib | `_dbopen` | 2 | android-studio, cyberduck |
 | libSystem.B.dylib | `_devname` | 2 | utm, vnote |
 | libSystem.B.dylib | `_devname_r` | 2 | hex-fiend, vnote |
+| libSystem.B.dylib | `_filesec_free` | 2 | openclaw, utm |
+| libSystem.B.dylib | `_filesec_get_property` | 2 | openclaw, utm |
+| libSystem.B.dylib | `_filesec_init` | 2 | openclaw, utm |
 | libSystem.B.dylib | `_fstatfs64` | 2 | docker-desktop, orbstack |
+| libSystem.B.dylib | `_fstatx_np$INODE64` | 2 | openclaw, utm |
 | libSystem.B.dylib | `_getmntinfo_r_np$INODE64` | 2 | brave-browser, cmux |
 | libSystem.B.dylib | `_getsectbynamefromheader` | 2 | clipy, sequel-ace |
 | libSystem.B.dylib | `_inet_net_pton` | 2 | pencil, webtorrent |
+| libSystem.B.dylib | `_nl_langinfo_l` | 2 | kicad, pgadmin4 |
 | libSystem.B.dylib | `_open_memstream` | 2 | shotcut, utm |
 | libSystem.B.dylib | `_pthread_setconcurrency` | 2 | kicad, libreoffice |
-| libSystem.B.dylib | `_readpassphrase` | 2 | tor-browser, utm |
 | libSystem.B.dylib | `_regcomp_l` | 2 | iterm2, kicad |
 | libSystem.B.dylib | `_sbrk` | 2 | godot, pixelorama |
+| libSystem.B.dylib | `_statx_np$INODE64` | 2 | openclaw, utm |
 | libSystem.B.dylib | `_strunvis` | 2 | android-studio, gimp |
 | libSystem.B.dylib | `_strvis` | 2 | android-studio, gimp |
 | libSystem.B.dylib | `_swap_linkedit_data_command` | 2 | google-chrome, microsoft-edge |
-| libSystem.B.dylib | `_swap_load_command` | 2 | google-chrome, microsoft-edge |
-| libSystem.B.dylib | `_swap_mach_header` | 2 | google-chrome, microsoft-edge |
 | libSystem.B.dylib | `_swap_mach_header_64` | 2 | google-chrome, microsoft-edge |
-| libSystem.B.dylib | `_swap_segment_command` | 2 | google-chrome, microsoft-edge |
 | libSystem.B.dylib | `_swap_segment_command_64` | 2 | google-chrome, microsoft-edge |
 | libSystem.B.dylib | `_swap_symtab_command` | 2 | google-chrome, microsoft-edge |
 | libSystem.B.dylib | `_tempnam` | 2 | deluge, vlc |
@@ -554,6 +585,20 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_vsprintf_l` | 2 | kicad, prusaslicer |
 | libSystem.B.dylib | `_wcsnlen` | 2 | dolphin, zoom |
 | libSystem.B.dylib | `_wprintf` | 2 | audacity, kicad |
+| libX11.6.dylib | `_XChangeProperty` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XCreateSimpleWindow` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XDestroyWindow` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XFlush` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XFree` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XGetAtomName` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XGetWindowProperty` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XInternAtom` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XNextEvent` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XOpenDisplay` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XSelectInput` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XSendEvent` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XSetErrorHandler` | 2 | basictex, xquartz |
+| libX11.6.dylib | `_XSetIOErrorHandler` | 2 | basictex, xquartz |
 | libbz2.1.0.dylib | `_BZ2_bzWriteClose` | 2 | deluge, sequel-ace |
 | libbz2.1.0.dylib | `_BZ2_bzread` | 2 | inkscape, sequel-ace |
 | libbz2.1.0.dylib | `_BZ2_bzwrite` | 2 | inkscape, sequel-ace |
@@ -605,10 +650,163 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libcups.2.dylib | `_ppdMarkOption` | 2 | gimp, inkscape |
 | libcups.2.dylib | `_ppdNextCustomParam` | 2 | gimp, inkscape |
 | libcups.2.dylib | `_ppdPageSize` | 2 | gimp, inkscape |
-| libedit.3.dylib | `_readline` | 2 | deluge, hammerspoon |
-| libexpat.1.dylib | `_XML_Parse` | 2 | github, kitty |
+| libexpat.1.dylib | `_XML_ExpatVersion` | 2 | keka, kitty |
 | libexslt.0.dylib | `_exsltRegisterAll` | 2 | inkscape, libreoffice |
+| libicucore.A.dylib | `_u_charDirection` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_u_charType` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_u_getUnicodeVersion` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_u_getVersion` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_u_isUWhiteSpace` | 2 | openclaw, opencode-desktop |
 | libicucore.A.dylib | `_u_strlen` | 2 | iterm2, sequel-ace |
+| libicucore.A.dylib | `_u_toupper` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_u_versionToString` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ubrk_clone` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ubrk_countAvailable` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ubrk_current` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ubrk_first` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ubrk_getAvailable` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ubrk_getRuleStatus` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ubrk_next` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ubrk_previous` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_add` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_clear` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_clone` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_get` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_getAttribute` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_getCanonicalTimeZoneID` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_getDayOfWeekType` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_getHostTimeZone` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_getKeywordValuesForLocale` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_getLimit` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_getMillis` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_getTimeZoneDisplayName` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_getTimeZoneOffsetFromLocal` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_getTimeZoneTransitionDate` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_open` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_openTimeZoneIDEnumeration` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_openTimeZones` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_set` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_setGregorianChange` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_setMillis` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucal_setTimeZone` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucfpos_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucfpos_constrainCategory` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucfpos_constrainField` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucfpos_getCategory` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucfpos_getField` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucfpos_getIndexes` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucfpos_open` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucfpos_reset` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_countAvailable` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_getAttribute` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_getAvailable` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_getKeywordValues` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_getKeywordValuesForLocale` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_getRules` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_open` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_setAttribute` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_strcoll` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucol_strcollUTF8` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucurr_getName` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ucurr_openISOCurrencies` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udat_applyPattern` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udat_clone` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udat_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udat_format` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udat_formatForFields` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udat_getCalendar` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udat_open` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udat_toPattern` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udatpg_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udatpg_getBestPatternWithOptions` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udatpg_getFieldDisplayName` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udatpg_getSkeleton` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udatpg_open` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udtitvfmt_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udtitvfmt_closeResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udtitvfmt_formatCalendarToResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udtitvfmt_formatToResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udtitvfmt_open` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udtitvfmt_openResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_udtitvfmt_resultAsValue` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uenum_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uenum_count` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uenum_next` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uenum_unext` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ufieldpositer_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ufieldpositer_next` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ufieldpositer_open` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ufmtval_getString` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ufmtval_nextPosition` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uidna_nameToASCII` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uidna_nameToUnicode` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uldn_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uldn_keyValueDisplayName` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uldn_localeDisplayName` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uldn_openForContext` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uldn_regionDisplayName` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uldn_scriptDisplayName` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ulistfmt_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ulistfmt_closeResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ulistfmt_format` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ulistfmt_formatStringsToResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ulistfmt_openForType` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ulistfmt_openResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ulistfmt_resultAsValue` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_addLikelySubtags` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_canonicalize` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_countAvailable` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_forLanguageTag` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_getAvailable` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_getBaseName` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_getCharacterOrientation` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_getCountry` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_getDefault` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_getKeywordValue` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_getLanguage` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_getScript` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_minimizeSubtags` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_openKeywords` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_setDefault` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_setKeywordValue` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_toLanguageTag` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uloc_toUnicodeLocaleType` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unorm2_getInstance` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unorm2_getNFDInstance` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unorm2_getNFKCInstance` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unorm2_getNFKDInstance` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unorm2_isNormalized` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unum_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unum_open` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unum_setAttribute` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumf_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumf_closeResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumf_formatDecimal` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumf_formatDouble` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumf_openForSkeletonAndLocale` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumf_openResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumf_resultGetAllFieldPositions` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumf_resultToString` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumrf_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumrf_closeResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumrf_formatDecimalRange` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumrf_formatDoubleRange` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumrf_openForSkeletonWithCollapseAndIdentityFallback` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumrf_openResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumrf_resultAsValue` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumsys_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumsys_getName` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumsys_isAlgorithmic` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumsys_open` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumsys_openAvailableNames` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_unumsys_openByName` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uplrules_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uplrules_getKeywords` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uplrules_openForType` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uplrules_selectForRange` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_uplrules_selectFormatted` | 2 | openclaw, opencode-desktop |
 | libicucore.A.dylib | `_uregex_appendReplacement` | 2 | iterm2, sequel-ace |
 | libicucore.A.dylib | `_uregex_appendTail` | 2 | iterm2, sequel-ace |
 | libicucore.A.dylib | `_uregex_clone` | 2 | iterm2, sequel-ace |
@@ -621,7 +819,24 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libicucore.A.dylib | `_uregex_reset` | 2 | iterm2, sequel-ace |
 | libicucore.A.dylib | `_uregex_setText` | 2 | iterm2, sequel-ace |
 | libicucore.A.dylib | `_uregex_start` | 2 | iterm2, sequel-ace |
+| libicucore.A.dylib | `_ureldatefmt_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ureldatefmt_closeResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ureldatefmt_format` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ureldatefmt_formatNumeric` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ureldatefmt_formatNumericToResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ureldatefmt_formatToResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ureldatefmt_open` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ureldatefmt_openResult` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ureldatefmt_resultAsValue` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ures_close` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ures_getByKey` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ures_getStringByKey` | 2 | openclaw, opencode-desktop |
+| libicucore.A.dylib | `_ures_open` | 2 | openclaw, opencode-desktop |
 | libncurses.5.4.dylib | `_curses_version` | 2 | kitty, krita |
+| libsqlite3.dylib | `_sqlite3_snapshot_cmp` | 2 | clipy, openclaw |
+| libsqlite3.dylib | `_sqlite3_snapshot_free` | 2 | clipy, openclaw |
+| libsqlite3.dylib | `_sqlite3_snapshot_get` | 2 | clipy, openclaw |
+| libsqlite3.dylib | `_sqlite3_snapshot_open` | 2 | clipy, openclaw |
 | libxslt.1.dylib | `_xsltApplyStylesheet` | 2 | inkscape, libreoffice |
 | libxslt.1.dylib | `_xsltApplyStylesheetUser` | 2 | inkscape, libreoffice |
 | libxslt.1.dylib | `_xsltFreeSecurityPrefs` | 2 | inkscape, libreoffice |
@@ -662,29 +877,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Tcl.framework | `_Tcl_WrongNumArgs` | 1 | hex-fiend |
 | libAppleWM.7.dylib | `_XAppleWMQueryExtension` | 1 | xquartz |
 | libAppleWM.7.dylib | `_XAppleWMSelectInput` | 1 | xquartz |
-| libIOReport.dylib | `_IOReportChannelGetChannelName` | 1 | stats |
-| libIOReport.dylib | `_IOReportChannelGetGroup` | 1 | stats |
-| libIOReport.dylib | `_IOReportChannelGetSubGroup` | 1 | stats |
-| libIOReport.dylib | `_IOReportChannelGetUnitLabel` | 1 | stats |
-| libIOReport.dylib | `_IOReportCopyChannelsInGroup` | 1 | stats |
-| libIOReport.dylib | `_IOReportCreateSamples` | 1 | stats |
-| libIOReport.dylib | `_IOReportCreateSamplesDelta` | 1 | stats |
-| libIOReport.dylib | `_IOReportCreateSubscription` | 1 | stats |
-| libIOReport.dylib | `_IOReportMergeChannels` | 1 | stats |
-| libIOReport.dylib | `_IOReportStateGetCount` | 1 | stats |
-| libIOReport.dylib | `_IOReportStateGetNameForIndex` | 1 | stats |
-| libIOReport.dylib | `_IOReportStateGetResidency` | 1 | stats |
-| libSystem.B.dylib | `_NSAddressOfSymbol` | 1 | kicad |
-| libSystem.B.dylib | `_NSCreateObjectFileImageFromMemory` | 1 | kicad |
-| libSystem.B.dylib | `_NSDestroyObjectFileImage` | 1 | kicad |
-| libSystem.B.dylib | `_NSLinkEditError` | 1 | kicad |
-| libSystem.B.dylib | `_NSLinkModule` | 1 | kicad |
-| libSystem.B.dylib | `_NSLookupSymbolInImage` | 1 | kicad |
-| libSystem.B.dylib | `_NSLookupSymbolInModule` | 1 | kicad |
-| libSystem.B.dylib | `_NSUnLinkModule` | 1 | kicad |
-| libSystem.B.dylib | `_NXFindBestFatArch` | 1 | kicad |
+| libIOReport.dylib | `_IOReportCopyAllChannels` | 1 | figma |
+| libSystem.B.dylib | `_NSCreateObjectFileImageFromFile` | 1 | keka |
 | libSystem.B.dylib | `_OSAtomicAdd64` | 1 | hex-fiend |
-| libSystem.B.dylib | `_OSAtomicAdd64Barrier` | 1 | cmux |
 | libSystem.B.dylib | `_OSAtomicDecrement64` | 1 | hex-fiend |
 | libSystem.B.dylib | `_OSAtomicIncrement64` | 1 | hex-fiend |
 | libSystem.B.dylib | `_SANDBOX_CHECK_NO_REPORT` | 1 | visual-studio-code |
@@ -712,72 +907,186 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libSystem.B.dylib | `_chmodx_np` | 1 | utm |
 | libSystem.B.dylib | `_daemon` | 1 | utm |
 | libSystem.B.dylib | `_daemon$1050` | 1 | vlc |
+| libSystem.B.dylib | `_dirstat_np` | 1 | telegram |
 | libSystem.B.dylib | `_endhostent` | 1 | vlc |
 | libSystem.B.dylib | `_erand48` | 1 | vlc |
 | libSystem.B.dylib | `_ether_aton` | 1 | docker-desktop |
 | libSystem.B.dylib | `_fchmodx_np` | 1 | utm |
 | libSystem.B.dylib | `_ffsctl` | 1 | utm |
+| libSystem.B.dylib | `_fgetws` | 1 | keka |
 | libSystem.B.dylib | `_filesec_dup` | 1 | utm |
-| libSystem.B.dylib | `_filesec_free` | 1 | utm |
-| libSystem.B.dylib | `_filesec_get_property` | 1 | utm |
-| libSystem.B.dylib | `_filesec_init` | 1 | utm |
+| libSystem.B.dylib | `_filesec_query_property` | 1 | openclaw |
 | libSystem.B.dylib | `_filesec_set_property` | 1 | utm |
 | libSystem.B.dylib | `_freehostent` | 1 | deluge |
-| libSystem.B.dylib | `_fstatx_np$INODE64` | 1 | utm |
 | libSystem.B.dylib | `_ftime` | 1 | zoom |
+| libSystem.B.dylib | `_gcvt` | 1 | qlmarkdown |
 | libSystem.B.dylib | `_get_end` | 1 | inkscape |
 | libSystem.B.dylib | `_get_etext` | 1 | inkscape |
 | libSystem.B.dylib | `_getaudit_addr` | 1 | android-studio |
 | libSystem.B.dylib | `_getipnodebyaddr` | 1 | deluge |
 | libSystem.B.dylib | `_getipnodebyname` | 1 | deluge |
 | libSystem.B.dylib | `_getopt_long_only` | 1 | android-studio |
-| libSystem.B.dylib | `_getpass` | 1 | sequel-ace |
 | libSystem.B.dylib | `_getsectdatafromheader` | 1 | alt-tab |
 | libSystem.B.dylib | `_imaxabs` | 1 | android-studio |
+| libSystem.B.dylib | `_in6addr_linklocal_allnodes` | 1 | telegram |
+| libSystem.B.dylib | `_in6addr_linklocal_allrouters` | 1 | telegram |
+| libSystem.B.dylib | `_in6addr_nodelocal_allnodes` | 1 | telegram |
 | libSystem.B.dylib | `_jrand48` | 1 | vlc |
 | libSystem.B.dylib | `_kSBXProfilePureComputation` | 1 | vnote |
 | libSystem.B.dylib | `_lfind` | 1 | wireshark-app |
 | libSystem.B.dylib | `_lio_listio` | 1 | localsend |
+| libSystem.B.dylib | `_lrand48` | 1 | telegram |
 | libSystem.B.dylib | `_lstatx_np$INODE64` | 1 | utm |
 | libSystem.B.dylib | `_minherit` | 1 | tor-browser |
 | libSystem.B.dylib | `_mount` | 1 | orbstack |
-| libSystem.B.dylib | `_nl_langinfo_l` | 1 | kicad |
 | libSystem.B.dylib | `_nrand48` | 1 | vlc |
 | libSystem.B.dylib | `_os_trace_debug_enabled` | 1 | alt-tab |
 | libSystem.B.dylib | `_pthread_chdir_np` | 1 | 1password |
 | libSystem.B.dylib | `_pthread_cpu_number_np` | 1 | vnote |
 | libSystem.B.dylib | `_pthread_getconcurrency` | 1 | libreoffice |
 | libSystem.B.dylib | `_putwc` | 1 | inkscape |
+| libSystem.B.dylib | `_putwchar` | 1 | keka |
 | libSystem.B.dylib | `_sethostent` | 1 | vlc |
-| libSystem.B.dylib | `_statx_np$INODE64` | 1 | utm |
 | libSystem.B.dylib | `_strcasecmp_l` | 1 | blender |
 | libSystem.B.dylib | `_strfmon_l` | 1 | kicad |
 | libSystem.B.dylib | `_strptime_l` | 1 | orbstack |
+| libSystem.B.dylib | `_swap_dylib_command` | 1 | steam |
+| libSystem.B.dylib | `_swap_section` | 1 | steam |
 | libSystem.B.dylib | `_sys_errlist` | 1 | vlc |
 | libSystem.B.dylib | `_vswscanf` | 1 | kicad |
 | libSystem.B.dylib | `_wcstombs_l` | 1 | zoom |
-| libX11.6.dylib | `_XChangeProperty` | 1 | xquartz |
+| libX11.6.dylib | `_XAllocColor` | 1 | basictex |
+| libX11.6.dylib | `_XAllocColorCells` | 1 | basictex |
+| libX11.6.dylib | `_XBell` | 1 | basictex |
+| libX11.6.dylib | `_XChangeGC` | 1 | basictex |
+| libX11.6.dylib | `_XCheckMaskEvent` | 1 | basictex |
+| libX11.6.dylib | `_XCheckTypedEvent` | 1 | basictex |
+| libX11.6.dylib | `_XClearArea` | 1 | basictex |
+| libX11.6.dylib | `_XClearWindow` | 1 | basictex |
 | libX11.6.dylib | `_XCloseDisplay` | 1 | xquartz |
+| libX11.6.dylib | `_XConfigureWindow` | 1 | basictex |
 | libX11.6.dylib | `_XConvertSelection` | 1 | xquartz |
-| libX11.6.dylib | `_XCreateSimpleWindow` | 1 | xquartz |
-| libX11.6.dylib | `_XDestroyWindow` | 1 | xquartz |
-| libX11.6.dylib | `_XFlush` | 1 | xquartz |
-| libX11.6.dylib | `_XFree` | 1 | xquartz |
-| libX11.6.dylib | `_XGetAtomName` | 1 | xquartz |
+| libX11.6.dylib | `_XCopyArea` | 1 | basictex |
+| libX11.6.dylib | `_XCopyColormapAndFree` | 1 | basictex |
+| libX11.6.dylib | `_XCopyPlane` | 1 | basictex |
+| libX11.6.dylib | `_XCreateBitmapFromData` | 1 | basictex |
+| libX11.6.dylib | `_XCreateColormap` | 1 | basictex |
+| libX11.6.dylib | `_XCreateFontCursor` | 1 | basictex |
+| libX11.6.dylib | `_XCreateGC` | 1 | basictex |
+| libX11.6.dylib | `_XCreateImage` | 1 | basictex |
+| libX11.6.dylib | `_XCreatePixmap` | 1 | basictex |
+| libX11.6.dylib | `_XCreatePixmapCursor` | 1 | basictex |
+| libX11.6.dylib | `_XCreateRegion` | 1 | basictex |
+| libX11.6.dylib | `_XCreateWindow` | 1 | basictex |
+| libX11.6.dylib | `_XDefineCursor` | 1 | basictex |
+| libX11.6.dylib | `_XDeleteProperty` | 1 | basictex |
+| libX11.6.dylib | `_XDestroyRegion` | 1 | basictex |
+| libX11.6.dylib | `_XDisplayKeycodes` | 1 | basictex |
+| libX11.6.dylib | `_XDisplayString` | 1 | basictex |
+| libX11.6.dylib | `_XDrawImageString` | 1 | basictex |
+| libX11.6.dylib | `_XDrawLine` | 1 | basictex |
+| libX11.6.dylib | `_XDrawLines` | 1 | basictex |
+| libX11.6.dylib | `_XDrawPoint` | 1 | basictex |
+| libX11.6.dylib | `_XDrawRectangle` | 1 | basictex |
+| libX11.6.dylib | `_XDrawSegments` | 1 | basictex |
+| libX11.6.dylib | `_XFillPolygon` | 1 | basictex |
+| libX11.6.dylib | `_XFillRectangle` | 1 | basictex |
+| libX11.6.dylib | `_XFillRectangles` | 1 | basictex |
+| libX11.6.dylib | `_XFreeColors` | 1 | basictex |
+| libX11.6.dylib | `_XFreeGC` | 1 | basictex |
+| libX11.6.dylib | `_XFreePixmap` | 1 | basictex |
+| libX11.6.dylib | `_XGeometry` | 1 | basictex |
+| libX11.6.dylib | `_XGetDefault` | 1 | basictex |
+| libX11.6.dylib | `_XGetErrorDatabaseText` | 1 | basictex |
+| libX11.6.dylib | `_XGetErrorText` | 1 | basictex |
+| libX11.6.dylib | `_XGetIconSizes` | 1 | basictex |
+| libX11.6.dylib | `_XGetInputFocus` | 1 | basictex |
 | libX11.6.dylib | `_XGetSelectionOwner` | 1 | xquartz |
-| libX11.6.dylib | `_XGetWindowProperty` | 1 | xquartz |
-| libX11.6.dylib | `_XInternAtom` | 1 | xquartz |
-| libX11.6.dylib | `_XNextEvent` | 1 | xquartz |
-| libX11.6.dylib | `_XOpenDisplay` | 1 | xquartz |
+| libX11.6.dylib | `_XGetVisualInfo` | 1 | basictex |
+| libX11.6.dylib | `_XGetWindowAttributes` | 1 | basictex |
+| libX11.6.dylib | `_XInstallColormap` | 1 | basictex |
+| libX11.6.dylib | `_XInternAtoms` | 1 | basictex |
+| libX11.6.dylib | `_XIntersectRegion` | 1 | basictex |
+| libX11.6.dylib | `_XKeysymToString` | 1 | basictex |
+| libX11.6.dylib | `_XListDepths` | 1 | basictex |
+| libX11.6.dylib | `_XListPixmapFormats` | 1 | basictex |
+| libX11.6.dylib | `_XLoadQueryFont` | 1 | basictex |
+| libX11.6.dylib | `_XLookupColor` | 1 | basictex |
+| libX11.6.dylib | `_XLookupString` | 1 | basictex |
+| libX11.6.dylib | `_XMapRaised` | 1 | basictex |
+| libX11.6.dylib | `_XMapWindow` | 1 | basictex |
+| libX11.6.dylib | `_XMaxRequestSize` | 1 | basictex |
+| libX11.6.dylib | `_XMoveWindow` | 1 | basictex |
+| libX11.6.dylib | `_XParseColor` | 1 | basictex |
+| libX11.6.dylib | `_XParseGeometry` | 1 | basictex |
 | libX11.6.dylib | `_XPending` | 1 | xquartz |
-| libX11.6.dylib | `_XSelectInput` | 1 | xquartz |
-| libX11.6.dylib | `_XSendEvent` | 1 | xquartz |
-| libX11.6.dylib | `_XSetErrorHandler` | 1 | xquartz |
-| libX11.6.dylib | `_XSetIOErrorHandler` | 1 | xquartz |
+| libX11.6.dylib | `_XPutImage` | 1 | basictex |
+| libX11.6.dylib | `_XQueryBestSize` | 1 | basictex |
+| libX11.6.dylib | `_XQueryColor` | 1 | basictex |
+| libX11.6.dylib | `_XQueryColors` | 1 | basictex |
+| libX11.6.dylib | `_XQueryPointer` | 1 | basictex |
+| libX11.6.dylib | `_XRaiseWindow` | 1 | basictex |
+| libX11.6.dylib | `_XResizeWindow` | 1 | basictex |
+| libX11.6.dylib | `_XScreenNumberOfScreen` | 1 | basictex |
+| libX11.6.dylib | `_XSetClipMask` | 1 | basictex |
+| libX11.6.dylib | `_XSetClipRectangles` | 1 | basictex |
+| libX11.6.dylib | `_XSetForeground` | 1 | basictex |
+| libX11.6.dylib | `_XSetRegion` | 1 | basictex |
 | libX11.6.dylib | `_XSetSelectionOwner` | 1 | xquartz |
+| libX11.6.dylib | `_XSetStandardProperties` | 1 | basictex |
+| libX11.6.dylib | `_XSetWMHints` | 1 | basictex |
+| libX11.6.dylib | `_XSetWMProtocols` | 1 | basictex |
+| libX11.6.dylib | `_XSetWindowBackground` | 1 | basictex |
+| libX11.6.dylib | `_XSetWindowBorderWidth` | 1 | basictex |
+| libX11.6.dylib | `_XStoreColor` | 1 | basictex |
+| libX11.6.dylib | `_XSubtractRegion` | 1 | basictex |
+| libX11.6.dylib | `_XSync` | 1 | basictex |
+| libX11.6.dylib | `_XTextWidth` | 1 | basictex |
+| libX11.6.dylib | `_XTranslateCoordinates` | 1 | basictex |
+| libX11.6.dylib | `_XUnionRectWithRegion` | 1 | basictex |
+| libX11.6.dylib | `_XUnionRegion` | 1 | basictex |
+| libX11.6.dylib | `_XUnmapWindow` | 1 | basictex |
+| libX11.6.dylib | `_XVisualIDFromVisual` | 1 | basictex |
+| libX11.6.dylib | `_XWarpPointer` | 1 | basictex |
+| libX11.6.dylib | `_XWithdrawWindow` | 1 | basictex |
+| libX11.6.dylib | `_XmbTextListToTextProperty` | 1 | basictex |
+| libX11.6.dylib | `_XrmCombineFileDatabase` | 1 | basictex |
+| libX11.6.dylib | `_XrmGetDatabase` | 1 | basictex |
+| libX11.6.dylib | `_XrmMergeDatabases` | 1 | basictex |
+| libX11.6.dylib | `_XrmParseCommand` | 1 | basictex |
+| libX11.6.dylib | `_XrmPutFileDatabase` | 1 | basictex |
+| libX11.6.dylib | `_XrmPutResource` | 1 | basictex |
+| libX11.6.dylib | `_XrmPutStringResource` | 1 | basictex |
 | libX11.6.dylib | `_Xutf8TextListToTextProperty` | 1 | xquartz |
 | libXau.6.dylib | `_XauDisposeAuth` | 1 | xquartz |
 | libXau.6.dylib | `_XauReadAuth` | 1 | xquartz |
+| libXaw.7.dylib | `_FMT8BIT` | 1 | basictex |
+| libXaw.7.dylib | `_XawFmt8Bit` | 1 | basictex |
+| libXaw.7.dylib | `_XawInitializeWidgetSet` | 1 | basictex |
+| libXaw.7.dylib | `_XawListChange` | 1 | basictex |
+| libXaw.7.dylib | `_XawListHighlight` | 1 | basictex |
+| libXaw.7.dylib | `_XawListShowCurrent` | 1 | basictex |
+| libXaw.7.dylib | `_XawScrollbarSetThumb` | 1 | basictex |
+| libXaw.7.dylib | `_XawTextDisplayCaret` | 1 | basictex |
+| libXaw.7.dylib | `_XawTextGetInsertionPoint` | 1 | basictex |
+| libXaw.7.dylib | `_XawTextReplace` | 1 | basictex |
+| libXaw.7.dylib | `_XawTextSetInsertionPoint` | 1 | basictex |
+| libXaw.7.dylib | `_XawToggleGetCurrent` | 1 | basictex |
+| libXaw.7.dylib | `_XawToggleSetCurrent` | 1 | basictex |
+| libXaw.7.dylib | `_XawViewportSetCoordinates` | 1 | basictex |
+| libXaw.7.dylib | `_asciiTextWidgetClass` | 1 | basictex |
+| libXaw.7.dylib | `_commandWidgetClass` | 1 | basictex |
+| libXaw.7.dylib | `_formWidgetClass` | 1 | basictex |
+| libXaw.7.dylib | `_labelWidgetClass` | 1 | basictex |
+| libXaw.7.dylib | `_listWidgetClass` | 1 | basictex |
+| libXaw.7.dylib | `_menuButtonWidgetClass` | 1 | basictex |
+| libXaw.7.dylib | `_panedWidgetClass` | 1 | basictex |
+| libXaw.7.dylib | `_scrollbarWidgetClass` | 1 | basictex |
+| libXaw.7.dylib | `_simpleMenuWidgetClass` | 1 | basictex |
+| libXaw.7.dylib | `_smeBSBObjectClass` | 1 | basictex |
+| libXaw.7.dylib | `_smeLineObjectClass` | 1 | basictex |
+| libXaw.7.dylib | `_toggleClassRec` | 1 | basictex |
+| libXaw.7.dylib | `_viewportWidgetClass` | 1 | basictex |
 | libXdmcp.6.dylib | `_XdmcpARRAY8Equal` | 1 | xquartz |
 | libXdmcp.6.dylib | `_XdmcpAllocARRAY8` | 1 | xquartz |
 | libXdmcp.6.dylib | `_XdmcpCompareKeys` | 1 | xquartz |
@@ -814,6 +1123,11 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libXfont2.2.dylib | `_xfont2_parse_glyph_caching_mode` | 1 | xquartz |
 | libXfont2.2.dylib | `_xfont2_query_glyph_extents` | 1 | xquartz |
 | libXfont2.2.dylib | `_xfont2_query_text_extents` | 1 | xquartz |
+| libXmu.6.dylib | `_XmuConvertStandardSelection` | 1 | basictex |
+| libXmu.6.dylib | `_XmuInternAtom` | 1 | basictex |
+| libXmu.6.dylib | `__XA_COMPOUND_TEXT` | 1 | basictex |
+| libXmu.6.dylib | `__XA_TEXT` | 1 | basictex |
+| libXmu.6.dylib | `__XEditResCheckMessages` | 1 | basictex |
 | libXplugin.1.dylib | `_xp_attach_gl_context` | 1 | xquartz |
 | libXplugin.1.dylib | `_xp_configure_surface` | 1 | xquartz |
 | libXplugin.1.dylib | `_xp_configure_window` | 1 | xquartz |
@@ -849,6 +1163,88 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libXplugin.1.dylib | `_xp_unlock_window` | 1 | xquartz |
 | libXplugin.1.dylib | `_xp_update_gl_context` | 1 | xquartz |
 | libXplugin.1.dylib | `_xp_window_bring_all_to_front` | 1 | xquartz |
+| libXpm.4.dylib | `_XpmCreatePixmapFromData` | 1 | basictex |
+| libXpm.4.dylib | `_XpmFreeAttributes` | 1 | basictex |
+| libXt.6.dylib | `_XtAddActions` | 1 | basictex |
+| libXt.6.dylib | `_XtAddCallback` | 1 | basictex |
+| libXt.6.dylib | `_XtAddEventHandler` | 1 | basictex |
+| libXt.6.dylib | `_XtAppAddActions` | 1 | basictex |
+| libXt.6.dylib | `_XtAppAddWorkProc` | 1 | basictex |
+| libXt.6.dylib | `_XtAppCreateShell` | 1 | basictex |
+| libXt.6.dylib | `_XtAppError` | 1 | basictex |
+| libXt.6.dylib | `_XtAppNextEvent` | 1 | basictex |
+| libXt.6.dylib | `_XtCallActionProc` | 1 | basictex |
+| libXt.6.dylib | `_XtCallCallbacks` | 1 | basictex |
+| libXt.6.dylib | `_XtConvertAndStore` | 1 | basictex |
+| libXt.6.dylib | `_XtCreateManagedWidget` | 1 | basictex |
+| libXt.6.dylib | `_XtCreatePopupShell` | 1 | basictex |
+| libXt.6.dylib | `_XtCvtStringToPixel` | 1 | basictex |
+| libXt.6.dylib | `_XtDatabase` | 1 | basictex |
+| libXt.6.dylib | `_XtDestroyWidget` | 1 | basictex |
+| libXt.6.dylib | `_XtDisownSelection` | 1 | basictex |
+| libXt.6.dylib | `_XtDispatchEvent` | 1 | basictex |
+| libXt.6.dylib | `_XtDisplay` | 1 | basictex |
+| libXt.6.dylib | `_XtDisplayOfObject` | 1 | basictex |
+| libXt.6.dylib | `_XtDisplayStringConversionWarning` | 1 | basictex |
+| libXt.6.dylib | `_XtFree` | 1 | basictex |
+| libXt.6.dylib | `_XtGetApplicationResources` | 1 | basictex |
+| libXt.6.dylib | `_XtGetGC` | 1 | basictex |
+| libXt.6.dylib | `_XtGetSelectionRequest` | 1 | basictex |
+| libXt.6.dylib | `_XtGetValues` | 1 | basictex |
+| libXt.6.dylib | `_XtInitialize` | 1 | basictex |
+| libXt.6.dylib | `_XtInstallAccelerators` | 1 | basictex |
+| libXt.6.dylib | `_XtInstallAllAccelerators` | 1 | basictex |
+| libXt.6.dylib | `_XtIsManaged` | 1 | basictex |
+| libXt.6.dylib | `_XtIsRealized` | 1 | basictex |
+| libXt.6.dylib | `_XtIsSensitive` | 1 | basictex |
+| libXt.6.dylib | `_XtLastTimestampProcessed` | 1 | basictex |
+| libXt.6.dylib | `_XtMalloc` | 1 | basictex |
+| libXt.6.dylib | `_XtManageChild` | 1 | basictex |
+| libXt.6.dylib | `_XtName` | 1 | basictex |
+| libXt.6.dylib | `_XtNameToWidget` | 1 | basictex |
+| libXt.6.dylib | `_XtOverrideTranslations` | 1 | basictex |
+| libXt.6.dylib | `_XtOwnSelection` | 1 | basictex |
+| libXt.6.dylib | `_XtParent` | 1 | basictex |
+| libXt.6.dylib | `_XtParseAcceleratorTable` | 1 | basictex |
+| libXt.6.dylib | `_XtParseTranslationTable` | 1 | basictex |
+| libXt.6.dylib | `_XtPending` | 1 | basictex |
+| libXt.6.dylib | `_XtPopdown` | 1 | basictex |
+| libXt.6.dylib | `_XtPopup` | 1 | basictex |
+| libXt.6.dylib | `_XtPopupSpringLoaded` | 1 | basictex |
+| libXt.6.dylib | `_XtQueryGeometry` | 1 | basictex |
+| libXt.6.dylib | `_XtRealizeWidget` | 1 | basictex |
+| libXt.6.dylib | `_XtRealloc` | 1 | basictex |
+| libXt.6.dylib | `_XtRemoveEventHandler` | 1 | basictex |
+| libXt.6.dylib | `_XtScreen` | 1 | basictex |
+| libXt.6.dylib | `_XtScreenDatabase` | 1 | basictex |
+| libXt.6.dylib | `_XtSetKeyboardFocus` | 1 | basictex |
+| libXt.6.dylib | `_XtSetLanguageProc` | 1 | basictex |
+| libXt.6.dylib | `_XtSetMappedWhenManaged` | 1 | basictex |
+| libXt.6.dylib | `_XtSetSensitive` | 1 | basictex |
+| libXt.6.dylib | `_XtSetTypeConverter` | 1 | basictex |
+| libXt.6.dylib | `_XtSetValues` | 1 | basictex |
+| libXt.6.dylib | `_XtShellStrings` | 1 | basictex |
+| libXt.6.dylib | `_XtStrings` | 1 | basictex |
+| libXt.6.dylib | `_XtUnmanageChild` | 1 | basictex |
+| libXt.6.dylib | `_XtVaAppCreateShell` | 1 | basictex |
+| libXt.6.dylib | `_XtVaCreateManagedWidget` | 1 | basictex |
+| libXt.6.dylib | `_XtVaCreatePopupShell` | 1 | basictex |
+| libXt.6.dylib | `_XtVaCreateWidget` | 1 | basictex |
+| libXt.6.dylib | `_XtVaGetValues` | 1 | basictex |
+| libXt.6.dylib | `_XtVaSetValues` | 1 | basictex |
+| libXt.6.dylib | `_XtWidgetToApplicationContext` | 1 | basictex |
+| libXt.6.dylib | `_XtWindow` | 1 | basictex |
+| libXt.6.dylib | `_XtWindowOfObject` | 1 | basictex |
+| libXt.6.dylib | `_XtWindowToWidget` | 1 | basictex |
+| libXt.6.dylib | `__XtComputeLateBindings` | 1 | basictex |
+| libXt.6.dylib | `__XtInherit` | 1 | basictex |
+| libXt.6.dylib | `__XtInheritTranslations` | 1 | basictex |
+| libXt.6.dylib | `__XtWindowedAncestor` | 1 | basictex |
+| libXt.6.dylib | `_colorConvertArgs` | 1 | basictex |
+| libXt.6.dylib | `_compositeWidgetClass` | 1 | basictex |
+| libXt.6.dylib | `_transientShellWidgetClass` | 1 | basictex |
+| libXt.6.dylib | `_widgetClass` | 1 | basictex |
+| libXt.6.dylib | `_widgetClassRec` | 1 | basictex |
 | libaprutil-1.0.dylib | `_apr_base64_decode` | 1 | iterm2 |
 | libaprutil-1.0.dylib | `_apr_base64_decode_len` | 1 | iterm2 |
 | libaprutil-1.0.dylib | `_apr_base64_encode_binary` | 1 | iterm2 |
@@ -889,7 +1285,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libcupsimage.2.dylib | `_cupsRasterOpen` | 1 | inkscape |
 | libcupsimage.2.dylib | `_cupsRasterWriteHeader2` | 1 | inkscape |
 | libcupsimage.2.dylib | `_cupsRasterWritePixels` | 1 | inkscape |
-| libexpat.1.dylib | `_XML_ExpatVersion` | 1 | kitty |
+| libedit.3.dylib | `_current_history` | 1 | pgadmin4 |
+| libedit.3.dylib | `_history_set_pos` | 1 | pgadmin4 |
+| libedit.3.dylib | `_next_history` | 1 | pgadmin4 |
+| libedit.3.dylib | `_previous_history` | 1 | pgadmin4 |
+| libedit.3.dylib | `_rl_completer_quote_characters` | 1 | pgadmin4 |
+| libedit.3.dylib | `_rl_filename_completion_function` | 1 | pgadmin4 |
+| libedit.3.dylib | `_stifle_history` | 1 | pgadmin4 |
 | libexpat.1.dylib | `_XML_ExpatVersionInfo` | 1 | kitty |
 | libexpat.1.dylib | `_XML_ExternalEntityParserCreate` | 1 | kitty |
 | libexpat.1.dylib | `_XML_FreeContentModel` | 1 | kitty |
@@ -940,173 +1342,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libffi.dylib | `_ffi_type_complex_double` | 1 | kitty |
 | libffi.dylib | `_ffi_type_complex_float` | 1 | kitty |
 | libffi.dylib | `_ffi_type_complex_longdouble` | 1 | kitty |
-| libicucore.A.dylib | `_u_charDirection` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_u_charType` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_u_getUnicodeVersion` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_u_getVersion` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_u_isUWhiteSpace` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_u_toupper` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_u_versionToString` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ubrk_clone` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ubrk_countAvailable` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ubrk_current` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ubrk_first` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ubrk_getAvailable` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ubrk_getRuleStatus` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ubrk_next` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ubrk_previous` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_add` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_clear` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_clone` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_get` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_getAttribute` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_getCanonicalTimeZoneID` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_getDayOfWeekType` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_getHostTimeZone` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_getKeywordValuesForLocale` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_getLimit` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_getMillis` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_getTimeZoneDisplayName` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_getTimeZoneOffsetFromLocal` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_getTimeZoneTransitionDate` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_open` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_openTimeZoneIDEnumeration` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_openTimeZones` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_set` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_setGregorianChange` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_setMillis` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucal_setTimeZone` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucfpos_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucfpos_constrainCategory` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucfpos_constrainField` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucfpos_getCategory` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucfpos_getField` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucfpos_getIndexes` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucfpos_open` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucfpos_reset` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_countAvailable` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_getAttribute` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_getAvailable` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_getKeywordValues` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_getKeywordValuesForLocale` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_getRules` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_open` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_setAttribute` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_strcoll` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucol_strcollUTF8` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucurr_getName` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ucurr_openISOCurrencies` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udat_applyPattern` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udat_clone` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udat_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udat_format` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udat_formatForFields` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udat_getCalendar` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udat_open` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udat_toPattern` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udatpg_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udatpg_getBestPatternWithOptions` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udatpg_getFieldDisplayName` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udatpg_getSkeleton` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udatpg_open` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udtitvfmt_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udtitvfmt_closeResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udtitvfmt_formatCalendarToResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udtitvfmt_formatToResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udtitvfmt_open` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udtitvfmt_openResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_udtitvfmt_resultAsValue` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uenum_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uenum_count` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uenum_next` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uenum_unext` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ufieldpositer_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ufieldpositer_next` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ufieldpositer_open` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ufmtval_getString` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ufmtval_nextPosition` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uidna_nameToASCII` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uidna_nameToUnicode` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uldn_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uldn_keyValueDisplayName` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uldn_localeDisplayName` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uldn_openForContext` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uldn_regionDisplayName` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uldn_scriptDisplayName` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ulistfmt_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ulistfmt_closeResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ulistfmt_format` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ulistfmt_formatStringsToResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ulistfmt_openForType` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ulistfmt_openResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ulistfmt_resultAsValue` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_addLikelySubtags` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_canonicalize` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_countAvailable` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_forLanguageTag` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_getAvailable` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_getBaseName` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_getCharacterOrientation` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_getCountry` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_getDefault` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_getKeywordValue` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_getLanguage` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_getScript` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_minimizeSubtags` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_openKeywords` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_setDefault` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_setKeywordValue` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_toLanguageTag` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uloc_toUnicodeLocaleType` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unorm2_getInstance` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unorm2_getNFDInstance` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unorm2_getNFKCInstance` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unorm2_getNFKDInstance` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unorm2_isNormalized` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unum_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unum_open` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unum_setAttribute` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumf_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumf_closeResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumf_formatDecimal` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumf_formatDouble` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumf_openForSkeletonAndLocale` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumf_openResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumf_resultGetAllFieldPositions` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumf_resultToString` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumrf_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumrf_closeResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumrf_formatDecimalRange` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumrf_formatDoubleRange` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumrf_openForSkeletonWithCollapseAndIdentityFallback` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumrf_openResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumrf_resultAsValue` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumsys_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumsys_getName` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumsys_isAlgorithmic` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumsys_open` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumsys_openAvailableNames` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_unumsys_openByName` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uplrules_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uplrules_getKeywords` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uplrules_openForType` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uplrules_selectForRange` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_uplrules_selectFormatted` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ureldatefmt_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ureldatefmt_closeResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ureldatefmt_format` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ureldatefmt_formatNumeric` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ureldatefmt_formatNumericToResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ureldatefmt_formatToResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ureldatefmt_open` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ureldatefmt_openResult` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ureldatefmt_resultAsValue` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ures_close` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ures_getByKey` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ures_getStringByKey` | 1 | opencode-desktop |
-| libicucore.A.dylib | `_ures_open` | 1 | opencode-desktop |
 | libncurses.5.4.dylib | `_assume_default_colors` | 1 | kitty |
 | libncurses.5.4.dylib | `_boolnames` | 1 | iterm2 |
 | libncurses.5.4.dylib | `_cur_term` | 1 | iterm2 |
@@ -1260,10 +1495,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libsqlite3.dylib | `_sqlite3_mutex_enter` | 1 | whatsapp |
 | libsqlite3.dylib | `_sqlite3_mutex_free` | 1 | whatsapp |
 | libsqlite3.dylib | `_sqlite3_mutex_leave` | 1 | whatsapp |
-| libsqlite3.dylib | `_sqlite3_snapshot_cmp` | 1 | clipy |
-| libsqlite3.dylib | `_sqlite3_snapshot_free` | 1 | clipy |
-| libsqlite3.dylib | `_sqlite3_snapshot_get` | 1 | clipy |
-| libsqlite3.dylib | `_sqlite3_snapshot_open` | 1 | clipy |
 | libstdc++.6.dylib | `__ZNSs4_Rep10_M_destroyERKSaIcE` | 1 | deluge |
 | libstdc++.6.dylib | `__ZNSs4_Rep20_S_empty_rep_storageE` | 1 | deluge |
 | libstdc++.6.dylib | `__ZNSs6assignEPKcm` | 1 | deluge |
