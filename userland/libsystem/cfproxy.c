@@ -133,7 +133,9 @@ id cx_proxies_from_pac_result(const char *res) {
     return a;
 }
 /* proxy escolhido para uma URL, no formato do mnet ("http://h:p", "socks5://h:p"); NULL = direto.
-   settings NULL = o do sistema. PAC ainda não avaliado: cai nas entradas manuais seguintes. */
+   settings NULL = o do sistema. PAC (URL ou script) é avaliado (cfpac.c); se falhar, valem as entradas manuais. */
+char *cx_pac_result(const char *script, const char *url, char **err);
+char *cx_pac_result_url(const char *pac_url, const char *url, char **err);
 char *cx_proxy_for(id settings, const char *url) {
     id sys = 0;
     if (!settings) settings = sys = CFNetworkCopySystemProxySettings();
@@ -144,7 +146,24 @@ char *cx_proxy_for(id settings, const char *url) {
     int n = mnet_proxy_for_url(&c, url, list, 8);
     char *out = 0;
     for (int i = 0; i < n && !out; i++) {
+        if (list[i].type == MNET_PX_PAC_URL || list[i].type == MNET_PX_PAC_JS) {
+            char *err = 0;
+            char *r = list[i].type == MNET_PX_PAC_JS ? cx_pac_result(c.pac_js, url, &err) : cx_pac_result_url(list[i].host, url, &err);
+            free(err);
+            if (!r) continue;                                    /* PAC falhou: segue para as entradas manuais */
+            mnet_proxy_t pl[8];
+            int pn = mnet_proxy_parse_pac_result(r, pl, 8);
+            free(r);
+            if (pn && pl[0].type == MNET_PX_NONE) break;          /* o PAC mandou ir direto */
+            for (int k = 0; k < pn && !out; k++) {
+                if (pl[k].type != MNET_PX_HTTP && pl[k].type != MNET_PX_HTTPS && pl[k].type != MNET_PX_SOCKS) continue;
+                list[i] = pl[k];
+                goto take;
+            }
+            continue;
+        }
         if (list[i].type == MNET_PX_NONE) break;
+take:;
         if (list[i].type != MNET_PX_HTTP && list[i].type != MNET_PX_HTTPS && list[i].type != MNET_PX_SOCKS) continue;
         mnet_buf_t b = {0};
         mnet_buf_puts(&b, list[i].type == MNET_PX_SOCKS ? "socks5://" : "http://");

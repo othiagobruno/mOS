@@ -316,27 +316,6 @@ rng_t CFURLGetByteRangeForComponent(id url, long comp, unsigned char *range_incl
 
 id CFDictionaryCreateMutable(void *alloc, long cap, const void *k, const void *v);
 void CFDictionarySetValue(id d, id k, id val);
-id CFNetworkCopyProxiesForAutoConfigurationScript(id script, id url) {
-    const char *s = C(script);
-    const char *p = strstr(s, "PROXY ");
-    id arr = CFArrayCreateMutable(0, 0, 0);
-    id d = CFDictionaryCreateMutable(0, 0, 0, 0);
-    (void)url;
-    if (p) {
-        char host[128]; int port = 0, i = 0;
-        p += 6;
-        while (*p && *p != ':' && *p != ';' && *p != ' ' && i < 120) host[i++] = *p++;
-        host[i] = 0;
-        if (*p == ':') port = atoi(p + 1);
-        CFDictionarySetValue(d, cx_str("kCFProxyTypeKey"), cx_str("kCFProxyTypeHTTP"));
-        { id h = S(host); CFDictionarySetValue(d, cx_str("kCFProxyHostNameKey"), h); objc_release(h); }
-        { long long pv = port; id n = CFNumberCreate(0, 4, &pv); if (n) { CFDictionarySetValue(d, cx_str("kCFProxyPortNumberKey"), n); objc_release(n); } }
-    } else {
-        CFDictionarySetValue(d, cx_str("kCFProxyTypeKey"), cx_str("kCFProxyTypeNone"));
-    }
-    CFArrayAppendValue(arr, d);
-    objc_release(d);
-    return arr;
-}
+/* CFNetworkCopyProxiesForAutoConfigurationScript: cfpac.c (avaliação real com o JavaScriptCore) */
 
 void *CFFileSecurityCopyAccessControlList(void *s) { (void)s; return 0; }
