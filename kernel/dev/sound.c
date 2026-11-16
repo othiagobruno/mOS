@@ -660,6 +660,7 @@ static void mix_block(i16 *dst, int n, bool late) {
 void (*audio_tap)(const i16 *stereo, u32 frames);
 bool audio_route_bluetooth;   /* true: a saída interna fica em silêncio enquanto o fone toca */
 
+void (*audio_usb_sink)(const i16 *stereo, u32 frames);
 /* mistura final do sistema para o ScreenCaptureKit (capturesAudio): anel de 1 s, ligado no primeiro leitor. Cada leitor
  * guarda a própria posição (quadros desde que o anel nasceu), então vários apps leem sem roubar áudio um do outro. */
 #define SYS_N 65536u
@@ -700,6 +701,10 @@ void snd_render(i16 *dst, u32 frames) {
         int n = frames > BLOCK ? BLOCK : (int)frames;
         mix_block(dst, n, false);
         sys_push(dst, n);
+        if (audio_usb_sink) {   /* alto-falante/headset USB (kernel/dev/uac.c): a saída interna fica em silêncio */
+            audio_usb_sink(dst, (u32)n);
+            if (!audio_tap) { memset(dst, 0, sizeof(i16) * 2 * n); dst += n * 2; frames -= n; continue; }
+        }
         if (audio_tap) {
             audio_tap(dst, (u32)n);
             if (audio_route_bluetooth) memset(dst, 0, sizeof(i16) * 2 * n);
@@ -758,7 +763,7 @@ bool audio_init(void) {
     return true;
 }
 
-bool audio_available(void) { return backend != BK_NONE || audio_tap; }
+bool audio_available(void) { return backend != BK_NONE || audio_tap || audio_usb_sink; }
 const char *audio_device_name(void) { return devname; }
 
 bool audio_input_available(void) { return cap_on; }
@@ -790,8 +795,8 @@ u32 audio_capture_read(i16 *dst, u32 frames) {
 void audio_poll(void) {
     if (backend == BK_HDA) hda_service();
     else if (backend == BK_AC97) ac97_service();
-    else if (audio_tap) {
-        /* sem placa de som: o relógio do mixer passa a ser o timer, só para alimentar o fone */
+    else if (audio_tap || audio_usb_sink) {
+        /* sem placa de som: o relógio do mixer passa a ser o timer, só para alimentar o fone ou o áudio USB */
         static u64 last;
         static i16 buf[BLOCK * 2];
         u64 now = timer_ticks();

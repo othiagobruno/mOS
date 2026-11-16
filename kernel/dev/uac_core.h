@@ -28,4 +28,8 @@ uint32_t uac_pick_rate(const uac_alt_info *a);
 /* conversão: PCM inteiro little-endian (subslot 2/3/4 bytes, 1..8 canais) -> 48 kHz estéreo i16, reamostragem linear */
 typedef struct { uint32_t in_rate; uint64_t pos; int16_t last_l, last_r; int have_last; } uac_rs;
 void uac_rs_init(uac_rs *r, uint32_t rate);
+/* saída: estéreo i16 -> PCM do dispositivo (1..8 canais, subslot 2/3/4; canais além do 2º em silêncio, mono = média) */
+uint32_t uac_pack(const int16_t *stereo, uint32_t frames, int channels, int subslot, uint8_t *dst);
+/* quadros do próximo intervalo de serviço: taxa x duração, com o resto acumulado em *acc (em Hz·µs) */
+uint32_t uac_frames_for(uint32_t rate, uint32_t interval_us, uint64_t *acc);
 uint32_t uac_convert(uac_rs *r, const uint8_t *src, uint32_t bytes, int channels, int subslot, int16_t *out, uint32_t cap);
