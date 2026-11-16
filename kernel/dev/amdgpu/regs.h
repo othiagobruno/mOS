@@ -148,6 +148,17 @@
 #define R_VM_CTX0_PT_END_LO           MMHUB_REG(0x076B)
 #define R_VM_CTX0_PT_END_HI           MMHUB_REG(0x076C)
 #define R_VM_INV_ENG17_SEM            MMHUB_REG(0x06E2)
+/* contextos 1..15 (VMIDs dos processos): CNTL a cada dword, endereços a cada 2 dwords a partir do contexto 0 */
+#define R_VM_CTX_CNTL(n)              (R_VM_CONTEXT0_CNTL + 4u * (n))
+#define R_VM_CTX_PT_BASE_LO(n)        (R_VM_CTX0_PT_BASE_LO + 8u * (n))
+#define R_VM_CTX_PT_BASE_HI(n)        (R_VM_CTX0_PT_BASE_HI + 8u * (n))
+#define R_VM_CTX_PT_START_LO(n)       (R_VM_CTX0_PT_START_LO + 8u * (n))
+#define R_VM_CTX_PT_START_HI(n)       (R_VM_CTX0_PT_START_HI + 8u * (n))
+#define R_VM_CTX_PT_END_LO(n)         (R_VM_CTX0_PT_END_LO + 8u * (n))
+#define R_VM_CTX_PT_END_HI(n)         (R_VM_CTX0_PT_END_HI + 8u * (n))
+#define   CTX_DEPTH_4LEVEL            (3u << 1)      /* PDB2 -> PDB1 -> PDB0 -> PTB, blocos de 512 entradas */
+#define   CTX_FAULT_DEFAULTS          0x00555400u    /* range, dummy, PDE0, valid, read, write, exec: página de rascunho */
+#define   AMD_VM_MAX_PFN              (1ull << 36)   /* 48 bits de VA */
 #define R_VM_INV_ENG17_REQ            MMHUB_REG(0x06F4)
 #define R_VM_INV_ENG17_ACK            MMHUB_REG(0x0706)
 #define   L1_TLB_ENABLE               0x1u
@@ -177,6 +188,7 @@
 #define   CTX0_BLOCK_MASK             0x78u
 #define   CTX0_RETRY_FAULT            0x80u
 #define   INV_REQ_VMID0               0x1u
+#define   INV_REQ_ALL_LEVELS          0x7C0000u      /* L2 PTEs, PDE0/1/2 e L1 */
 #define   INV_REQ_L2_PTES             0x40000u
 #define   INV_REQ_L2_PDE0             0x80000u
 #define   INV_REQ_L2_PDE1             0x100000u
@@ -191,6 +203,8 @@
 #define AMD_PTE_READ      (1ull << 5)
 #define AMD_PTE_WRITE     (1ull << 6)
 #define AMD_PTE_MTYPE_UC  (3ull << 57)
+#define AMD_PTE_MTYPE_MASK (3ull << 57)                /* 0 = NC: o padrão do amdgpu para APU */
+#define AMD_PDE_VALID     (1ull << 0)
 #define AMD_PTE_ADDR_MASK 0x0000FFFFFFFFF000ull
 
 /* SDMA 4.1 */

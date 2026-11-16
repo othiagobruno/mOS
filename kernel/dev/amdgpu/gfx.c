@@ -357,12 +357,12 @@ static bool gwait(amdgpu_t *a, u32 seq) {
 
 bool amdgpu_gfx_wait(amdgpu_t *a, u32 seq) { return a && a->gfx_ok && gwait(a, seq); }
 
-static u32 gsubmit(amdgpu_t *a, u64 ib_mc, u32 ndw) {
+static u32 gsubmit(amdgpu_t *a, u64 ib_mc, u32 ndw, u32 vmid) {
     if (!ndw || ndw > 0xFFFFFu || (ib_mc & 3) || !gring_room(a, 4 + 8)) return 0;
     gput(a, PM4_TYPE3(PM4_INDIRECT_BUFFER, 2));
     gput(a, (u32)ib_mc);
     gput(a, (u32)(ib_mc >> 32) & 0xFFFFu);
-    gput(a, ndw);                                 /* VMID 0 */
+    gput(a, ndw | vmid << 24);
     u32 seq = gfence(a);
     gcommit(a);
     a->gfx_ibs++;
@@ -371,7 +371,12 @@ static u32 gsubmit(amdgpu_t *a, u64 ib_mc, u32 ndw) {
 
 u32 amdgpu_gfx_submit(amdgpu_t *a, u64 ib_mc, u32 ndw) {
     if (!a || !a->gfx_ok) return 0;
-    return gsubmit(a, ib_mc, ndw);
+    return gsubmit(a, ib_mc, ndw, 0);
+}
+
+u32 amdgpu_gfx_submit_vm(amdgpu_t *a, amd_vm_t *vm, u64 ib_va, u32 ndw) {
+    if (!a || !a->gfx_ok || !vm || !vm->vmid) return 0;
+    return gsubmit(a, ib_va, ndw, vm->vmid);
 }
 
 static bool cp_resume(amdgpu_t *a) {
@@ -446,7 +451,7 @@ static bool gfx_tests(amdgpu_t *a, u64 ib_phys) {
     ib[3] = (u32)(dst >> 32);
     ib[4] = 0xDEADBEEFu;
     WMB();
-    u32 seq = gsubmit(a, amdgpu_vram_to_mc(a, ib_phys), 5);
+    u32 seq = gsubmit(a, amdgpu_vram_to_mc(a, ib_phys), 5, 0);
     if (!seq || !gwait(a, seq) || a->gwb_cpu[8] != 0xDEADBEEFu) {
         kprintf("amdgpu: o IB de teste não rodou (writeback 0x%x, fence %u de %u)\n", a->gwb_cpu[8], a->gwb_cpu[4], seq);
         return false;
