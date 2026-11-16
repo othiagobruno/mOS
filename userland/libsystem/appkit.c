@@ -1515,8 +1515,13 @@ static void geo_log(int *n, const char *what, id w, NSRect in, NSRect out) {
         cx_fdprintf(2, "[ca] %s: %dx%d -> %dx%d (janela %d)\n", what, (int)in.s.w, (int)in.s.h, (int)out.s.w, (int)out.s.h, ws(w)->gid);
     }
 }
+static char k_pos_set, k_level;
+static void w_push_frame(id self, int resize);
+static void w_pull_frame(id self);
+static i64 w_level(id self, SEL c);
 static NSRect w_frame(id self, SEL c) {
     (void)c;
+    w_pull_frame(self);
     NSRect r = ws(self)->frame;
     r.s.h += w_title_h(self);
     static int n; geo_log(&n, "frame", self, ws(self)->frame, r);
@@ -1666,6 +1671,9 @@ static void w_order_in(id self) {
         long id_ = SYS4(GUI_WIN_CREATE, cx_cstr(s->title), (long)s->frame.s.w, (long)s->frame.s.h, fl);
         if (id_ <= 0) { cx_fdprintf(2, "AppKit[mOS]: não foi possível criar a janela (%ld)\n", id_); return; }
         s->gid = (int)id_;
+        if (objc_getAssociatedObject(self, &k_pos_set)) w_push_frame(self, 0);   /* o app pediu um lugar */
+        if (w_level(self, 0)) SYS3(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_LEVEL, w_level(self, 0));
+        if (cx_responds(self->isa, sel_registerName("_cxPushLimits"))) MSG0(void, self, "_cxPushLimits");
         w_sync_owner(self);   /* filha registrada (addChildWindow:) antes de ter janela no window server */
         { nsarr_t *aw = (nsarr_t *)app_windows;
           for (u64 i = 0; aw && i < aw->n; i++) if (ws(aw->items[i])->parent == self) w_sync_owner(aw->items[i]); }
@@ -1739,8 +1747,75 @@ static void w_order_out(id self, SEL c, id sender) {
     (void)c; (void)sender;
     ((void (*)(id, SEL, i64, i64))objc_msgSend)(self, sel_registerName("orderWindow:relativeTo:"), 0, 0);   /* NSWindowOut */
 }
-static void w_center(id self, SEL c) { (void)self; (void)c; }
-static void w_set_min(id self, SEL c, NSSize z) { (void)self; (void)c; (void)z; }
+/* ---- geometria da janela no window server (GUI_FOCUS_FRAME/GETFRAME, PR da Camila). O Cocoa conta y de baixo para
+ * cima a partir da base da tela principal; o window server conta do topo da tela (com a barra de menus) e usa o canto
+ * superior esquerdo do conteúdo. s->frame é o retângulo do conteúdo em coordenadas do Cocoa. */
+static double screen_full_h(void) { gui_wininfo_t i = {1440, 876, 1, 1}; SYS1(GUI_SCREEN, &i); return i.h + 24; }
+static void w_push_frame(id self, int resize) {
+    wstate_t *s = ws(self);
+    if (s->gid <= 0) return;
+    gui_frame_t f = {(int)s->frame.o.x, (int)(screen_full_h() - (s->frame.o.y + s->frame.s.h)),
+                     resize ? (int)s->frame.s.w : 0, resize ? (int)s->frame.s.h : 0};
+    SYS3(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_FRAME, &f);
+}
+/* lê a posição atual (o usuário pode ter arrastado a janela) */
+static void w_pull_frame(id self) {
+    wstate_t *s = ws(self);
+    if (s->gid <= 0) return;
+    gui_frame_t f;
+    if (SYS3(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_GETFRAME, &f) != 0 || f.w <= 0 || f.h <= 0) return;
+    s->frame.o.x = f.x;
+    s->frame.o.y = screen_full_h() - f.y - f.h;
+}
+/* posição pedida pelo app antes de a janela existir: aplicada logo depois do GUI_WIN_CREATE (que centraliza) */
+static void mark_pos(id self) { objc_setAssociatedObject(self, &k_pos_set, (id)cx_num_i(1), 1); }
+static void w_center(id self, SEL c) {
+    (void)c;
+    wstate_t *s = ws(self);
+    gui_wininfo_t i = {1440, 876, 1, 1};
+    SYS1(GUI_SCREEN, &i);
+    double fh = s->frame.s.h + w_title_h(self);
+    s->frame.o.x = (i.w - s->frame.s.w) / 2;
+    /* como no Cocoa: um pouco acima do meio (a sobra de cima é metade da de baixo) */
+    double top = (i.h - fh) / 3 + 24;
+    s->frame.o.y = screen_full_h() - top - fh;
+    mark_pos(self);
+    w_push_frame(self, 0);
+}
+static void w_set_frame_origin(id self, SEL c, NSPoint p) {
+    (void)c;
+    wstate_t *s = ws(self);
+    s->frame.o = p;                      /* a origem da moldura = a do conteúdo (a barra de título fica em cima) */
+    mark_pos(self);
+    w_push_frame(self, 0);
+}
+static void w_set_frame_top_left(id self, SEL c, NSPoint p) {
+    (void)c;
+    wstate_t *s = ws(self);
+    s->frame.o.x = p.x;
+    s->frame.o.y = p.y - s->frame.s.h - w_title_h(self);
+    mark_pos(self);
+    w_push_frame(self, 0);
+}
+static NSPoint w_cascade(id self, SEL c, NSPoint p) {
+    (void)c;
+    wstate_t *s = ws(self);
+    if (p.x == 0 && p.y == 0) { w_pull_frame(self); return (NSPoint){s->frame.o.x + 22, s->frame.o.y + s->frame.s.h + w_title_h(self) - 22}; }
+    w_set_frame_top_left(self, 0, p);
+    return (NSPoint){p.x + 22, p.y - 22};
+}
+static void w_set_level(id self, SEL c, i64 level) {
+    (void)c;
+    objc_setAssociatedObject(self, &k_level, (id)cx_num_i(level), 1);
+    if (ws(self)->gid > 0) SYS3(GUI_WIN_FOCUS, ws(self)->gid, GUI_FOCUS_LEVEL, level);
+}
+static i64 w_level(id self, SEL c) { (void)c; id v = objc_getAssociatedObject(self, &k_level); return v ? MSG0(i64, v, "longLongValue") : 0; }
+/* limites do conteúdo para o redimensionamento pelo usuário (appkit_sheets.c guarda min/max e chama aqui) */
+void cx_window_push_limits(id self, double min_w, double min_h, double max_w, double max_h) {
+    if (ws(self)->gid <= 0) return;
+    gui_limits_t l = {(int)min_w, (int)min_h, max_w >= 1e6 ? 0 : (int)max_w, max_h >= 1e6 ? 0 : (int)max_h};
+    SYS3(GUI_WIN_FOCUS, ws(self)->gid, GUI_FOCUS_LIMITS, &l);
+}
 static void w_set_frame(id self, SEL c, NSRect r, BOOL disp) {
     (void)c; (void)disp;
     wstate_t *s = ws(self);
@@ -1748,12 +1823,20 @@ static void w_set_frame(id self, SEL c, NSRect r, BOOL disp) {
     r.s.h -= w_title_h(self);
     static int n; geo_log(&n, "setFrame:display:", self, in, r);
     s->frame.o = r.o;
+    mark_pos(self);
     if (s->gid <= 0) {
         BOOL changed = s->frame.s.w != r.s.w || s->frame.s.h != r.s.h;
         s->frame = r;
         v_set_frame(s->content, 0, r_make(0, 0, r.s.w, r.s.h));
         if (changed) w_did_resize(self);
+        return;
     }
+    /* janela na tela: o window server move e redimensiona; a mudança de tamanho volta como GEV_RESIZE */
+    BOOL resize = s->frame.s.w != r.s.w || s->frame.s.h != r.s.h;
+    NSSize keep = s->frame.s;
+    s->frame.s = r.s;
+    w_push_frame(self, resize);
+    if (resize) s->frame.s = keep;                /* o tamanho só muda quando o GEV_RESIZE chegar */
 }
 static void w_set_content_size(id self, SEL c, NSSize z) {
     (void)c;
@@ -1764,7 +1847,15 @@ static void w_set_content_size(id self, SEL c, NSSize z) {
         s->frame.s = z;
         v_set_frame(s->content, 0, r_make(0, 0, z.w, z.h));
         if (changed) w_did_resize(self);
+        return;
     }
+    /* na tela: o alto da janela fica no lugar (como no Cocoa) */
+    w_pull_frame(self);
+    NSRect old = s->frame;
+    s->frame.o.y = old.o.y + old.s.h - z.h;
+    s->frame.s = z;
+    w_push_frame(self, 1);
+    s->frame.s = old.s;
 }
 static void close_window(id self, BOOL from_wm) {
     wstate_t *s = ws(self);
@@ -5778,15 +5869,15 @@ void cx_appkit_init(void) {
     M(NSWindow, "orderOut:", w_order_out); M(NSWindow, "center", w_center); M(NSWindow, "close", w_close); M(NSWindow, "performClose:", w_perform_close);
     M(NSWindow, "setBackgroundColor:", w_set_bg); M(NSWindow, "backgroundColor", w_bg); M(NSWindow, "isVisible", w_visible);
     M(NSWindow, "setReleasedWhenClosed:", w_set_released); M(NSWindow, "firstResponder", w_first); M(NSWindow, "makeFirstResponder:", w_make_first);
-    M(NSWindow, "setMinSize:", w_set_min); M(NSWindow, "setMaxSize:", w_set_min); M(NSWindow, "setContentMinSize:", w_set_min);
+     
     M(NSWindow, "setFrame:display:", w_set_frame); M(NSWindow, "setContentSize:", w_set_content_size); M(NSWindow, "display", w_display);
     M(NSWindow, "setFrameAutosaveName:", noop1_m); M(NSWindow, "setTitlebarAppearsTransparent:", noop1_m); M(NSWindow, "setTitleVisibility:", noop1_m);
-    M(NSWindow, "setLevel:", noop1_m); M(NSWindow, "setOpaque:", noop1_m); M(NSWindow, "setHasShadow:", noop1_m); M(NSWindow, "setMovableByWindowBackground:", noop1_m);
+    M(NSWindow, "setLevel:", w_set_level); M(NSWindow, "level", w_level); M(NSWindow, "setOpaque:", noop1_m); M(NSWindow, "setHasShadow:", noop1_m); M(NSWindow, "setMovableByWindowBackground:", noop1_m);
     M(NSWindow, "setAcceptsMouseMovedEvents:", noop1_m); M(NSWindow, "setInitialFirstResponder:", noop1_m);
     M(NSWindow, "setStyleMask:", w_set_style_mask); M(NSWindow, "styleMask", w_style_mask);
     M(NSWindow, "contentLayoutRect", w_content_layout_rect); M(NSWindow, "performWindowDragWithEvent:", w_perform_drag);
-    M(NSWindow, "setCollectionBehavior:", noop1_m); M(NSWindow, "setAppearance:", noop1_m); M(NSWindow, "setFrameOrigin:", noop1_m);
-    M(NSWindow, "setFrameTopLeftPoint:", noop1_m); M(NSWindow, "windowNumber", w_number);
+    M(NSWindow, "setCollectionBehavior:", noop1_m); M(NSWindow, "setAppearance:", noop1_m); M(NSWindow, "setFrameOrigin:", w_set_frame_origin);
+    M(NSWindow, "setFrameTopLeftPoint:", w_set_frame_top_left); M(NSWindow, "cascadeTopLeftFromPoint:", w_cascade); M(NSWindow, "windowNumber", w_number);
     M(NSWindow, "nextEventMatchingMask:", w_next_event); M(NSWindow, "nextEventMatchingMask:untilDate:inMode:dequeue:", w_next_event_full);
     M(NSWindow, "postEvent:atStart:", ap_post_event); M(NSWindow, "discardEventsMatchingMask:beforeEvent:", ap_discard_events);
     M(NSWindow, "sendEvent:", w_send_event); M(NSWindow, "currentEvent", ap_current_event); M(NSWindow, "setTabbingMode:", noop1_m);
