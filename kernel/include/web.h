@@ -55,6 +55,7 @@ struct style;
 struct box;
 typedef struct ctrl ctrl_t;
 typedef struct img img_t;
+typedef struct frame frame_t;
 
 typedef struct node {
     u8 type;
@@ -71,6 +72,7 @@ typedef struct node {
     ctrl_t *ctrl;          /* estado de controle de formulário */
     img_t *img;            /* imagem associada (<img>) */
     int ay;                /* posição y (para âncoras), -1 se desconhecida */
+    frame_t *frame;        /* <iframe>: documento filho (kernel/web/frame.c) */
     int index;             /* ordem no documento */
 } node_t;
 
@@ -241,6 +243,11 @@ typedef struct doc {
     u64 last_layout;
     u32 layout_ms;          /* duração do último layout */
     int node_count;
+    /* iframes (kernel/web/frame.c) */
+    frame_t *frames;
+    struct js_page *frames_js;  /* página JS deste documento, dona dos iframes */
+    int frame_depth;            /* 0 = documento principal */
+    bool transparent;           /* iframe: sem fundo declarado, a tela fica transparente */
 } doc_t;
 
 doc_t *doc_parse(const char *html, usize len, const char *url);
@@ -252,6 +259,23 @@ void   doc_paint(doc_t *d, ui_t *u, rect_t view, int scroll, node_t *hover_link)
 frag_t *doc_hit(doc_t *d, int x, int y, box_t **owner);  /* coordenadas do documento */
 box_t *doc_hit_atom(doc_t *d, int x, int y);
 int    doc_anchor_y(doc_t *d, const char *name);
+
+/* ============================================================ iframes (kernel/web/frame.c) */
+enum { FRAME_CLICK, FRAME_WHEEL };
+bool    frames_pump(doc_t *d);                  /* carrega, roda o JS e faz o layout dos iframes; true se mudou */
+bool    frames_busy(doc_t *d);
+int     frames_next_ms(doc_t *d);
+void    frames_free(doc_t *d);                  /* doc_free chama */
+void    frames_set_owner_js(doc_t *d, struct js_page *js);
+frame_t *frame_at(doc_t *d, int x, int y, int *ox, int *oy);   /* coords do documento; ox/oy: canto do conteúdo */
+bool    frame_input(frame_t *f, int kind, int x, int y, int wheel, char *out_url, int cap);
+void    frame_paint(frame_t *f, ui_t *u, rect_t r);
+void    frame_navigate(node_t *iframe, const char *url);
+struct js_page *frame_page(node_t *iframe);
+doc_t  *frame_document(frame_t *f);
+const char *frame_url(frame_t *f);
+bool    doc_pump_images(doc_t *d);              /* imagens http/data:/file: de um documento */
+u8     *frame_data_url(const char *url, usize *len, char *mime, int mcap);
 
 /* chamado pela pintura para controles de formulário (implementado em horizonte.c) */
 void web_paint_control(ui_t *u, doc_t *d, ctrl_t *c, rect_t r);

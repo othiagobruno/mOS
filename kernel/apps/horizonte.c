@@ -548,6 +548,7 @@ static void commit(tab_t *t, doc_t *d, const char *url, bool record, int scroll)
     else if (t->nhist && t->hpos >= 0) hent_set(&t->hist[t->hpos], url);
     /* JavaScript: executa os scripts da página (os externos continuam no tick) */
     if (d && !t->about && js_enabled) t->js = js_page_new(d, url, 0, 0);
+    if (d) frames_set_owner_js(d, t->js);
     if (!t->title[0]) {
         char host[128];
         if (url_host(url, host, sizeof host)) strncpy(t->title, host, sizeof t->title - 1);
@@ -1514,6 +1515,7 @@ static void tick(app_t *a) {
                 if (!t->req) changed = true;
             }
             if (i == b->cur && pump_images(t)) changed = true;
+            if (i == b->cur && t->doc && frames_pump(t->doc)) changed = true;
             if (css_pump(t)) changed = true;
             if (t->js) {
                 if (js_page_tick(t->js)) changed = true;

@@ -258,6 +258,14 @@ static void replaced_size(lay_t *L, box_t *b, int cw, int *w, int *h) {
     int iw = 0, ih = 0;
     img_t *im = n->img;
     if (im && im->state == IMG_OK && im->surf) { iw = (int)(im->surf->w * z); ih = (int)(im->surf->h * z); }
+    if (n->tag == T_IFRAME) {
+        /* tamanho padrão do HTML: 300x150 */
+        int W = st->width.u == U_PX || (st->width.u == U_PCT && cw > 0) ? rl(st->width, cw) : (int)(300 * z);
+        int H = st->height.u == U_PX ? rl(st->height, 0) : (int)(150 * z);
+        *w = MAX(W, 0);
+        *h = MAX(H, 0);
+        return;
+    }
     bool hw = st->width.u == U_PX || (st->width.u == U_PCT && cw > 0), hh = st->height.u == U_PX;
     int W = hw ? rl(st->width, cw) : 0, H = hh ? rl(st->height, 0) : 0;
     if (hw && hh) { *w = W; *h = H; }
@@ -434,7 +442,7 @@ static void inline_node(lay_t *L, node_t *c, lst_t *ls) {
     int d = st->display;
     if (c->tag == T_BR) { item_t *it = push_item(L); if (it) { it->kind = IT_BREAK; it->st = st; it->node = c; } return; }
     if (c->tag == T_WBR) { item_t *it = push_item(L); if (it) { it->kind = IT_SPACE; it->w = 0; it->st = st; } return; }
-    if (c->tag == T_IMG || c->tag == T_SVG || is_ctrl_tag(c->tag) || d == D_INLINE_BLOCK || d == D_INLINE_TABLE) {
+    if (c->tag == T_IMG || c->tag == T_SVG || c->tag == T_IFRAME || is_ctrl_tag(c->tag) || d == D_INLINE_BLOCK || d == D_INLINE_TABLE) {
         box_t *a = gen_atom(L, c);
         if (!a) return;
         push_anchor(L, c);
@@ -484,13 +492,13 @@ static void gen_children(lay_t *L, box_t *cont, node_t *n, lst_t *ls) {
         }
         if (c->type != N_ELEM || !c->st || c->st->display == D_NONE) continue;
         int d = c->st->display;
-        if (c->tag != T_IMG && c->tag != T_SVG && !is_ctrl_tag(c->tag) && is_block_level(d)) {
+        if (c->tag != T_IMG && c->tag != T_SVG && c->tag != T_IFRAME && !is_ctrl_tag(c->tag) && is_block_level(d)) {
             lines_end(L, ls);
             box_t *b = gen_block(L, c);
             if (b) addc(cont, b);
             continue;
         }
-        if ((c->tag == T_IMG || c->tag == T_SVG || is_ctrl_tag(c->tag)) && is_block_level(d)) {
+        if ((c->tag == T_IMG || c->tag == T_SVG || c->tag == T_IFRAME || is_ctrl_tag(c->tag)) && is_block_level(d)) {
             lines_end(L, ls);
             box_t *b = gen_atom(L, c);
             if (b) addc(cont, b);
@@ -643,6 +651,7 @@ static void svg_sprites(node_t *root, node_t *self, sbuf_t *out) {
 }
 
 static box_t *gen_atom(lay_t *L, node_t *n) {
+    if (n->tag == T_IFRAME) return nbox(L, B_REPLACED, n, n->st);
     if (n->tag == T_SVG) {
         box_t *b = nbox(L, B_REPLACED, n, n->st);
         if (!b) return NULL;
@@ -1407,7 +1416,7 @@ void doc_layout(doc_t *d, int width, int vh, float zoom) {
         u32 bg = 0;
         if (d->html->st && C_A(d->html->st->bg)) bg = d->html->st->bg;
         else if (d->body->st && C_A(d->body->st->bg)) bg = d->body->st->bg;
-        d->canvas_bg = C_A(bg) ? (bg | 0xFF000000u) : RGB(255, 255, 255);
+        d->canvas_bg = C_A(bg) ? (bg | 0xFF000000u) : d->transparent ? 0 : RGB(255, 255, 255);
     }
     arena_free(&d->larena);
     d->rootbox = NULL;
@@ -1528,6 +1537,10 @@ static void paint_replaced(pctx_t *P, box_t *b) {
         return;
     }
     if (w <= 0 || h <= 0) return;
+    if (n->tag == T_IFRAME) {
+        if (n->frame && !b->st->hidden) frame_paint(n->frame, P->u, rect_make(x, y, w, h));
+        return;
+    }
     img_t *im = n->img;
     if (im && im->state == IMG_OK && im->surf) {
         surface_t *src = im->surf;
@@ -1639,6 +1652,25 @@ void doc_paint(doc_t *d, ui_t *u, rect_t view, int scroll, node_t *hover) {
 }
 
 /* ============================================================ teste de clique */
+/* caixa substituída (imagem, svg, iframe, controle) sob o ponto, inclusive dentro de inline-blocks */
+static box_t *atom_in(box_t *b, int x, int y) {
+    if (b->kind == B_REPLACED) return x >= b->x && x < b->x + b->w && y >= b->y && y < b->y + b->h ? b : NULL;
+    if (y < b->y - 2 || y > b->ob + 2) return NULL;
+    if (b->kind == B_LINES) {
+        for (int i = 0; i < b->nfrags; i++) {
+            frag_t *f = &b->frags[i];
+            if (!f->atom) continue;
+            box_t *r = atom_in(f->atom, x, y);
+            if (r) return r;
+        }
+        return NULL;
+    }
+    for (box_t *c = b->first; c; c = c->next) { box_t *r = atom_in(c, x, y); if (r) return r; }
+    return NULL;
+}
+
+box_t *doc_hit_atom(doc_t *d, int x, int y) { return d && d->rootbox ? atom_in(d->rootbox, x, y) : NULL; }
+
 static frag_t *hit_box(box_t *b, int x, int y, box_t **owner) {
     if (y < b->y - 2 || y > b->ob + 2) return NULL;
     if (b->kind == B_LINES) {

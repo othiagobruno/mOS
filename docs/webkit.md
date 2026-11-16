@@ -67,7 +67,8 @@ nos binários públicos. A tabela e o que foi implementado por causa dela estão
 
 - **Diálogos.** `alert`/`confirm`/`prompt` não param o script esperando o app. O delegate recebe a mensagem;
   `confirm` devolve `false` e `prompt` devolve `null` à página, como o WebKit sem `WKUIDelegate`.
-- **O que o motor ainda não suporta.** Iframes, mídia (`<video>`/`<audio>`), WebGL/canvas 3D e AVIF,
+- **O que o motor ainda não suporta.** Formulários dentro de iframes (os iframes em si carregam, pintam, rodam JS e
+  trocam `postMessage`: [web-electron-plano.md](web-electron-plano.md)), mídia (`<video>`/`<audio>`), WebGL/canvas 3D e AVIF,
   impressão e PDF ficam de fora. Os completions de PDF e impressão devolvem erro.
   WebP decodifica (`kernel/web/webp.c`, idêntico ao libwebp no teste de host), `<picture>`/`srcset` escolhem o
   candidato, e SVG desenha inline e em `<img>` (`kernel/web/svg.c`; sem `<mask>`, `<pattern>`, filtros e sem os

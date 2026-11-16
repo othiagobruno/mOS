@@ -55,3 +55,8 @@ int  js_page_eval_value(js_page_t *p, const char *code, int len, sbuf_t *out);  
 void js_page_wk_bridge(js_page_t *p, void (*post)(void *ctx, const char *name, const char *body, int len, int type), void *ctx);
 void js_page_wk_handler(js_page_t *p, const char *name, bool on);              /* window.webkit.messageHandlers.<nome> */
 bool js_page_busy(js_page_t *p);                     /* scripts externos ou o evento load ainda pendentes */
+
+/* ---------- iframes (kernel/web/frame.c) */
+/* liga a página de um iframe à do pai: parent, top, frameElement; about:blank/srcdoc herdam a origem */
+void js_page_link_frame(js_page_t *child, js_page_t *parent, node_t *iframe);
+void js_page_fire(js_page_t *p, node_t *target, const char *type, bool bubbles);   /* evento simples (load do iframe) */

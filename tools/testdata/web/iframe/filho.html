@@ -1,0 +1,9 @@
+<html><head><style>body{margin:0;background:#00ff00}</style><link rel="stylesheet" href="filho.css"></head>
+<body><div id="t">filho</div><a id="lk" href="outro.html" style="display:block;width:40px;height:20px;background:#0000ff"></a>
+<script>
+  window.addEventListener('message', function (e) {
+    document.getElementById('t').textContent = 'recebi:' + e.data.n + ':' + (e.source === window.parent);
+    e.source.postMessage({resposta: e.data.n * 2}, '*');
+  });
+  window.ehFilho = (window.parent !== window) && (window.top === window.parent) && (window.frameElement !== null);
+</script></body></html>
