@@ -64,6 +64,7 @@ VK(UNNotificationDismissActionIdentifier, "com.apple.UNNotificationDismissAction
 VK(WKWebsiteDataTypeCookies, "WKWebsiteDataTypeCookies")
 
 /* ---- constantes numéricas e funções desses frameworks */
+const float AVSpeechUtteranceMinimumSpeechRate = 0.0f;
 const float AVSpeechUtteranceDefaultSpeechRate = 0.5f;
 const float AVSpeechUtteranceMaximumSpeechRate = 1.0f;
 /* HIToolbox: tipo do teclado físico (kKeyboardISO = 1, ABNT2 é ISO) */

@@ -13,6 +13,7 @@ typedef int32_t i32; typedef uint32_t u32; typedef uint64_t u64; typedef int64_t
 SHELL(AVCaptureDevice) SHELL(AVCaptureDeviceInput) SHELL(AVCaptureVideoDataOutput) SHELL(AVCapturePhotoOutput)
 SHELL(AVCapturePhotoSettings) SHELL(AVCaptureSession)
 void cx_avcapture_init(void);
+char cx_cfconst_isa_test[16] __asm__("__CFConstantStringClassReference");
 
 /* ---------------------------------------------------------------- runtime */
 typedef struct { void *key; const char *name; unsigned extra; void *super; const char *sels[160]; void *imps[160]; int n; } cls_t;

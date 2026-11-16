@@ -28,6 +28,9 @@ CFCONST(kVTH264EntropyMode_CABAC, "CABAC")
 CFCONST(kVTPixelTransferPropertyKey_DestinationColorPrimaries, "DestinationColorPrimaries")
 CFCONST(kVTPixelTransferPropertyKey_DestinationTransferFunction, "DestinationTransferFunction")
 CFCONST(kVTPixelTransferPropertyKey_DestinationYCbCrMatrix, "DestinationYCbCrMatrix")
+CFCONST(kVTPixelTransferPropertyKey_DestinationCleanAperture, "DestinationCleanAperture")
+CFCONST(kVTPixelTransferPropertyKey_DownsamplingMode, "DownsamplingMode")
+CFCONST(kVTPixelTransferPropertyKey_RealTime, "RealTime")
 CFCONST(kVTProfileLevel_H264_Baseline_1_3, "H264_Baseline_1_3")
 CFCONST(kVTProfileLevel_H264_Baseline_3_0, "H264_Baseline_3_0")
 CFCONST(kVTProfileLevel_H264_Baseline_3_1, "H264_Baseline_3_1")
@@ -127,5 +130,15 @@ int VTCopyVideoEncoderList(id options, id *out) {
     id no = MSG(id, (id)cx_class_named("NSNumber"), "numberWithBool:", (BOOL)0);
     MSG(void, d, "setObject:forKey:", no, cx_str("IsHardwareAccelerated"));
     *out = objc_retain(MSG(id, (id)cx_class_named("NSArray"), "arrayWithObject:", d));
+    return 0;
+}
+
+/* o codificador do mOS faz uma passada só (canPerformMultiplePasses = NO): não há trechos para outra passada */
+typedef struct { long long value; int timescale; unsigned flags; long long epoch; } vt_time_t;
+typedef struct { vt_time_t start, duration; } vt_range_t;
+int VTCompressionSessionGetTimeRangesForNextPass(void *session, long *count, const vt_range_t **ranges) {
+    if (!session || !count || !ranges) return -12902;   /* kVTParameterErr */
+    *count = 0;
+    *ranges = 0;
     return 0;
 }
