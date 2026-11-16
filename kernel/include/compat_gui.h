@@ -122,6 +122,22 @@ typedef struct {
     unsigned int cur_interval;
     unsigned long long frames, dropped;
 } gui_camera_info_t;
+/* ScreenCaptureKit (kernel/compat/sccapture.c):
+ *   DEV_SCREEN_COMPOSE (gui_sc_compose_t *, buf) -> w | h << 32: a tela composta de novo só com as janelas pedidas
+ *                      (lista de inclusão ou de exclusão), com ou sem fundo/barra/Dock e cursor; buf 0 só mede
+ *   DEV_WINDOW_CAPTURE (número da janela, buf) -> w | h << 32: a superfície da janela, mesmo coberta; buf 0 só mede */
+#define DEV_SCREEN_COMPOSE 32
+#define DEV_WINDOW_CAPTURE 33
+#define DEV_AUDIO_SYSTEM 34   /* (amostras i16 estéreo 48 kHz, quadros, u64 *posição) -> quadros da mistura do sistema
+                               * a partir da posição do leitor (0 = do agora); a posição avança */
+#define GUI_SC_MAXWIN 64
+enum { GUI_SC_INCLUDE = 1, GUI_SC_DESKTOP = 2, GUI_SC_CURSOR = 4 };
+typedef struct {
+    int x, y, w, h;                /* área da tela (w = 0: a tela toda) */
+    unsigned int flags;            /* GUI_SC_*: INCLUDE = só as janelas da lista; senão todas menos as da lista */
+    unsigned int nwin;
+    unsigned int win[GUI_SC_MAXWIN];
+} gui_sc_compose_t;
 #define DEV_AUDIO_READ 21     /* (amostras i16 estéreo 48 kHz, quadros) -> quadros copiados da captura; 0 = anel vazio ou sem entrada */
 typedef struct {
     unsigned int queued, capacity, rate, channels;

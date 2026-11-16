@@ -252,6 +252,7 @@ void      wm_bring_app(app_t *a);
 int       wm_count_for(app_t *a);
 void      wm_compose(void);
 bool      wm_handle_event(input_event_t *e);
+surface_t *wm_cursor_image(int *x, int *y);   /* cursor atual e o canto dele na tela */
 int       wm_mouse_x(void);
 int       wm_mouse_y(void);
 int       wm_mouse_buttons(void);         /* bit 0 esquerdo, bit 1 direito */
