@@ -3,7 +3,7 @@
  * (inventário do tools/machocheck.c). Sem elas o carregador ligava a classe a NSObject e toda mensagem
  * caía no vazio:
  *   NSMutableData (subclasse do NSData do mOS {isa, bytes, len} + capacidade), NSTimeZone (UTC, como o
- *   resto do mOS), NSCalendar/NSDateComponents (gregoriano), NSEnumerator, NSOrderedSet/NSMutableOrderedSet
+ *   resto do mOS), NSCalendar/NSDateComponents (gregoriano), NSEnumerator
  *   (sobre um NSMutableArray, com encaminhamento do resto), NSMethodSignature/NSInvocation (no x86 o
  *   SysV com o que passa de 6 inteiros e 8 XMM na pilha, ffi_x64.S; no arm64 o PCS da Apple) e o
  *   typeinfo OBJC_EHTYPE_$_NSException para @catch (NSException *).
@@ -30,7 +30,7 @@ const char *NSGetSizeAndAlignment(const char *type, u64 *size, u64 *align);
 
 #define KLASS(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
 KLASS(NSMutableData) KLASS(NSEnumerator)
-KLASS(NSOrderedSet) KLASS(NSMutableOrderedSet) KLASS(NSMethodSignature) KLASS(NSInvocation)
+KLASS(NSMethodSignature) KLASS(NSInvocation)
 static id cls(const char *n) { return (id)cx_class_named(n); }
 typedef struct { long loc, len; } ns_range_t;
 
@@ -194,44 +194,7 @@ static BOOL fm_mkdir_url(id self, SEL c, id url, BOOL inter, id attrs, id *err) 
 static void de_skip(id self, SEL c) { (void)self; (void)c; }
 static u64 de_level(id self, SEL c) { (void)self; (void)c; return 0; }
 
-/* ================================================================ NSOrderedSet / NSMutableOrderedSet */
-typedef struct { cx_class_t *isa; id arr; } os_t;
-static id os_arr(id self) { os_t *o = (os_t *)self; if (!o->arr) o->arr = objc_retain(cx_arr_new(0)); return o->arr; }
-static void os_add(id self, SEL c, id v) { (void)c; if (v && !MSG(BOOL, os_arr(self), "containsObject:", v)) MSG(void, os_arr(self), "addObject:", v); }
-static id os_new_from(id k, id src) {
-    id s = cx_alloc_instance((cx_class_t *)k);
-    u64 n = src ? MSG0(u64, src, "count") : 0;
-    for (u64 i = 0; i < n; i++) os_add(s, 0, MSG(id, src, "objectAtIndex:", i));
-    if (!n) os_arr(s);
-    return s;
-}
-static id os_empty(id k, SEL c) { (void)c; return objc_autorelease(os_new_from(k, 0)); }
-static id os_with_array(id k, SEL c, id a) { (void)c; return objc_autorelease(os_new_from(k, a)); }
-static id os_with_object(id k, SEL c, id o) { (void)c; id s = os_new_from(k, 0); os_add(s, 0, o); return objc_autorelease(s); }
-static id os_init(id self, SEL c) { (void)c; os_arr(self); return self; }
-static id os_init_array(id self, SEL c, id a) {
-    (void)c;
-    u64 n = a ? MSG0(u64, a, "count") : 0;
-    for (u64 i = 0; i < n; i++) os_add(self, 0, MSG(id, a, "objectAtIndex:", i));
-    os_arr(self);
-    return self;
-}
-static id os_array(id self, SEL c) { (void)c; return MSG0(id, os_arr(self), "copy"); }
-static id os_set(id self, SEL c) { (void)c; return MSG(id, cls("NSSet"), "setWithArray:", os_arr(self)); }
-static void os_insert(id self, SEL c, id v, u64 i) { (void)c; if (v && !MSG(BOOL, os_arr(self), "containsObject:", v)) MSG(void, os_arr(self), "insertObject:atIndex:", v, i); }
-static void os_add_array(id self, SEL c, id a) { u64 n = a ? MSG0(u64, a, "count") : 0; for (u64 i = 0; i < n; i++) os_add(self, c, MSG(id, a, "objectAtIndex:", i)); }
-static id os_copy(id self, SEL c) { (void)c; return os_new_from((id)&NSOrderedSet_c, os_arr(self)); }
-static id os_mcopy(id self, SEL c) { (void)c; return os_new_from((id)&NSMutableOrderedSet_c, os_arr(self)); }
-static id os_enum(id self, SEL c) { (void)c; return cx_enumerator_new(os_arr(self)); }
-static BOOL os_is_equal(id self, SEL c, id o) {
-    (void)c;
-    if (self == o) return YES;
-    if (!o || !cx_is_subclass(object_getClass(o), &NSOrderedSet_c)) return NO;
-    return MSG(BOOL, os_arr(self), "isEqualToArray:", os_arr(o));
-}
-/* o resto (count, objectAtIndex:, indexOfObject:, containsObject:, removeObject:, fast enumeration...)
- * vai para o array */
-static id os_forward(id self, SEL c, SEL s) { (void)c; (void)s; return os_arr(self); }
+/* NSOrderedSet/NSMutableOrderedSet: fdn_orderedset.c */
 
 /* ================================================================ NSMethodSignature / NSInvocation */
 #define SIG_MAX 16
@@ -814,20 +777,6 @@ void cx_foundation_extra_init(void) {
             cx_add_method(fm, "enumeratorAtPath:", (void *)fm_enum_path);
             cx_add_method(fm, "createDirectoryAtURL:withIntermediateDirectories:attributes:error:", (void *)fm_mkdir_url);
         }
-    }
-    if (!cx_class_named("NSOrderedSet")) {
-        cx_define_class(&NSOrderedSet_c, &NSOrderedSet_m, "NSOrderedSet", ob, 8);
-        cx_define_class(&NSMutableOrderedSet_c, &NSMutableOrderedSet_m, "NSMutableOrderedSet", &NSOrderedSet_c, 0);
-        CM_(NSOrderedSet, "orderedSet", os_empty); CM_(NSOrderedSet, "orderedSetWithArray:", os_with_array);
-        CM_(NSOrderedSet, "orderedSetWithObject:", os_with_object);
-        IM(NSOrderedSet, "init", os_init); IM(NSOrderedSet, "initWithArray:", os_init_array);
-        IM(NSOrderedSet, "array", os_array); IM(NSOrderedSet, "set", os_set); IM(NSOrderedSet, "copy", os_copy);
-        IM(NSOrderedSet, "mutableCopy", os_mcopy); IM(NSOrderedSet, "objectEnumerator", os_enum); IM(NSOrderedSet, "isEqual:", os_is_equal);
-        IM(NSOrderedSet, "forwardingTargetForSelector:", os_forward);
-        CM_(NSMutableOrderedSet, "orderedSetWithCapacity:", os_empty);
-        IM(NSMutableOrderedSet, "initWithCapacity:", os_init);
-        IM(NSMutableOrderedSet, "addObject:", os_add); IM(NSMutableOrderedSet, "insertObject:atIndex:", os_insert);
-        IM(NSMutableOrderedSet, "addObjectsFromArray:", os_add_array);
     }
     if (!cx_class_named("NSMethodSignature")) {
         cx_define_class(&NSMethodSignature_c, &NSMethodSignature_m, "NSMethodSignature", ob, (u32)(sizeof(msig_t) - 8));
