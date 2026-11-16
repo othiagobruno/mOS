@@ -27,6 +27,7 @@ static void *dma_alloc(usize n, u64 *phys) {
 }
 static void pmm_free(u64 p, u64 pages) { (void)pages; free((void *)(uintptr_t)p); }
 #define kprintf(...) ((void)0)
+#define sched_wake(t) ((t)->state = TH_READY)
 static u32 host_caps;
 void gpu_host_caps(u32 c) { host_caps = c; }
 #else
@@ -109,7 +110,7 @@ static void wake_fence(int pid, u32 id, i64 rax, u32 seq) {
         ((int_frame_t *)w->frame)->rax = (u64)rax;
         w->wake_at = 0;
         w->futex_va = 0;
-        w->state = TH_READY;
+        sched_wake(w);
     }
 }
 #else
@@ -124,7 +125,7 @@ static void host_drop(thread_t *t, i64 rax) {
     for (int i = 0; i < HOST_NW; i++) if (host_ws[i] == t) {
         host_rax[i] = rax;
         host_wake_rax = rax;
-        t->state = TH_READY;
+        sched_wake(t);
         t->wait_pid = 0;
         t->futex_va = 0;
         t->wake_at = 0;

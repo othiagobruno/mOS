@@ -175,6 +175,7 @@ enum {
     MOS_THR_SETQOS,        /* (tid, classe Darwin) -> 0 | -ESRCH     QOS_CLASS_* (0x21..0x09); fila e fatia */
     MOS_THR_AFFINITY,      /* (tid, máscara de CPUs) -> 0            bit i = núcleo i; 0 = qualquer um */
     MOS_THR_ROFILE,        /* (va, u64 id_off[2]) -> 1 se a página é código de arquivo sem escrita */
+    MOS_THR_SETPRIO,       /* (tid, pri | 0x100 fixa) -> 0 | -EINVAL | -EPERM   prioridade Mach 0..127; > 63 só root */
 };
 #define MOS_MUNMAP_KEEP    0x4B454550u   /* 'KEEP' */
 #define MOS_MUNMAP_DISCARD 0x44495343u   /* 'DISC' */

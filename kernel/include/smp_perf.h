@@ -43,3 +43,26 @@ static inline unsigned long long smp_shoot_mask(unsigned ncpu, int self,
     }
     return m;
 }
+
+/* prioridade Mach base de cada classe (índice de smp_qos_from_darwin), como no XNU:
+ * interativo 47, iniciado 37, padrão 31, utilidade 20, fundo 4 */
+static inline int smp_qos_base_pri(int qidx) {
+    static const unsigned char t[5] = {47, 37, 31, 20, 4};
+    return qidx >= 0 && qidx < 5 ? t[qidx] : 31;
+}
+
+/* uso recente com meia-vida de 100 ms: cada 100 ms inteiros desde `at` dividem por 2 */
+static inline unsigned smp_usage_decay(unsigned usage, unsigned long long at, unsigned long long now) {
+    unsigned long long n = now > at ? (now - at) / 100 : 0;
+    return n >= 32 ? 0 : usage >> n;
+}
+
+/* prioridade efetiva: a base menos 1 a cada 8 ms de uso recente, até 16 (timeshare do Mach).
+ * Fixa (pri_fixed) não decai. Sempre em 0..127. */
+static inline int smp_eff_pri(int base, unsigned usage, int fixed) {
+    int pen = fixed ? 0 : (int)(usage / 8 > 16 ? 16 : usage / 8);
+    int e = base - pen;
+    if (e < 0) e = 0;
+    if (e > 127) e = 127;
+    return e;
+}

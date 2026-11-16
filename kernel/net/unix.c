@@ -100,7 +100,7 @@ static void ready(thread_t *t, i64 res) {
     if (!t || !t->proc || t->proc->exited || t->state == TH_DEAD) return;
     if (t->frame) ((int_frame_t *)t->frame)->rax = (u64)res;
     t->wait_pid = 0;
-    t->state = TH_READY;
+    sched_wake(t);
 }
 
 void unix_clear_waiter(thread_t *t) {
