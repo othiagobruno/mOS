@@ -7,8 +7,10 @@
 extern "C" {
 #endif
 typedef struct cx_h264 cx_h264;
+/* cor do VUI (H.264 E.2.1); sem VUI: faixa de vídeo e 2 (não especificado) nos três códigos */
+typedef struct { int full_range, matrix, primaries, transfer; } cx_h264_color;
 typedef void (*cx_h264_emit)(void *ctx, const uint8_t *y, const uint8_t *u, const uint8_t *v, int stride_y, int stride_uv,
-                             int w, int h, uint64_t tag);
+                             int w, int h, uint64_t tag, const cx_h264_color *color);
 /* decode_order 1: cada quadro sai na chamada que o decodificou (o VideoToolbox sem EnableTemporalProcessing);
  * 0: ordem de exibição, com atraso de reordenação (o resto sai no cx_h264_flush). */
 cx_h264 *cx_h264_open(int decode_order);

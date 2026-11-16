@@ -13,7 +13,7 @@ Licenças de terceiros em [midia-licencas.md](midia-licencas.md). Build completo
 | AAC | só reconhecido (ADTS, `mp4a`) | decodificar AAC-LC, HE-AAC v1/v2 (SBR/PS), xHE; codificar (AudioConverter, AVAssetWriter) |
 | Opus | só reconhecido (Ogg, CAF) | decodificar e codificar (libopus) |
 | Contêiner | `walk_mp4` mínimo (só stsz/ALAC) | demuxer ISO BMFF completo (MP4/MOV/M4A/fMP4), Matroska/WebM, Ogg, ADTS |
-| H.264 | decodificador Baseline (h264bsd), codificador só I_PCM | Main/High (CABAC, B, 8x8, entrelaçado), codificador real (intra+P, CAVLC) |
+| H.264 | decodificador Baseline/Main/High (OpenH264 corrigido, bit-exato), codificador só I_PCM | entrelaçado (PAFF/MBAFF), High 10/4:2:2, codificador real (intra+P, CAVLC) |
 | HEVC | stub (-12906/-12908) | decodificador Main/Main10 |
 | VP9 / AV1 | nada | libvpx (BSD) e dav1d (BSD-2) |
 | AVPlayer vídeo | AVPlayer só áudio | demux + decodificação em linha de tempo, AVPlayerItemVideoOutput, AVPlayerLayer, AVSampleBufferDisplayLayer, sincronismo A/V |

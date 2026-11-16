@@ -30,10 +30,20 @@ cx_h264 *cx_h264_open(int decode_order) {
     return c;
 }
 
-static void out(const SBufferInfo &bi, unsigned char **y, uint64_t tag, cx_h264_emit emit, void *ctx) {
+static void out(ISVCDecoder *d, const SBufferInfo &bi, unsigned char **y, uint64_t tag, cx_h264_emit emit, void *ctx) {
     if (bi.iBufferStatus != 1 || !y[0] || !emit) return;
     const SSysMEMBuffer &b = bi.UsrData.sSystemBuffer;
-    emit(ctx, y[0], y[1], y[2], b.iStride[0], b.iStride[1], b.iWidth, b.iHeight, tag);
+    cx_h264_color col = {0, 2, 2, 2};
+    const WelsDec::SVui *vui = static_cast<WelsDec::CWelsDecoder *>(d)->MosActiveVui();
+    if (vui && vui->bVideoSignalTypePresentFlag) {
+        col.full_range = vui->bVideoFullRangeFlag;
+        if (vui->bColourDescripPresentFlag) {
+            col.primaries = vui->uiColourPrimaries;
+            col.transfer = vui->uiTransferCharacteristics;
+            col.matrix = vui->uiMatrixCoeffs;
+        }
+    }
+    emit(ctx, y[0], y[1], y[2], b.iStride[0], b.iStride[1], b.iWidth, b.iHeight, tag, &col);
 }
 
 int cx_h264_decode(cx_h264 *c, const uint8_t *annexb, int n, uint64_t tag, cx_h264_emit emit, void *ctx) {
@@ -43,7 +53,7 @@ int cx_h264_decode(cx_h264 *c, const uint8_t *annexb, int n, uint64_t tag, cx_h2
     memset(&bi, 0, sizeof bi);
     bi.uiInBsTimeStamp = tag;
     DECODING_STATE st = c->dec->DecodeFrameNoDelay(annexb, n, y, &bi);
-    out(bi, y, c->decode_order ? tag : bi.uiOutYuvTimeStamp, emit, ctx);
+    out(c->dec, bi, y, c->decode_order ? tag : bi.uiOutYuvTimeStamp, emit, ctx);
     return st == dsErrorFree ? 0 : -(int)st;
 }
 
@@ -57,7 +67,7 @@ int cx_h264_flush(cx_h264 *c, cx_h264_emit emit, void *ctx) {
         memset(&bi, 0, sizeof bi);
         c->dec->FlushFrame(y, &bi);
         if (bi.iBufferStatus != 1) break;
-        out(bi, y, bi.uiOutYuvTimeStamp, emit, ctx);
+        out(c->dec, bi, y, bi.uiOutYuvTimeStamp, emit, ctx);
     }
     end = 0;
     c->dec->SetOption(DECODER_OPTION_END_OF_STREAM, &end);
