@@ -232,6 +232,16 @@ static i64 dw_cwd(process_t *p, int pid, u64 buf, u64 cap) {
     return (i64)n;
 }
 
+/* NOTE_EXITSTATUS do kevent: o status do filho zumbi, sem colher (quem colhe é o waitpid do dono) */
+static i64 dw_exitstatus(process_t *p, int pid) {
+    for (process_t *q = proc_list(); q; q = q->next) {
+        if (q->pid != pid || q->ppid != p->pid || !q->exited) continue;
+        int code = q->exit_code;
+        return code < 0 && code >= -31 ? -code : (code & 0xFF) << 8;   /* posix_status de process.c */
+    }
+    return -MOS_ESRCH;
+}
+
 i64 darwin_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
     switch (op) {
     case MOS_DW_SYSINFO:     return dw_sysinfo(p, a);
@@ -243,6 +253,7 @@ i64 darwin_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
     case MOS_DW_THREADS:     return dw_threads(p, (int)a, b, c);
     case MOS_DW_FDS:         return dw_fds(p, (int)a, b, c);
     case MOS_DW_CWD:         return dw_cwd(p, (int)a, b, c);
+    case MOS_DW_EXITSTATUS:  return dw_exitstatus(p, (int)a);
     default:                 return -MOS_EINVAL;
     }
 }

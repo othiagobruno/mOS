@@ -73,6 +73,10 @@ timeout 60 /tmp/sysv_ipc_host | tail -1
 gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/oslock.c -o /tmp/oslock_ls.o
 gcc -O1 -Wall -pthread tools/oslock_host.c /tmp/oslock_ls.o -o /tmp/oslock_host
 timeout 120 /tmp/oslock_host | tail -1
+# kqueue/kevent (F6): todos os filtros contra um kernel falso (journal do VFS, processos, pressão de memória)
+gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/kqueue.c -o /tmp/kqueue_ls.o
+gcc -O1 -Wall tools/kqueue_host.c /tmp/kqueue_ls.o -o /tmp/kqueue_host
+timeout 30 /tmp/kqueue_host | tail -1
 # GPU AMD: estado do display, vsync, troca no vblank, buffer duplo e VRAM contra um Picasso simulado
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu_hw_host.c kernel/dev/amdgpu/amdgpu.c \
     kernel/dev/amdgpu/edid.c kernel/dev/amdgpu/ucode.c -o /tmp/amdgpu_hw_host
