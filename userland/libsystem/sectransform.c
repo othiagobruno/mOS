@@ -230,6 +230,17 @@ id SecKeyDeriveFromPassword(id password, id params, id *err) {
     memset(dk, 0, sizeof dk);
     return k;
 }
+/* para cssm.c: chave simétrica de um tipo kSecAttrKeyType* a partir dos bytes; e os bytes/algoritmo de uma chave */
+id cx_symkey_create(const void *type, const u8 *b, size_t n) {
+    int ti = sym_index(K_(type));
+    return ti < 0 ? 0 : sym_new(ti, b, n, 0);
+}
+int cx_symkey_raw(id key, const u8 **b, size_t *n, int *ccalg) {
+    symkey_t *k = sym_of(key);
+    if (!k) return -1;
+    *b = k->b; *n = k->n; *ccalg = k->ccalg;
+    return 0;
+}
 /* para seckey.c */
 size_t cx_symkey_block_size(id key) {
     symkey_t *k = sym_of(key);
@@ -830,10 +841,11 @@ id SecTransformCopyExternalRepresentation(id o) {
         id keys = MSG0(id, m->links, "allKeys");
         for (u64 j = 0; j < MSG0(u64, keys, "count"); j++) {
             id dk = MSG(id, keys, "objectAtIndex:", j), pair = MSG(id, m->links, "objectForKey:", dk);
-            u64 si = MSG(u64, t->members, "indexOfObject:", MSG(id, pair, "objectAtIndex:", (u64)0));
+            id p0 = MSG(id, pair, "objectAtIndex:", (u64)0), p1 = MSG(id, pair, "objectAtIndex:", (u64)1);
+            u64 si = MSG(u64, t->members, "indexOfObject:", p0);
             id c = MSG0(id, cls("NSMutableDictionary"), "dictionary");
             MSG(void, c, "setObject:forKey:", cx_num_i((i64)si), cx_str("SRC"));
-            MSG(void, c, "setObject:forKey:", MSG(id, pair, "objectAtIndex:", (u64)1), cx_str("SRCATTR"));
+            MSG(void, c, "setObject:forKey:", p1, cx_str("SRCATTR"));
             MSG(void, c, "setObject:forKey:", cx_num_i((i64)i), cx_str("DST"));
             MSG(void, c, "setObject:forKey:", dk, cx_str("DSTATTR"));
             MSG(void, conns, "addObject:", c);
@@ -872,9 +884,11 @@ id SecTransformCreateFromExternalRepresentation(id d, id *err) {
         u64 si = (u64)num(MSG(id, c, "objectForKey:", cx_str("SRC"))), di = (u64)num(MSG(id, c, "objectForKey:", cx_str("DST")));
         if (si >= n || di >= n) { set_err(err, kSecTransformErrorInvalidInputDictionary, "Bad connection"); objc_release(g); return 0; }
         id src = MSG(id, gt->members, "objectAtIndex:", si), dst = MSG(id, gt->members, "objectAtIndex:", di);
-        id objs[2] = {src, MSG(id, c, "objectForKey:", cx_str("SRCATTR"))};
+        id sattr = MSG(id, c, "objectForKey:", cx_str("SRCATTR"));
+        id objs[2] = {src, sattr};
         id pair = MSG(id, cls("NSArray"), "arrayWithObjects:count:", (id *)objs, (u64)2);
-        MSG(void, tr_of(dst)->links, "setObject:forKey:", pair, MSG(id, c, "objectForKey:", cx_str("DSTATTR")));
+        id dattr = MSG(id, c, "objectForKey:", cx_str("DSTATTR"));
+        MSG(void, tr_of(dst)->links, "setObject:forKey:", pair, dattr);
     }
     return g;
 }

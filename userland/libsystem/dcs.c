@@ -120,7 +120,7 @@ static id fetch(const dict_t *d, id word) {
     id entries = MSG(id, json, "objectForKey:", cx_str(d->lang));
     if (!entries) {                                                              /* às vezes o verbete vem noutra língua */
         id keys = MSG0(id, json, "allKeys");
-        if (keys && MSG0(u64, keys, "count")) entries = MSG(id, json, "objectForKey:", MSG(id, keys, "objectAtIndex:", (u64)0));
+        if (keys && MSG0(u64, keys, "count")) { id k0 = MSG(id, keys, "objectAtIndex:", (u64)0); entries = MSG(id, json, "objectForKey:", k0); }
     }
     return entries && MSG(BOOL, entries, "isKindOfClass:", cls("NSArray")) && MSG0(u64, entries, "count") ? entries : 0;
 }
@@ -139,7 +139,8 @@ static id entry_text(id e, int with_pos) {
         strip_html(h, t, cap);
         if (t[0]) {
             char num[16];
-            snprintf(num, sizeof num, "%s%llu ", k ? " " : "", (unsigned long long)++k);
+            k++;
+            snprintf(num, sizeof num, "%s%llu ", k > 1 ? " " : "", (unsigned long long)k);
             MSG(void, out, "appendString:", cx_str(num));
             MSG(void, out, "appendString:", cx_str(t));
         }
