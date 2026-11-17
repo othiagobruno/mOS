@@ -73,19 +73,7 @@ double wcstod(const wchar32 *s, wchar32 **end) { char buf[128]; size_t n; narrow
 float wcstof(const wchar32 *s, wchar32 **end) { return (float)wcstod(s, end); }
 long double wcstold(const wchar32 *s, wchar32 **end) { return wcstod(s, end); }
 int vsnprintf(char *b, size_t n, const char *fmt, va_list ap);
-int swprintf(wchar32 *out, size_t n, const wchar32 *fmt, ...) {
-    char f[256], tmp[512];
-    size_t used;
-    narrow(fmt, f, sizeof f, &used);
-    va_list ap;
-    va_start(ap, fmt);
-    int r = vsnprintf(tmp, sizeof tmp, f, ap);
-    va_end(ap);
-    size_t i = 0;
-    for (; tmp[i] && i + 1 < n; i++) out[i] = (unsigned char)tmp[i];
-    if (n) out[i] = 0;
-    return r;
-}
+/* swprintf: libc_corpus3.c (formato largo completo) */
 
 /* ---- dladdr: imagem via o dyld do kernel; símbolo pela export trie mapeada na imagem */
 typedef struct { const char *dli_fname; void *dli_fbase; const char *dli_sname; void *dli_saddr; } Dl_info;

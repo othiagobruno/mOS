@@ -173,14 +173,7 @@ static int widen(wchar_t_ *o, size_t cap, const char *s) {
     if (cap) o[w] = 0;
     return (int)w;
 }
-int vswprintf(wchar_t_ *s, size_t n, const wchar_t_ *fmt, va_list ap) {
-    char f[512], b[2048];
-    narrow(f, sizeof f, fmt);
-    int r = vsnprintf(b, sizeof b, f, ap);
-    if (r < 0) return -1;
-    int w = widen(s, n, b);
-    return (size_t)r >= n ? -1 : w;
-}
+/* vswprintf: libc_corpus3.c */
 size_t wcsftime(wchar_t_ *s, size_t max, const wchar_t_ *fmt, const void *tm) {
     char f[256], b[1024];
     narrow(f, sizeof f, fmt);
