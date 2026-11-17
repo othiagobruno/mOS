@@ -29,8 +29,13 @@ log, dentro do `\EFI\mOS\boot.log` que o instalador já deixou alocado. O kernel
 desse arquivo, sem alocar espaço, sem mudar o tamanho e sem tocar em diretório nem na FAT. O estado só sai de
 `PRIMEIRO_BOOT` pelo passo 6, rodado no Ubuntu.
 
-O lado do kernel (log na ESP e nenhuma escrita em `PRIMEIRO_BOOT`) é do Henrique. Só grave depois que esse PR estiver
-na main e o build final tiver sido refeito com ele.
+No kernel: com o estado `PRIMEIRO_BOOT`, o `persist.c` chama `storage_seal()` (`kernel/dev/storage.c`) antes de
+qualquer outra coisa. Daí em diante, `storage_grant_write` recusa tudo: persistência, volumes de `/Volumes`, instalador e
+TRIM. Os drivers (AHCI, NVMe, USB) só aceitam as faixas do log. O `kernel/fs/bootlog.c` acha os clusters do
+`boot.log` pela FAT, só lendo (`fat_extents`). Ele registra essas faixas com `storage_allow_log` e grava direto no
+driver, em setores inteiros, sem page cache, FAT ou diretório: ~1 vez por segundo e no pânico, depois da tela. Ao encher
+os 2 MiB do slot, para com `...[cortado]`. O log também é gravado nos boots seguintes (`INSTALADO`), sempre nos mesmos
+clusters. Só grave no PC depois que o build final tiver sido refeito com esse kernel.
 
 ## Passo a passo
 
@@ -88,5 +93,9 @@ continua em `/var/backups/mos-dual-boot/`. Sem o Ubuntu, pelo firmware: escolha 
 - `tools/instalar-dual-boot-teste.sh`: 29/29 numa ESP simulada, sem root (instala, `boot.log` de 4 MiB zerado, arquivos
   do Ubuntu intactos, BootOrder com o Ubuntu primeiro, `--concluir`, atualizar, desinstalar).
 - Simulação contra a ESP real (`/dev/sda1`), só leitura: origem conferida, 269 MiB de 1067 MiB.
-- Boot na VM com uma ESP de dual boot falsa (`\EFI\ubuntu` + `\mOS` + `boot.log`): o log aparece e o resto da
-  partição não muda (sha256). Fica para depois do PR do kernel.
+- `tools/bootlog_test.sh`: 3 boots num disco falso com o `boot.log` em 2 faixas, lidos pelo `ler-boot-log.py`. Confere
+  o N, a alternância de slots, o corte em 2 MiB e que nenhum byte fora do `boot.log` muda.
+- Boot na VM (KVM, sem `-snapshot`) com uma ESP de dual boot falsa (`\EFI\ubuntu` + `\EFI\mOS` + `\mOS` +
+  `boot.log` + `PRIMEIRO_BOOT`), 2 boots seguidos: o `ler-boot-log.py --todos` mostra o boot 2 e o boot 1 inteiros, até
+  o "Desktop pronto". O sha256 da imagem inteira, com os clusters do `boot.log` zerados, é igual antes e depois, e a
+  árvore copiada com o `mcopy` é igual fora do `boot.log`.

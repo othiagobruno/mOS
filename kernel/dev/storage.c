@@ -36,7 +36,36 @@ static struct { blkdev_t *disk; u64 off, len; } grants[MAX_GRANTS];
 static int ngrants;
 static u64 denied;
 
+static bool sealed;
+#define MAX_LOGEXT 8
+static struct { blkdev_t *disk; u64 off, len; } logext[MAX_LOGEXT];
+static int nlogext;
+
+bool storage_sealed(void) { return sealed; }
+
+void storage_seal(void) {
+    if (sealed) return;
+    sealed = true;
+    if (ngrants) kprintf("storage: modo seguro: %d liberação(ões) de escrita revogada(s)\n", ngrants);
+    ngrants = 0;
+    kprintf("storage: MODO SEGURO: nenhuma escrita em disco neste boot (só o log de boot já alocado)\n");
+}
+
+/* faixa do boot.log: setores inteiros, dentro do disco; aceita mesmo com a política lacrada */
+bool storage_allow_log(blkdev_t *disk, u64 off, u64 len) {
+    if (!disk || storage_disk_index(disk) < 0 || !blk_hw_writable(disk) || !len || (off | len) & 511) return false;
+    if (off > disk->size || len > disk->size - off || nlogext >= MAX_LOGEXT) return false;
+    logext[nlogext].disk = disk; logext[nlogext].off = off; logext[nlogext].len = len;
+    nlogext++;
+    kprintf("storage: escrita do log de boot em %s: [%llu, %llu)\n", storage_disk_name(storage_disk_index(disk)), off, off + len);
+    return true;
+}
+
 bool storage_grant_write(blkdev_t *disk, u64 off, u64 len) {
+    if (sealed) {
+        kprintf("storage: liberação de escrita RECUSADA (modo seguro do primeiro boot)\n");
+        return false;
+    }
     if (!disk || storage_disk_index(disk) < 0 || !blk_hw_writable(disk) || !len) return false;
     if (off > disk->size || len > disk->size - off) return false;
     if (ngrants >= MAX_GRANTS) return false;
@@ -67,6 +96,9 @@ bool storage_write_ok(blkdev_t *root, u64 off, u64 len) {
     if (len == 0) return true;
     for (int i = 0; i < ngrants; i++)
         if (grants[i].disk == root && off >= grants[i].off && len <= grants[i].len && off - grants[i].off <= grants[i].len - len)
+            return true;
+    for (int i = 0; i < nlogext; i++)
+        if (logext[i].disk == root && off >= logext[i].off && len <= logext[i].len && off - logext[i].off <= logext[i].len - len)
             return true;
     if (denied++ < 8) kprintf("storage: ESCRITA RECUSADA em %s (off %llu, %llu bytes): sem liberação\n",
                               storage_disk_name(storage_disk_index(root)), off, len);

@@ -28,6 +28,12 @@ bool        storage_grant_write(blkdev_t *disk, u64 off, u64 len);   /* disk = d
 void        storage_revoke_write(blkdev_t *disk, u64 off, u64 len);  /* revoga só a faixa liberada exatamente assim */
 void        storage_revoke_all(void);
 bool        storage_write_ok(blkdev_t *root, u64 off, u64 len);      /* chamado pelos drivers */
+/* Modo seguro do primeiro boot no PC (docs/instalar-no-pc.md): storage_seal() fecha a política para o resto do boot.
+ * Daí em diante storage_grant_write recusa tudo, e as liberações que já existiam são revogadas. A única escrita aceita
+ * é a das faixas do log de boot, registradas uma vez por storage_allow_log (os clusters já alocados do boot.log). */
+void        storage_seal(void);
+bool        storage_sealed(void);
+bool        storage_allow_log(blkdev_t *disk, u64 off, u64 len);
 /* descarta (TRIM) a faixa de uma partição ou disco: sobe pelos pais somando base, respeita a política de
  * escrita e devolve false se o disco não suporta (quem chama segue normal: TRIM é só uma dica ao SSD) */
 bool        blk_discard(blkdev_t *d, u64 off, u64 len);
