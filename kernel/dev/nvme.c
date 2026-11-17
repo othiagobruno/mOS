@@ -641,6 +641,11 @@ static bool create_ioq(nvme_ctrl_t *c, u32 q, u32 ien) {
     if (!c->io[q].sq) {
         if (!alloc_queue(&c->io[q], (u16)(q + 1), (u16)qd)) return false;
     } else {
+        /* A fila foi apagada e volta com phase 1: as conclusões antigas (fase 1) na CQ pareceriam novas. O reap_q
+         * as consumia, adiantava o head além do controlador e o doorbell inválido parava a fila (leituras expirando
+         * depois do nvme_smp_ready). Fila recriada começa zerada, como a recém-alocada. */
+        memset((void *)c->io[q].cq, 0, (usize)qd * sizeof(cqe_t));
+        memset((void *)c->io[q].sq, 0, (usize)qd * sizeof(sqe_t));
         c->io[q].head = c->io[q].tail = 0;
         c->io[q].phase = 1;
         c->io[q].qid = (u16)(q + 1);
