@@ -244,12 +244,15 @@ id_ SecKeyCopyPublicKey(id_ key) {
 }
 
 /* ================================================================ exportar e atributos */
+id_ cx_symkey_data(id_ key);
+size_t cx_symkey_block_size(id_ key);
+id_ cx_symkey_attrs(id_ key);
 id_ SecKeyCopyExternalRepresentation(id_ key, id_ *err) {
     if (err) *err = 0;
     sk_key *k = unwrap(key);
     u8 *b;
     usize n;
-    if (!k) { set_err(err, errSecParam); return 0; }
+    if (!k) { id_ d = cx_symkey_data(key); if (!d) set_err(err, errSecParam); return d; }    /* chave simétrica: sectransform.c */
     if (sk_export(k, &b, &n)) { set_err(err, errSecAllocate); return 0; }
     id_ d = cx_data_new(b, n);
     memset(b, 0, n);
@@ -258,13 +261,13 @@ id_ SecKeyCopyExternalRepresentation(id_ key, id_ *err) {
 }
 size_t SecKeyGetBlockSize(id_ key) {
     sk_key *k = unwrap(key);
-    if (!k) return 0;
+    if (!k) return cx_symkey_block_size(key);
     if (k->type == SK_RSA) return sk_block_size(k);
     return k->B;                                      /* EC: bytes de uma coordenada, como o SecECPublicKeyBlockSize */
 }
 id_ SecKeyCopyAttributes(id_ key) {
     sk_key *k = unwrap(key);
-    if (!k) return 0;
+    if (!k) return cx_symkey_attrs(key);
     id_ d = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     id_ t = k->type == SK_RSA ? K_(kSecAttrKeyTypeRSA) : K_(kSecAttrKeyTypeECSECPrimeRandom);
     id_ yes = (id_)kCFBooleanTrue, no = (id_)kCFBooleanFalse;
