@@ -743,38 +743,13 @@ mkdir -p "$SSDIR"
     -Wl,-install_name,/System/Library/Frameworks/SafariServices.framework/Versions/A/SafariServices -Wl,-undefined,dynamic_lookup
 echo "SafariServices.framework ok"
 
-# CryptoKit.framework: o Swift de userland/frameworks/CryptoKit compilado com evolução de biblioteca
-# (tools/build-cryptokit-macho.sh), como o build.ps1 faz. Precisa do swift-frontend 6.4.2 oficial
-# (SWIFT_FRONTEND, SWIFTC ou .tools/swift-6.4.2); sem ele o framework fica de fora desta imagem.
+# CryptoKit.framework: Swift com evolução de biblioteca contra a stdlib e o Foundation reais, na segunda passada de
+# tools/build-frameworks-objc.sh (swift-needs: Foundation); x86_64 e arm64 entram juntos pelo cp -a das árvores acima.
 echo "==> CryptoKit.framework"
-CKFE=${SWIFT_FRONTEND:-${SWIFTC:-}}
-if [ -z "$CKFE" ]; then
-    for c in "$ROOT/.tools/swift-6.4.2/usr/bin/swift-frontend" "$ROOT"/.tools/swift/*/usr/bin/swift-frontend; do
-        if [ -x "$c" ]; then CKFE=$c; break; fi
-    done
-fi
-if [ -n "$CKFE" ] && [ -x "$CKFE" ]; then
-    if SWIFT_FRONTEND="$CKFE" MOS_ZIG="$ZIG" sh "$ROOT/tools/build-cryptokit-macho.sh" "$OUT/cryptokit-macho" \
-            > "$OUT/cryptokit-macho.log" 2>&1; then
-        CKDIR="$ESP/mOS/System/Library/Frameworks/CryptoKit.framework/Versions/A"
-        mkdir -p "$CKDIR"
-        cp -f "$OUT/cryptokit-macho/CryptoKit" "$CKDIR/CryptoKit"
-        # fatia arm64 (processo arm64 do tradutor): o mesmo script com MOS_ARCH=arm64
-        if SWIFT_FRONTEND="$CKFE" MOS_ZIG="$ZIG" MOS_ARCH=arm64 sh "$ROOT/tools/build-cryptokit-macho.sh" "$OUT/cryptokit-macho-arm64" \
-                > "$OUT/cryptokit-macho-arm64.log" 2>&1; then
-            python3 -I "$ROOT/tools/lipo-mos.py" -o "$CKDIR/CryptoKit" "$OUT/cryptokit-macho/CryptoKit" "$OUT/cryptokit-macho-arm64/CryptoKit"
-        else
-            grep -m8 -E 'error:' "$OUT/cryptokit-macho-arm64.log" >&2 || true
-            echo "CryptoKit.framework arm64 não compilou (log em $OUT/cryptokit-macho-arm64.log)" >&2
-        fi
-        echo "CryptoKit.framework na imagem"
-    else
-        grep -m8 -E 'error:' "$OUT/cryptokit-macho.log" >&2 || true
-        echo "CryptoKit.framework não compilou (log em $OUT/cryptokit-macho.log)" >&2
-        exit 1
-    fi
+if [ -f "$ESP/mOS/System/Library/Frameworks/CryptoKit.framework/Versions/A/CryptoKit" ]; then
+    echo "CryptoKit.framework na imagem"
 else
-    echo "aviso: sem swift-frontend 6.4.2; CryptoKit.framework fica de fora desta imagem" >&2
+    echo "aviso: CryptoKit.framework não saiu de tools/build-frameworks-objc.sh (falta o Foundation Swift real?)" >&2
 fi
 
 echo "==> apps oficiais em /Aplicativos"

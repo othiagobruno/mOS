@@ -353,6 +353,7 @@ int mos_ck_ed25519_verify(const u8 pub[32], const u8 *msg, size_t n, const u8 si
 static int curve_id(int bits) { return bits == 256 ? EC_P256 : bits == 384 ? EC_P384 : bits == 521 ? EC_P521 : 0; }
 int mos_ck_ec_size(int bits) { return bits == 256 ? 32 : bits == 384 ? 48 : bits == 521 ? 66 : 0; }
 int mos_ck_ec_generate(int bits, u8 *priv, u8 *pub) { int c = curve_id(bits); return c ? ecdh_keygen(c, priv, pub) : -1; }
+int mos_ck_ec_decompress(int bits, const u8 *x, int ybit, u8 *pub) { int c = curve_id(bits); return c ? ec_decompress(c, x, ybit, pub) : -1; }
 int mos_ck_ec_public(int bits, const u8 *priv, u8 *pub) { int c = curve_id(bits); return c ? ec_public_key(c, priv, pub) : -1; }
 int mos_ck_ec_sign(int bits, const u8 *priv, const u8 *digest, size_t dlen, u8 *rs) {
     int c = curve_id(bits), B = mos_ck_ec_size(bits);

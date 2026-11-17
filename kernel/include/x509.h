@@ -36,6 +36,7 @@ int ecdh_p256_keygen(u8 priv[32], u8 pub[65]);
 int ecdh_p256(u8 shared[32], const u8 priv[32], const u8 *peer, u32 peerlen);
 /* chave pública 04 || X || Y de uma privada; assinatura ECDSA com nonce aleatório (r e s com B bytes) */
 int ec_public_key(int curve, const u8 *priv, u8 *pub);
+int ec_decompress(int curve, const u8 *x, int ybit, u8 *out);   /* 04||X||Y a partir de X e da paridade de Y */
 int ecdsa_sign(int curve, const u8 *priv, const u8 *digest, u32 dlen, u8 *r, u8 *s);
 /* assinatura RSA com o expoente privado d (big-endian); sig recebe k bytes (k = tamanho do módulo) */
 int rsa_sign_pkcs1(const u8 *n, u32 nlen, const u8 *d, u32 dlen, int halg, const u8 *digest, u8 *sig, u32 *siglen);
