@@ -44,6 +44,9 @@ void car_set_scratch(uint8_t *p, long cap);
  * pré-multiplicado (comps 4) ou cinza+alfa (2) em out com rowbytes; work é a área de descompressão. 1 se deu certo. */
 int car_deepmap2(const uint8_t *data, long n, int kcbc_blocks, car_decompress_fn dec, int w, int h, int comps, uint8_t *out,
                  long rowbytes, long outcap, uint8_t *work, long workcap);
+/* o mesmo para o deepmap antigo (compressão 10, contêiner "dmap" em blocos de 256x256) */
+int car_deepmap1(const uint8_t *data, long n, int kcbc_blocks, car_decompress_fn dec, int w, int h, int comps, uint8_t *out,
+                 long rowbytes, long outcap, uint8_t *work, long workcap);
 /* nomes do catálogo (FACETKEYS), um a um; devolve o tamanho do nome ou -1 no fim */
 int car_name_at(const car_file *c, int i, char *out, int cap);
 #endif

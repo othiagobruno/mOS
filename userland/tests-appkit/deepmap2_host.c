@@ -1,4 +1,4 @@
-/* Teste de host do deepmap2 de userland/libsystem/car_core.c com dados sintéticos: um codificador mínimo aqui monta os
+/* Teste de host do deepmap2 e do deepmap antigo de userland/libsystem/car_core.c com dados sintéticos: um codificador mínimo aqui monta os
  * contêineres (padrão com os quatro preditores, cru, sem perdas, paleta e blocos KCBC) e o "descompressor" só copia.
  * gcc -O1 -Wall -Wextra -I userland/libsystem userland/tests-appkit/deepmap2_host.c userland/libsystem/car_core.c */
 #include <stdio.h>
@@ -161,6 +161,42 @@ int main(void) {
         CHECK(!car_deepmap2(buf, 30, 0, copy_dec, W, H, 4, out, W * 4, W * H * 4, work, sizeof work), "contêiner truncado é recusado");
         buf[23] = 20;
         CHECK(!car_deepmap2(buf, n, 0, copy_dec, W, H, 4, out, W * 4, W * H * 4, work, sizeof work), "formato 20 (16 bits) não é lido");
+    }
+    {   /* deepmap antigo: 260x2 em dois blocos (256 + 4 de largura), sem perdas */
+        static uint8_t big[300000], bout[260 * 2 * 4];
+        enum { BW = 260, BH = 2 };
+        uint8_t *b = big;
+        memset(b, 0, 28); memcpy(b + 16, "dmap", 4); b[20] = 3; b[21] = 1; b[23] = 4;
+        long t0 = 256L * BH * 4, t1 = 4L * BH * 4;
+        put32(b + 24, (uint32_t)t0);
+        uint8_t *q = b + 28;
+        for (long i = 0; i < t0; i++) q[i] = (uint8_t)(i % 251);
+        q += t0; put32(q, (uint32_t)t1); q += 4;
+        for (long i = 0; i < t1; i++) q[i] = (uint8_t)(200 + i);
+        q += t1;
+        put32(b + 8, (uint32_t)(q - b - 16));
+        int ok = car_deepmap1(b, q - b, 0, copy_dec, BW, BH, 4, bout, BW * 4, sizeof bout, work, sizeof work);
+        CHECK(ok && bout[0] == 0 && bout[255 * 4 + 3] == (uint8_t)((255 * 4 + 3) % 251) && bout[256 * 4] == 200
+              && bout[BW * 4 + 256 * 4] == 216, "deepmap antigo: dois blocos sem perdas costurados");
+        /* padrão: um bloco 3x2 com preditor 0 (os resíduos são os próprios valores YCoCg) */
+        enum { SW = 3, SH = 2 };
+        long npx = SW * SH, need = npx + SH + 6 * npx, padded = (need + 7) & ~7L;
+        memset(b, 0, 28 + padded); memcpy(b + 16, "dmap", 4); b[20] = 2; b[21] = 1; b[23] = 4;
+        put32(b + 24, (uint32_t)padded);
+        uint8_t *al = b + 28, *pr = al + npx, *hi = pr + SH, *lo = hi + 3 * npx;
+        for (long i = 0; i < npx; i++) {
+            al[i] = 255;
+            int v[3] = {100 + (int)i, -3, 2};   /* Y, Co/2, Cg/2 */
+            for (int k = 0; k < 3; k++) { uint16_t e = (uint16_t)((iabs(v[k]) << 1) | (v[k] < 0)); hi[i * 3 + k] = e >> 8; lo[i * 3 + k] = e & 255; }
+        }
+        put32(b + 8, (uint32_t)(12 + padded));
+        ok = car_deepmap1(b, 28 + padded, 0, copy_dec, SW, SH, 4, bout, SW * 4, sizeof bout, work, sizeof work);
+        int r, g, bl;
+        rgb_of(105, -3, 2, &r, &g, &bl);
+        CHECK(ok && bout[(SW + 2) * 4] == (uint8_t)bl && bout[(SW + 2) * 4 + 1] == (uint8_t)g && bout[(SW + 2) * 4 + 2] == (uint8_t)r,
+              "deepmap antigo: bloco padrão pelo transformador do deepmap2");
+        b[16] = 'x';
+        CHECK(!car_deepmap1(b, 28 + padded, 0, copy_dec, SW, SH, 4, bout, SW * 4, sizeof bout, work, sizeof work), "sem \"dmap\" é recusado");
     }
     printf("deepmap2_host: %d/%d\n", total - fails, total);
     return fails != 0;
