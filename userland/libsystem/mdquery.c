@@ -65,6 +65,21 @@ MDK(kMDQueryDidFinishNotification) MDK(kMDQueryDidUpdateNotification) MDK(kMDQue
 MDK(kMDQueryScopeComputer) MDK(kMDQueryScopeHome) MDK(kMDQueryScopeNetwork) MDK(kMDQueryScopeAllIndexed)
 MDK(kMDQueryScopeComputerIndexed) MDK(kMDQueryScopeNetworkIndexed)
 MDK(kMDQueryUpdateAddedItems) MDK(kMDQueryUpdateChangedItems) MDK(kMDQueryUpdateRemovedItems)
+/* atributos de metadados de conteúdo (MDItem.h): o mOS não tem importadores, então item_get devolve NULL para eles,
+ * como o macOS faz para um arquivo sem esses metadados; as chaves existem para predicados e dicionários */
+MDK(kMDItemAlbum) MDK(kMDItemAudioBitRate) MDK(kMDItemAudioChannelCount) MDK(kMDItemAudioSampleRate)
+MDK(kMDItemAudioTrackNumber) MDK(kMDItemAuthors) MDK(kMDItemBitsPerSample) MDK(kMDItemCity) MDK(kMDItemCodecs)
+MDK(kMDItemColorSpace) MDK(kMDItemComment) MDK(kMDItemComposer) MDK(kMDItemContactKeywords)
+MDK(kMDItemContributors) MDK(kMDItemCopyright) MDK(kMDItemCreator) MDK(kMDItemDescription)
+MDK(kMDItemDurationSeconds) MDK(kMDItemEmailAddresses) MDK(kMDItemEncodingApplications) MDK(kMDItemFinderComment)
+MDK(kMDItemFSHasCustomIcon) MDK(kMDItemFSIsExtensionHidden) MDK(kMDItemFSIsStationery) MDK(kMDItemFSLabel)
+MDK(kMDItemGenre) MDK(kMDItemHasAlphaChannel) MDK(kMDItemHeadline) MDK(kMDItemHTMLContent) MDK(kMDItemKeywords)
+MDK(kMDItemLanguages) MDK(kMDItemLayerNames) MDK(kMDItemLyricist) MDK(kMDItemMediaTypes) MDK(kMDItemMusicalGenre)
+MDK(kMDItemNumberOfPages) MDK(kMDItemOrganizations) MDK(kMDItemPageHeight) MDK(kMDItemPageWidth)
+MDK(kMDItemParticipants) MDK(kMDItemPerformers) MDK(kMDItemPixelCount) MDK(kMDItemPixelHeight)
+MDK(kMDItemPixelWidth) MDK(kMDItemProfileName) MDK(kMDItemProjects) MDK(kMDItemPublishers) MDK(kMDItemRecipients)
+MDK(kMDItemRecordingDate) MDK(kMDItemRecordingYear) MDK(kMDItemResolutionHeightDPI) MDK(kMDItemResolutionWidthDPI)
+MDK(kMDItemSecurityMethod) MDK(kMDItemTitle) MDK(kMDItemTotalBitRate) MDK(kMDItemVideoBitRate)
 
 enum { MD_SYNC = 1, MD_UPDATES = 4, MD_MAX_DEPTH = 12, MD_MAX_VISIT = 50000 };
 
@@ -399,6 +414,13 @@ struct mdquery_s {
     void (*on_update)(void *ctx, id added, id changed, id removed);
     void *hook_ctx;
     id self_obj;             /* fraco: o __MDQuery dono (para o objeto da notificação) */
+    long max_count;          /* MDQuerySetMaxCount: 0 = sem limite */
+    id sort_attrs;           /* MDQueryCreate(sortingAttrs) */
+    int (*sort_cmp)(const void **, const void **, void *);   /* MDQuerySetSortComparator */
+    void *sort_ctx;
+    u32 sort_flags[8];       /* MDQuerySetSortOptionFlagsForAttribute: 1 = decrescente */
+    id sort_flag_attr[8];
+    u64 batch[6];            /* MDQueryBatchingParams: guardados (a coleta do mOS entrega tudo de uma vez) */
 };
 static mdquery_t *query_of(id o) { return o && object_getClass(o) == &MDQuery_c ? *(mdquery_t **)((u8 *)o + 8) : 0; }
 static void free_scopes(mdquery_t *q) {
@@ -416,6 +438,8 @@ static void query_dealloc(id self, SEL c) {
     if (q) {
         mdq_free(q->pred);
         if (q->results) objc_release(q->results);
+        if (q->sort_attrs) objc_release(q->sort_attrs);
+        for (int i = 0; i < 8; i++) if (q->sort_flag_attr[i]) objc_release(q->sort_flag_attr[i]);
         if (q->query_text) objc_release(q->query_text);
         if (q->stream) { FSEventStreamStop(q->stream); FSEventStreamInvalidate(q->stream); FSEventStreamRelease(q->stream); }
         if (q->queue) dispatch_release(q->queue);
@@ -427,7 +451,7 @@ static void query_dealloc(id self, SEL c) {
 }
 
 id MDQueryCreate(void *alloc, id query, id valueListAttrs, id sortingAttrs) {
-    (void)alloc; (void)valueListAttrs; (void)sortingAttrs;
+    (void)alloc; (void)valueListAttrs;
     char err[96];
     const char *s = query && cx_is_str(query) ? cx_cstr(query) : 0;
     if (!s) return 0;
@@ -442,6 +466,7 @@ id MDQueryCreate(void *alloc, id query, id valueListAttrs, id sortingAttrs) {
     q->pred = p;
     q->query_text = objc_retain(query);
     q->results = objc_retain(cx_arr_new(0));
+    q->sort_attrs = sortingAttrs ? objc_retain(sortingAttrs) : 0;
     id o = cx_alloc_instance(&MDQuery_c);
     if (!o) { mdq_free(p); objc_release(q->results); objc_release(q->query_text); free(q); return 0; }
     *(mdquery_t **)((u8 *)o + 8) = q;
@@ -507,6 +532,7 @@ static void test_path(mdquery_t *q, const char *path) {
     memset(&probe, 0, sizeof probe);
     probe.path = (char *)path;
     if (!mdq_eval(q->pred, item_get, &probe) || already(q, path)) return;
+    if (q->max_count > 0 && (long)MSG0(u64, q->results, "count") >= q->max_count) return;   /* MDQuerySetMaxCount */
     id it = item_new(path);
     if (!it) return;
     if (!q->filter || q->filter(q->hook_ctx, it)) cx_arr_add(q->results, it);
@@ -543,11 +569,63 @@ static int never_index(const char *path) {
     cx_snprintf(flag, sizeof flag, "%s/.metadata_never_index", root);
     return cx_file_size(flag) >= 0;
 }
+static void sort_results(mdquery_t *q);
 static void gather(mdquery_t *q) {
     if (!q->nscopes) add_computer(q);
     q->visited = 0;
     for (int i = 0; i < q->nscopes && !q->stopped; i++)
         if (!never_index(q->scopes[i])) walk(q, q->scopes[i], 0);
+    sort_results(q);
+}
+/* ordenação pelos atributos de ordenação: o comparador do app ou a ordem natural (texto, número, data), com a opção
+ * decrescente de MDQuerySetSortOptionFlagsForAttribute (kMDQueryReverseSortOrderFlag = 1) */
+long CFStringCompare(id a, id b, u64 opts);
+u8 CFEqual(id a, id b);
+static int natural_cmp(id a, id b) {
+    if (!a || !b) return a ? -1 : b ? 1 : 0;
+    if (cx_is_str(a) && cx_is_str(b)) return (int)CFStringCompare(a, b, 0x220 /* localizado e numérico */);
+    if (MSG(BOOL, a, "respondsToSelector:", sel_registerName("compare:"))) return (int)MSG(long, a, "compare:", b);
+    return 0;
+}
+static mdquery_t *g_sortq;
+static int sort_one(const void *x, const void *y) {
+    mdquery_t *q = g_sortq;
+    id a = *(id *)x, b = *(id *)y;
+    long n = (long)MSG0(u64, q->sort_attrs, "count");
+    if (n > 8) n = 8;
+    const void *va[8] = {0}, *vb[8] = {0};
+    for (long i = 0; i < n; i++) {
+        id k = MSG(id, q->sort_attrs, "objectAtIndex:", (u64)i);
+        va[i] = MDItemCopyAttribute(a, k);
+        vb[i] = MDItemCopyAttribute(b, k);
+    }
+    int r = 0;
+    if (q->sort_cmp) r = q->sort_cmp(va, vb, q->sort_ctx);
+    else
+        for (long i = 0; i < n && !r; i++) {
+            id k = MSG(id, q->sort_attrs, "objectAtIndex:", (u64)i);
+            r = natural_cmp((id)va[i], (id)vb[i]);
+            for (int j = 0; j < 8; j++) if (q->sort_flag_attr[j] && CFEqual(q->sort_flag_attr[j], k) && (q->sort_flags[j] & 1)) r = -r;
+        }
+    for (long i = 0; i < n; i++) { if (va[i]) objc_release((id)va[i]); if (vb[i]) objc_release((id)vb[i]); }
+    return r;
+}
+void qsort(void *b, size_t n, size_t s, int (*cmp)(const void *, const void *));
+static void sort_results(mdquery_t *q) {
+    if (!q->sort_attrs || !MSG0(u64, q->sort_attrs, "count")) return;
+    u64 n = MSG0(u64, q->results, "count");
+    if (n < 2) return;
+    id *v = malloc(n * sizeof(id));
+    if (!v) return;
+    for (u64 i = 0; i < n; i++) v[i] = objc_retain(MSG(id, q->results, "objectAtIndex:", i));
+    static volatile int lk;
+    while (__sync_lock_test_and_set(&lk, 1)) ;
+    g_sortq = q;
+    qsort(v, n, sizeof(id), sort_one);
+    __sync_lock_release(&lk);
+    MSG0(void, q->results, "removeAllObjects");
+    for (u64 i = 0; i < n; i++) { cx_arr_add(q->results, v[i]); objc_release(v[i]); }
+    free(v);
 }
 
 /* ---- atualizações ao vivo: o FSEventStream acorda, a coleta é refeita e a diferença vira kMDQueryDidUpdateNotification */
@@ -952,4 +1030,35 @@ void cx_mdquery_init(void) {
     cx_add_method(mq, "setOperationQueue:", (void *)mq_ignore);
     cx_add_method(mq, "setNotificationBatchingInterval:", (void *)mq_ignore_d);
     cx_add_method(mq, "notificationBatchingInterval", (void *)mq_batch);
+}
+
+/* ---- limite, ordenação e lotes */
+void MDQuerySetMaxCount(id query, long n) { mdquery_t *q = query_of(query); if (q) q->max_count = n > 0 ? n : 0; }
+void MDQuerySetSortComparator(id query, void *cmp, void *ctx) {
+    mdquery_t *q = query_of(query);
+    if (q) { q->sort_cmp = (int (*)(const void **, const void **, void *))cmp; q->sort_ctx = ctx; }
+}
+u8 MDQuerySetSortOptionFlagsForAttribute(id query, id attr, u32 flags) {
+    mdquery_t *q = query_of(query);
+    if (!q || !attr || !q->sort_attrs || !MSG(BOOL, q->sort_attrs, "containsObject:", attr)) return 0;
+    for (int i = 0; i < 8; i++)
+        if (!q->sort_flag_attr[i] || CFEqual(q->sort_flag_attr[i], attr)) {
+            if (!q->sort_flag_attr[i]) q->sort_flag_attr[i] = objc_retain(attr);
+            q->sort_flags[i] = flags;
+            return 1;
+        }
+    return 0;
+}
+u32 MDQueryGetSortOptionFlagsForAttribute(id query, id attr) {
+    mdquery_t *q = query_of(query);
+    for (int i = 0; q && attr && i < 8; i++) if (q->sort_flag_attr[i] && CFEqual(q->sort_flag_attr[i], attr)) return q->sort_flags[i];
+    return 0;
+}
+/* MDQueryBatchingParams {first_max_num, first_max_ms, progress_max_num, progress_max_ms, update_max_num, update_max_ms} */
+void MDQuerySetBatchingParameters(id query, const u64 *p) { mdquery_t *q = query_of(query); if (q && p) memcpy(q->batch, p, sizeof q->batch); }
+void MDQueryGetBatchingParameters(id query, u64 *out) {
+    mdquery_t *q = query_of(query);
+    static const u64 def[6] = {1000, 1000, 5000, 1000, 100, 2000};   /* os padrões do macOS */
+    if (!out) return;
+    memcpy(out, q && (q->batch[0] || q->batch[1]) ? q->batch : def, sizeof def);
 }
