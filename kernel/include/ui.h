@@ -295,6 +295,7 @@ void desktop_show_about(void);
 void desktop_shutdown_dialog(int kind); /* 0 desligar, 1 reiniciar */
 void desktop_request_restart(void);    /* reinicia sem perguntar (fim da instalação pelo assistente) */
 void desktop_toggle_spotlight(void);
+void desktop_spotlight_query(const char *q);
 void desktop_toggle_control_center(void);
 void desktop_toggle_launcher(void);
 void desktop_request_sleep(void);      /* repouso (acpi_sleep) no laço seguinte, depois de o menu ou o alerta sumirem */

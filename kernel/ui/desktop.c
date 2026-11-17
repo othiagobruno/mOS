@@ -2164,6 +2164,17 @@ void desktop_toggle_spotlight(void) {
     wm_damage_all();
 }
 
+/* abre a busca já com um texto (HISearchWindowShow do Carbon, pelo MOS_DESK_SEARCH) */
+void desktop_spotlight_query(const char *q) {
+    spot_open = true;
+    spot_sel = 0; spot_n = 0; spot_calc[0] = 0;
+    strncpy(spot_q, q ? q : "", sizeof spot_q - 1);
+    spot_q[sizeof spot_q - 1] = 0;
+    spot_caret = (int)strlen(spot_q);
+    spot_update();
+    wm_damage_all();
+}
+
 static rect_t spot_rect(void) {
     int w = MIN(680, SW - 48), h = 56 + (spot_n || spot_calc[0] ? 8 + (spot_n + (spot_calc[0] ? 1 : 0)) * 40 : 0);
     return rect_make((SW - w) / 2, SH / 5, w, h);

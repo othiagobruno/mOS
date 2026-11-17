@@ -234,3 +234,44 @@ int cc_track_hit(int kind, double length, double minv, double maxv, double value
     if (at >= t.pos && at <= t.pos + t.len) return 129;
     return at < t.pos ? 22 : 23;
 }
+
+/* ================================================================ famílias 'icns' */
+static unsigned be32(const unsigned char *p) { return (unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]; }
+static void put_be32(unsigned char *p, unsigned v) { p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16); p[2] = (unsigned char)(v >> 8); p[3] = (unsigned char)v; }
+static long icns_total(const unsigned char *fam, long n) {
+    if (!fam || n < 8 || be32(fam) != 0x69636E73u) return -1;   /* 'icns' */
+    long t = (long)be32(fam + 4);
+    return t >= 8 && t <= n ? t : -1;
+}
+int cc_icns_find(const unsigned char *fam, long n, unsigned type, long *off, long *len) {
+    long t = icns_total(fam, n);
+    if (t < 0) return 0;
+    for (long p = 8; p + 8 <= t;) {
+        long el = (long)be32(fam + p + 4);
+        if (el < 8 || p + el > t) return 0;
+        if (be32(fam + p) == type) { if (off) *off = p + 8; if (len) *len = el - 8; return 1; }
+        p += el;
+    }
+    return 0;
+}
+long cc_icns_set(const unsigned char *fam, long n, unsigned type, const unsigned char *data, long dn, unsigned char *out) {
+    if (!out || dn < 0 || (dn && !data)) return -1;
+    long t = icns_total(fam, n);
+    if (t < 0) t = 8;   /* família vazia ou inválida: começa uma nova */
+    long w = 8, done = 0;
+    for (long p = 8; fam && t > 8 && p + 8 <= t;) {
+        long el = (long)be32(fam + p + 4);
+        if (el < 8 || p + el > t) break;
+        if (be32(fam + p) == type) {
+            if (!done) { put_be32(out + w, type); put_be32(out + w + 4, (unsigned)(dn + 8)); for (long i = 0; i < dn; i++) out[w + 8 + i] = data[i]; w += dn + 8; done = 1; }
+        } else {
+            for (long i = 0; i < el; i++) out[w + i] = fam[p + i];
+            w += el;
+        }
+        p += el;
+    }
+    if (!done) { put_be32(out + w, type); put_be32(out + w + 4, (unsigned)(dn + 8)); for (long i = 0; i < dn; i++) out[w + 8 + i] = data[i]; w += dn + 8; }
+    put_be32(out, 0x69636E73u);
+    put_be32(out + 4, (unsigned)w);
+    return w;
+}

@@ -68,6 +68,7 @@ int cx_tcc_request(const char *service);
 const void *cx_aed_node(id d);
 id cx_aed_from_node_copy(const void *n);
 int cx_ae_send_node(const void *ev, void **reply, int mode, long timeout_ms);
+int (*cx_osa_send_hook)(const void *ev_node, int to_self, void **reply_node);
 int cx_ae_app_running(const char *bundle);
 void *CGEventCreateKeyboardEvent(void *src, u16 key, u8 down);
 void CGEventSetFlags(void *e, u64 f);
@@ -273,7 +274,10 @@ static int h_send(void *ctx, const char *app, unsigned ecls, unsigned eid, const
         else ae_put_key(ev, AE_DIRECT, val_to_ae(direct));
     }
     void *reply = 0;
-    int rc = cx_ae_send_node(ev, &reply, 3 | 0x20, 120000);          /* kAEWaitReply | kAECanInteract */
+    int rc = 1;
+    /* OSA (carbon_osa.c): o procedimento de envio e o alvo padrão do app que hospeda o script; 1 = envio normal */
+    if (cx_osa_send_hook) rc = cx_osa_send_hook(ev, self, &reply);
+    if (rc == 1) rc = cx_ae_send_node(ev, &reply, 3 | 0x20, 120000);  /* kAEWaitReply | kAECanInteract */
     ae_free(ev);
     ae_node *r = reply;
     if (!rc && r) {

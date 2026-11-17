@@ -5116,6 +5116,8 @@ static id key_window_obj(void) { return ap_key_window(NSApp, 0); }
 #define M(cls, s, f) cx_add_method(&cls##_c, s, (void *)(f))
 #define CM(cls, s, f) cx_add_cmethod(&cls##_c, s, (void *)(f))
 #define DEF(cls, sup) cx_define_class(&cls##_c, &cls##_m, #cls, &sup##_c, 8)
+int OBJC_IVAR_NSApplication__appFlags __asm__("OBJC_IVAR_$_NSApplication._appFlags") = 24;   /* recalculado no init */
+u32 cx_instance_size(cx_class_t *c);
 
 /* ================================================================ Auto Layout
  * NSLayoutConstraint/NSLayoutAnchor como no Cocoa, resolvidos por propagação: as restrições
@@ -5902,7 +5904,11 @@ void cx_appkit_init(void) {
     M(NSResponder, "mouseMoved:", noop1_m); M(NSResponder, "keyUp:", r_key_up); M(NSResponder, "flagsChanged:", r_flags_changed); M(NSResponder, "acceptsFirstResponder", no_m);
     M(NSResponder, "becomeFirstResponder", yes_m); M(NSResponder, "resignFirstResponder", yes_m);
 
-    DEF(NSApplication, NSResponder);
+    /* 8 bytes a mais que o DEF comum para o _appFlags (OBJC_IVAR_$_NSApplication._appFlags, depois dos 8 de sempre).
+     * Apps antigos leem esse campo direto; o layout dos bits é privado da Apple e o mOS não o reproduz, então ele fica
+     * zerado. As subclasses do app deslizam os ivars delas para depois dele (realize_ro em objc.c). */
+    cx_define_class(&NSApplication_c, &NSApplication_m, "NSApplication", &NSResponder_c, 16);
+    OBJC_IVAR_NSApplication__appFlags = (int)cx_instance_size(&NSResponder_c) + 8;
     CM(NSApplication, "sharedApplication", ap_shared);
     M(NSApplication, "setDelegate:", ap_set_delegate); M(NSApplication, "delegate", ap_delegate); M(NSApplication, "run", ap_run);
     M(NSApplication, "setActivationPolicy:", ap_set_policy); M(NSApplication, "activationPolicy", ap_policy);

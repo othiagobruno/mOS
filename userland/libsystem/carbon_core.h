@@ -44,7 +44,6 @@ int cc_shape_intersects_rect(const cc_shape *s, cc_rect r);
 void cc_shape_offset(cc_shape *s, double dx, double dy);
 int cc_shape_inset(cc_shape *s, double dx, double dy);
 double cc_shape_area(const cc_shape *s);
-#endif
 
 /* ---- trilhas do HITheme (barra de rolagem, slider, progresso): posição e tamanho do polegar ao longo do comprimento */
 typedef struct { double pos, len; } cc_thumb;
@@ -52,3 +51,11 @@ typedef struct { double pos, len; } cc_thumb;
 cc_thumb cc_track_thumb(int kind, double length, double minv, double maxv, double value, double viewsize);
 /* parte sob a coordenada ao longo da trilha: 129 polegar, 22 página acima/à esquerda, 23 página abaixo/à direita, 0 fora */
 int cc_track_hit(int kind, double length, double minv, double maxv, double value, double viewsize, double at);
+
+/* ---- famílias de ícones 'icns' (IconFamilyHandle): cabeçalho 'icns' + tamanho total, depois elementos tipo + tamanho
+ * (com os 8 bytes do cabeçalho do elemento), tudo big-endian. */
+/* acha o elemento: devolve 1 com o deslocamento e o tamanho dos dados (sem o cabeçalho), ou 0 */
+int cc_icns_find(const unsigned char *fam, long n, unsigned type, long *off, long *len);
+/* troca (ou acrescenta) o elemento type em out, que precisa de n + dn + 8 bytes; devolve o novo tamanho ou -1 */
+long cc_icns_set(const unsigned char *fam, long n, unsigned type, const unsigned char *data, long dn, unsigned char *out);
+#endif
