@@ -27,6 +27,7 @@ typedef struct { nibctx_t *ctx; unsigned idx; } coderst_t;
 static id fr_placeholder;            /* "First Responder": ações com alvo nil */
 static nibctx_t *cur_ctx;             /* nib em carga (para controllers decodificados dentro dele) */
 static void *nib_alloc(unsigned long s) { return calloc(1, s); }
+static void *g_nib_creator;   /* bloco (NSCoder *) -> id da próxima cena (instantiate...creator:) */
 static coderst_t *cst(id c) { return (coderst_t *)ST(c); }
 static int sfx(const char *s, const char *suf) { size_t a = strlen(s), b = strlen(suf); return a >= b && !strcmp(s + a - b, suf); }
 
@@ -377,6 +378,18 @@ static id nib_decode(nibctx_t *x, unsigned idx) {
     else {
         const char *orig;
         cx_class_t *k = nib_class_for(x, idx, &orig);
+        /* instantiate...Controller...creator: o controlador da cena sai do bloco do app (com o coder do nib) */
+        if (k && g_nib_creator && (cx_is_subclass(k, &NSViewController_c) || cx_is_subclass(k, &NSWindowController_c))) {
+            void *cr = g_nib_creator;
+            g_nib_creator = 0;
+            id cd = coder_new(x, idx);
+            nibctx_t *save = cur_ctx;
+            cur_ctx = x;
+            r = ((id (*)(void *, id))(*(void **)((u8 *)cr + 16)))(cr, cd);
+            cur_ctx = save;
+            objc_release(cd);
+            if (r) { cx_arr_add(x->made, r); k = 0; }
+        }
         if (k) {
             id o = MSG0(id, k, "alloc");
             x->memo[idx] = o;
@@ -578,6 +591,8 @@ static id vc_view(id self, SEL c) {
     return s->view;
 }
 static BOOL vc_loaded(id self, SEL c) { (void)c; return vc(self)->view != 0; }
+static id vc_view_if_loaded(id self, SEL c) { (void)c; return vc(self)->view; }
+static void vc_load_if_needed(id self, SEL c) { (void)c; MSG0(id, self, "view"); }
 static id vc_title(id self, SEL c) { (void)c; return vc(self)->title; }
 static void vc_set_title(id self, SEL c, id t) { (void)c; keep(&vc(self)->title, t); }
 static id vc_rep(id self, SEL c) { (void)c; return vc(self)->rep; }
@@ -644,8 +659,9 @@ static sbst_t *sb(id o) { return ST(o); }
 static id so_scene;     /* _CXSceneOwner: recebe o outlet "sceneController" */
 static void so_set_scene(id self, SEL c, id v) { (void)self; (void)c; so_scene = v; }
 static id sb_with_name(id cls, SEL c, id name, id bundle) {
-    (void)cls; (void)c; (void)bundle;
-    id p = MSG(id, MSG0(id, (id)cx_class_named("NSBundle"), "mainBundle"), "pathForResource:ofType:", name, cx_str("storyboardc"));
+    (void)cls; (void)c;
+    id b = bundle ? bundle : MSG0(id, (id)cx_class_named("NSBundle"), "mainBundle");
+    id p = MSG(id, b, "pathForResource:ofType:", name, cx_str("storyboardc"));
     if (!p) { cx_fdprintf(2, "AppKit[mOS]: storyboard '%s' não encontrado\n", cx_cstr(name)); return 0; }
     id o = cx_alloc_instance(&NSStoryboard_c);
     sbst_t *s = calloc(1, sizeof *s);
@@ -679,6 +695,18 @@ static id sb_initial(id self, SEL c) {
     sbst_t *s = sb(self);
     id ep = s->info ? MSG(id, s->info, "objectForKey:", cx_str("NSStoryboardDesignatedEntryPointIdentifier")) : 0;
     return ep ? sb_instantiate(self, c, ep) : 0;
+}
+static id sb_instantiate_creator(id self, SEL c, id ident, void *creator) {
+    g_nib_creator = creator;
+    id r = sb_instantiate(self, c, ident);
+    g_nib_creator = 0;
+    return r;
+}
+static id sb_initial_creator(id self, SEL c, void *creator) {
+    g_nib_creator = creator;
+    id r = sb_initial(self, c);
+    g_nib_creator = 0;
+    return r;
 }
 static id sb_main(id cls, SEL c) {
     id n = MSG(id, MSG0(id, (id)cx_class_named("NSBundle"), "mainBundle"), "objectForInfoDictionaryKey:", cx_str("NSMainStoryboardFile"));
@@ -728,7 +756,7 @@ static void nib_register(void) {
     M(NSViewController, "view", vc_view); M(NSViewController, "setView:", vc_set_view); M(NSViewController, "loadView", vc_load_view);
     M(NSViewController, "viewDidLoad", noop_m); M(NSViewController, "viewWillAppear", noop_m); M(NSViewController, "viewDidAppear", noop_m);
     M(NSViewController, "viewWillDisappear", noop_m); M(NSViewController, "viewDidDisappear", noop_m); M(NSViewController, "isViewLoaded", vc_loaded);
-    M(NSViewController, "viewIfLoaded", vc_view); M(NSViewController, "title", vc_title); M(NSViewController, "setTitle:", vc_set_title);
+    M(NSViewController, "viewIfLoaded", vc_view_if_loaded); M(NSViewController, "loadViewIfNeeded", vc_load_if_needed); M(NSViewController, "title", vc_title); M(NSViewController, "setTitle:", vc_set_title);
     M(NSViewController, "representedObject", vc_rep); M(NSViewController, "setRepresentedObject:", vc_set_rep); M(NSViewController, "nibName", vc_nib_name);
     M(NSViewController, "storyboard", vc_storyboard); M(NSViewController, "setStoryboard:", vc_set_storyboard);
     M(NSViewController, "updateViewConstraints", noop_m); M(NSViewController, "viewWillLayout", noop_m); M(NSViewController, "viewDidLayout", noop_m);
@@ -743,6 +771,7 @@ static void nib_register(void) {
     DEF(NSStoryboard, NSObject);
     CM(NSStoryboard, "storyboardWithName:bundle:", sb_with_name); CM(NSStoryboard, "mainStoryboard", sb_main);
     M(NSStoryboard, "instantiateInitialController", sb_initial); M(NSStoryboard, "instantiateControllerWithIdentifier:", sb_instantiate);
+    M(NSStoryboard, "instantiateInitialControllerWithCreator:", sb_initial_creator); M(NSStoryboard, "instantiateControllerWithIdentifier:creator:", sb_instantiate_creator);
     DEF(_CXSceneOwner, NSObject);
     M(_CXSceneOwner, "setSceneController:", so_set_scene);
 }

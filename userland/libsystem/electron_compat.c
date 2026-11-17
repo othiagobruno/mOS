@@ -247,6 +247,10 @@ static id url_value(id url, const char *k, int *ok) {
     if (key_is(k, "NSURLTagNamesKey") || key_is(k, "NSURLContentTypeKey") || key_is(k, "NSURLFileProtectionKey") ||
         key_is(k, "NSURLQuarantinePropertiesKey") || key_is(k, "NSURLLabelColorKey"))
         return 0;
+    /* ícone que o Finder mostraria (AppKit: NSWorkspace iconForFile:); sem ícone próprio nem etiqueta no mOS */
+    if (key_is(k, "NSURLEffectiveIconKey")) { id ws = MSG0(id, (id)cls("NSWorkspace"), "sharedWorkspace"); return ws ? MSG(id, ws, "iconForFile:", path) : 0; }
+    if (key_is(k, "NSURLCustomIconKey")) return 0;
+    if (key_is(k, "NSURLLabelNumberKey")) return cx_num_i(0);
     cmp_stat_t st;
     int link = lstat(p, &st) == 0 && (st.st_mode & 0170000) == 0120000;
     if (stat(p, &st) != 0 && !link) { *ok = 0; return 0; }
