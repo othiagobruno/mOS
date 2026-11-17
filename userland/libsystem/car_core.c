@@ -398,6 +398,94 @@ int car_deepmap2(const uint8_t *data, long n, int kcbc_blocks, car_decompress_fn
     return y == h;
 }
 
+/* ---- deepmap antigo (compressão 10): contêiner "dmap" (método em +20, formato em +23, tamanho do 1º segmento em +24,
+ * dados em +28) com a imagem em blocos de 256x256, um segmento comprimido por bloco, na ordem das linhas. O bloco
+ * padrão usa o mesmo transformador do deepmap2; o sem perdas traz os pixels; a paleta, entradas + índices por bloco. */
+static int dm1_container(const uint8_t *p, long n, car_decompress_fn dec, uint8_t *out, long rowbytes, long outcap, int w, int h,
+                         int want_comps, int *y, uint8_t *work, long workcap) {
+    if (n < 28 || p[16] != 'd' || p[17] != 'm' || p[18] != 'a' || p[19] != 'p') return 0;
+    int method = p[20], comps, has_alpha;
+    if (!dm2_layout(p[23], &comps, &has_alpha) || comps != want_comps || (long)(*y + h) * rowbytes > outcap) return 0;
+    int rc = has_alpha ? comps - 1 : comps;
+    if (method == 1) {
+        if (n - 28 < (long)w * h * comps) return 0;
+        for (int yy = 0; yy < h; yy++) for (long i = 0; i < (long)w * comps; i++) out[(long)(*y + yy) * rowbytes + i] = p[28 + (long)yy * w * comps + i];
+        *y += h;
+        return 1;
+    }
+    const uint8_t *q = p + 28, *qe = p + n, *pal = 0;
+    int count = 0, pc = 0;
+    long clen;
+    if (method == 4) {
+        uint32_t desc = le32(p + 24);
+        count = (int)(desc & 0xFFFF); pc = (int)(desc >> 16);
+        if (!pc) pc = has_alpha ? comps - 1 : comps;
+        if (count <= 0 || count > 256 || pc > comps) return 0;
+        pal = q;
+        q += (long)count * comps;
+        if (q + 4 > qe) return 0;
+        clen = (long)le32(q);
+        q += 4;
+    } else if (method == 2 || method == 3) clen = (long)le32(p + 24);
+    else return 0;
+    long ints = 3L * 256 * 2;
+    if (workcap < ints * 2 + 64) return 0;
+    int16_t *prev = (int16_t *)work, *cur = prev + 3 * 256;
+    uint8_t *seg = work + ints * 2;
+    long segcap = workcap - ints * 2;
+    for (int ty = 0; ty < h; ty += 256)
+        for (int tx = 0; tx < w; tx += 256) {
+            int tw = w - tx < 256 ? w - tx : 256, th = h - ty < 256 ? h - ty : 256;
+            long npx = (long)tw * th;
+            long expect = method == 2 ? ((has_alpha ? npx : 0) + th + 2L * rc * npx + 7) & ~7L
+                        : method == 3 ? npx * comps : npx * (1 + comps - pc);
+            if (clen <= 0 || q + clen > qe || expect > segcap) return 0;
+            long got = dm2_inflate(dec, q, clen, seg, dm2_magic(q, clen) ? segcap : expect);
+            if (got <= 0) return 0;
+            uint8_t *dst = out + (long)(*y) * rowbytes + (long)tx * comps;
+            if (method == 2) {
+                for (int i = 0; i < 3 * tw; i++) prev[i] = 0;
+                if (!dm2_default_segment(seg, got, tw, th, comps, has_alpha, prev, cur, dst, rowbytes, ty)) return 0;
+            } else if (method == 3) {
+                if (got < npx * comps) return 0;
+                for (int yy = 0; yy < th; yy++) for (long i = 0; i < (long)tw * comps; i++) dst[(long)(ty + yy) * rowbytes + i] = seg[(long)yy * tw * comps + i];
+            } else {
+                int sep = comps - pc;
+                if (got < npx * (1 + sep)) return 0;
+                const uint8_t *idx = seg + npx * sep;
+                for (long i = 0; i < npx; i++) {
+                    if (idx[i] >= count) return 0;
+                    uint8_t *o = dst + (long)(ty + i / tw) * rowbytes + (i % tw) * comps;
+                    for (int k = 0; k < comps; k++) o[k] = pal[idx[i] * comps + k];
+                    for (int k = 0; k < sep; k++) o[pc + k] = seg[(long)k * npx + i];
+                }
+            }
+            q += clen;
+            if (ty + th >= h && tx + tw >= w) break;
+            if (q + 4 > qe) return 0;
+            clen = (long)le32(q);
+            q += 4;
+        }
+    *y += h;
+    return 1;
+}
+int car_deepmap1(const uint8_t *data, long n, int kcbc_blocks, car_decompress_fn dec, int w, int h, int comps, uint8_t *out,
+                 long rowbytes, long outcap, uint8_t *work, long workcap) {
+    int y = 0;
+    if (kcbc_blocks > 0) {
+        const uint8_t *p = data, *e = data + n;
+        for (int i = 0; i < kcbc_blocks && p + 20 <= e; i++) {
+            if (le32(p) != FCC('C', 'B', 'C', 'K')) return 0;
+            int rows = (int)le32(p + 12);
+            long len = le32(p + 16);
+            if (p + 20 + len > e || rows <= 0) return 0;
+            if (!dm1_container(p + 20, len, dec, out, rowbytes, outcap, w, rows, comps, &y, work, workcap)) return 0;
+            p += 20 + len;
+        }
+    } else if (!dm1_container(data, n, dec, out, rowbytes, outcap, w, h, comps, &y, work, workcap)) return 0;
+    return y == h;
+}
+
 /* descomprime os pixels brutos (linhas de rowbytes) de uma rendition de bitmap; devolve rowbytes ou 0 */
 static long raw_pixels(const csi *s, car_decompress_fn dec, uint8_t *raw, long cap) {
     long rb_len;
@@ -409,13 +497,13 @@ static long raw_pixels(const csi *s, car_decompress_fn dec, uint8_t *raw, long c
     if (need > cap || s->data_len < 16 || le32(s->data) != FCC('C', 'E', 'L', 'M')) return 0;
     uint32_t ver = le32(s->data + 4), comp = le32(s->data + 8), f4 = le32(s->data + 12);
     const uint8_t *p = s->data + 16, *end = s->data + s->data_len;
-    if (comp == 11) {   /* deepmap2: o resto do espaço de trabalho, depois dos pixels, serve de área de descompressão */
+    if (comp == 10 || comp == 11) {   /* deepmap: o resto do espaço de trabalho, depois dos pixels, é a área de descompressão */
         long work_off = (need + 15) & ~15L;
         if (work_off >= cap) return 0;
-        return car_deepmap2(p, end - p, ver == 1 ? (int)f4 : 0, dec, s->w, s->h, bpp, raw, rowbytes, need, raw + work_off, cap - work_off)
+        return (comp == 10 ? car_deepmap1 : car_deepmap2)(p, end - p, ver == 1 ? (int)f4 : 0, dec, s->w, s->h, bpp, raw, rowbytes, need, raw + work_off, cap - work_off)
                ? rowbytes : 0;
     }
-    if (comp >= 5 && comp != 4) return 0;   /* jpeg-lzfse, astc, paleta, hevc, deepmap antigo: não lidos aqui */
+    if (comp >= 5 && comp != 4) return 0;   /* jpeg-lzfse, blurred, astc, paleta, hevc: não lidos aqui */
     long off = 0;
     if (ver == 1) {   /* blocos KCBC */
         for (uint32_t i = 0; i < f4 && p + 20 <= end; i++) {

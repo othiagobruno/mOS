@@ -6,7 +6,7 @@
  *   +[NSColor colorNamed:] / colorNamed:bundle: devolvem a cor do catálogo (nil se não houver, como no macOS);
  *   o ícone do app sai do catálogo pelo CFBundleIconName (appkit_icons.c chama cx_catalog_image).
  * Leitura em car_core.c (teste userland/tests-appkit/car_host.c), inclusive as comprimidas em deepmap2 (padrão, cru,
- * sem perdas e paleta). O deepmap antigo (compressão 10) segue sem leitura: imageNamed: devolve nil nele.
+ * sem perdas e paleta) e no deepmap antigo (compressão 10).
  * Registro: cx_appkit_catalog_init(), chamado do cx_appkit_input_init (depois do appkit_postico.c e do appkit_icons.c).
  */
 #include "foundation.h"
