@@ -598,6 +598,7 @@ void cx_appkit_input_init(void) {
     cx_tracking_init();         /* hover: NSTrackingArea e mouseEntered/Exited/Moved */
     cx_foundation_extra_init(); /* foundation_extra.c: NSMutableData, NSTimeZone, NSCalendar, NSInvocation... */
     cx_uttype_init();           /* vscode_media.c: classe UTType */
+    { extern void cx_fw_small_init(void); cx_fw_small_init(); }                     /* fw_small.c: MetricKit, SystemExtensions, OSAKit... */
     cx_const_objs_init();       /* constobjs.c: NSConstantArray/NSConstantDictionary dos literais do clang */
     cx_vscode_cf_classes();     /* vscode_cf.c: classes internas de CF (locale, UUID, CharacterSet, BinaryHeap) e kCFNull */
     { extern void cx_appkit_more_classes(void); cx_appkit_more_classes(); }   /* appkit_more.c: NSGestureRecognizer, NSObjectController, NSTextBlock antes das subclasses */
