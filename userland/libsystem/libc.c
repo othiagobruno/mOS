@@ -1791,6 +1791,12 @@ int clock_gettime(int clk, mac_timespec_t *ts) {
     return 0;
 }
 u64 clock_gettime_nsec_np(int clk) { mac_timespec_t t; clock_gettime(clk, &t); return (u64)t.tv_sec * 1000000000ull + (u64)t.tv_nsec; }
+/* timespec_get (C11 <time.h>): base TIME_UTC (1) usa o relógio de parede; devolve base no sucesso, 0 no erro */
+int timespec_get(mac_timespec_t *ts, int base) {
+    if (base != 1 || !ts) return 0;
+    clock_gettime(0, ts);   /* CLOCK_REALTIME */
+    return base;
+}
 unsigned long clock(void) { return (unsigned long)SYS0(SYS_TIME) * 1000; }   /* CLOCKS_PER_SEC = 10^6 */
 u64 mach_absolute_time(void) { return (u64)SYS0(SYS_TIME) * 1000000ull; }
 u64 mach_continuous_time(void) { return mach_absolute_time(); }
