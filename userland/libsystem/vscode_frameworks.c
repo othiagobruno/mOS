@@ -166,7 +166,6 @@ OSStatus PMPrinterCreateFromPrinterID(id pid, void **out) { (void)pid; if (out) 
 #define PM_FAIL2(name, T1, T2) OSStatus name(T1 a, T2 b) { (void)a; (void)b; return kPMGeneralError; }
 #define PM_FAIL3(name, T1, T2, T3) OSStatus name(T1 a, T2 b, T3 c) { (void)a; (void)b; (void)c; return kPMGeneralError; }
 #define PM_OUT0(name) OSStatus name(void *a, void **out) { (void)a; if (out) *out = 0; return kPMGeneralError; }
-PM_FAIL2(PMGetAdjustedPageRect, void *, void *)
 PM_FAIL3(PMPrinterGetIndexedPrinterResolution, void *, u32, void *)
 PM_FAIL2(PMPrinterGetPrinterResolutionCount, void *, u32 *)
 PM_FAIL2(PMGetOrientation, void *, u16 *)
