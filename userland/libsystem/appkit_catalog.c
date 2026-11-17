@@ -5,8 +5,8 @@
  *   rendition, na escala 2× quando houver, e na aparência escura quando o sistema está escuro;
  *   +[NSColor colorNamed:] / colorNamed:bundle: devolvem a cor do catálogo (nil se não houver, como no macOS);
  *   o ícone do app sai do catálogo pelo CFBundleIconName (appkit_icons.c chama cx_catalog_image).
- * Leitura em car_core.c (teste userland/tests-appkit/car_host.c). Imagens comprimidas com o deepmap da Apple não são
- * lidas: o nome existe, mas não há pixels (imageNamed: devolve nil).
+ * Leitura em car_core.c (teste userland/tests-appkit/car_host.c), inclusive as comprimidas em deepmap2 (padrão, cru,
+ * sem perdas e paleta). O deepmap antigo (compressão 10) segue sem leitura: imageNamed: devolve nil nele.
  * Registro: cx_appkit_catalog_init(), chamado do cx_appkit_input_init (depois do appkit_postico.c e do appkit_icons.c).
  */
 #include "foundation.h"
@@ -32,6 +32,18 @@ static long car_dec(int kind, const uint8_t *in, long n, uint8_t *out, long cap)
     if (kind == 2) {   /* zip: zlib com cabeçalho */
         if (n > 2 && (in[0] & 0x0F) == 8) { in += 2; n -= 2; }
         return (long)compression_decode_buffer(out, (size_t)cap, in, (size_t)n, 0, 0x205);
+    }
+    if (kind == 3) {   /* LZVN cru (deepmap2): vira um bloco bvxn com o tamanho esperado, que o decodificador LZFSE lê */
+        uint8_t *b = malloc((size_t)n + 16);
+        if (!b) return 0;
+        memcpy(b, "bvxn", 4);
+        uint32_t raw = (uint32_t)cap, len = (uint32_t)n;
+        memcpy(b + 4, &raw, 4); memcpy(b + 8, &len, 4);
+        memcpy(b + 12, in, (size_t)n);
+        memcpy(b + 12 + n, "bvx$", 4);
+        long got = (long)compression_decode_buffer(out, (size_t)cap, b, (size_t)n + 16, 0, 0x801);
+        free(b);
+        return got;
     }
     return (long)compression_decode_buffer(out, (size_t)cap, in, (size_t)n, 0, 0x801);   /* LZFSE (e LZVN nos blocos bvxn) */
 }
