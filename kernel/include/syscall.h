@@ -104,6 +104,7 @@ enum {
     SYS_SETEUID = 103, /* (uid) -> 0 | -MOS_EPERM. Só real, efetivo ou saved. */
     SYS_SETEGID = 104, /* (gid) -> 0 | -MOS_EPERM. */
     SYS_FSMETA = 106,  /* (op, mos_fsmeta_t*) -> resultado | -errno   metadados de arquivo (MOS_FSM_*, kernel/lib/vfsmeta.c) */
+    SYS_ACCOUNT = 107, /* (op, a, b) -> resultado | -errno   contas do sistema: listar, a da sessão, conferir senha (MOS_ACCT_* no fim) */
     /* 110: interface Darwin do kernel (kernel/proc/darwin.c, docs/darwin-bsd-mach.md). rdi = MOS_DW_* (abaixo). */
     SYS_DARWIN = 110,
     SYS_VMCTL = 120,   /* (op, a, b) -> resultado | -errno   memória virtual: estatísticas, rlimit, limites (MOS_VM_* abaixo) */
@@ -968,3 +969,8 @@ typedef struct {
     unsigned msg_cap, def_cap, frame_cap, text_len;
     unsigned msg_len, def_len, frame_len, subframe; /* GET: tamanhos reais (o texto é cortado em cap); subframe: veio de iframe */
 } mos_web_dialog_t;
+
+/* SYS_ACCOUNT (kernel/lib/account.c): CSIdentity e Authorization do libSystem. VERIFY confere a senha (PBKDF2, tempo
+ * constante); 5 erros seguidos travam a conferência por 30 s (-MOS_EAGAIN). */
+enum { MOS_ACCT_COUNT, MOS_ACCT_GET, MOS_ACCT_CURRENT, MOS_ACCT_VERIFY };
+typedef struct { char name[32]; char full[64]; unsigned admin, has_password; } mos_account_t;

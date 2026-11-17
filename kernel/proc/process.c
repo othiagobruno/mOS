@@ -4457,6 +4457,42 @@ static u64 proc_syscall_(int_frame_t *f) {
         break;
     case SYS_DYLD: r = macho_dyld_syscall(p, a, b, c, f->r10); break;   /* dlopen/dlsym (kernel/compat/macho.c) */
     case SYS_LS: { extern i64 ls_syscall(process_t *p, u64 op, u64 ureq); r = ls_syscall(p, a, b); break; }   /* Launch Services (kernel/compat/launchsvc.c) */
+    case SYS_ACCOUNT: {                                     /* contas (CSIdentity, Authorization do libSystem) */
+        static u32 acct_fails;
+        static u64 acct_lock_until;
+        if (a == MOS_ACCT_COUNT) { r = account_count(); break; }
+        if (a == MOS_ACCT_GET || a == MOS_ACCT_CURRENT) {
+            mos_account_t out;
+            bool adm = false, haspw = false;
+            memset(&out, 0, sizeof out);
+            if (a == MOS_ACCT_GET) {
+                if (!account_get((int)b, out.name, sizeof out.name, out.full, sizeof out.full, &adm, &haspw)) { r = -MOS_ENOENT; break; }
+            } else {
+                const char *cn = account_current();
+                if (!cn || !*cn) { r = -MOS_ENOENT; break; }
+                snprintf(out.name, sizeof out.name, "%s", cn);
+                snprintf(out.full, sizeof out.full, "%s", account_fullname() ? account_fullname() : "");
+                adm = account_is_admin(cn);
+                haspw = !account_verify(cn, "");
+            }
+            out.admin = adm; out.has_password = haspw;
+            r = uvm_copy_out(p, c, &out, sizeof out) ? 0 : -MOS_EFAULT;
+            break;
+        }
+        if (a == MOS_ACCT_VERIFY) {
+            char name[64], pw[256];
+            if (!copy_str_in(p, name, b, sizeof name) || !copy_str_in(p, pw, c, sizeof pw)) { r = -MOS_EFAULT; break; }
+            if (timer_ticks() < acct_lock_until) { memset(pw, 0, sizeof pw); r = -MOS_EAGAIN; break; }
+            bool ok = account_verify(name, pw);
+            memset(pw, 0, sizeof pw);
+            if (ok) acct_fails = 0;
+            else if (++acct_fails >= 5) { acct_lock_until = timer_ticks() + 30000; acct_fails = 0; }
+            r = ok ? 1 : 0;
+            break;
+        }
+        r = -MOS_EINVAL;
+        break;
+    }
     case SYS_NET: { extern i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c); r = net_user_syscall(p, a, b, c, f->r10); break; }   /* TCP/DNS (kernel/net/usersock.c) */
     case SYS_UNIX: return unix_syscall(f, t, p);   /* AF_UNIX (kernel/net/unix.c) */
 
