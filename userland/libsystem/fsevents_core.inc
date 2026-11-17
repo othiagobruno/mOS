@@ -317,6 +317,7 @@ typedef struct fse_cfg {
 typedef struct fse_stream {
     u32 magic;
     int refs;
+    int urefs;          /* referências do app (FSEventStreamRetain/Release); refs conta também as entregas em curso */
     int started, primed, invalid, zombie, in_scan;
     int nodefer, watch_root, file_events, use_cf, need_history;
     int force_flush, dropped;
@@ -1027,6 +1028,7 @@ void *FSEventStreamCreate(void *alloc, void *cb, void *ctx, void *paths, u64 sin
     if (!s) return 0;
     s->magic = FSE_MAGIC;
     s->refs = 1;
+    s->urefs = 1;
     s->cb = (fse_cb_fn)cb;
     s->need_history = since != kFSEventStreamEventIdSinceNow;
     s->use_cf = (flags & kFSEventStreamCreateFlagUseCFTypes) != 0;
@@ -1076,10 +1078,21 @@ void FSEventStreamInvalidate(void *p) {
     s->started = 0;
     fse_sunlock(&s->lock);
 }
+void FSEventStreamRetain(void *p) {
+    fse_stream *s = fse_of(p);
+    if (!s) return;
+    fse_slock(&s->lock);
+    s->urefs++;
+    fse_sunlock(&s->lock);
+}
 void FSEventStreamRelease(void *p) {
     fse_stream *s = fse_of(p);
     int die;
     if (!s) return;
+    fse_slock(&s->lock);
+    int last = --s->urefs <= 0;
+    fse_sunlock(&s->lock);
+    if (!last) return;                                  /* ainda há quem retenha (FSEventStreamRetain) */
     fse_live_del(s);
     fse_slock(&s->lock);
     s->zombie = 1;
