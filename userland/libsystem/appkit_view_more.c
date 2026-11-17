@@ -88,6 +88,15 @@ static RG dm_range(id self, SEL c) { (void)c; id v = objc_getAssociatedObject(se
 static id dm_val(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_val); }
 static id dm_label(id self, SEL c) { (void)self; (void)c; return 0; }
 
+/* NSMenuItem.indentationLevel (0 a 15), lido pelo menu flutuante (appkit_menupop.c) */
+static char k_indent;
+static i64 mi_indent(id self, SEL c) { (void)c; id v = objc_getAssociatedObject(self, &k_indent); return v ? MSG0(i64, v, "longLongValue") : 0; }
+static void mi_set_indent(id self, SEL c, i64 v) {
+    (void)c;
+    if (v < 0) v = 0;
+    if (v > 15) v = 15;
+    objc_setAssociatedObject(self, &k_indent, MSG(id, (id)kls("NSNumber"), "numberWithLongLong:", v), 1);
+}
 static void def(cx_class_t *k, cx_class_t *m, const char *n, cx_class_t *sup) { if (!cx_class_named(n)) cx_define_class(k, m, n, sup, 0); }
 void cx_appkit_view_more_init(void) {
     cx_class_t *v = kls("NSView"), *vc = kls("NSViewController");
@@ -101,6 +110,7 @@ void cx_appkit_view_more_init(void) {
         cx_add_method(vc, "additionalSafeAreaInsets", (void *)vc_extra);
         cx_add_method(vc, "setAdditionalSafeAreaInsets:", (void *)vc_set_extra);
     }
+    { cx_class_t *mi = kls("NSMenuItem"); if (mi) { cx_add_method(mi, "indentationLevel", (void *)mi_indent); cx_add_method(mi, "setIndentationLevel:", (void *)mi_set_indent); } }
     def(&DDMatch_c, &DDMatch_m, "DDMatch", kls("NSObject"));
     def(&DDMatchLink_c, &DDMatchLink_m, "DDMatchLink", &DDMatch_c);
     def(&DDMatchEmailAddress_c, &DDMatchEmailAddress_m, "DDMatchEmailAddress", &DDMatch_c);
