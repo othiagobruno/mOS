@@ -1,0 +1,67 @@
+/* Teste de host do núcleo do Carbon (EventRef, tipos dos tratadores, HIShape). Roda no Linux, sem VM:
+ *   gcc -std=c11 -Wall -Wextra -Wno-multichar -Iuserland/libsystem userland/libsystem/carbon_core.c \
+ *       userland/tests-appkit/carbon_host.c -o /tmp/carbon-test && /tmp/carbon-test */
+#include "carbon_core.h"
+#include <stdio.h>
+#include <stdlib.h>
+void *cc_alloc(cc_size n) { return calloc(1, n); }
+void cc_free(void *p) { free(p); }
+static int ok, total;
+static void check(int c, const char *w) { total++; if (c) ok++; printf("%s %s\n", c ? "  ok  " : "  FALHA", w); }
+static int near(double a, double b) { return a - b < 1e-9 && b - a < 1e-9; }
+int main(void) {
+    cc_event *e = cc_event_new('keyb', 5, 1.5, 0);
+    unsigned v = 42, got = 0, t = 0; cc_size sz = 0;
+    check(cc_event_set(e, 'kcod', 'magn', 4, &v) == 0, "parâmetro guardado");
+    check(cc_event_get(e, 'kcod', 'magn', &t, 4, &sz, &got) == 0 && got == 42 && t == 'magn' && sz == 4, "parâmetro lido");
+    check(cc_event_get(e, 'kcod', 'long', 0, 4, 0, &got) == -1700, "tipo errado: errAECoercionFail");
+    got = 0;
+    check(cc_event_get(e, 'kcod', '****', &t, 4, 0, &got) == 0 && got == 42, "tipo curinga aceita");
+    check(cc_event_get(e, 'none', 'magn', 0, 4, 0, &got) == -9870, "sem parâmetro: eventParameterNotFoundErr");
+    v = 7; cc_event_set(e, 'kcod', 'magn', 4, &v);
+    cc_event_get(e, 'kcod', 'magn', 0, 4, 0, &got);
+    check(got == 7, "mesmo nome substitui");
+    cc_event *c = cc_event_copy(e);
+    got = 0; cc_event_get(c, 'kcod', 'magn', 0, 4, 0, &got);
+    check(c && c != e && got == 7 && c->cls == 'keyb' && c->kind == 5 && near(c->time, 1.5), "cópia independente");
+    e->refs++; cc_event_release(e); check(e->refs == 1, "retain/release conta");
+    cc_event_release(e); cc_event_release(c);
+    cc_specs s = {0, 0, 0};
+    cc_spec a[2] = {{'keyb', 5}, {'keyb', 6}}, b[1] = {{'mous', 1}};
+    cc_specs_add(&s, a, 2); cc_specs_add(&s, a, 1);
+    check(s.n == 2 && cc_specs_match(&s, 'keyb', 6) && !cc_specs_match(&s, 'keyb', 7), "tipos somados sem repetir");
+    cc_specs_add(&s, b, 1);
+    check(cc_specs_remove(&s, a, 1) == 0 && !cc_specs_match(&s, 'keyb', 5) && cc_specs_match(&s, 'mous', 1), "remove um tipo");
+    check(cc_specs_remove(&s, a, 1) == -50, "remover o que não está: paramErr");
+    cc_specs_free(&s);
+    cc_shape A = {0, 0, 0}, B = {0, 0, 0}, R = {0, 0, 0};
+    cc_shape_set_rect(&A, (cc_rect){0, 0, 10, 10});
+    cc_shape_set_rect(&B, (cc_rect){5, 5, 10, 10});
+    cc_shape_union(&R, &A, &B);
+    check(near(cc_shape_area(&R), 175) && !cc_shape_rectangular(&R), "união em L: área 175, não retangular");
+    cc_rect bb = cc_shape_bounds(&R);
+    check(near(bb.x, 0) && near(bb.w, 15) && near(bb.h, 15), "limites da união");
+    cc_shape_intersect(&R, &A, &B);
+    check(near(cc_shape_area(&R), 25) && cc_shape_rectangular(&R), "interseção 5x5");
+    cc_shape_diff(&R, &A, &B);
+    check(near(cc_shape_area(&R), 75) && cc_shape_contains(&R, 1, 1) && !cc_shape_contains(&R, 7, 7), "diferença tira o canto");
+    cc_shape_xor(&R, &A, &B);
+    check(near(cc_shape_area(&R), 150), "xor = união − interseção");
+    cc_shape_union(&R, &A, &B);
+    check(cc_shape_intersects_rect(&R, (cc_rect){12, 12, 1, 1}) && !cc_shape_intersects_rect(&R, (cc_rect){12, 1, 1, 1}), "toca retângulo");
+    cc_shape_offset(&R, 100, 0);
+    check(cc_shape_contains(&R, 101, 1) && !cc_shape_contains(&R, 1, 1), "desloca");
+    cc_shape_set_rect(&R, (cc_rect){0, 0, 10, 10});
+    cc_shape_inset(&R, 2, 3);
+    bb = cc_shape_bounds(&R);
+    check(near(bb.x, 2) && near(bb.y, 3) && near(bb.w, 6) && near(bb.h, 4) && cc_shape_rectangular(&R), "inset de retângulo exato");
+    cc_shape_inset(&R, -2, -3);
+    check(near(cc_shape_area(&R), 100), "inset negativo volta ao tamanho");
+    cc_shape_union(&R, &A, &B);
+    cc_shape_inset(&R, 1, 1);
+    check(!cc_shape_contains(&R, 0.5, 0.5) && cc_shape_contains(&R, 1.5, 1.5) && !cc_shape_contains(&R, 10.5, 1.5), "inset de L erode as bordas");
+    cc_shape_clear(&R);
+    check(cc_shape_empty(&R) && cc_shape_rectangular(&R), "vazio");
+    printf("%d/%d\n", ok, total);
+    return ok == total ? 0 : 1;
+}

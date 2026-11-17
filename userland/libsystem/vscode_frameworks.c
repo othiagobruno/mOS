@@ -476,17 +476,7 @@ int IOPMAssertionCreateWithDescription(id type, id name, id details, id human, i
 }
 
 /* ================================================================ Carbon / HIToolbox */
-u32 GetCurrentKeyModifiers(void) { return 0; }
-/* atalhos globais: registrados mas nunca disparam (o servidor de janelas não tem esse recurso) */
-OSStatus RegisterEventHotKey(u32 code, u32 mods, u64 hkid, void *target, u32 opts, void **out) { (void)code; (void)mods; (void)hkid; (void)target; (void)opts; if (out) *out = (void *)token(); return 0; }
-OSStatus UnregisterEventHotKey(void *ref) { if (ref) objc_release((id)ref); return 0; }
-static u8 app_target_storage[16];
-void *GetApplicationEventTarget(void) { return app_target_storage; }
-OSStatus InstallEventHandler(void *target, void *handler, u32 n, const void *types, void *data, void **out) { (void)target; (void)handler; (void)n; (void)types; (void)data; if (out) *out = (void *)token(); return 0; }
-OSStatus RemoveEventHandler(void *ref) { if (ref) objc_release((id)ref); return 0; }
-OSStatus GetEventParameter(void *ev, u32 name, u32 type, u32 *outType, u64 size, u64 *outSize, void *data) { (void)ev; (void)name; (void)type; (void)outType; (void)size; (void)outSize; (void)data; return -9870; /* eventParameterNotFoundErr */ }
-void ReleaseEvent(void *ev) { (void)ev; }
-OSStatus ReceiveNextEvent(u32 n, const void *types, double timeout, u8 pull, void **out) { (void)n; (void)types; (void)timeout; (void)pull; if (out) *out = 0; return -9875; /* eventLoopTimedOutErr */ }
+/* GetCurrentKeyModifiers: appkit_carbon.c. Eventos, alvos, tratadores, fila e atalhos: carbon_events.c */
 OSStatus AEProcessEvent(void *ev) { (void)ev; return 0; }
 /* Entrada segura (campos de senha): contador como no Carbon; Enable/Disable em pares. */
 static volatile int g_secure_input;

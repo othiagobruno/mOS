@@ -626,6 +626,7 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_controls3_init(void); cx_appkit_controls3_init(); } /* appkit_controls3.c: NSTokenField, NSPathControl, NSBrowser, NSRuleEditor, NSPredicateEditor */
     { extern void cx_appkit_collection_init(void); cx_appkit_collection_init(); } /* appkit_collection.c: NSCollectionView e layouts */
     { extern void cx_appkit_tabs_init(void); cx_appkit_tabs_init(); }         /* appkit_tabs.c: abas de janela */
+    { extern void cx_carbon_shape_init(void); cx_carbon_shape_init(); }       /* carbon_shape.c: HIShape */
     cx_class_t *resp = cx_class_named("NSResponder");
     cx_class_t *view = cx_class_named("NSView");
     cx_class_t *obj = cx_class_named("NSObject");

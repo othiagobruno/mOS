@@ -1,0 +1,47 @@
+/* mOS libSystem — núcleo sem ObjC do Carbon: parâmetros de EventRef, casamento de tipos dos tratadores e regiões do
+ * HIShape (lista de retângulos disjuntos). Usado por carbon_events.c e carbon_shape.c; teste em
+ * userland/tests-appkit/carbon_host.c. Sem libc (malloc/free vêm de quem chama). */
+#ifndef CARBON_CORE_H
+#define CARBON_CORE_H
+typedef unsigned int cc_u32;
+typedef unsigned long cc_size;
+void *cc_alloc(cc_size n);           /* fornecidos por quem usa (libSystem ou teste) */
+void cc_free(void *p);
+
+/* ---- EventRef */
+typedef struct cc_param { cc_u32 name, type; cc_size size; struct cc_param *next; unsigned char data[]; } cc_param;
+typedef struct { int refs; cc_u32 cls, kind; double time; unsigned attrs; cc_param *params; } cc_event;
+cc_event *cc_event_new(cc_u32 cls, cc_u32 kind, double time, unsigned attrs);
+cc_event *cc_event_copy(const cc_event *e);
+void cc_event_release(cc_event *e);            /* libera quando refs chega a 0 */
+int cc_event_set(cc_event *e, cc_u32 name, cc_u32 type, cc_size size, const void *data);   /* 0 ou -1 (memória) */
+/* devolve 0, ou -9870 (eventParameterNotFoundErr), -9878 (eventParameterTypeMismatch? usamos errAECoercionFail -1700) */
+int cc_event_get(const cc_event *e, cc_u32 name, cc_u32 want, cc_u32 *out_type, cc_size cap, cc_size *out_size, void *out);
+
+/* ---- tipos de evento de um tratador */
+typedef struct { cc_u32 cls, kind; } cc_spec;
+typedef struct { cc_spec *v; int n, cap; } cc_specs;
+int cc_specs_add(cc_specs *s, const cc_spec *add, int n);
+int cc_specs_remove(cc_specs *s, const cc_spec *rm, int n);   /* -9876 (eventNotHandled?) se algum não estava: usamos paramErr -50 */
+int cc_specs_match(const cc_specs *s, cc_u32 cls, cc_u32 kind);
+void cc_specs_free(cc_specs *s);
+
+/* ---- HIShape: retângulos disjuntos */
+typedef struct { double x, y, w, h; } cc_rect;
+typedef struct { cc_rect *r; int n, cap; } cc_shape;
+void cc_shape_clear(cc_shape *s);
+int cc_shape_set_rect(cc_shape *s, cc_rect r);
+int cc_shape_copy(cc_shape *dst, const cc_shape *src);
+int cc_shape_union(cc_shape *out, const cc_shape *a, const cc_shape *b);
+int cc_shape_intersect(cc_shape *out, const cc_shape *a, const cc_shape *b);
+int cc_shape_diff(cc_shape *out, const cc_shape *a, const cc_shape *b);
+int cc_shape_xor(cc_shape *out, const cc_shape *a, const cc_shape *b);
+int cc_shape_empty(const cc_shape *s);
+cc_rect cc_shape_bounds(const cc_shape *s);
+int cc_shape_rectangular(const cc_shape *s);
+int cc_shape_contains(const cc_shape *s, double x, double y);
+int cc_shape_intersects_rect(const cc_shape *s, cc_rect r);
+void cc_shape_offset(cc_shape *s, double dx, double dy);
+int cc_shape_inset(cc_shape *s, double dx, double dy);
+double cc_shape_area(const cc_shape *s);
+#endif
