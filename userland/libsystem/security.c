@@ -1323,7 +1323,18 @@ id_ SecPolicyCreateWithProperties(id_ type, id_ props) {
     if (type && CFEqual(type, K_(kSecPolicyAppleRevocation))) return policy_new("rev", 0);
     return policy_new("x509", 0);
 }
+static struct { id_ p; char host[256]; } g_pol_host[32];   /* SecPolicySetValue: nome do servidor trocado */
 static int policy_kind(id_ p, char *host, size_t hn) {   /* -1 = não é política; 0 x509, 1 ssl, 2 sslc, 3 rev */
+    int k0 = -1;
+    for (int i = 0; p && i < 32; i++) if (g_pol_host[i].p == p) { k0 = i; break; }
+    if (k0 >= 0 && host && hn) {
+        const char *s = utf8(p);
+        int k = s && !memcmp(s, "mOS-policy:sslc:", 16) ? 2 : 1;
+        size_t i = 0;
+        for (; i + 1 < hn && g_pol_host[k0].host[i]; i++) host[i] = g_pol_host[k0].host[i];
+        host[i] = 0;
+        return k;
+    }
     const char *s = p ? utf8(p) : 0;
     if (host && hn) host[0] = 0;
     if (!s || memcmp(s, "mOS-policy:", 11)) return -1;
@@ -1355,6 +1366,9 @@ typedef struct {
     int has_date; double date;  /* CFAbsoluteTime */
     int evaluated; u32 result; int xerr; char msg[160];
     id_ policies;
+    u32 options;                /* SecTrustSetOptions / SecTrustSetParameters: 1 = vencido ok, 8 = raiz vencida ok */
+    id_ keychains;              /* SecTrustSetKeychains (guardado; os intermediários vêm da cadeia) */
+    void *evidence;             /* SecTrustGetResult: CSSM_TP_APPLE_EVIDENCE_INFO[], dono = a confiança */
 } tstate_t;
 static tstate_t g_ts[128];
 static volatile int g_tslock;
@@ -1372,6 +1386,8 @@ static tstate_t *ts_get(id_ t, int create) {
         free_ = &g_ts[rr++ % 128];
         if (free_->anchors) CFRelease(free_->anchors);
         if (free_->policies) CFRelease(free_->policies);
+        if (free_->keychains) CFRelease(free_->keychains);
+        free(free_->evidence);
     }
     for (size_t i = 0; i < sizeof *free_; i++) ((u8 *)free_)[i] = 0;
     free_->t = t;
@@ -1579,6 +1595,8 @@ static OSStatus xerr_status(int e) {
 int cx_ts_anchors(const u8 **ders, u32 *lens, int max, u8 ***own);
 int cx_ts_denied(const u8 *der, u32 n);
 /* avalia e guarda o resultado (kSecTrustResult*) no estado */
+double SecCertificateNotValidBefore(id_ cert);
+double SecCertificateNotValidAfter(id_ cert);
 static void trust_run(id_ trust, tstate_t *snap) {
     long n = trust ? CFArrayGetCount(trust) : 0;
     snap->result = kSecTrustResultRecoverableTrustFailure;
@@ -1621,6 +1639,19 @@ static void trust_run(id_ trust, tstate_t *snap) {
     long long at = snap->has_date ? (long long)(snap->date + 978307200.0) : -1;
     int e = cx_sectrust_eval(ders, lens, (unsigned)n, anc, alens, na, !snap->anchors_only, snap->policy,
                              snap->host[0] ? snap->host : 0, at, snap->msg, sizeof snap->msg);
+    /* kSecTrustOptionAllowExpired / AllowExpiredRoot: confere de novo no maior notBefore da cadeia (o resto vale) */
+    if ((e == X_EXPIRED || e == X_NOT_YET_VALID) && (snap->options & 9)) {
+        double from = -1e300, to = 1e300;
+        for (long i = 0; i < n; i++) {
+            id_ c = CFArrayGetValueAtIndex(trust, i);
+            double a = SecCertificateNotValidBefore(c), b = SecCertificateNotValidAfter(c);
+            if (a > from) from = a;
+            if (b < to) to = b;
+        }
+        if (from <= to)
+            e = cx_sectrust_eval(ders, lens, (unsigned)n, anc, alens, na, !snap->anchors_only, snap->policy,
+                                 snap->host[0] ? snap->host : 0, (long long)(from + 978307200.0) + 1, snap->msg, sizeof snap->msg);
+    }
     for (int j = 0; j < nown; j++) free(own[j]);
     free(own);
     snap->xerr = e;
@@ -1755,7 +1786,16 @@ id_ SecTrustCopyPublicKey(id_ trust);
 
 /* ================================================================ chaves, identidades, PKCS#12, transforms */
 /* SecKey*: seckey.c (núcleo em seckey_core.inc) */
+/* SecIdentityCreate: identidades só em memória (não vão para o arquivo), referência "mOS-identity:<n>" */
+static kitem_t mem_ids[32];
+static int nmem_ids;
 static kitem_t *identity_from_ref(id_ ref) {
+    const char *s = ref && CFGetTypeID(ref) == CFStringGetTypeID() ? utf8(ref) : 0;
+    if (s && !memcmp(s, "mOS-identity:", 13)) {
+        u32 k = 0;
+        for (s += 13; *s >= '0' && *s <= '9'; s++) k = k * 10 + (u32)(*s - '0');
+        return k < 32 && mem_ids[k].used ? &mem_ids[k] : 0;
+    }
     kitem_t *it = item_from_ref(ref);
     return it && is_identity_class(it->cls) ? it : 0;
 }
@@ -1814,8 +1854,12 @@ OSStatus SecIdentityCopyPrivateKey(id_ ident, id_ *key) {
     else objc_release(k);
     return errSecSuccess;
 }
-id_ SecIdentityCopyPreferred(id_ name, id_ usage, id_ names) { (void)name; (void)usage; (void)names; return 0; }
-OSStatus SecIdentitySetPreferred(id_ ident, id_ name, id_ usage) { (void)ident; (void)name; (void)usage; return errSecUnimplemented; }
+OSStatus SecIdentityCopyPreference(id_ name, u32 usage, id_ issuers, id_ *ident);
+id_ SecIdentityCopyPreferred(id_ name, id_ usage, id_ names) {
+    (void)usage;
+    id_ r = 0;
+    return SecIdentityCopyPreference(name, 0, names, &r) == errSecSuccess ? r : 0;
+}
 /* SecPKCS12Import, SecItemImport e SecItemExport: seccert.c */
 id_ SecDigestTransformCreate(id_ type, long len, id_ *err) { (void)type; (void)len; if (err) *err = 0; return 0; }
 id_ SecSignTransformCreate(id_ key, id_ *err) { (void)key; if (err) *err = 0; return 0; }
@@ -1953,4 +1997,422 @@ id_ SecCopyErrorMessageString(OSStatus st, void *reserved) {
     }
     }
     return str_n(m, strlen(m));
+}
+
+/* ================================================================ API antiga (CDSA) de confiança, certificado,
+ * política e identidade. Os tipos CSSM_* seguem os cabeçalhos públicos do macOS (cssmtype.h, cssmapple.h). */
+typedef struct { size_t Length; u8 *Data; } cssm_data_t;
+#define errSecPolicyNotFound (-25241)
+#define CSSMERR_TP_NOT_TRUSTED (-2147409622)
+#define CSSMERR_TP_CERT_EXPIRED (-2147409654)
+#define CSSMERR_TP_CERT_NOT_VALID_YET (-2147409653)
+#define CSSMERR_TP_INVALID_ANCHOR_CERT (-2147409646)
+#define CSSMERR_TP_INVALID_CERTIFICATE (-2147409643)
+#define CSSMERR_TP_VERIFICATION_FAILURE (-2147409847)
+#define CSSMERR_APPLETP_HOSTNAME_MISMATCH (-2147408896)
+#define CSSMERR_APPLETP_INVALID_EXTENDED_KEY_USAGE (-2147408889)
+
+/* SecTrustGetResult: resultado, cadeia e um CSSM_TP_APPLE_EVIDENCE_INFO por certificado (vale até a confiança
+ * ser liberada ou avaliada de novo) */
+typedef struct { u32 StatusBits, NumStatusCodes; int *StatusCodes; u32 Index; long DlDb[2]; void *UniqueRecord; } evidence_t;
+OSStatus SecTrustGetResult(id_ trust, u32 *result, id_ *chain, void **status) {
+    if (!trust) return errSecParam;
+    if (chain) *chain = 0;
+    if (status) *status = 0;
+    u32 r = 0;
+    int xerr = 0;
+    char msg[160];
+    trust_eval_cached(trust, &r, &xerr, msg, sizeof msg);
+    if (result) *result = r;
+    long n = CFArrayGetCount(trust);
+    if (chain) *chain = SecTrustCopyCertificateChain(trust);
+    if (status) {
+        evidence_t *ev = calloc((size_t)(n ? n : 1), sizeof *ev);
+        if (!ev) return errSecAllocate;
+        for (long i = 0; i < n; i++) {
+            ev[i].StatusBits = 0x4;                                  /* CSSM_CERT_STATUS_IS_IN_INPUT_CERTS */
+            ev[i].Index = (u32)i;
+            if (i == n - 1 && (r == kSecTrustResultUnspecified || r == kSecTrustResultProceed)) ev[i].StatusBits |= 0x8 | 0x10;
+            if (xerr == X_EXPIRED) ev[i].StatusBits |= 0x1;
+            if (xerr == X_NOT_YET_VALID) ev[i].StatusBits |= 0x2;
+        }
+        ts_lock();
+        tstate_t *st = ts_get(trust, 1);
+        free(st->evidence);
+        st->evidence = ev;
+        ts_unlock();
+        *status = ev;
+    }
+    return errSecSuccess;
+}
+OSStatus SecTrustGetCssmResultCode(id_ trust, int *code) {
+    if (!trust || !code) return errSecParam;
+    u32 r = 0;
+    int xerr = 0;
+    trust_eval_cached(trust, &r, &xerr, 0, 0);
+    *code = r == kSecTrustResultUnspecified || r == kSecTrustResultProceed ? 0
+          : xerr == X_EXPIRED ? CSSMERR_TP_CERT_EXPIRED : xerr == X_NOT_YET_VALID ? CSSMERR_TP_CERT_NOT_VALID_YET
+          : xerr == X_NAME ? CSSMERR_APPLETP_HOSTNAME_MISMATCH : xerr == X_KEY_USAGE ? CSSMERR_APPLETP_INVALID_EXTENDED_KEY_USAGE
+          : xerr == X_UNTRUSTED_ROOT || xerr == X_SELF_SIGNED ? CSSMERR_TP_INVALID_ANCHOR_CERT
+          : xerr == X_PARSE ? CSSMERR_TP_INVALID_CERTIFICATE : xerr == X_BAD_SIG ? CSSMERR_TP_VERIFICATION_FAILURE
+          : CSSMERR_TP_NOT_TRUSTED;
+    return errSecSuccess;
+}
+/* kSecTrustOption*: AllowExpired (1) e AllowExpiredRoot (8) mudam a avaliação; os outros são aceitos */
+OSStatus SecTrustSetOptions(id_ trust, u32 options) {
+    if (!trust) return errSecParam;
+    ts_lock(); tstate_t *st = ts_get(trust, 1); st->options = options; ts_dirty(st); ts_unlock();
+    return errSecSuccess;
+}
+/* CSSM_TP_ACTION_DEFAULT com CSSM_APPLE_TP_ACTION_DATA {Version, ActionFlags}: ALLOW_EXPIRED 1, ALLOW_EXPIRED_ROOT 8 */
+OSStatus SecTrustSetParameters(id_ trust, u32 action, id_ data) {
+    if (!trust) return errSecParam;
+    u32 flags = 0;
+    if (action == 0 && data && CFGetTypeID(data) == CFDataGetTypeID() && CFDataGetLength(data) >= 8) memcpy(&flags, CFDataGetBytePtr(data) + 4, 4);
+    return SecTrustSetOptions(trust, flags & 9);
+}
+OSStatus SecTrustSetKeychains(id_ trust, id_ kcs) {
+    if (!trust) return errSecParam;
+    ts_lock(); tstate_t *st = ts_get(trust, 1);
+    if (st->keychains) CFRelease(st->keychains);
+    st->keychains = kcs ? CFRetain(kcs) : 0;
+    ts_unlock();
+    return errSecSuccess;
+}
+
+/* ---- certificado: o SecCertificateRef é o CFData do DER, então CSSM_DATA aponta para os bytes dele */
+OSStatus SecCertificateGetData(id_ cert, cssm_data_t *data) {
+    if (!cert || !data || CFGetTypeID(cert) != CFDataGetTypeID()) return errSecParam;
+    data->Length = (size_t)CFDataGetLength(cert);
+    data->Data = (u8 *)CFDataGetBytePtr(cert);
+    return errSecSuccess;
+}
+/* type = CSSM_CERT_X_509v1..v3 (1..3), encoding = CSSM_CERT_ENCODING_BER/DER (1/3) */
+OSStatus SecCertificateCreateFromData(const cssm_data_t *data, u32 type, u32 encoding, id_ *cert) {
+    if (!data || !cert || !data->Data) return errSecParam;
+    *cert = 0;
+    if (type > 3 || (encoding != 1 && encoding != 3 && encoding != 0)) return errSecUnimplemented;
+    id_ d = cx_data_new(data->Data, data->Length);
+    *cert = SecCertificateCreateWithData(0, d);
+    CFRelease(d);
+    return *cert ? errSecSuccess : errSecParam;
+}
+/* conteúdo do nome sem o SEQUENCE de fora (o "normalized content" da API) */
+id_ SecCertificateCopyNormalizedIssuerSequence(id_ cert);
+id_ SecCertificateCopyNormalizedSubjectSequence(id_ cert);
+static id_ der_inner(id_ seq) {
+    if (!seq) return 0;
+    const u8 *b = CFDataGetBytePtr(seq);
+    long n = CFDataGetLength(seq), h = 2;
+    if (n < 2 || b[0] != 0x30) { CFRelease(seq); return 0; }
+    if (b[1] & 0x80) h = 2 + (b[1] & 0x7f);
+    id_ r = h <= n ? cx_data_new(b + h, (u64)(n - h)) : 0;
+    CFRelease(seq);
+    return r;
+}
+id_ SecCertificateCopyNormalizedIssuerContent(id_ cert, id_ *err) { if (err) *err = 0; return der_inner(SecCertificateCopyNormalizedIssuerSequence(cert)); }
+id_ SecCertificateCopyNormalizedSubjectContent(id_ cert, id_ *err) { if (err) *err = 0; return der_inner(SecCertificateCopyNormalizedSubjectSequence(cert)); }
+
+/* SecCertificateGetSubject: CSSM_X509_NAME { RDNs { pares { CSSM_OID tipo, u8 valueType (tag ASN.1), CSSM_DATA } } }.
+ * A estrutura aponta para dentro de uma cópia do DER e vale enquanto o certificado viver (até 32 nomes em uso). */
+typedef struct { cssm_data_t type; u8 valueType; cssm_data_t value; } x509_pair_t;
+typedef struct { u32 n; x509_pair_t *pairs; } x509_rdn_t;
+typedef struct { u32 n; x509_rdn_t *rdns; } x509_name_t;
+static struct { id_ cert; x509_name_t *name; } g_names[32];
+static int der_hdr(const u8 *b, long n, long *hl, long *len) {
+    if (n < 2) return -1;
+    long l = b[1], h = 2;
+    if (l & 0x80) {
+        int k = (int)(l & 0x7f);
+        if (k < 1 || k > 3 || n < 2 + k) return -1;
+        l = 0;
+        for (int i = 0; i < k; i++) l = l << 8 | b[2 + i];
+        h = 2 + k;
+    }
+    if (h + l > n) return -1;
+    *hl = h; *len = l;
+    return 0;
+}
+static x509_name_t *parse_name(const u8 *b, long n) {
+    long hl, len;
+    if (der_hdr(b, n, &hl, &len) || b[0] != 0x30) return 0;
+    const u8 *p = b + hl, *e = p + len;
+    u32 nr = 0, np = 0;
+    for (const u8 *q = p; q < e;) {                         /* conta RDNs (SET) e pares (SEQUENCE) */
+        long h2, l2;
+        if (der_hdr(q, e - q, &h2, &l2) || q[0] != 0x31) return 0;
+        nr++;
+        for (const u8 *r = q + h2; r < q + h2 + l2;) { long h3, l3; if (der_hdr(r, q + h2 + l2 - r, &h3, &l3)) return 0; np++; r += h3 + l3; }
+        q += h2 + l2;
+    }
+    size_t sz = sizeof(x509_name_t) + nr * sizeof(x509_rdn_t) + np * sizeof(x509_pair_t) + (size_t)n;
+    u8 *m = calloc(1, sz);
+    if (!m) return 0;
+    x509_name_t *nm = (x509_name_t *)m;
+    nm->rdns = (x509_rdn_t *)(nm + 1);
+    x509_pair_t *pr = (x509_pair_t *)(nm->rdns + nr);
+    u8 *copy = (u8 *)(pr + np);
+    memcpy(copy, b, (size_t)n);
+    p = copy + hl; e = p + len;
+    for (const u8 *q = p; q < e;) {
+        long h2, l2;
+        der_hdr(q, e - q, &h2, &l2);
+        x509_rdn_t *rd = &nm->rdns[nm->n++];
+        rd->pairs = pr;
+        for (const u8 *r = q + h2; r < q + h2 + l2;) {
+            long h3, l3, h4, l4, h5, l5;
+            der_hdr(r, q + h2 + l2 - r, &h3, &l3);
+            const u8 *x = r + h3;                           /* SEQUENCE { OID, valor } */
+            if (!der_hdr(x, l3, &h4, &l4) && x[0] == 0x06 && !der_hdr(x + h4 + l4, l3 - h4 - l4, &h5, &l5)) {
+                pr->type.Data = (u8 *)x + h4; pr->type.Length = (size_t)l4;
+                pr->valueType = x[h4 + l4];
+                pr->value.Data = (u8 *)x + h4 + l4 + h5; pr->value.Length = (size_t)l5;
+                pr++; rd->n++;
+            }
+            r += h3 + l3;
+        }
+        q += h2 + l2;
+    }
+    return nm;
+}
+OSStatus SecCertificateGetSubject(id_ cert, const void **name) {
+    if (!cert || !name) return errSecParam;
+    *name = 0;
+    for (int i = 0; i < 32; i++) if (g_names[i].cert == cert && g_names[i].name) { *name = g_names[i].name; return errSecSuccess; }
+    id_ seq = SecCertificateCopyNormalizedSubjectSequence(cert);
+    if (!seq) return errSecParam;
+    x509_name_t *nm = parse_name(CFDataGetBytePtr(seq), CFDataGetLength(seq));
+    CFRelease(seq);
+    if (!nm) return errSecDecode;
+    static int rr;
+    int k = rr++ % 32;
+    free(g_names[k].name);
+    g_names[k].cert = cert; g_names[k].name = nm;
+    *name = nm;
+    return errSecSuccess;
+}
+
+/* ---- identidades: em memória (SecIdentityCreate) e preferidas por nome (itens genp "mOS-pref:<nome>") */
+id_ SecIdentityCreate(void *alloc, id_ cert, id_ key) {
+    (void)alloc;
+    if (!cert || !key || CFGetTypeID(cert) != CFDataGetTypeID()) return 0;
+    id_ kd = SecKeyCopyExternalRepresentation(key, 0);
+    if (!kd) return 0;
+    lock();
+    int k = nmem_ids < 32 ? nmem_ids++ : -1;
+    for (int i = 0; k < 0 && i < 32; i++) if (!mem_ids[i].used) k = i;
+    if (k < 0) { unlock(); CFRelease(kd); return 0; }
+    kitem_t *it = &mem_ids[k];
+    free_item(it);
+    memset(it, 0, sizeof *it);
+    it->used = 1;
+    memcpy(it->cls, "idnt", 5);
+    set_data(it, CFDataGetBytePtr(cert), (u32)CFDataGetLength(cert));
+    set_field(it, F_GENA, CFDataGetBytePtr(kd), (u32)CFDataGetLength(kd));
+    unlock();
+    CFRelease(kd);
+    char b[32];
+    int n = cx_snprintf(b, sizeof b, "mOS-identity:%d", k);
+    return str_n(b, (u64)n);
+}
+static OSStatus pref_set(id_ cert, id_ name) {
+    if (!cert || !name) return errSecParam;
+    const char *nm = utf8(name);
+    char svc[300];
+    int sl = cx_snprintf(svc, sizeof svc, "mOS-pref:%s", nm ? nm : "");
+    query_t x;
+    q_from_c(&x, "genp", svc, (u32)sl, "cert", 4, F_SVCE);
+    lock(); load();
+    for (int i = 0; i < nitems; i++) if (matches(&items[i], &x)) free_item(&items[i]);
+    kitem_t *it = new_item();
+    OSStatus st = errSecAllocate;
+    if (it) {
+        memcpy(it->cls, "genp", 5);
+        it->id = next_id++;
+        it->cdat = it->mdat = CFAbsoluteTimeGetCurrent();
+        set_field(it, F_SVCE, (const u8 *)svc, (u32)sl);
+        set_field(it, F_ACCT, (const u8 *)"cert", 4);
+        set_field(it, F_INVI, (const u8 *)"1", 1);
+        set_data(it, CFDataGetBytePtr(cert), (u32)CFDataGetLength(cert));
+        st = save();
+        if (st != errSecSuccess) { free_item(it); nitems--; }
+    }
+    unlock();
+    q_free(&x);
+    return st;
+}
+OSStatus SecCertificateSetPreferred(id_ cert, id_ name, id_ usage) { (void)usage; return pref_set(cert, name); }
+OSStatus SecIdentitySetPreferred(id_ ident, id_ name, id_ usage) {
+    (void)usage;
+    id_ cert = 0;
+    OSStatus st = SecIdentityCopyCertificate(ident, &cert);
+    if (st) return st;
+    st = pref_set(cert, name);
+    CFRelease(cert);
+    return st;
+}
+OSStatus SecIdentityCopyPreference(id_ name, u32 usage, id_ issuers, id_ *ident) {
+    (void)usage; (void)issuers;
+    if (!name || !ident) return errSecParam;
+    *ident = 0;
+    const char *nm = utf8(name);
+    char svc[300];
+    int sl = cx_snprintf(svc, sizeof svc, "mOS-pref:%s", nm ? nm : "");
+    u32 dl = 0;
+    void *der = 0;
+    OSStatus st = find_password("genp", F_SVCE, svc, (u32)sl, "cert", 4, &dl, &der, 0);
+    if (st) return st;
+    id_ c = cx_data_new(der, dl);
+    free(der);
+    st = SecIdentityCreateWithCertificate(0, c, ident);
+    CFRelease(c);
+    return st;
+}
+
+/* ---- SecPolicySearch: acha a política pelo OID CDSA (X.509 básica, SSL, revogação CRL/OCSP) */
+typedef struct { size_t Length; const u8 *Data; } cssm_oid_c;
+extern const cssm_oid_t CSSMOID_APPLE_X509_BASIC, CSSMOID_APPLE_TP_SSL, CSSMOID_APPLE_TP_REVOCATION_CRL,
+    CSSMOID_APPLE_TP_REVOCATION_OCSP;
+static int oid_is(const cssm_oid_c *o, const cssm_oid_t *ref) { return o && o->Length == ref->Length && !memcmp(o->Data, ref->Data, o->Length); }
+OSStatus SecPolicySearchCreate(u32 certType, const void *oid, const void *value, id_ *search) {
+    (void)certType; (void)value;
+    if (!search || !oid) return errSecParam;
+    *search = 0;
+    const cssm_oid_c *o = oid;
+    const char *kind = oid_is(o, &CSSMOID_APPLE_X509_BASIC) ? "x509" : oid_is(o, &CSSMOID_APPLE_TP_SSL) ? "ssl"
+                     : oid_is(o, &CSSMOID_APPLE_TP_REVOCATION_CRL) || oid_is(o, &CSSMOID_APPLE_TP_REVOCATION_OCSP) ? "rev" : 0;
+    if (!kind) return errSecPolicyNotFound;
+    id_ s = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
+    id_ p = policy_new(kind, 0);
+    CFArrayAppendValue(s, p);
+    CFRelease(p);
+    *search = s;
+    return errSecSuccess;
+}
+/* a busca é um CFMutableArray: cada CopyNext tira a próxima política */
+void CFArrayRemoveValueAtIndex(id_ a, long i);
+OSStatus SecPolicySearchCopyNext(id_ search, id_ *policy) {
+    if (!search || !policy) return errSecParam;
+    *policy = 0;
+    if (CFGetTypeID(search) != CFArrayGetTypeID() || !CFArrayGetCount(search)) return errSecPolicyNotFound;
+    *policy = CFRetain(CFArrayGetValueAtIndex(search, 0));
+    CFArrayRemoveValueAtIndex(search, 0);
+    return errSecSuccess;
+}
+/* SSL: CSSM_APPLE_TP_SSL_OPTIONS {u32 Version, ServerNameLen; const char *ServerName; u32 Flags} troca o servidor */
+OSStatus SecPolicySetValue(id_ policy, const cssm_data_t *value) {
+    char host[256];
+    int k = policy_kind(policy, host, sizeof host);
+    if (k < 0 || !value) return errSecParam;
+    if (k != 1 && k != 2) return errSecSuccess;              /* X.509 básica e revogação não têm valor */
+    if (value->Length < 16 || !value->Data) return errSecParam;
+    u32 ver, nl;
+    const char *nm;
+    memcpy(&ver, value->Data, 4); memcpy(&nl, value->Data + 4, 4); memcpy(&nm, value->Data + 8, sizeof nm);
+    int slot = -1;
+    for (int i = 0; i < 32 && slot < 0; i++) if (g_pol_host[i].p == policy) slot = i;
+    for (int i = 0; i < 32 && slot < 0; i++) if (!g_pol_host[i].p) slot = i;
+    if (slot < 0) return errSecAllocate;
+    if (nl && nm[nl - 1] == 0) nl--;
+    if (nl >= sizeof g_pol_host[0].host) return errSecParam;
+    memcpy(g_pol_host[slot].host, nm ? nm : "", nl);
+    g_pol_host[slot].host[nl] = 0;
+    g_pol_host[slot].p = policy;
+    return errSecSuccess;
+}
+
+/* ---- assinatura de código: os objetos SecCode/SecStaticCode são CFString (ver acima) */
+u64 SecCodeGetTypeID(void) { return CFStringGetTypeID(); }
+u64 SecStaticCodeGetTypeID(void) { return CFStringGetTypeID(); }
+OSStatus SecStaticCodeCreateWithPathAndAttributes(id_ url, u32 flags, id_ attrs, id_ *st) { (void)attrs; return SecStaticCodeCreateWithPath(url, flags, st); }
+OSStatus SecCodeCreateWithXPCMessage(id_ msg, u32 flags, id_ *code) {
+    (void)flags;
+    if (!msg || !code) return errSecParam;
+    *code = str_n("mOS-code:guest", 14);
+    return errSecSuccess;
+}
+/* o mOS não assina código: nenhum processo satisfaz um requisito (mesma resposta de SecCodeCheckValidity) */
+OSStatus SecTaskValidateForRequirement(id_ task, id_ req) { (void)task; (void)req; return errSecCSUnsigned; }
+
+/* ---- objetos sec_* do Network.framework: são os próprios SecIdentity/SecCertificate retidos */
+void *sec_identity_create(id_ ident) { return ident ? (void *)CFRetain(ident) : 0; }
+void *sec_identity_copy_ref(void *si) { return si ? (void *)CFRetain(si) : 0; }
+void *sec_certificate_create(id_ cert) { return cert ? (void *)CFRetain(cert) : 0; }
+void *sec_certificate_copy_ref(void *sc) { return sc ? (void *)CFRetain(sc) : 0; }
+void *sec_retain(void *o) { return o ? (void *)CFRetain(o) : 0; }
+void sec_release(void *o) { if (o) CFRelease(o); }
+
+/* ================================================================ Authorization: forma externa, informações */
+/* AuthorizationExternalForm = 32 bytes. O mOS não concede direitos (pedir = errAuthorizationDenied), então a referência
+ * reconstruída em outro processo é equivalente à original: uma autorização vazia. */
+#define errAuthorizationInvalidRef (-60002)
+#define errAuthorizationInvalidPointer (-60004)
+#define errAuthorizationExternalizeNotAllowed (-60009)
+#define errAuthorizationInternalizeNotAllowed (-60010)
+static const u8 AUTH_MAGIC[8] = {'m', 'O', 'S', 'a', 'u', 't', 'h', 1};
+OSStatus AuthorizationMakeExternalForm(void *auth, void *ext) {
+    if (!auth) return errAuthorizationInvalidRef;
+    if (!ext) return errAuthorizationInvalidPointer;
+    u8 *e = ext;
+    memcpy(e, AUTH_MAGIC, 8);
+    memcpy(e + 8, auth, 16);                                  /* o conteúdo opaco da referência */
+    for (int i = 24; i < 32; i++) e[i] = 0;
+    return errAuthorizationSuccess;
+}
+OSStatus AuthorizationCreateFromExternalForm(const void *ext, void **auth) {
+    if (!ext || !auth) return errAuthorizationInvalidPointer;
+    *auth = 0;
+    if (memcmp(ext, AUTH_MAGIC, 8)) return errAuthorizationInvalidRef;
+    void *a = calloc(1, 16);
+    if (!a) return errSecAllocate;
+    memcpy(a, (const u8 *)ext + 8, 16);
+    *auth = a;
+    return errAuthorizationSuccess;
+}
+/* AuthorizationItemSet {u32 count; AuthorizationItem *items}: sem direitos concedidos, o conjunto vem vazio */
+typedef struct { const char *name; size_t valueLength; void *value; u32 flags; } auth_item_t;
+typedef struct { u32 count; auth_item_t *items; } auth_set_t;
+OSStatus AuthorizationCopyInfo(void *auth, const char *tag, auth_set_t **info) {
+    (void)tag;
+    if (!auth) return errAuthorizationInvalidRef;
+    if (!info) return errAuthorizationInvalidPointer;
+    *info = calloc(1, sizeof **info);
+    return *info ? errAuthorizationSuccess : errSecAllocate;
+}
+OSStatus AuthorizationFreeItemSet(auth_set_t *set) {
+    if (!set) return errAuthorizationInvalidPointer;
+    for (u32 i = 0; i < set->count; i++) free(set->items[i].value);
+    free(set->items);
+    free(set);
+    return errAuthorizationSuccess;
+}
+/* mudar o banco de direitos exige administrador, que o mOS não concede a apps */
+OSStatus AuthorizationRightRemove(void *auth, const char *right) {
+    if (!auth) return errAuthorizationInvalidRef;
+    if (!right) return errAuthorizationInvalidPointer;
+    return errAuthorizationDenied;
+}
+/* o bloco recebe (OSStatus, AuthorizationRights *) na fila global, como no macOS */
+typedef struct { void *isa; int flags, reserved; void (*invoke)(void *, OSStatus, void *); } auth_blk_t;
+void *_Block_copy(const void *b);
+void _Block_release(const void *b);
+void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
+void *dispatch_get_global_queue(long prio, unsigned long flags);
+static void auth_async(void *b) { auth_blk_t *k = b; k->invoke(k, errAuthorizationDenied, 0); _Block_release(b); }
+void AuthorizationCopyRightsAsync(void *auth, const void *rights, const void *env, u32 flags, void *block) {
+    (void)rights; (void)env; (void)flags;
+    if (!block) return;
+    void *b = _Block_copy(block);
+    if (!auth) { ((auth_blk_t *)b)->invoke(b, errAuthorizationInvalidRef, 0); _Block_release(b); return; }
+    dispatch_async_f(dispatch_get_global_queue(0, 0), b, auth_async);
+}
+
+/* ================================================================ cssmPerror: "<como>: <mensagem>" no stderr */
+void cssmPerror(const char *how, int err) {
+    id_ s = SecCopyErrorMessageString(err, 0);
+    const char *m = s ? utf8(s) : "erro";
+    char b[400];
+    int n = cx_snprintf(b, sizeof b, "%s%s%s (%d)\n", how ? how : "", how ? ": " : "", m, err);
+    if (n > 0) write(2, b, (size_t)(n < (int)sizeof b ? n : (int)sizeof b - 1));
+    if (s) CFRelease(s);
 }

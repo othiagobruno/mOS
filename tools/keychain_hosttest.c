@@ -33,12 +33,24 @@ int cx_cert_fields(const u8 *d, u32 n, const u8 **a, u32 *b, const u8 **c, u32 *
     (void)d; (void)n; (void)a; (void)b; (void)c; (void)e; (void)f; (void)g; (void)l; (void)lc; return -1;
 }
 int cx_seckey_describe(const u8 *e, u32 n, int *p, int *t, u8 k[20]) { (void)e; (void)n; (void)p; (void)t; (void)k; return -1; }
-id_ cx_seckey_import(const u8 *d, u32 n, int p) { (void)d; (void)n; (void)p; return 0; }
-id_ SecKeyCopyExternalRepresentation(id_ k, id_ *e) { (void)k; (void)e; return 0; }
+/* chave falsa: o próprio CFData com os bytes; o teste só confere que eles vão e voltam */
+id_ cx_seckey_import(const u8 *d, u32 n, int p) { (void)p; return cx_data_new(d, n); }
+id_ SecKeyCopyExternalRepresentation(id_ k, id_ *e) { (void)e; return k ? cx_data_new(CFDataGetBytePtr(k), (u64)CFDataGetLength(k)) : 0; }
+/* seccert.c fica fora: nome do assunto fixo e validade em CFAbsoluteTime */
+static const u8 DN[] = {0x30, 0x1e, 0x31, 0x0c, 0x30, 0x0a, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x03, 'm', 'O', 'S',
+                        0x31, 0x0e, 0x30, 0x0c, 0x06, 0x03, 0x55, 0x04, 0x0a, 0x13, 0x05, 'T', 'i', 'm', 'e', '!'};
+id_ SecCertificateCopyNormalizedSubjectSequence(id_ c) { (void)c; return cx_data_new(DN, sizeof DN); }
+id_ SecCertificateCopyNormalizedIssuerSequence(id_ c) { (void)c; return cx_data_new(DN, sizeof DN); }
+double SecCertificateNotValidBefore(id_ c) { (void)c; return 700000000.0; }
+double SecCertificateNotValidAfter(id_ c) { (void)c; return 800000000.0; }
+static long long last_at;
+/* avaliação falsa: "vencido" agora; válido num instante dentro de [700000000, 800000000] + 2001 */
 int cx_sectrust_eval(const u8 *const *ders, const u32 *lens, unsigned n, const u8 *const *anc, const u32 *alens, unsigned na,
                      int sys, int pol, const char *host, long long at, char *err, unsigned el) {
-    (void)ders; (void)lens; (void)n; (void)anc; (void)alens; (void)na; (void)sys; (void)pol; (void)host; (void)at; (void)err; (void)el;
-    return -1;
+    (void)ders; (void)lens; (void)n; (void)anc; (void)alens; (void)na; (void)sys; (void)pol; (void)host; (void)el;
+    last_at = at;
+    if (err) err[0] = 0;
+    return at > 978307200LL + 700000000LL && at < 978307200LL + 800000000LL ? X_OK : X_EXPIRED;
 }
 int cx_ts_anchors(const u8 **ders, u32 *lens, int max, u8 ***own) { (void)ders; (void)lens; (void)max; (void)own; return 0; }
 int cx_ts_denied(const u8 *der, u32 n) { (void)der; (void)n; return 0; }
@@ -199,6 +211,82 @@ static void buscas(void) {
     check(SecKeychainCopySearchList(&list) == 0 && CFArrayGetCount(list) == 1 && SecKeychainCopyDomainSearchList(1, &list) == 0, "lista de busca");
 }
 
+static int blk_status = 1;
+static void blk_invoke(void *b, OSStatus st, void *r) { (void)b; (void)r; blk_status = st; }
+static void legado(void) {
+    /* Authorization */
+    void *a = 0, *b = 0;
+    u8 ext[32];
+    check(AuthorizationCreate(0, 0, 0, &a) == 0 && AuthorizationMakeExternalForm(a, ext) == 0 &&
+          AuthorizationCreateFromExternalForm(ext, &b) == 0 && b && !memcmp(a, b, 16), "forma externa ida e volta");
+    ext[0] ^= 1;
+    check(AuthorizationCreateFromExternalForm(ext, &b) == errAuthorizationInvalidRef, "forma externa estragada");
+    auth_set_t *set = 0;
+    check(AuthorizationCopyInfo(a, 0, &set) == 0 && set && set->count == 0 && AuthorizationFreeItemSet(set) == 0, "CopyInfo vazio");
+    check(AuthorizationRightRemove(a, "system.privilege.admin") == errAuthorizationDenied, "RightRemove negado");
+    auth_blk_t blk = {0, 0, 0, blk_invoke};
+    AuthorizationCopyRightsAsync(a, 0, 0, 0, &blk);
+    check(blk_status == errAuthorizationDenied, "CopyRightsAsync chama o bloco com negado");
+
+    /* certificado e nome */
+    id_ cert = cx_data_new("\x30\x82\x00\x01\x05", 5);
+    cssm_data_t cd;
+    id_ c2 = 0;
+    check(SecCertificateGetData(cert, &cd) == 0 && cd.Length == 5 && SecCertificateCreateFromData(&cd, 3, 3, &c2) == 0 &&
+          CFDataGetLength(c2) == 5, "GetData e CreateFromData");
+    const x509_name_t *nm = 0;
+    check(SecCertificateGetSubject(cert, (const void **)&nm) == 0 && nm && nm->n == 2 && nm->rdns[0].n == 1 &&
+          nm->rdns[0].pairs[0].type.Length == 3 && nm->rdns[0].pairs[0].valueType == 0x0c &&
+          nm->rdns[0].pairs[0].value.Length == 3 && !memcmp(nm->rdns[0].pairs[0].value.Data, "mOS", 3) &&
+          nm->rdns[1].pairs[0].valueType == 0x13 && !memcmp(nm->rdns[1].pairs[0].value.Data, "Time!", 5), "GetSubject: RDNs, OIDs e tipos");
+    id_ ic = SecCertificateCopyNormalizedIssuerContent(cert, 0);
+    check(ic && CFDataGetLength(ic) == (long)sizeof DN - 2 && CFDataGetBytePtr(ic)[0] == 0x31, "conteúdo normalizado sem o SEQUENCE");
+
+    /* identidade em memória */
+    id_ key = cx_data_new("chave", 5), ident = SecIdentityCreate(0, cert, key), oc = 0, ok_ = 0;
+    check(ident && SecIdentityCopyCertificate(ident, &oc) == 0 && CFDataGetLength(oc) == 5 && SecIdentityCopyPrivateKey(ident, &ok_) == 0 &&
+          ok_ && CFDataGetLength(ok_) == 5 && !memcmp(CFDataGetBytePtr(ok_), "chave", 5), "SecIdentityCreate devolve certificado e chave");
+    /* preferência: o certificado de uma identidade do Keychain, por nome */
+    id_ idq = CFDictionaryCreateMutable(0, 0, 0, 0);
+    id_ pc = cx_data_new("\x30\x03\x02\x01\x07", 5), got = 0;
+    CFDictionarySetValue(idq, K_(kSecClass), K_(kSecClassIdentity));
+    CFDictionarySetValue(idq, K_(kSecValueData), pc);
+    SecItemAdd(idq, 0);
+    check(SecCertificateSetPreferred(pc, S("https://site.example"), 0) == 0 &&
+          SecIdentityCopyPreference(S("https://site.example"), 0, 0, &got) == 0 && got, "preferência por nome acha a identidade");
+    check(SecIdentityCopyPreference(S("outro"), 0, 0, &got) == errSecItemNotFound, "sem preferência");
+
+    /* busca de política e valor SSL */
+    id_ ps = 0, pol = 0;
+    check(SecPolicySearchCreate(3, &CSSMOID_APPLE_TP_SSL, 0, &ps) == 0 && SecPolicySearchCopyNext(ps, &pol) == 0 &&
+          SecPolicySearchCopyNext(ps, &pol) == errSecPolicyNotFound, "SecPolicySearch: 1 política");
+    check(SecPolicySearchCreate(3, &CSSMOID_SHA1WithRSA, 0, &ps) == errSecPolicyNotFound, "OID que não é política");
+    SecPolicySearchCreate(3, &CSSMOID_APPLE_TP_SSL, 0, &ps); SecPolicySearchCopyNext(ps, &pol);
+    struct { u32 ver, nl; const char *name; u32 flags; } opt = {0, 8, "host.dev", 0};
+    cssm_data_t v = {sizeof opt, (u8 *)&opt};
+    id_ props = 0;
+    check(SecPolicySetValue(pol, &v) == 0 && (props = SecPolicyCopyProperties(pol)) && str_is(CFDictionaryGetValue(props, K_(kSecPolicyName)), "host.dev"),
+          "SecPolicySetValue troca o servidor");
+
+    /* SecTrust: opções AllowExpired e o resultado da API antiga */
+    id_ arr = CFArrayCreateMutable(0, 0, 0), tr = 0;
+    CFArrayAppendValue(arr, cert);
+    check(SecTrustCreateWithCertificates(arr, 0, &tr) == 0 && tr, "confiança criada");
+    int code = 0;
+    u32 res = 0;
+    check(SecTrustGetCssmResultCode(tr, &code) == 0 && code == CSSMERR_TP_CERT_EXPIRED, "vencido = CSSMERR_TP_CERT_EXPIRED");
+    check(SecTrustSetOptions(tr, 1) == 0 && SecTrustGetCssmResultCode(tr, &code) == 0 && code == 0 &&
+          last_at == 978307200LL + 700000000LL + 1, "AllowExpired confere no notBefore e passa");
+    id_ ch = 0;
+    evidence_t *ev = 0;
+    check(SecTrustGetResult(tr, &res, &ch, (void **)&ev) == 0 && res == kSecTrustResultUnspecified && ch && CFArrayGetCount(ch) == 1 &&
+          ev && ev[0].StatusBits == (0x4 | 0x8 | 0x10), "SecTrustGetResult: cadeia e evidências");
+    u8 pd[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    check(SecTrustSetParameters(tr, 0, cx_data_new(pd, 8)) == 0 && SecTrustGetCssmResultCode(tr, &code) == 0 && code == CSSMERR_TP_CERT_EXPIRED,
+          "SetParameters sem ALLOW_EXPIRED volta a recusar");
+    cssmPerror("teste", -25300);
+}
+
 /* segunda execução (outro processo): os atributos novos saem do arquivo cifrado */
 static void reler(void) {
     id_ m = inet_q("example.com", "ana");
@@ -229,7 +317,7 @@ static void formato_antigo(const char *home) {
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "antigo")) formato_antigo(getenv("HOME"));
     else if (argc > 1 && !strcmp(argv[1], "reler")) reler();
-    else { constantes(); senha_internet(); buscas(); }
+    else { constantes(); senha_internet(); buscas(); legado(); }
     printf("keychain: %d/%d ok\n", ok, total);
     return ok == total ? 0 : 1;
 }
