@@ -220,6 +220,184 @@ static int csi_by_key(const car_file *c, const uint16_t *key, int nkey, csi *s) 
     walk(c, c->renditions_tree, bykey_cb, &q);
     return q.v && parse_csi(q.v, q.vl, s);
 }
+/* ---- deepmap2 (compressão 11): o formato seguiu a descrição pública do decodificador carfile-go (licença MIT,
+ * github.com/devcxm/carfile-go); a implementação aqui é própria.
+ * Contêiner: u32 versão (1), u32 codificação, u64 tamanho, "dmp2", método, versão (1), -, formato de pixel, u16 largura,
+ * u16 altura (do 1º segmento), u32 descritor (tamanho comprimido do 1º segmento ou, na paleta, contagem | componentes<<16).
+ * Método 1 cru; 2 padrão (por segmento: alfa, um preditor por linha, plano alto e plano baixo dos resíduos em YCoCg com o
+ * sinal no bit 0); 3 sem perdas (os pixels comprimidos); 4 paleta (entradas, u32 tamanho e índices comprimidos).
+ * Saída como as outras renditions: BGRA pré-multiplicado (4 componentes) ou cinza+alfa (2). */
+static int dm2_layout(int pf, int *comps, int *has_alpha) {
+    switch (pf) {
+    case 1: *comps = 1; *has_alpha = 0; return 1;
+    case 2: *comps = 2; *has_alpha = 1; return 1;
+    case 3: *comps = 3; *has_alpha = 0; return 1;
+    case 4: *comps = 4; *has_alpha = 1; return 1;
+    }
+    return 0;   /* 20 (componentes de 16 bits) não é lido */
+}
+static int dm2_abs(int v) { return v < 0 ? -v : v; }
+static void dm2_unpredict(int16_t *row, const int16_t *prev, int n3, int pred) {
+    switch (pred) {
+    case 1:   /* de cima ou da esquerda, o que variar menos na luminância */
+        for (int c = 0; c < 3; c++) row[c] = (int16_t)(row[c] + prev[c]);
+        for (int i = 3; i < n3; i += 3) {
+            const int16_t *src = dm2_abs(prev[i] - prev[i - 3]) > dm2_abs(row[i - 3] - prev[i - 3]) ? prev + i : row + i - 3;
+            int16_t p0 = src[0], p1 = src[1], p2 = src[2];
+            row[i] = (int16_t)(row[i] + p0); row[i + 1] = (int16_t)(row[i + 1] + p1); row[i + 2] = (int16_t)(row[i + 2] + p2);
+        }
+        break;
+    case 2: for (int i = 3; i < n3; i++) row[i] = (int16_t)(row[i] + row[i - 3]); break;   /* esquerda */
+    case 3: for (int i = 0; i < n3; i++) row[i] = (int16_t)(row[i] + prev[i]); break;      /* cima */
+    case 4:   /* média de esquerda e cima, arredondada para cima e simétrica nos negativos */
+        for (int c = 0; c < 3; c++) row[c] = (int16_t)(row[c] + prev[c]);
+        for (int i = 3; i < n3; i++) {
+            int32_t sum = (int32_t)row[i - 3] + prev[i] + 1;
+            if (sum < 0) sum++;
+            row[i] = (int16_t)(row[i] + (sum >> 1));
+        }
+        break;
+    }
+}
+static uint8_t dm2_clip(int v) { return (uint8_t)(v & 255); }
+/* um segmento padrão já descomprimido (rows linhas) → pixels de saída a partir da linha y0 */
+static int dm2_default_segment(const uint8_t *src, long len, int w, int rows, int comps, int has_alpha, int16_t *prev, int16_t *cur,
+                               uint8_t *out, long rowbytes, int y0) {
+    long npx = (long)w * rows;
+    int rc = has_alpha ? comps - 1 : comps;
+    long abytes = has_alpha ? npx : 0, need = abytes + rows + 2 * rc * npx;
+    if (len < need) return 0;
+    const uint8_t *alpha = src, *pred = src + abytes, *hi = pred + rows, *lo = hi + rc * npx;
+    for (int y = 0; y < rows; y++) {
+        for (int i = 0; i < 3 * w; i++) cur[i] = 0;
+        for (int x = 0; x < w; x++)
+            for (int k = 0; k < rc; k++) {
+                long idx = ((long)y * w + x) * rc + k;
+                uint16_t e = (uint16_t)(lo[idx] | hi[idx] << 8);
+                int16_t v = (int16_t)(e >> 1);
+                cur[x * 3 + k] = (e & 1) ? (int16_t)-v : v;
+            }
+        dm2_unpredict(cur, prev, 3 * w, pred[y]);
+        uint8_t *o = out + (long)(y0 + y) * rowbytes;
+        for (int x = 0; x < w; x++) {
+            uint8_t a = has_alpha ? alpha[(long)y * w + x] : 255;
+            if (rc == 1) { o[x * comps] = dm2_clip(cur[x * 3]); if (has_alpha) o[x * comps + 1] = a; continue; }
+            int yy = cur[x * 3], co = (int16_t)((uint16_t)cur[x * 3 + 1] << 1), cg = (int16_t)((uint16_t)cur[x * 3 + 2] << 1);
+            int t = yy - cg / 2, g = t + cg, b = t - co / 2, r = b + co;
+            o[x * comps + 0] = dm2_clip(b); o[x * comps + 1] = dm2_clip(g); o[x * comps + 2] = dm2_clip(r);
+            if (comps == 4) o[x * comps + 3] = a;
+        }
+        int16_t *t = prev; prev = cur; cur = t;
+    }
+    /* a última linha decodificada fica em prev para o segmento seguinte */
+    if (rows & 1) for (int i = 0; i < 3 * w; i++) { int16_t t = prev[i]; prev[i] = cur[i]; cur[i] = t; }
+    return 1;
+}
+static int dm2_magic(const uint8_t *p, long n) { return n >= 4 && p[0] == 'b' && p[1] == 'v' && p[2] == 'x'; }
+static long dm2_inflate(car_decompress_fn dec, const uint8_t *p, long n, uint8_t *out, long cap) {
+    if (!dec) return 0;
+    return dec(dm2_magic(p, n) ? 4 : 3, p, n, out, cap);
+}
+/* um contêiner dmp2: pixels a partir da linha *y em out; devolve 1 e avança *y */
+static int dm2_container(const uint8_t *p, long n, car_decompress_fn dec, uint8_t *out, long rowbytes, long outcap, int want_w,
+                         int want_comps, int *y, uint8_t *work, long workcap) {
+    if (n < 32 || le32(p) != 1) return 0;
+    long clen = (long)(le32(p + 8));
+    if (clen > n - 16) clen = n - 16;
+    long end = 16 + clen;
+    if (end < 28 || p[16] != 'd' || p[17] != 'm' || p[18] != 'p' || p[19] != '2' || p[21] != 1) return 0;
+    int method = p[20], comps, has_alpha;
+    if (!dm2_layout(p[23], &comps, &has_alpha) || comps != want_comps) return 0;
+    int w = le16(p + 24), h = le16(p + 26);
+    if (w != want_w || h <= 0) return 0;
+    long bpp = comps;
+    if (method == 1) {
+        if (end - 28 < (long)w * h * bpp || (long)(*y + h) * rowbytes > outcap) return 0;
+        for (int yy = 0; yy < h; yy++) for (long i = 0; i < w * bpp; i++) out[(long)(*y + yy) * rowbytes + i] = p[28 + (long)yy * w * bpp + i];
+        *y += h;
+        return 1;
+    }
+    if (end < 32) return 0;
+    uint32_t desc = le32(p + 28);
+    const uint8_t *q = p + 32, *qe = p + end;
+    if (method == 2 || method == 3) {
+        int rc = has_alpha ? comps - 1 : comps;
+        long row_in = (has_alpha ? w : 0) + 1 + 2L * rc * w;
+        long ints = 3L * w * 2;   /* duas linhas de int16 */
+        if (workcap < ints * 2 + 64) return 0;
+        int16_t *prev = (int16_t *)work, *cur = prev + 3 * w;
+        uint8_t *seg = work + ints * 2;
+        long segcap = workcap - ints * 2;
+        for (int i = 0; i < 3 * w; i++) prev[i] = 0;
+        long clen1 = (long)desc;
+        /* LZVN cru não diz o tamanho: o esperado é o de um segmento da altura do cabeçalho (alinhado a 16) */
+        long expect = method == 2 ? ((has_alpha ? (long)w * h : 0) + h + 2L * rc * w * h + 15) & ~15L : (long)w * h * bpp;
+        for (;;) {
+            if (clen1 <= 0 || q + clen1 > qe) return 0;
+            long got = dm2_inflate(dec, q, clen1, seg, dm2_magic(q, clen1) || expect > segcap ? segcap : expect);
+            if (got <= 0) return 0;
+            if (method == 2) {
+                int rows = (int)(got / row_in);
+                if (rows <= 0 || got - rows * row_in >= 16 || (long)(*y + rows) * rowbytes > outcap) return 0;
+                if (!dm2_default_segment(seg, got, w, rows, comps, has_alpha, prev, cur, out, rowbytes, *y)) return 0;
+                *y += rows;
+            } else {
+                long rb = (long)w * bpp;
+                int rows = (int)(got / rb);
+                if (rows <= 0 || (long)(*y + rows) * rowbytes > outcap) return 0;
+                for (int yy = 0; yy < rows; yy++) for (long i = 0; i < rb; i++) out[(long)(*y + yy) * rowbytes + i] = seg[(long)yy * rb + i];
+                *y += rows;
+            }
+            q += clen1;
+            if (q >= qe) break;
+            if (q + 4 > qe) return 0;
+            clen1 = (long)le32(q);
+            q += 4;
+        }
+        return 1;
+    }
+    if (method == 4) {   /* paleta: as primeiras pc componentes vêm da entrada; as outras em planos à parte */
+        int count = (int)(desc & 0xFFFF), pc = (int)(desc >> 16);
+        if (count <= 0 || count > 256 || pc <= 0 || pc > comps) return 0;
+        long pbytes = (long)count * bpp;
+        if (q + pbytes + 4 > qe) return 0;
+        const uint8_t *pal = q;
+        long elen = (long)le32(q + pbytes);
+        const uint8_t *enc = q + pbytes + 4;
+        if (enc + elen > qe) return 0;
+        long npx = (long)w * h, sep = comps - pc, planes = npx * sep;
+        if (workcap < planes + npx || (long)(*y + h) * rowbytes > outcap) return 0;
+        long got = dm2_inflate(dec, enc, elen, work, planes + npx);
+        if (got != planes + npx) return 0;
+        const uint8_t *idx = work + planes;
+        for (long i = 0; i < npx; i++) {
+            if (idx[i] >= count) return 0;
+            uint8_t *o = out + (long)(*y + i / w) * rowbytes + (i % w) * bpp;
+            for (int k = 0; k < comps; k++) o[k] = pal[idx[i] * bpp + k];
+            for (int k = 0; k < sep; k++) o[pc + k] = work[(long)k * npx + i];
+        }
+        *y += h;
+        return 1;
+    }
+    return 0;
+}
+/* pixels de uma rendition deepmap2 (data depois do cabeçalho CELM; ver 1 = blocos KCBC) */
+int car_deepmap2(const uint8_t *data, long n, int kcbc_blocks, car_decompress_fn dec, int w, int h, int comps, uint8_t *out,
+                 long rowbytes, long outcap, uint8_t *work, long workcap) {
+    int y = 0;
+    if (kcbc_blocks > 0) {
+        const uint8_t *p = data, *e = data + n;
+        for (int i = 0; i < kcbc_blocks && p + 20 <= e; i++) {
+            if (le32(p) != FCC('C', 'B', 'C', 'K')) return 0;
+            long len = le32(p + 16);
+            if (p + 20 + len > e) return 0;
+            if (!dm2_container(p + 20, len, dec, out, rowbytes, outcap, w, comps, &y, work, workcap)) return 0;
+            p += 20 + len;
+        }
+    } else if (!dm2_container(data, n, dec, out, rowbytes, outcap, w, comps, &y, work, workcap)) return 0;
+    return y == h;
+}
+
 /* descomprime os pixels brutos (linhas de rowbytes) de uma rendition de bitmap; devolve rowbytes ou 0 */
 static long raw_pixels(const csi *s, car_decompress_fn dec, uint8_t *raw, long cap) {
     long rb_len;
@@ -230,8 +408,14 @@ static long raw_pixels(const csi *s, car_decompress_fn dec, uint8_t *raw, long c
     long need = rowbytes * s->h;
     if (need > cap || s->data_len < 16 || le32(s->data) != FCC('C', 'E', 'L', 'M')) return 0;
     uint32_t ver = le32(s->data + 4), comp = le32(s->data + 8), f4 = le32(s->data + 12);
-    if (comp >= 5 && comp != 4) return 0;   /* jpeg-lzfse, astc, paleta, hevc, deepmap: não lidos aqui */
     const uint8_t *p = s->data + 16, *end = s->data + s->data_len;
+    if (comp == 11) {   /* deepmap2: o resto do espaço de trabalho, depois dos pixels, serve de área de descompressão */
+        long work_off = (need + 15) & ~15L;
+        if (work_off >= cap) return 0;
+        return car_deepmap2(p, end - p, ver == 1 ? (int)f4 : 0, dec, s->w, s->h, bpp, raw, rowbytes, need, raw + work_off, cap - work_off)
+               ? rowbytes : 0;
+    }
+    if (comp >= 5 && comp != 4) return 0;   /* jpeg-lzfse, astc, paleta, hevc, deepmap antigo: não lidos aqui */
     long off = 0;
     if (ver == 1) {   /* blocos KCBC */
         for (uint32_t i = 0; i < f4 && p + 20 <= end; i++) {
