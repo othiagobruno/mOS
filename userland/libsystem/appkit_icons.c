@@ -24,6 +24,7 @@ void objc_setAssociatedObject(id obj, const void *key, id value, u64 policy);
 id objc_getAssociatedObject(id obj, const void *key);
 id cx_color(double r, double g, double b, double a);
 extern id NSFontAttributeName, NSForegroundColorAttributeName;
+id cx_catalog_image(id bundle, id name);
 
 typedef struct { double x, y; } P;
 typedef struct { double w, h; } S;
@@ -407,7 +408,10 @@ static id app_icon_at(id path) {
     id info = b ? MSG0(id, b, "infoDictionary") : 0;
     id file = info ? MSG(id, info, "objectForKey:", str("CFBundleIconFile")) : 0;
     id img = bundle_resource_icns(b, file);
-    if (!img && info) img = bundle_resource_icns(b, MSG(id, info, "objectForKey:", str("CFBundleIconName")));
+    id iname = info ? MSG(id, info, "objectForKey:", str("CFBundleIconName")) : 0;
+    if (!img && iname) img = cx_catalog_image(b, iname);   /* ícone no catálogo (Xcode 9+) */
+    if (!img && iname) img = bundle_resource_icns(b, iname);
+    if (img) ((void (*)(id, SEL, S))objc_msgSend)(img, sl("setSize:"), (S){32, 32});
     return img ? img : system_image("_mOSGenericApplication");
 }
 static BOOL arr_has(id arr, id s, BOOL ci) {
@@ -494,9 +498,12 @@ static id ws_icon_for_content_type(id self, SEL c, id uttype) {
 }
 
 /* ================================================================ +imageNamed: (depois dos recursos do app) */
+id cx_catalog_image(id bundle, id name);   /* appkit_catalog.c: Assets.car */
 id cx_named_image_more(id cls, id name) {
     (void)cls;
     if (g_names) { id img = MSG(id, g_names, "objectForKey:", name); if (img) return img; }
+    id cat = cx_catalog_image(0, name);
+    if (cat) return cat;
     const char *n = cx_cstr(name);
     if (!strcmp(n, "NSApplicationIcon")) {
         id mb = MSG0(id, (id)kls("NSBundle"), "mainBundle");
@@ -516,7 +523,7 @@ static id bundle_image(id self, SEL c, id name) {
             if (img) return objc_autorelease(img);
         }
     }
-    return 0;
+    return cx_catalog_image(self, name);
 }
 static id bundle_image_path(id self, SEL c, id name) {
     (void)c;
