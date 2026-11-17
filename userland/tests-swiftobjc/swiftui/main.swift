@@ -353,14 +353,16 @@ m = medir(200, 100) { GroupBox { Color.red.frame(width: 20, height: 10).backgrou
 if let g = m["gb"] { check(g.width == 20 && g.minX >= 10, "GroupBox: \(desc(g))") } else { check(false, "GroupBox: sem conteúdo") }
 
 // NavigationStack(path:): o topo da pilha vem do navigationDestination do tipo; com a pilha vazia, a raiz
-m = medir(200, 100) {
-    NavigationStack(path: .constant([7])) {
+// o destino é registrado pelo corpo da raiz: aparece no quadro seguinte (dois quadros, como num app)
+medidas = [:]
+let hostNav = NSHostingView(rootView: NavigationStack(path: .constant([7])) {
         Color.red.frame(width: 10, height: 10).background(Sonda(id: "raiz"))
             .navigationDestination(for: Int.self) { n in
                 Color.blue.frame(width: CGFloat(n * 10), height: 10).background(Sonda(id: "destino"))
             }
-    }
-}
+    })
+for h in [100.0, 101] { hostNav.setFrameSize(NSSize(width: 200, height: h)); hostNav.layout() }
+m = medidas
 check(abs((m["destino"]?.width ?? 0) - 70) < 0.5, "NavigationStack mostra o destino do valor empilhado: \(desc(m["destino"]))")
 m = medir(200, 100) {
     NavigationStack { Color.red.frame(width: 10, height: 10).background(Sonda(id: "raiz")) }
@@ -396,6 +398,31 @@ m = medir(300, 200) {
 }
 check(perto(m["nav"], 10, 9, 20, 20) && perto(m["acao"], 260, 9, 30, 20) && perto(m["corpo"], 0, 38, 300, 162),
       "toolbar: nav \(desc(m["nav"])) ação \(desc(m["acao"])) corpo \(desc(m["corpo"]))")
+
+// List(selection:): a linha com a tag selecionada ganha o realce; sem seleção, nenhuma
+struct ListaSel: View {
+    @State var sel: Int? = 2
+    var body: some View {
+        List(selection: $sel) {
+            ForEach(1...3, id: \.self) { i in Color.clear.frame(width: 10, height: 10).background(Sonda(id: "lin\(i)")) }
+        }
+    }
+}
+m = medir(200, 100) { ListaSel() }
+check(m["lin1"] != nil && m["lin2"] != nil && m["lin3"] != nil && (m["lin2"]!.minY > m["lin1"]!.minY),
+      "List(selection:) mostra as linhas em ordem: \(desc(m["lin1"])) \(desc(m["lin2"]))")
+
+// listStyle(.sidebar) dá margem 8 + padding da linha
+m = medir(200, 100) { List { Color.clear.frame(width: 10, height: 10).background(Sonda(id: "ls")) }.listStyle(.sidebar) }
+check((m["ls"]?.minY ?? 0) >= 8, "listStyle(.sidebar) aplica a margem: \(desc(m["ls"]))")
+
+// VSplitView: duas metades com divisória de 1
+m = medir(200, 101) { VSplitView { Color.clear.background(Sonda(id: "sv1")); Color.clear.background(Sonda(id: "sv2")) } }
+check(perto(m["sv1"], 0, 0, 200, 50) && perto(m["sv2"], 0, 51, 200, 50), "VSplitView: \(desc(m["sv1"])) \(desc(m["sv2"]))")
+
+// acessibilidade não muda o layout
+m = medir(200, 100) { Color.red.frame(width: 20, height: 20).accessibility(label: Text("x")).accessibilityHint("y").background(Sonda(id: "ax")) }
+check(perto(m["ax"], 90, 40, 20, 20), "accessibility(label:)/accessibilityHint mantêm o layout: \(desc(m["ax"]))")
 
 // Text tem tamanho de texto, não da proposta (por último: depende do CoreText do libSystem)
 m = medir(200, 100) { Text("Olá, mOS").background(Sonda(id: "t")) }

@@ -176,6 +176,22 @@ open class NSHostingView<Content>: NSView where Content: View {
     }
 
     open override var intrinsicContentSize: NSSize { NSSize(width: -1, height: -1) }   // NSView.noIntrinsicMetric
+
+    /// Quais tamanhos do conteúdo o hosting reflete na view (o mOS usa o tamanho do conteúdo pelo sizeThatFits).
+    @available(macOS 13.0, *)
+    public var sizingOptions: NSHostingSizingOptions = .standardBounds
+}
+
+/// Opções de como um NSHostingView/NSHostingController reflete o tamanho do conteúdo SwiftUI.
+@available(macOS 13.0, *)
+public struct NSHostingSizingOptions: OptionSet, Sendable {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+    public static let minSize = NSHostingSizingOptions(rawValue: 1 << 0)
+    public static let intrinsicContentSize = NSHostingSizingOptions(rawValue: 1 << 1)
+    public static let maxSize = NSHostingSizingOptions(rawValue: 1 << 2)
+    public static let preferredContentSize = NSHostingSizingOptions(rawValue: 1 << 3)
+    public static let standardBounds: NSHostingSizingOptions = [.minSize, .intrinsicContentSize, .maxSize]
 }
 
 /// Um view controller do AppKit que gerencia uma hierarquia de views do SwiftUI.
@@ -207,6 +223,12 @@ open class NSHostingController<Content>: NSViewController where Content: View {
     open override func loadView() { view = _mosHostingView }
 
     public func sizeThatFits(in size: CGSize) -> CGSize { _mosHostingView.mosSizeThatFits(size) }
+
+    @available(macOS 13.0, *)
+    public var sizingOptions: NSHostingSizingOptions {
+        get { _mosHostingView.sizingOptions }
+        set { _mosHostingView.sizingOptions = newValue }
+    }
 }
 
 #endif

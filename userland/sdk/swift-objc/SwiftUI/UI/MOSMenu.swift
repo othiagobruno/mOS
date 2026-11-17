@@ -181,15 +181,20 @@ public struct Menu<Label, Content>: View where Label: View, Content: View {
 }
 
 @available(macOS 11.0, *)
-extension Menu where Label == Text {
-    public init(_ titleKey: LocalizedStringKey, @ViewBuilder content: () -> Content) {
+extension Menu {
+    // ABI da Apple: o `where` fica no init, numa extensão sem restrição
+    public init(_ titleKey: LocalizedStringKey, @ViewBuilder content: () -> Content) where Label == Text {
         self.init(content: content) { Text(titleKey) }
     }
 
     @_disfavoredOverload
-    public init<S>(_ title: S, @ViewBuilder content: () -> Content) where S: StringProtocol {
+    public init<S>(_ title: S, @ViewBuilder content: () -> Content) where Label == Text, S: StringProtocol {
         self.init(content: content) { Text(title) }
     }
+}
+
+@available(macOS 11.0, *)
+extension Menu where Label == Text {
 
     @available(macOS 12.0, *)
     public init(_ titleKey: LocalizedStringKey, @ViewBuilder content: () -> Content, primaryAction: @escaping () -> Void) {

@@ -59,10 +59,12 @@ typedef CGPoint NSPoint;
 - (void)viewDidLoad;
 @end
 
+@class NSBundle;
 @interface NSColor : NSObject
 + (NSColor *)colorWithSRGBRed:(CGFloat)red green:(CGFloat)green blue:(CGFloat)blue alpha:(CGFloat)alpha;
 + (NSColor *)colorWithCalibratedRed:(CGFloat)red green:(CGFloat)green blue:(CGFloat)blue alpha:(CGFloat)alpha;
 - (nullable NSColor *)colorUsingColorSpaceName:(NSString *)name;
++ (nullable NSColor *)colorNamed:(NSString *)name bundle:(nullable NSBundle *)bundle NS_SWIFT_NAME(init(named:bundle:));
 @property (readonly) CGFloat redComponent;
 @property (readonly) CGFloat greenComponent;
 @property (readonly) CGFloat blueComponent;
