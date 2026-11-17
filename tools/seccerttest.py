@@ -188,6 +188,15 @@ other = make("Outra Raiz", other_key, ca=True)
 check(trust(1, "app.mos.test", -1, 0, None, [p_leaf, p_in], [put("other.der", other.public_bytes(DER))]) != "0", "âncora errada")
 bad = bytearray(leaf.public_bytes(DER)); bad[-5] ^= 0x40
 check(trust(1, "app.mos.test", -1, 0, None, [put("bad.der", bytes(bad)), p_in], [p_ca]) in ("7", "2", "1"), "assinatura adulterada")
+# SecureTransport com SSLSetAllowsAnyRoot (securetransport.c, verify_chain): o topo da cadeia vira âncora e o resto
+# continua conferido
+check(trust(1, "app.mos.test", -1, 0, None, [p_leaf, p_in]) == "2", "sem âncora: emissor desconhecido")
+check(trust(1, "app.mos.test", -1, 0, None, [p_leaf, p_in], [p_in]) == "0", "AllowsAnyRoot: topo da cadeia como âncora")
+check(trust(1, "outro.exemplo", -1, 0, None, [p_leaf, p_in], [p_in]) == "11", "AllowsAnyRoot ainda confere o nome")
+check(trust(1, "app.mos.test", later, 0, None, [p_leaf, p_in], [p_in]) == "5", "AllowsAnyRoot ainda confere a data")
+# SSLSetAllowsExpiredCerts: confere de novo no maior notBefore da cadeia
+nb_max = int(max(leaf.not_valid_before_utc, inter.not_valid_before_utc).timestamp()) + 1
+check(trust(1, "app.mos.test", nb_max, 0, None, [p_leaf, p_in], [p_ca]) == "0", "AllowsExpiredCerts: instante em que todos valem")
 cl_key = ec.generate_private_key(ec.SECP256R1())
 cl = make("cliente.mos.test", cl_key, inter, in_key, san=["cliente.mos.test"], eku=[ExtendedKeyUsageOID.CLIENT_AUTH])
 p_cl = put("cl.der", cl.public_bytes(DER))

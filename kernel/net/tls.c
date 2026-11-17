@@ -145,7 +145,8 @@ struct tls_conn {
     u16 suite;
     u8 master[48], c_hs[48], s_hs[48], c_ap[48], s_ap[48];
     tls_aead_t rd, wr;
-    u8 alpn_offer[128]; u32 alpn_offer_len;   /* lista ALPN no formato do fio (sem o u16 externo); 0 = "http/1.1" */
+    u8 alpn_offer[128]; u32 alpn_offer_len;
+    bool skip_chain;   /* tls_set_skip_chain: a cadeia é guardada mas validada por quem pediu (SecureTransport) */   /* lista ALPN no formato do fio (sem o u16 externo); 0 = "http/1.1" */
     char alpn[33];                            /* protocolo que o servidor escolheu ("" = nenhum) */
     /* certificado de cliente (tls_set_client_identity) */
     u8 *id_chain; u32 id_n, id_off[10], id_len[10];
@@ -813,6 +814,23 @@ void (*tls_test_chain_hook)(const char *host, const u8 *const *ders, const u32 *
 void (*tls_test_ocsp_hook)(const char *host, const u8 *resp, u32 len);
 #endif
 
+/* guarda a cadeia (MOS_NET_TLS_CERTS, OCSP grampeado) */
+static int tls_keep_chain(tls_conn_t *c, const u8 *const *ders, const u32 *lens, u32 count) {
+    /* guarda a cadeia para conferir o OCSP grampeado (no 1.2 ele chega depois) */
+    u32 tot = 0;
+    for (u32 i = 0; i < count; i++) tot += lens[i];
+    c->chain = kmalloc(tot ? tot : 1);
+    if (!c->chain) return fail(c, AL_INTERNAL, "sem memória");
+    for (u32 i = 0, off = 0; i < count; i++) {
+        memcpy(c->chain + off, ders[i], lens[i]);
+        c->chain_off[i] = off;
+        c->chain_len[i] = lens[i];
+        off += lens[i];
+    }
+    c->chain_n = count;
+    return 0;
+}
+
 static int tls_check_certificate(tls_conn_t *c, const u8 *const *ders, const u32 *lens, u32 count) {
     c->leaf = kmalloc(lens[0] ? lens[0] : 1);
     if (!c->leaf) return fail(c, AL_INTERNAL, "sem memória");
@@ -821,7 +839,14 @@ static int tls_check_certificate(tls_conn_t *c, const u8 *const *ders, const u32
 #ifdef MOS_HOST_TEST
     if (tls_test_chain_hook) tls_test_chain_hook(c->sni, ders, lens, count);
 #endif
-    if (g_tls_insecure) {
+    if (g_tls_insecure || c->skip_chain) {
+        if (c->skip_chain) {
+            /* o SecureTransport do app pediu outra política (SSLSetEnableCertVerify, SSLSetAllowsAnyRoot,
+             * SSLSetTrustedRoots...): a cadeia segue para ele (MOS_NET_TLS_CERTS) e a assinatura do handshake
+             * continua conferida com a chave do certificado folha */
+            kprintf("[tls] %s: cadeia de %u certificado(s) entregue ao app para validar\n", c->sni, count);
+            return tls_keep_chain(c, ders, lens, count);
+        }
         if (!tls_insecure_logged) {
             kprintf("[tls] AVISO: g_tls_insecure ativo — certificados NÃO são verificados\n");
             tls_insecure_logged = true;
@@ -847,19 +872,7 @@ static int tls_check_certificate(tls_conn_t *c, const u8 *const *ders, const u32
         return fail(c, al, "%s", err);
     }
     kprintf("[tls] %s: cadeia de %u certificado(s) válida até a raiz \"%s\" (%u ms)\n", c->sni, count, anchor, ms);
-    /* guarda a cadeia para conferir o OCSP grampeado (no 1.2 ele chega depois) */
-    u32 tot = 0;
-    for (u32 i = 0; i < count; i++) tot += lens[i];
-    c->chain = kmalloc(tot ? tot : 1);
-    if (!c->chain) return fail(c, AL_INTERNAL, "sem memória");
-    for (u32 i = 0, off = 0; i < count; i++) {
-        memcpy(c->chain + off, ders[i], lens[i]);
-        c->chain_off[i] = off;
-        c->chain_len[i] = lens[i];
-        off += lens[i];
-    }
-    c->chain_n = count;
-    return 0;
+    return tls_keep_chain(c, ders, lens, count);
 }
 
 /* revogação via OCSP grampeado. resp == NULL: o servidor não grampeou (soft-fail).
@@ -1230,7 +1243,7 @@ static int handle_finished(tls_conn_t *c, const u8 *msg, u32 mlen) {
     kfree(c->ch); c->ch = NULL;
     kfree(c->cookie); c->cookie = NULL;
     kfree(c->leaf); c->leaf = NULL;
-    kfree(c->chain); c->chain = NULL;
+    /* a cadeia fica até tls_free: MOS_NET_TLS_CERTS (SSLCopyPeerTrust, serverTrust do URLSession) a lê depois */
     c->hs = HS_DONE;
     return 1;   /* troca de chaves de leitura */
 }
@@ -1388,7 +1401,7 @@ static int handle_finished12(tls_conn_t *c, const u8 *body, u32 blen) {
     secure_zero(c->master, sizeof(c->master));
     kfree(c->ch); c->ch = NULL;
     kfree(c->leaf); c->leaf = NULL;
-    kfree(c->chain); c->chain = NULL;
+    /* a cadeia fica até tls_free: MOS_NET_TLS_CERTS (SSLCopyPeerTrust, serverTrust do URLSession) a lê depois */
     c->hs = HS_DONE;
     kprintf("[tls] %s: handshake TLS 1.2 concluído\n", c->sni);
     return 0;
@@ -1718,6 +1731,12 @@ tls_conn_t *tls_new(int tcp_sock, const char *sni) {
 }
 
 /* lista ALPN no formato do fio (u8 tamanho + nome, repetido). Só antes do handshake. */
+/* antes do 1º handshake: não validar a cadeia aqui (quem chamou valida com a cadeia de MOS_NET_TLS_CERTS) */
+int tls_set_skip_chain(tls_conn_t *c, bool skip) {
+    if (!c || c->hs != HS_START) return -1;
+    c->skip_chain = skip;
+    return 0;
+}
 int tls_set_alpn(tls_conn_t *c, const u8 *list, u32 len) {
     if (!c || c->hs != HS_START || len > sizeof(c->alpn_offer)) return -1;
     for (u32 i = 0; i < len; i += 1u + list[i])

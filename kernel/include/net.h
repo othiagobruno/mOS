@@ -107,6 +107,7 @@ int  tls_set_client_identity(tls_conn_t *c, const u8 *chain, u32 chain_len, cons
 void tls_free(tls_conn_t *c);
 const char *tls_error(tls_conn_t *c);
 int  tls_copy_peer_chain(const tls_conn_t *c, u8 *buf, u32 cap);
+int  tls_set_skip_chain(tls_conn_t *c, bool skip);   /* antes do handshake: a cadeia vai para o app validar */
 int  tls_set_alpn(tls_conn_t *c, const u8 *list, u32 len);   /* formato do fio (RFC 7301); antes do handshake */
 const char *tls_get_alpn(const tls_conn_t *c);              /* "" se o servidor não escolheu */
 int  tls_get_version(const tls_conn_t *c);                  /* 0x0304, 0x0303 ou 0 antes do fim */

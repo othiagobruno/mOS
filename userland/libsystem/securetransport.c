@@ -41,10 +41,14 @@ enum {
     errSSLProtocol = -9800, errSSLNegotiation = -9801, errSSLFatalAlert = -9802, errSSLWouldBlock = -9803,
     errSSLClosedGraceful = -9805, errSSLClosedAbort = -9806, errSSLXCertChainInvalid = -9807, errSSLInternal = -9810,
     errSSLClosedNoNotify = -9816, errSSLPeerAuthCompleted = -9841, errSSLBadConfiguration = -9848, errSSLBadCert = -9808,
+    errSSLUnknownRootCert = -9812, errSSLNoRootCert = -9813, errSSLCertExpired = -9814, errSSLCertNotYetValid = -9815,
 };
 enum { kSSLIdle, kSSLHandshake, kSSLConnected, kSSLClosed, kSSLAborted };
 enum { kSSLSessionOptionBreakOnServerAuth = 0 };
-enum { kTLSProtocol12 = 8, kTLSProtocol13 = 10 };
+enum { kSSLProtocol2 = 1, kSSLProtocol3 = 2, kTLSProtocol1 = 4, kSSLProtocolAll = 6, kTLSProtocol11 = 7, kTLSProtocol12 = 8,
+       kTLSProtocol13 = 10 };
+/* validação da cadeia pedida pelo app (API antiga): sem nenhuma destas, o kernel valida como sempre */
+enum { V_OFF = 1, V_ANY_ROOT = 2, V_EXP_CERTS = 4, V_EXP_ROOTS = 8 };
 
 id CFArrayCreateMutable(void *alloc, long cap, const void *cb);
 void CFArrayAppendValue(id a, id v);
@@ -90,6 +94,12 @@ typedef struct {
     u32 rec_have, out_off, out_len, p_off, p_len;
     u8 alpn[128]; u32 alpn_len;          /* lista pedida pelo app, formato do fio */
     u8 *ident; u32 ident_len;            /* SSLSetCertificate: cadeia + chave para MOS_NET_TLS_IDENTITY */
+    u8 vflags;                           /* V_*: SSLSetEnableCertVerify, SSLSetAllowsAnyRoot, SSLSetAllowsExpired* */
+    Boolean roots_only, chain_ok;        /* SSLSetTrustedRoots(replace); cadeia válida pela política padrão */
+    id roots;                            /* SSLSetTrustedRoots: CFArray de SecCertificate (âncoras do app) */
+    u8 *dh; u32 dh_len;                  /* SSLSetDiffieHellmanParams (só servidor usa; guardado como na Apple) */
+    u8 *peerid; u32 peerid_len;          /* SSLSetPeerID */
+    u16 pmask;                           /* SSLSetProtocolVersionEnabled: bit = número do protocolo */
     mos_net_tls_info_t info;             /* preenchido no fim do handshake */
 } ssl_t;
 
@@ -112,6 +122,9 @@ static void ssl_dealloc(id self, SEL c) {
     ssl_teardown(s, 0);
     free(s->rec); free(s->out); free(s->plain);
     if (s->ident) { memset(s->ident, 0, s->ident_len); free(s->ident); }
+    if (s->roots) CFRelease(s->roots);
+    free(s->dh); free(s->peerid);
+    s->roots = 0; s->dh = s->peerid = 0;
     s->rec = s->out = s->plain = 0;
     s->magic = 0;
     if (nsobject_dealloc) ((void (*)(id, SEL))nsobject_dealloc)(self, c);
@@ -145,6 +158,7 @@ void *SSLCreateContext(void *alloc, int side, int type) {
     s->h = -1;
     s->vmin = kTLSProtocol12;
     s->vmax = kTLSProtocol13;
+    s->pmask = 1u << kTLSProtocol1 | 1u << kTLSProtocol11 | 1u << kTLSProtocol12 | 1u << kTLSProtocol13;
     s->tickets = 1;
     s->rec = malloc(REC_MAX);
     s->out = malloc(OUT_CAP);
@@ -206,12 +220,106 @@ OSStatus SSLGetPeerDomainName(void *ctx, char *buf, size_t *len) {
     *len = n;
     return errSecSuccess;
 }
-OSStatus SSLSetPeerID(void *ctx, const void *id_, size_t len) { (void)id_; (void)len; return S(ctx) ? errSecSuccess : errSecParam; }
+id SecCertificateCopyData(id cert);
+double SecCertificateNotValidBefore(id cert);
+double SecCertificateNotValidAfter(id cert);
+/* PeerID: chave de cache de sessão do app. O kernel não retoma sessões, então ele só fica guardado (SSLGetPeerID) */
+static OSStatus set_blob(u8 **dst, u32 *dl, const void *src, size_t n) {
+    if (n > 64 * 1024 || (n && !src)) return errSecParam;
+    u8 *b = n ? malloc(n) : 0;
+    if (n && !b) return errSecAllocate;
+    if (n) memcpy(b, src, n);
+    free(*dst);
+    *dst = b; *dl = (u32)n;
+    return errSecSuccess;
+}
+OSStatus SSLSetPeerID(void *ctx, const void *id_, size_t len) { ssl_t *s = S(ctx); return s ? set_blob(&s->peerid, &s->peerid_len, id_, len) : errSecParam; }
+OSStatus SSLGetPeerID(void *ctx, const void **id_, size_t *len) {
+    ssl_t *s = S(ctx);
+    if (!s || !id_ || !len) return errSecParam;
+    *id_ = s->peerid; *len = s->peerid_len;
+    return errSecSuccess;
+}
+/* parâmetros DH (PKCS#3): só o lado servidor usa; o mOS só tem cliente, e o cliente da Apple também só os guarda */
+OSStatus SSLSetDiffieHellmanParams(void *ctx, const void *dh, size_t len) {
+    ssl_t *s = S(ctx);
+    if (!s) return errSecParam;
+    if (s->h >= 0) return errSecBadReq;
+    return set_blob(&s->dh, &s->dh_len, dh, len);
+}
+OSStatus SSLGetDiffieHellmanParams(void *ctx, const void **dh, size_t *len) {
+    ssl_t *s = S(ctx);
+    if (!s || !dh || !len) return errSecParam;
+    *dh = s->dh; *len = s->dh_len;
+    return errSecSuccess;
+}
+/* opções antigas de validação: valem para o próximo handshake */
+static OSStatus vflag(void *ctx, u8 bit, Boolean on) {
+    ssl_t *s = S(ctx);
+    if (!s) return errSecParam;
+    if (s->h >= 0) return errSecBadReq;
+    s->vflags = on ? (u8)(s->vflags | bit) : (u8)(s->vflags & ~bit);
+    return errSecSuccess;
+}
+static OSStatus vget(void *ctx, u8 bit, Boolean *on, int invert) {
+    ssl_t *s = S(ctx);
+    if (!s || !on) return errSecParam;
+    *on = (Boolean)(((s->vflags & bit) != 0) ^ invert);
+    return errSecSuccess;
+}
+OSStatus SSLSetEnableCertVerify(void *ctx, Boolean on) { return vflag(ctx, V_OFF, !on); }
+OSStatus SSLGetEnableCertVerify(void *ctx, Boolean *on) { return vget(ctx, V_OFF, on, 1); }
+OSStatus SSLSetAllowsAnyRoot(void *ctx, Boolean on) { return vflag(ctx, V_ANY_ROOT, on); }
+OSStatus SSLGetAllowsAnyRoot(void *ctx, Boolean *on) { return vget(ctx, V_ANY_ROOT, on, 0); }
+OSStatus SSLSetAllowsExpiredCerts(void *ctx, Boolean on) { return vflag(ctx, V_EXP_CERTS, on); }
+OSStatus SSLGetAllowsExpiredCerts(void *ctx, Boolean *on) { return vget(ctx, V_EXP_CERTS, on, 0); }
+OSStatus SSLSetAllowsExpiredRoots(void *ctx, Boolean on) { return vflag(ctx, V_EXP_ROOTS, on); }
+OSStatus SSLGetAllowsExpiredRoots(void *ctx, Boolean *on) { return vget(ctx, V_EXP_ROOTS, on, 0); }
+/* âncoras do app: replace = só elas; senão, elas mais as raízes do sistema */
+OSStatus SSLSetTrustedRoots(void *ctx, id roots, Boolean replace) {
+    ssl_t *s = S(ctx);
+    if (!s) return errSecParam;
+    if (s->h >= 0) return errSecBadReq;
+    id a = CFArrayCreateMutable(0, 0, &kCFTypeArrayCallBacks);
+    if (!a) return errSecAllocate;
+    long n = roots ? CFArrayGetCount(roots) : 0;
+    for (long i = 0; i < n; i++) {
+        id c = (id)CFArrayGetValueAtIndex(roots, i);
+        id d = c ? SecCertificateCopyData(c) : 0;
+        if (!d) { CFRelease(a); return errSecParam; }
+        CFRelease(d);
+        CFArrayAppendValue(a, c);
+    }
+    if (s->roots) CFRelease(s->roots);
+    s->roots = a;
+    s->roots_only = replace;
+    return errSecSuccess;
+}
+OSStatus SSLCopyTrustedRoots(void *ctx, id *roots) {
+    ssl_t *s = S(ctx);
+    if (!s || !roots) return errSecParam;
+    *roots = s->roots ? CFRetain(s->roots) : 0;
+    return errSecSuccess;
+}
+/* autoridades aceitas para o certificado de cliente: é lista do lado servidor (SSLSetCertificateAuthorities); no
+ * cliente não há nenhuma, e a Apple devolve NULL */
+OSStatus SSLCopyCertificateAuthorities(void *ctx, id *names) {
+    if (!S(ctx) || !names) return errSecParam;
+    *names = 0;
+    return errSecSuccess;
+}
+/* erro que as próximas chamadas devolvem (usado por quem embrulha o SecureTransport para abortar a sessão) */
+OSStatus SSLSetError(void *ctx, OSStatus err) {
+    ssl_t *s = S(ctx);
+    if (!s) return errSecParam;
+    s->err = err;
+    if (err) s->state = kSSLAborted;
+    return errSecSuccess;
+}
 /* certificado de cliente: certs[0] = SecIdentityRef, depois os intermediários (SecCertificateRef). A cadeia vai no
  * formato de MOS_NET_TLS_CERTS e a chave como SecKeyCopyExternalRepresentation (PKCS#1 no RSA, X9.63 no EC). */
 OSStatus SecIdentityCopyCertificate(id ident, id *cert);
 OSStatus SecIdentityCopyPrivateKey(id ident, id *key);
-id SecCertificateCopyData(id cert);
 id SecKeyCopyExternalRepresentation(id key, id *err);
 OSStatus SSLSetCertificate(void *ctx, id certs) {
     ssl_t *s = S(ctx);
@@ -268,6 +376,28 @@ OSStatus SSLSetProtocolVersionMax(void *ctx, int v) {
     if (!s) return errSecParam;
     if (v != 999 && v < kTLSProtocol12) return errSSLBadConfiguration;   /* o motor só fala 1.2 e 1.3 */
     s->vmax = v == 999 ? kTLSProtocol13 : v;
+    return errSecSuccess;
+}
+/* API antiga por protocolo: o motor do kernel fala 1.2 e 1.3; min/max saem do que ficou ligado entre os dois */
+static int proto_ok(int p) { return p == kSSLProtocol2 || p == kSSLProtocol3 || p == kTLSProtocol1 || p == kTLSProtocol11 ||
+                                    p == kTLSProtocol12 || p == kTLSProtocol13 || p == kSSLProtocolAll; }
+OSStatus SSLSetProtocolVersionEnabled(void *ctx, int p, Boolean on) {
+    ssl_t *s = S(ctx);
+    if (!s) return errSecParam;
+    if (s->h >= 0) return errSecBadReq;
+    if (!proto_ok(p)) return errSecParam;
+    u16 bits = p == kSSLProtocolAll ? (u16)(1u << kSSLProtocol3 | 1u << kTLSProtocol1 | 1u << kTLSProtocol11 | 1u << kTLSProtocol12 |
+                                            1u << kTLSProtocol13) : (u16)(1u << p);
+    s->pmask = on ? (u16)(s->pmask | bits) : (u16)(s->pmask & ~bits);
+    int lo = s->pmask & 1u << kTLSProtocol12 ? kTLSProtocol12 : s->pmask & 1u << kTLSProtocol13 ? kTLSProtocol13 : 0;
+    int hi = s->pmask & 1u << kTLSProtocol13 ? kTLSProtocol13 : s->pmask & 1u << kTLSProtocol12 ? kTLSProtocol12 : 0;
+    s->vmin = lo; s->vmax = hi;               /* 0 = nenhuma versão que o motor fala: o handshake recusa */
+    return errSecSuccess;
+}
+OSStatus SSLGetProtocolVersionEnabled(void *ctx, int p, Boolean *on) {
+    ssl_t *s = S(ctx);
+    if (!s || !on || !proto_ok(p)) return errSecParam;
+    *on = p == kSSLProtocolAll ? (s->pmask & 0x594) == 0x594 : (s->pmask >> p) & 1;
     return errSecSuccess;
 }
 OSStatus SSLGetProtocolVersionMin(void *ctx, int *v) { ssl_t *s = S(ctx); if (!s || !v) return errSecParam; *v = s->vmin; return errSecSuccess; }
@@ -393,7 +523,7 @@ OSStatus SSLCopyPeerTrust(void *ctx, id *trust) {
     free(buf);
     if (!t || !CFArrayGetCount(t)) { if (t) CFRelease(t); return errSecSuccess; }
     cx_trust_set_host(t, s->peer);
-    cx_trust_mark_verified(t);
+    if (s->chain_ok) cx_trust_mark_verified(t);
     *trust = t;
     return errSecSuccess;
 }
@@ -479,6 +609,84 @@ static OSStatus fatal(ssl_t *s) {
     return st;
 }
 
+/* ---------------------------------------------------------------- validação pedida pelo app
+ * Com V_* ou âncoras próprias, o kernel não valida (MOS_NET_TLS_NOVERIFY) e a cadeia é conferida aqui com o mesmo
+ * x509 do SecTrust (sectrust.c), como o SecureTransport da Apple faz com o SecTrust:
+ *   - AllowsAnyRoot: a ponta de cima da cadeia vira âncora, e o resto (nome, datas, assinaturas) continua conferido;
+ *   - AllowsExpiredCerts/Roots: data fora da validade é aceita, conferindo de novo num instante em que todos valem;
+ *   - EnableCertVerify(false) e BreakOnServerAuth: não confere (o app decide com SSLCopyPeerTrust).
+ * chain_ok diz se a cadeia passa pela política padrão (raízes do sistema), e só aí a confiança devolvida por
+ * SSLCopyPeerTrust já vem marcada como avaliada. */
+extern int cx_sectrust_eval(const u8 *const *ders, const u32 *lens, unsigned n, const u8 *const *anc, const u32 *alens,
+                            unsigned na, int use_system, int policy, const char *host, long long at_unix, char *err,
+                            unsigned errlen);
+enum { XE_OK = 0, XE_PARSE, XE_UNKNOWN_ISSUER, XE_SELF_SIGNED, XE_UNTRUSTED_ROOT, XE_EXPIRED, XE_NOT_YET_VALID };
+static int app_verifies(ssl_t *s) { return s->vflags || s->roots || s->break_auth; }
+static OSStatus verify_chain(ssl_t *s) {
+    long need = net(MOS_NET_TLS_CERTS, s->h, 0, 0);
+    if (need < 8) return errSSLXCertChainInvalid;
+    u8 *buf = malloc((size_t)need);
+    if (!buf) return errSecAllocate;
+    if (net(MOS_NET_TLS_CERTS, s->h, (long)buf, need) != need) { free(buf); return errSSLInternal; }
+    const u8 *ders[10];
+    u32 lens[10], n = 0, o = 4, count = (u32)buf[0] | (u32)buf[1] << 8 | (u32)buf[2] << 16 | (u32)buf[3] << 24;
+    for (u32 i = 0; i < count && n < 10 && o + 4 <= (u32)need; i++) {
+        u32 L = (u32)buf[o] | (u32)buf[o + 1] << 8 | (u32)buf[o + 2] << 16 | (u32)buf[o + 3] << 24;
+        o += 4;
+        if (o + L > (u32)need) break;
+        ders[n] = buf + o; lens[n++] = L;
+        o += L;
+    }
+    const char *host = s->peer[0] ? s->peer : 0;
+    char err[160];
+    s->chain_ok = n && cx_sectrust_eval(ders, lens, n, 0, 0, 0, 1, 1, host, -1, err, sizeof err) == XE_OK;
+    if (!n) { free(buf); return errSSLXCertChainInvalid; }
+    if ((s->vflags & V_OFF) || s->break_auth) { free(buf); return errSecSuccess; }
+    /* âncoras: as do app e, com AllowsAnyRoot, o certificado do topo da cadeia */
+    const u8 *anc[34];
+    u32 alens[34], na = 0;
+    id rd[32];
+    long nr = s->roots ? CFArrayGetCount(s->roots) : 0;
+    if (nr > 32) nr = 32;
+    for (long i = 0; i < nr; i++) {
+        rd[i] = SecCertificateCopyData((id)CFArrayGetValueAtIndex(s->roots, i));
+        if (rd[i]) { anc[na] = CFDataGetBytePtr(rd[i]); alens[na++] = (u32)CFDataGetLength(rd[i]); }
+    }
+    int sys = !s->roots_only;
+    int e = cx_sectrust_eval(ders, lens, n, anc, alens, na, sys, 1, host, -1, err, sizeof err);
+    if ((e == XE_UNKNOWN_ISSUER || e == XE_SELF_SIGNED || e == XE_UNTRUSTED_ROOT) && (s->vflags & V_ANY_ROOT)) {
+        anc[na] = ders[n - 1]; alens[na++] = lens[n - 1];
+        e = cx_sectrust_eval(ders, lens, n, anc, alens, na, sys, 1, host, -1, err, sizeof err);
+    }
+    if ((e == XE_EXPIRED || e == XE_NOT_YET_VALID) && (s->vflags & (V_EXP_CERTS | V_EXP_ROOTS))) {
+        /* um instante em que todos os certificados valem: o maior "não antes de" */
+        double from = -1e300, to = 1e300;
+        for (u32 i = 0; i < n; i++) {
+            id d = CFDataCreate(0, ders[i], lens[i]), c = d ? SecCertificateCreateWithData(0, d) : 0;
+            if (c) {
+                double a = SecCertificateNotValidBefore(c), b = SecCertificateNotValidAfter(c);
+                if (a > from) from = a;
+                if (b < to) to = b;
+                CFRelease(c);
+            }
+            if (d) CFRelease(d);
+        }
+        if (from <= to) e = cx_sectrust_eval(ders, lens, n, anc, alens, na, sys, 1, host, (long long)(from + 978307200.0) + 1, err,
+                                             sizeof err);
+    }
+    for (long i = 0; i < nr; i++) if (rd[i]) CFRelease(rd[i]);
+    free(buf);
+    if (e == XE_OK) return errSecSuccess;
+    if (getenv("MOS_TLS_DEBUG")) {
+        char line[256];
+        int k = snprintf(line, sizeof line, "[SecureTransport] %s: cadeia recusada: %s\n", s->peer, err);
+        if (k > 0) write(2, line, (size_t)k);
+    }
+    return e == XE_EXPIRED ? errSSLCertExpired : e == XE_NOT_YET_VALID ? errSSLCertNotYetValid
+         : e == XE_UNKNOWN_ISSUER ? errSSLNoRootCert : e == XE_SELF_SIGNED || e == XE_UNTRUSTED_ROOT ? errSSLUnknownRootCert
+         : errSSLXCertChainInvalid;
+}
+
 OSStatus SSLHandshake(void *ctx) {
     ssl_t *s = S(ctx);
     if (!s) return errSecParam;
@@ -492,6 +700,8 @@ OSStatus SSLHandshake(void *ctx) {
         s->h = h;
         if (s->alpn_len && net(MOS_NET_TLS_ALPN, h, (long)s->alpn, s->alpn_len) < 0) { s->err = errSSLBadConfiguration; return s->err; }
         if (s->ident && net(MOS_NET_TLS_IDENTITY, h, (long)s->ident, s->ident_len) < 0) { s->err = errSSLBadCert; return s->err; }
+        if (!s->vmin) { s->err = errSSLBadConfiguration; return s->err; }   /* 1.2 e 1.3 desligados */
+        if (app_verifies(s) && net(MOS_NET_TLS_NOVERIFY, h, 1, 0) < 0) { s->err = errSSLInternal; return s->err; }
         s->state = kSSLHandshake;
     }
     for (;;) {
@@ -503,6 +713,10 @@ OSStatus SSLHandshake(void *ctx) {
             return st;
         }
         if (r == 1) {
+            if (app_verifies(s)) {
+                OSStatus v = verify_chain(s);
+                if (v) { s->state = kSSLAborted; s->err = v; return v; }
+            } else s->chain_ok = 1;                    /* o kernel validou pela política padrão */
             s->state = kSSLConnected;
             net(MOS_NET_TLS_INFO, s->h, (long)&s->info, 0);
             if (s->break_auth && !s->auth_done) { s->auth_done = 1; return errSSLPeerAuthCompleted; }

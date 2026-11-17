@@ -54,6 +54,9 @@ static void spit(const char *dir, const char *name, int i, const u8 *b, u32 n) {
 }
 static void hex(const u8 *b, u32 n) { for (u32 i = 0; i < n; i++) printf("%02x", b[i]); }
 
+/* commoncrypto.c traz o backtrace() do execinfo; o desenrolador fica em libc_bsd.c, fora deste teste */
+int backtrace_from_fp(void *startfp, void **array, int size) { (void)startfp; (void)array; (void)size; return 0; }
+
 int main(int argc, char **argv) {
     if (argc < 3) return 1;
     u32 n;

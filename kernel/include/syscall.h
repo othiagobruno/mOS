@@ -641,6 +641,8 @@ enum {
     MOS_NET_TLS_IDENTITY,  /* (sessão, buf, n) -> 0 | -errno   certificado de cliente, antes do 1º HANDSHAKE.
                             * buf = u32 tamanho da cadeia (BE) + cadeia (formato de MOS_NET_TLS_CERTS) + chave privada
                             * (DER PKCS#1/SEC1/PKCS#8 ou X9.63 04||X||Y||K) */
+    MOS_NET_TLS_NOVERIFY,  /* (sessão, 1/0) -> 0 | -errno   antes do 1º HANDSHAKE: o kernel não valida a cadeia; o
+                            * SecureTransport valida com a de MOS_NET_TLS_CERTS (SSLSetEnableCertVerify, AllowsAnyRoot...) */
 };
 #define MOS_NET_IF_LINK   1  /* mos_net_if_t.flags: cabo/associação de pé */
 #define MOS_NET_IF_ACTIVE 2  /* é a interface por onde a pilha fala (ip/máscara/gateway/dns valem) */

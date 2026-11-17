@@ -49,6 +49,8 @@ int  tcp_recv(int s, void *buf, int max);
 typedef struct tls_conn tls_conn_t;
 tls_conn_t *tls_new(int tcp_sock, const char *sni);
 int tls_set_alpn(tls_conn_t *c, const u8 *list, u32 len);
+int tls_set_skip_chain(tls_conn_t *c, bool skip);
+int tls_copy_peer_chain(const tls_conn_t *c, u8 *buf, u32 cap);
 const char *tls_get_alpn(const tls_conn_t *c);
 int tls_get_version(const tls_conn_t *c);
 int tls_get_suite(const tls_conn_t *c);

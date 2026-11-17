@@ -352,6 +352,13 @@ i64 net_user_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
         kfree(id);
         return r;
     }
+    if (op == MOS_NET_TLS_NOVERIFY) {
+        fl = spin_lock_irqsave(&g_tls_lock);
+        utls_t *u = ut_of(p, a);
+        r = u && u->tls ? (tls_set_skip_chain(u->tls, b != 0) ? -MOS_EINVAL : 0) : -MOS_EINVAL;
+        spin_unlock_irqrestore(&g_tls_lock, fl);
+        return r;
+    }
     if (op == MOS_NET_TLS_ALPN) {
         u8 list[128];
         if (c > sizeof list) return -MOS_EINVAL;
