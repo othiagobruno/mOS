@@ -1,4 +1,6 @@
 #!/bin/sh
+# OBSOLETO para o build do Linux: o CryptoKit agora é Swift normal e sai de tools/build-frameworks-objc.sh (stdlib e
+# Foundation reais). Este script, com a stdlib mínima de tools/cryptokit-macho, só compilava a versão antiga.
 # CryptoKit como Mach-O x86_64 que o carregador abre (MOS_ARCH=arm64: a fatia arm64, docs/runtime-arm64-plano.md).
 # Usa o swift-frontend oficial com -target x86_64-apple-macosx14.0 (ou arm64-apple-macosx14.0),
 # os stubs em tools/cryptokit-macho e o CryptoKit.swift do repo.

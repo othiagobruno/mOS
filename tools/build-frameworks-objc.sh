@@ -30,8 +30,6 @@ for fw in "$ROOT"/userland/frameworks/*/; do
     name=$(basename "$fw")
     # no Linux o libcompression entra no libSystem.mos (tools/build.sh, com os -I do lz4/lzfse/xz)
     [ "$name" = libcompression ] && continue
-    # o CryptoKit tem build próprio (tools/build-cryptokit-macho.sh, módulos Swift mínimos)
-    [ "$name" = CryptoKit ] && continue
     # o JavaScriptCore compila com o motor kernel/web/js_*.c (tools/build.sh, "==> JavaScriptCore.framework")
     [ "$name" = JavaScriptCore ] && continue
     if [ -n "$ONLY" ] && ! printf ',%s,' "$ONLY" | grep -q ",$name,"; then continue; fi
@@ -66,6 +64,8 @@ for fw in "$ROOT"/userland/frameworks/*/; do
     fi
     if ls "$fw"*.swift >/dev/null 2>&1 && [ -n "$missing" ]; then
         echo "$name: aviso: overlay Swift adiado (falta o módulo$missing); só a parte ObjC/C por enquanto" >&2
+        # só Swift (ex.: CryptoKit): nada a ligar agora; sai inteiro na segunda passada
+        [ ${#objs[@]} -eq 0 ] && [ "$bad" = 0 ] && continue
     elif ls "$fw"*.swift >/dev/null 2>&1; then
         if [ -x "$FE" ] && [ -d "$OBJC/Swift.swiftmodule" ] && [ -d "$RES" ] && [ "$bad" = 0 ]; then
             so="$TMP/${name}_swift.o"

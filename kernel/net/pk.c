@@ -708,6 +708,34 @@ int ecdh_p256(u8 shared[32], const u8 priv[32], const u8 *peer, u32 peerlen) {
  * Assinatura ECDSA e chave pública a partir da privada (CryptoKit no libSystem: P256/P384.Signing e
  * KeyAgreement com chave importada). O nonce k é aleatório (CSPRNG), como no CryptoKit da Apple.
  * ====================================================================== */
+/* ponto comprimido -> 04 || X || Y (SEC 1 §2.3.4). y² = x³ − 3x + b e, como p ≡ 3 (mod 4) nas três curvas,
+ * y = (y²)^((p+1)/4). ybit = paridade de Y. -1 se X não está no corpo ou não há raiz (X fora da curva). */
+int ec_decompress(int curve, const u8 *xb, int ybit, u8 *out) {
+    const curve_t *C = curve_get(curve);
+    if (!C) return -1;
+    int n = C->n;
+    u32 x[EC_LIMBS], xm[EC_LIMBS], r[EC_LIMBS], t[EC_LIMBS], e[EC_LIMBS], y[EC_LIMBS], one[EC_LIMBS];
+    if (!bn_from_be(x, n, xb, C->bytes) || bn_cmp(x, C->P.m, n) >= 0) return -1;
+    mont_to(&C->P, xm, x);
+    f_mul(C, r, xm, xm);
+    f_mul(C, r, r, xm);
+    f_add(C, t, xm, xm);
+    f_add(C, t, t, xm);
+    f_sub(C, r, r, t);
+    f_add(C, r, r, C->b);                                    /* r = y² (Montgomery) */
+    bn_set_word(one, n, 1);
+    bn_add(e, C->P.m, one, n);                               /* p + 1 cabe: o limb de cima tem folga nas três */
+    for (int i = 0; i < n; i++) e[i] = e[i] >> 2 | (i + 1 < n ? e[i + 1] << 30 : 0);
+    mont_pow(&C->P, y, r, e, n);
+    f_mul(C, t, y, y);
+    if (bn_cmp(t, r, n)) return -1;                           /* y² não é resíduo quadrático: X fora da curva */
+    mont_from(&C->P, y, y);
+    if ((int)(y[0] & 1) != (ybit & 1) && !bn_is_zero(y, n)) bn_sub(y, C->P.m, y, n);
+    out[0] = 4;
+    bn_to_be(out + 1, C->bytes, x, n);
+    bn_to_be(out + 1 + C->bytes, C->bytes, y, n);
+    return 0;
+}
 int ec_public_key(int curve, const u8 *priv, u8 *pub) {
     const curve_t *C = curve_get(curve);
     if (!C) return -1;
