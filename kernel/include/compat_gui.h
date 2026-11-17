@@ -115,6 +115,7 @@ int compat_gui_cgwindow(int index, gui_cgwindow_t *out);
 #define DEV_CAMERA_OPEN 29
 #define DEV_CAMERA_READ 30
 #define DEV_CAMERA_CLOSE 31
+#define DEV_THEME 37           /* () -> bit 0 tema escuro, bits 8..31 cor de destaque RGB (NSAppearance, controlAccentColor) */
 #define DEV_CAMERA_CTRL 36    /* (índice, gui_camera_ctrl_t *) lê (set 0) ou grava (set 1) um controle UVC; 0 ou -errno */
 typedef struct {
     unsigned int id;               /* UVC_CTL_* (kernel/dev/uvc_core.h): brilho, contraste, ..., modo AE, exposição, foco, zoom */

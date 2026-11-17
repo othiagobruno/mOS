@@ -10,7 +10,8 @@
  *   windowsMenu / setWindowsMenu: com a lista das janelas no fim do menu (marca na janela-chave), addWindowsItem:,
  *   removeWindowsItem:, changeWindowsItem:title:filename:, updateWindowsItem:, setWindowsNeedUpdate: e
  *   -[NSWindow setExcludedFromWindowsMenu:].
- * O appkit.c chama cx_app_more_tick() a cada volta do laço e cx_app_menu_hide() no ⌘H.
+ * O appkit.c chama cx_app_more_tick() a cada volta do laço (que também confere o tema, appkit_appearance.c) e
+ * cx_app_menu_hide() no ⌘H.
  * Registro: cx_appkit_app_more_init(), chamado do cx_appkit_input_init. Código original do mOS.
  */
 #include "foundation.h"
@@ -265,6 +266,7 @@ void cx_app_more_tick(void) {
     if (now - last < 0.25) return;
     last = now;
     activity_check();
+    { extern void cx_appearance_tick(void); cx_appearance_tick(); }   /* appkit_appearance.c: tema claro/escuro e destaque */
     if (g_windows_menu) {
         u64 sig = signature();
         if (g_wm_dirty || sig != g_wm_sig) { g_wm_dirty = NO; g_wm_sig = sig; rebuild_windows_menu(); }
