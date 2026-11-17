@@ -160,3 +160,9 @@ int mos_lstat(const char *p, void *out) {
     m->st_ino = s.st_ino; m->st_uid = s.st_uid; m->st_gid = s.st_gid; m->st_size = s.st_size;
     return 0;
 }
+void *dispatch_get_global_queue(long p, unsigned long f) { (void)p; (void)f; return 0; }
+void CFArrayRemoveValueAtIndex(id_ a, long i) {
+    obj *o = a;
+    for (long k = i; k + 1 < o->n; k++) o->v[k] = o->v[k + 1];
+    o->n--;
+}
