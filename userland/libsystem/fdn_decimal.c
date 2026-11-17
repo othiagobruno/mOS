@@ -315,8 +315,8 @@ static id dh_exception(id s, SEL c, SEL op, unsigned long err, id l, id r) {
 static nsdec_t num_decimal(id s, SEL c) { (void)c; return dec_of(s); }
 static const char *num_type(id s, SEL c) { (void)c; u32 k = ((nsnum_t *)s)->kind; return k == 1 ? "d" : k == 2 ? "c" : "q"; }
 
-static cx_class_t dn_c __asm__("OBJC_CLASS_$_NSDecimalNumber"), dn_m __asm__("OBJC_METACLASS_$_NSDecimalNumber");
-static cx_class_t dh_c __asm__("OBJC_CLASS_$_NSDecimalNumberHandler"), dh_m __asm__("OBJC_METACLASS_$_NSDecimalNumberHandler");
+cx_class_t dn_c __asm__("OBJC_CLASS_$_NSDecimalNumber"), dn_m __asm__("OBJC_METACLASS_$_NSDecimalNumber");
+cx_class_t dh_c __asm__("OBJC_CLASS_$_NSDecimalNumberHandler"), dh_m __asm__("OBJC_METACLASS_$_NSDecimalNumberHandler");
 
 void cx_fdn_decimal_init(void) {
     cx_class_t *num = cx_class_named("NSNumber"), *ob = cx_class_named("NSObject");

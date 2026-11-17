@@ -17,7 +17,7 @@ void cx_kvo_forget(id o);
 typedef struct { cx_class_t *isa; crs_t s; u64 flags; } cs_t;
 #define C(o) ((cs_t *)(o))
 extern cx_class_t NSCharacterSet_c __asm__("OBJC_CLASS_$_NSCharacterSet");
-static cx_class_t mcs_c __asm__("OBJC_CLASS_$_NSMutableCharacterSet"), mcs_m __asm__("OBJC_METACLASS_$_NSMutableCharacterSet");
+cx_class_t mcs_c __asm__("OBJC_CLASS_$_NSMutableCharacterSet"), mcs_m __asm__("OBJC_METACLASS_$_NSMutableCharacterSet");
 static id cls(const char *n) { return (id)cx_class_named(n); }
 static id ar(id o) { return objc_autorelease(o); }
 typedef struct { u64 loc, len; } rng_t;
