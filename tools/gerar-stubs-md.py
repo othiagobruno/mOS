@@ -201,7 +201,11 @@ def gera_md(md, texto_sys, texto_swiftui):
 
 
 def le(rel):
-    with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
+    # o swiftui_imports.c saiu do libSystem (o SwiftUI.framework real o substitui): sem o arquivo, lista vazia
+    p = os.path.join(ROOT, rel)
+    if not os.path.exists(p):
+        return ""
+    with open(p, encoding="utf-8") as f:
         return f.read()
 
 

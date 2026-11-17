@@ -46,7 +46,14 @@ final class _MOSNavContext: Observation.Observable {
     func register(_ type: ObjectIdentifier, _ make: @escaping (AnyHashable) -> AnyView) {
         let isNew = destinations[type] == nil
         destinations[type] = make
-        if isNew { registrar.withMutation(of: self, keyPath: \.entries) {} }
+        // o registro acontece durante a atualização do grafo, quando uma mutação não invalida nada: o aviso vai para
+        // depois dela (fim da atualização), e o topo da pilha é refeito com o destino já conhecido
+        if isNew {
+            Update.enqueueAction(reason: nil) { [weak self] in
+                guard let self else { return }
+                self.registrar.withMutation(of: self, keyPath: \.entries) {}
+            }
+        }
     }
     /// numa split view: os links trocam o detalhe em vez de empilhar
     let replacesDetail: Bool
@@ -148,21 +155,22 @@ public struct NavigationStack<Data, Root>: View where Root: View {
 }
 
 @available(macOS 13.0, *)
-extension NavigationStack where Data == NavigationPath {
-    public init(@ViewBuilder root: () -> Root) {
+extension NavigationStack {
+    // ABI da Apple: o `where` fica em cada init
+    public init(@ViewBuilder root: () -> Root) where Data == NavigationPath {
         self.root = root()
     }
 
-    public init(path: Binding<NavigationPath>, @ViewBuilder root: () -> Root) {
+    public init(path: Binding<NavigationPath>, @ViewBuilder root: () -> Root) where Data == NavigationPath {
         self.root = root()
         self.path = Binding(get: { path.wrappedValue.elements }, set: { path.wrappedValue.elements = $0 })
     }
 }
 
 @available(macOS 13.0, *)
-extension NavigationStack where Data: MutableCollection, Data: RandomAccessCollection, Data: RangeReplaceableCollection,
-                                Data.Element: Hashable {
-    public init(path: Binding<Data>, @ViewBuilder root: () -> Root) {
+extension NavigationStack {
+    public init(path: Binding<Data>, @ViewBuilder root: () -> Root)
+        where Data: MutableCollection, Data: RandomAccessCollection, Data: RangeReplaceableCollection, Data.Element: Hashable {
         self.root = root()
         self.path = Binding(get: { path.wrappedValue.map { AnyHashable($0) } },
                             set: { path.wrappedValue = Data($0.compactMap { $0.base as? Data.Element }) })
@@ -407,20 +415,37 @@ public struct NavigationSplitView<Sidebar, Content, Detail>: View where Sidebar:
 }
 
 @available(macOS 13.0, *)
-extension NavigationSplitView where Content == EmptyView {
+extension NavigationSplitView {
     public init(columnVisibility: Binding<NavigationSplitViewVisibility>, @ViewBuilder sidebar: () -> Sidebar,
-                @ViewBuilder detail: () -> Detail) {
+                @ViewBuilder detail: () -> Detail) where Content == EmptyView {
         self.sidebar = sidebar()
         self.content = nil
         self.detail = detail()
         visibility = columnVisibility
     }
 
-    public init(@ViewBuilder sidebar: () -> Sidebar, @ViewBuilder detail: () -> Detail) {
+    public init(@ViewBuilder sidebar: () -> Sidebar, @ViewBuilder detail: () -> Detail) where Content == EmptyView {
         self.sidebar = sidebar()
         self.content = nil
         self.detail = detail()
     }
+
+    /// No macOS a coluna preferida no modo compacto não se aplica (a janela mostra as colunas lado a lado).
+    @available(macOS 14.0, *)
+    public init(columnVisibility: Binding<NavigationSplitViewVisibility>,
+                preferredCompactColumn: Binding<NavigationSplitViewColumn>,
+                @ViewBuilder sidebar: () -> Sidebar, @ViewBuilder detail: () -> Detail) where Content == EmptyView {
+        self.init(columnVisibility: columnVisibility, sidebar: sidebar, detail: detail)
+    }
+}
+
+/// Uma coluna de NavigationSplitView.
+@available(macOS 14.0, *)
+public struct NavigationSplitViewColumn: Hashable, Sendable {
+    let raw: Int
+    public static var sidebar: NavigationSplitViewColumn { .init(raw: 0) }
+    public static var content: NavigationSplitViewColumn { .init(raw: 1) }
+    public static var detail: NavigationSplitViewColumn { .init(raw: 2) }
 }
 
 // MARK: - NavigationView (macOS 10.15–12)

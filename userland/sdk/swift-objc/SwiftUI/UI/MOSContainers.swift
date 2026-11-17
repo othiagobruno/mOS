@@ -184,10 +184,69 @@ public struct ScrollView<Content>: View where Content: View {
 @available(macOS 10.15, *)
 public struct List<SelectionValue, Content>: View where SelectionValue: Hashable, Content: View {
     var content: Content
+    /// seleção de várias linhas (Set) ou de uma (valor): cada linha é selecionada pela tag ou pelo id do ForEach
+    var multiple: Binding<Set<SelectionValue>>?
+    var single: Binding<SelectionValue?>?
+    @Environment(\._mosListStyle) private var style
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) { content }
+            if multiple == nil && single == nil {
+                VStack(alignment: .leading, spacing: 0) { content }
+                    .padding(style.inset ? 8 : 0)
+            } else {
+                _VariadicView.Tree(_MOSListSelectionRoot(multiple: multiple, single: single, style: style)) { content }
+                    .padding(style.inset ? 8 : 0)
+            }
+        }
+        .background(style.sidebar ? Color.gray.opacity(0.08) : Color.clear)
+    }
+}
+
+@available(macOS 10.15, *)
+extension List {
+    public init(selection: Binding<Set<SelectionValue>>?, @ViewBuilder content: () -> Content) {
+        self.content = content()
+        multiple = selection
+    }
+
+    @available(macOS 13.0, *)
+    public init(selection: Binding<SelectionValue>, @ViewBuilder content: () -> Content) {
+        self.content = content()
+        single = Binding(get: { selection.wrappedValue }, set: { if let v = $0 { selection.wrappedValue = v } })
+    }
+
+    public init(selection: Binding<SelectionValue?>?, @ViewBuilder content: () -> Content) {
+        self.content = content()
+        single = selection
+    }
+}
+
+/// Linhas selecionáveis: o toque seleciona (⌘ alterna na seleção múltipla) e a linha selecionada ganha o realce.
+struct _MOSListSelectionRoot<SelectionValue: Hashable>: _VariadicView_MultiViewRoot {
+    var multiple: Binding<Set<SelectionValue>>?
+    var single: Binding<SelectionValue?>?
+    var style: _MOSListStyleInfo
+
+    func body(children: _VariadicView.Children) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(children.enumerated()), id: \.offset) { i, child in
+                let tag = child.traits.tag(for: SelectionValue.self) ?? (child.id.base as? SelectionValue)
+                let selected = tag.map { t in multiple?.wrappedValue.contains(t) ?? (single?.wrappedValue == t) } ?? false
+                child
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 3).padding(.horizontal, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(selected ? Color.accentColor.opacity(0.85)
+                                  : (style.alternates && i % 2 == 1 ? Color.gray.opacity(0.08) : Color.clear)))
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        guard let tag else { return }
+                        if let multiple { multiple.wrappedValue = [tag] }
+                        if let single { single.wrappedValue = tag }
+                    }
+            }
         }
     }
 }

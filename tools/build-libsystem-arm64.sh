@@ -38,8 +38,9 @@ F_COMP=(-Wno-unused-variable -DHAVE_CONFIG_H -DTUKLIB_SYMBOL_PREFIX=lzma_
 # Fontes com a convenção Swift do x86_64 escrita à mão (self em r13, erro em r12, String em rax/rdx, registradores
 # xmm): no processo arm64 esses tipos vêm das bibliotecas Swift arm64 de verdade (tools/build-swift-arm64.ps1), não
 # do libSystem. Ficam fora até terem a versão arm64 (x20/x21/x8, docs/tradutor-arm64.md).
-# O swiftui_geom.c é C puro (geometria e edição de texto do hosting, mos_sui_*) e o SwiftUI.framework arm64 importa.
-X86_SWIFTCC='swiftui_*.c combine_link.c combine_meta.c combine_meta.S'
+# O swiftui_geom.c é C puro (geometria e edição de texto do hosting, mos_sui_*) e o SwiftUI.framework arm64 importa;
+# o resto do SwiftUI saiu do libSystem (vem do SwiftUI.framework real).
+X86_SWIFTCC='combine_link.c combine_meta.c combine_meta.S'
 PORTAVEIS='swiftui_geom.c'
 
 SRC=(); GRP=()

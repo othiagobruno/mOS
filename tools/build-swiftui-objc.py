@@ -567,15 +567,97 @@ def stage_ui():
     build_swift('OpenSwiftUI', files, osui_flags(), '5', True)
 
 
+def witness_bridge(objs):
+    """Tabelas de testemunha (WP) que os binários da Apple usam direto e o framework não emite.
+
+    No SwiftUI da Apple os tipos e os protocolos de base (View, ViewModifier...) estão no mesmo módulo; no OpenSwiftUI
+    estão em OpenSwiftUICore e OpenSwiftUI, dois módulos resilientes, e uma conformidade entre módulos resilientes não
+    tem tabela estática, só o descritor (Mc). Para cada WP de userland/sdk/swift-objc/SwiftUI/c/apple-witness-tables.txt
+    cujo descritor e cujos metadados existem, gera um símbolo com o nome da Apple e um construtor que o preenche com a
+    tabela que o runtime monta (swift_getWitnessTable) ao carregar o framework."""
+    lst = os.path.join(MINE, 'c', 'apple-witness-tables.txt')
+    nm = find_tool('MOS_NM', [os.path.join(os.path.dirname(FE), 'llvm-nm'), shutil.which('llvm-nm')])
+    if not os.path.exists(lst) or not nm:
+        return None
+    defs = set()
+    libs = [os.path.join(OBJC, 'dylib', 'usr/lib/swift', f) for f in ('libswiftCore.dylib', 'libswiftFoundation.dylib')]
+    for o in objs + [l for l in libs if os.path.exists(l)]:
+        _, txt = run([nm, '-g', '--defined-only', '-j', o])
+        defs.update(s[1:] if s.startswith('_') else s for s in txt.split())
+    out, n = [], 0
+    for wp in [l.strip() for l in open(lst) if l.strip() and not l.startswith('#')]:
+        if wp in defs or not wp.endswith('WP'):
+            continue
+        mc = wp[:-2] + 'Mc'
+        if mc not in defs:
+            continue
+        # o tipo é o prefixo mais longo com acessor de metadados (Ma) ou metadados diretos (N)
+        body = wp[:-2]
+        typ = None
+        for i in range(len(body), 2, -1):
+            if body[:i] + 'Ma' in defs:
+                typ = ('Ma', body[:i] + 'Ma'); break
+            if body[:i] + 'N' in defs:
+                typ = ('N', body[:i] + 'N'); break
+        if not typ:
+            continue
+        k = 'w%d' % n
+        n += 1
+        out.append('extern const char %s_mc[] __asm__("_%s");' % (k, mc))
+        if typ[0] == 'Ma':
+            out.append('extern MR %s_ma(long) __asm__("_%s");' % (k, typ[1]))
+            md = '%s_ma(0).md' % k
+        else:
+            out.append('extern const char %s_md[] __asm__("_%s");' % (k, typ[1]))
+            md = '(const void *)%s_md' % k
+        out.append('__attribute__((visibility("default"))) const void *%s[MAXW] __asm__("_%s");' % (k, wp))
+        out.append('static void %s_fill(void) { fill(%s, %s_mc, %s); }' % (k, k, k, md))
+    if not n:
+        return None
+    src = os.path.join(SUI, 'c', 'witness_bridge.c')
+    os.makedirs(os.path.dirname(src), exist_ok=True)
+    calls = ''.join('    w%d_fill();\n' % i for i in range(n))
+    open(src, 'w').write("""/* gerado por tools/build-swiftui-objc.py (witness_bridge): %d tabelas de testemunha com o nome da Apple */
+#include <stdint.h>
+#define MAXW 64
+typedef struct { const void *md; long state; } MR;
+extern const void **swift_getWitnessTable(const void *conformance, const void *type, const void *const *args);
+static const void *rel(const char *p) {           /* ponteiro relativo (indireto quando o bit 0 está ligado) */
+    int32_t o = *(const int32_t *)p;
+    const char *a = p + (o & ~1);
+    return (o & 1) ? *(const void *const *)a : (const void *)a;
+}
+static void fill(const void **dst, const char *conf, const void *type) {
+    const char *proto = rel(conf);
+    uint32_t nreq = *(const uint32_t *)(proto + 16);   /* ProtocolDescriptor.NumRequirements */
+    const void **t = swift_getWitnessTable(conf, type, 0);
+    if (!t || nreq + 1 > MAXW) return;
+    for (uint32_t i = 0; i <= nreq; i++) dst[i] = t[i];
+}
+%s
+__attribute__((constructor)) static void mos_witness_bridge(void) {
+%s}
+""" % (n, '\n'.join(out), calls))
+    o = src[:-2] + '.o'
+    code, txt = run([ZIG, 'cc', '-target', ZIGT, '-O2', '-c', '-w', src, '-o', o])
+    if code:
+        log(txt[-1500:]); log('witness_bridge: FALHOU'); sys.exit(1)
+    log('witness_bridge: %d tabelas WP' % n)
+    return o
+
+
 def stage_link():
     objs = []
     for r, ds, fs in os.walk(SUI):
         if os.path.relpath(r, SUI).split(os.sep)[0] == 'src':
             continue
-        objs += [os.path.join(r, f) for f in fs if f.endswith('.o')]
+        objs += [os.path.join(r, f) for f in fs if f.endswith('.o') and f != 'witness_bridge.o']
     for d in ['Compute', 'OpenRenderBox', 'OpenSwiftUI_SPI']:
         dd = os.path.join(NAT, d)
         objs += [os.path.join(dd, f) for f in sorted(os.listdir(dd)) if f.endswith('.o') and not f.endswith('_swift.o') and os.path.getsize(os.path.join(dd, f)) > 0]
+    wt = witness_bridge(objs)
+    if wt:
+        objs.append(wt)
     dy = os.path.join(OBJC, 'dylib')
     install = '/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI'
     out = dy + install
@@ -596,6 +678,11 @@ def stage_link():
         log('SwiftUI.framework: link FALHOU')
         sys.exit(1)
     log('SwiftUI.framework: ok (%d KB, %d objetos)' % (os.path.getsize(out) // 1024, len(objs)))
+    # Mac Catalyst: o app liga /System/iOSSupport/System/Library/Frameworks/SwiftUI.framework (o WhatsApp). O FAT da
+    # imagem não tem links simbólicos, então vai uma cópia; o loader procura a imagem já carregada por todos os nomes.
+    cat = dy + '/System/iOSSupport' + install
+    os.makedirs(os.path.dirname(cat), exist_ok=True)
+    shutil.copyfile(out, cat)
 
 
 def main():
