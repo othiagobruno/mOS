@@ -430,10 +430,17 @@ fi
 # Sem o plugin de macros: o @Observable dos apps já vem expandido no binário.
 obs="$src/stdlib/public/Observation/Sources/Observation"
 if [ -d "$obs" ]; then
-    f=("$obs"/{ContinuousObservation,Locking,Observable,ObservationRegistrar,ObservationTracking,Observations,ThreadLocal}.swift)
+    # o SPI do original é @_spi(SwiftUI); o OpenSwiftUI importa @_spi(OpenSwiftUI) (nome do OpenObservation). As
+    # declarações SPI ganham também esse grupo: só muda a visibilidade no .swiftmodule, não os nomes nem a ABI.
+    mkdir -p "$out/obssrc"
+    f=()
+    for n in ContinuousObservation Locking Observable ObservationRegistrar ObservationTracking Observations ThreadLocal; do
+        sed 's/@_spi(SwiftUI)/@_spi(SwiftUI) @_spi(OpenSwiftUI)/g' "$obs/$n.swift" > "$out/obssrc/$n.swift"
+        f+=("$out/obssrc/$n.swift")
+    done
     if build_mod Observation 5 1 -- -autolink-force-load -enable-experimental-feature Macros \
             -enable-experimental-feature ExtensionMacros -library-level api "${stdav[@]}" -- "${f[@]}" && want Observation; then
-        "$zig" cc -target x86_64-macos -O2 -c "$root/userland/sdk/swift-objc/Observation/ThreadLocal.c" -o "$out/Observation_tls.o" &&
+        "$zig" cc -target "$zt" -O2 -c "$root/userland/sdk/swift-objc/Observation/ThreadLocal.c" -o "$out/Observation_tls.o" &&
             link_dylib libswiftObservation "$out/Observation.o" "$out/Observation_tls.o"
     fi
 fi
