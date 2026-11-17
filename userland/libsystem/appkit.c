@@ -4999,7 +4999,10 @@ static void tv_layout_views(id self) {
         if (b0 < 0) b0 = nrows - 1;
         sp.first = nrows > 0 && a0 <= b0 ? (int)a0 : -1; sp.last = sp.first >= 0 ? (int)b0 : -1;
     }
-    int want = s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableView:viewForTableColumn:row:"));
+    /* quem dá as views: o delegate ou, sem ele, a fonte de dados (NSTableViewDiffableDataSource do overlay Swift) */
+    id vprov = s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableView:viewForTableColumn:row:")) ? s->delegate :
+               s->data_source && cx_responds(s->data_source->isa, sel_registerName("tableView:viewForTableColumn:row:")) ? s->data_source : 0;
+    int want = vprov != 0;
     if (!want) {
         if (cx_tv_engine_placed_count(e)) { tv_in_layout = 1; tv_reclaim(self); tv_in_layout = 0; }
         cx_tv_engine_cells_clear(e);
@@ -5024,7 +5027,7 @@ static void tv_layout_views(id self) {
         for (u64 k = 0; k < passes; k++) {
             id col = nc && !group ? cols->items[k] : 0;
             double cw = col ? cs_(col)->width : s->frame.s.w;
-            id v = MSG(id, s->delegate, "tableView:viewForTableColumn:row:", self, col, (i64)r);
+            id v = MSG(id, vprov, "tableView:viewForTableColumn:row:", self, col, (i64)r);
             int got = v && cx_is_subclass(v->isa, &NSView_c);
             cx_tv_engine_note_cell(e, r, (int)k, got);
             if (got && !cx_tv_show_cell(got)) {
@@ -5229,10 +5232,12 @@ static id tv_view_at(id self, SEL c, i64 col, i64 row, BOOL make) {
     if (make) tv_layout_views(self);
     id v = cx_tv_engine_placed_view(cx_tv_engine_get(self, 0), (int)row, (int)col);
     if (!v) v = cx_tv_engine_placed_view(cx_tv_engine_get(self, 0), (int)row, -1);
-    if (!v && make && s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableView:viewForTableColumn:row:"))) {
+    id vprov = s->delegate && cx_responds(s->delegate->isa, sel_registerName("tableView:viewForTableColumn:row:")) ? s->delegate :
+               s->data_source && cx_responds(s->data_source->isa, sel_registerName("tableView:viewForTableColumn:row:")) ? s->data_source : 0;
+    if (!v && make && vprov) {
         nsarr_t *cols = (nsarr_t *)s->cols;
         id cl = cols && col >= 0 && (u64)col < cols->n ? cols->items[col] : 0;
-        v = MSG(id, s->delegate, "tableView:viewForTableColumn:row:", self, cl, row);   /* linha fora da área visível */
+        v = MSG(id, vprov, "tableView:viewForTableColumn:row:", self, cl, row);   /* linha fora da área visível */
     }
     return v;
 }

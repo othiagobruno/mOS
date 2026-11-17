@@ -188,8 +188,22 @@ ns_rect_t NSIntersectionRect(ns_rect_t a, ns_rect_t b) {
     return r;
 }
 /* acessibilidade: sem leitor de tela no mOS; as notificações não vão a lugar nenhum */
-void NSAccessibilityPostNotification(id element, id notification) { (void)element; (void)notification; }
-void NSAccessibilityPostNotificationWithUserInfo(id element, id notification, id info) { (void)element; (void)notification; (void)info; }
+/* avisos de acessibilidade: vão aos observadores AX deste processo e, pelo servidor AX, aos de outros processos
+ * (axobserver.c); sem elemento, o próprio app */
+void cx_ax_note_view(id obj, const char *note);
+void NSAccessibilityPostNotification(id element, id notification) {
+    extern id NSApp;
+    if (notification && cx_is_str(notification)) cx_ax_note_view(element ? element : NSApp, cx_cstr(notification));
+}
+void NSAccessibilityPostNotificationWithUserInfo(id element, id notification, id info) { (void)info; NSAccessibilityPostNotification(element, notification); }
+/* pedido de anúncio (framework Accessibility do Swift: AccessibilityNotification.Announcement.post()); o transporte AX
+ * do mOS leva só o nome do aviso, então o texto não chega aos observadores de outros processos */
+void cx_ax_announce(const char *text, long priority) {
+    (void)priority;
+    extern id NSApp;
+    if (text && *text) cx_ax_note_view(NSApp, "AXAnnouncementRequested");
+}
+void cx_ax_post_named(const char *note) { extern id NSApp; if (note && *note) cx_ax_note_view(NSApp, note); }
 id NSAccessibilityUnignoredAncestor(id element) { return element; }
 id NSAccessibilityUnignoredChildren(id children) { return children; }
 
