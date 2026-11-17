@@ -19,8 +19,8 @@ void objc_release(id o);
 void cx_post(id note);
 id cx_note(id name, id object, id info);
 
-static cx_class_t KVS_c __asm__("OBJC_CLASS_$_NSUbiquitousKeyValueStore");
-static cx_class_t KVS_m __asm__("OBJC_METACLASS_$_NSUbiquitousKeyValueStore");
+cx_class_t KVS_c __asm__("OBJC_CLASS_$_NSUbiquitousKeyValueStore");
+cx_class_t KVS_m __asm__("OBJC_METACLASS_$_NSUbiquitousKeyValueStore");
 typedef struct { cx_class_t *isa; id dict; id path; } kvs_t;
 
 /* constantes (NSUbiquitousKeyValueStore.h) */

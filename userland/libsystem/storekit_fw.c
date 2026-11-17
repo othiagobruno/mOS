@@ -27,7 +27,7 @@ extern cx_class_t SKProductsRequest_c __asm__("OBJC_CLASS_$_SKProductsRequest");
 extern cx_class_t SKMutablePayment_c __asm__("OBJC_CLASS_$_SKMutablePayment");
 extern cx_class_t NSBundle_c __asm__("OBJC_CLASS_$_NSBundle");
 
-#define SKC(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); static cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
+#define SKC(N) cx_class_t N##_c __asm__("OBJC_CLASS_$_" #N); cx_class_t N##_m __asm__("OBJC_METACLASS_$_" #N);
 SKC(SKProduct)
 SKC(SKProductsResponse)
 SKC(SKPaymentTransaction)
