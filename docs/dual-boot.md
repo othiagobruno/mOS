@@ -61,3 +61,5 @@ e o Ubuntu não é tocado em nenhum ponto. Escrita fora de `\mOS` e `\EFI\mOS` �
 
 Não testado ainda: boot real do mOS a partir de `\EFI\mOS` (precisa do build final) e a gravação na ESP do Thiago
 (só com a confirmação dele).
+
+A imagem `build/mOS.img` leva só o sistema e os apps nativos; os apps de terceiros ficam no disco de dados `build/apps.img` (docs/disco-de-apps.md) e não vão para a ESP.
