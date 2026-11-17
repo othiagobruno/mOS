@@ -327,60 +327,33 @@ static void px_rect(NSRect r, double *x, double *y, double *w, double *h) {
     *h = r.s.h;
 }
 
-/* ================================================================ NSBezierPath */
-typedef struct { float *xy; u32 n, cap; u32 *starts; u32 nstarts, capstarts; double lw; BOOL closed_last; } path_t;
-static path_t *pth(id p) { if (!ST(p)) { path_t *s = calloc(1, sizeof *s); s->lw = 1; ST(p) = s; } return ST(p); }
-static void p_add(path_t *p, double x, double y) {
-    if (p->n == p->cap) { p->cap = p->cap ? p->cap * 2 : 32; p->xy = realloc(p->xy, p->cap * 8); }
-    p->xy[p->n * 2] = (float)x;
-    p->xy[p->n * 2 + 1] = (float)y;
-    p->n++;
-}
-static void p_start(path_t *p) {
-    if (p->nstarts == p->capstarts) { p->capstarts = p->capstarts ? p->capstarts * 2 : 8; p->starts = realloc(p->starts, p->capstarts * 4); }
-    p->starts[p->nstarts++] = p->n;
-}
-static void bp_move(id self, SEL c, NSPoint pt) { (void)c; path_t *p = pth(self); p_start(p); p_add(p, pt.x, pt.y); }
-static void bp_line(id self, SEL c, NSPoint pt) { (void)c; path_t *p = pth(self); if (!p->nstarts) p_start(p); p_add(p, pt.x, pt.y); }
-static void bp_curve(id self, SEL c, NSPoint e, NSPoint c1, NSPoint c2) {
-    (void)c;
-    path_t *p = pth(self);
-    if (!p->n) { p_start(p); p_add(p, e.x, e.y); return; }
-    double x0 = p->xy[(p->n - 1) * 2], y0 = p->xy[(p->n - 1) * 2 + 1];
-    for (int i = 1; i <= 16; i++) {
-        double t = i / 16.0, u = 1 - t;
-        p_add(p, u * u * u * x0 + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * e.x,
-              u * u * u * y0 + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * e.y);
+/* ================================================================ NSBezierPath
+ * Elementos de verdade (bezier_core.c, teste userland/tests-appkit/bezier_host.c): o preenchimento vira um polígono
+ * só (o window server tem a regra não-zero; o par-ímpar é convertido), o traço passa pelo tracejado e ganha pontas e
+ * junções redondas/quadradas. addClip/setClip recortam pela caixa do caminho (o recorte do window server é retangular). */
+#include "bezier_core.h"
+void *bz_alloc(unsigned long n) { return malloc(n); }
+void *bz_realloc(void *p, unsigned long n) { return realloc(p, n); }
+void bz_free(void *p) { free(p); }
+typedef struct { bz_path e; double lw, miter, flat, phase; int cap, join, rule, ndash; double *dash; } path_t;
+static double g_bp_lw = 1, g_bp_miter = 10, g_bp_flat = 0.6;
+static int g_bp_cap, g_bp_join, g_bp_rule;
+static path_t *pth(id p) {
+    if (!ST(p)) {
+        path_t *s = calloc(1, sizeof *s);
+        s->lw = g_bp_lw; s->miter = g_bp_miter; s->flat = g_bp_flat; s->cap = g_bp_cap; s->join = g_bp_join; s->rule = g_bp_rule;
+        ST(p) = s;
     }
+    return ST(p);
 }
-static void bp_close(id self, SEL c) {
-    (void)c;
-    path_t *p = pth(self);
-    if (!p->nstarts) return;
-    u32 s = p->starts[p->nstarts - 1];
-    if (p->n > s) p_add(p, p->xy[s * 2], p->xy[s * 2 + 1]);
-}
-static void add_rect(path_t *p, NSRect r) {
-    p_start(p);
-    p_add(p, r.o.x, r.o.y); p_add(p, r.o.x + r.s.w, r.o.y); p_add(p, r.o.x + r.s.w, r.o.y + r.s.h); p_add(p, r.o.x, r.o.y + r.s.h); p_add(p, r.o.x, r.o.y);
-}
-static void add_oval(path_t *p, NSRect r) {
-    p_start(p);
-    double cx = r.o.x + r.s.w / 2, cy = r.o.y + r.s.h / 2;
-    for (int i = 0; i <= 64; i++) { double a = i * 6.283185307179586 / 64; p_add(p, cx + cos(a) * r.s.w / 2, cy + sin(a) * r.s.h / 2); }
-}
-static void add_rrect(path_t *p, NSRect r, double rx, double ry) {
-    if (rx <= 0 || ry <= 0) { add_rect(p, r); return; }
-    if (rx > r.s.w / 2) rx = r.s.w / 2;
-    if (ry > r.s.h / 2) ry = r.s.h / 2;
-    p_start(p);
-    double cxs[4] = {r.o.x + r.s.w - rx, r.o.x + r.s.w - rx, r.o.x + rx, r.o.x + rx};
-    double cys[4] = {r.o.y + ry, r.o.y + r.s.h - ry, r.o.y + r.s.h - ry, r.o.y + ry};
-    double a0[4] = {-1.5707963, 0, 1.5707963, 3.14159265};
-    for (int k = 0; k < 4; k++)
-        for (int i = 0; i <= 8; i++) { double a = a0[k] + i * 1.5707963 / 8; p_add(p, cxs[k] + cos(a) * rx, cys[k] + sin(a) * ry); }
-    p_add(p, p->xy[p->starts[p->nstarts - 1] * 2], p->xy[p->starts[p->nstarts - 1] * 2 + 1]);
-}
+static bz_rect bzr(NSRect r) { bz_rect b = {r.o.x, r.o.y, r.s.w, r.s.h}; return b; }
+static void bp_move(id self, SEL c, NSPoint pt) { (void)c; bz_move(&pth(self)->e, pt.x, pt.y); }
+static void bp_line(id self, SEL c, NSPoint pt) { (void)c; bz_line(&pth(self)->e, pt.x, pt.y); }
+static void bp_curve(id self, SEL c, NSPoint e, NSPoint c1, NSPoint c2) { (void)c; bz_curve(&pth(self)->e, c1.x, c1.y, c2.x, c2.y, e.x, e.y); }
+static void bp_close(id self, SEL c) { (void)c; bz_close(&pth(self)->e); }
+static void add_rect(path_t *p, NSRect r) { bz_rect_path(&p->e, bzr(r)); }
+static void add_oval(path_t *p, NSRect r) { bz_oval(&p->e, bzr(r)); }
+static void add_rrect(path_t *p, NSRect r, double rx, double ry) { bz_rrect(&p->e, bzr(r), rx, ry); }
 static id bp_new(void) { return MSG0(id, MSG0(id, &NSBezierPath_c, "alloc"), "init"); }
 static id bp_rect(id cls, SEL c, NSRect r) { (void)cls; (void)c; id o = bp_new(); add_rect(pth(o), r); return o; }
 static id bp_oval(id cls, SEL c, NSRect r) { (void)cls; (void)c; id o = bp_new(); add_oval(pth(o), r); return o; }
@@ -390,37 +363,239 @@ static void bp_app_oval(id self, SEL c, NSRect r) { (void)c; add_oval(pth(self),
 static void bp_app_rrect(id self, SEL c, NSRect r, double rx, double ry) { (void)c; add_rrect(pth(self), r, rx, ry); }
 static void bp_set_lw(id self, SEL c, double w) { (void)c; pth(self)->lw = w; }
 static double bp_lw(id self, SEL c) { (void)c; return pth(self)->lw; }
-static void bp_remove_all(id self, SEL c) { (void)c; path_t *p = pth(self); p->n = 0; p->nstarts = 0; }
-static void draw_path(path_t *p, int fill) {
-    for (u32 k = 0; k < p->nstarts; k++) {
-        u32 s = p->starts[k], e = k + 1 < p->nstarts ? p->starts[k + 1] : p->n;
-        if (e - s < 2) continue;
-        float *xy = malloc((e - s) * 8);
-        for (u32 i = s; i < e; i++) { xy[(i - s) * 2] = (float)px_x(p->xy[i * 2]); xy[(i - s) * 2 + 1] = (float)px_y(p->xy[i * 2 + 1]); }
-        if (fill && e - s >= 3) g_poly(xy, e - s, ctx.fill, 1, 0);
-        else if (!fill) g_poly(xy, e - s, ctx.stroke, 0, p->lw);
-        free(xy);
+static void bp_remove_all(id self, SEL c) { (void)c; bz_clear(&pth(self)->e); }
+/* traço: cada pedaço (depois do tracejado) vira polilinha; pontas e junções redondas são círculos, quadradas estendem */
+typedef struct { path_t *p; u32 color; } stroke_ctx;
+static void stroke_piece(void *cv, const double *xy, int n) {
+    stroke_ctx *sc = cv;
+    double lw = sc->p->lw > 0 ? sc->p->lw : 1;
+    if (n < 2) return;
+    float *f = malloc((size_t)n * 8);
+    if (!f) return;
+    for (int i = 0; i < n; i++) { f[i * 2] = (float)px_x(xy[i * 2]); f[i * 2 + 1] = (float)px_y(xy[i * 2 + 1]); }
+    if (sc->p->cap == 2) {   /* NSLineCapStyleSquare: estende meia largura nas pontas */
+        for (int end = 0; end < 2; end++) {
+            int a = end ? n - 1 : 0, b = end ? n - 2 : 1;
+            double dx = f[a * 2] - f[b * 2], dy = f[a * 2 + 1] - f[b * 2 + 1], l = __builtin_sqrt(dx * dx + dy * dy);
+            if (l > 0) { f[a * 2] += (float)(dx / l * lw / 2); f[a * 2 + 1] += (float)(dy / l * lw / 2); }
+        }
     }
+    g_poly(f, (u32)n, sc->color, 0, lw);
+    if (lw > 1.5) {
+        for (int i = 0; i < n; i++) {
+            int endpt = i == 0 || i == n - 1;
+            if ((endpt && sc->p->cap == 1) || (!endpt && sc->p->join == 1) || (!endpt && sc->p->join == 0 && lw > 2))
+                g_rrect(f[i * 2] - lw / 2, f[i * 2 + 1] - lw / 2, lw, lw, lw / 2, sc->color);   /* cobre a fresta da junção */
+        }
+    }
+    free(f);
+}
+static void draw_path(path_t *p, int fill) {
+    bz_flat fl = {0, 0, 0, 0, 0, 0, 0};
+    double tol = p->flat > 0 ? p->flat / 2 : 0.3;
+    if (bz_flatten(&p->e, tol, &fl) <= 0) { bz_flat_release(&fl); return; }
+    if (fill) {
+        float *o = 0;
+        int n = bz_fill_polygon(&fl, p->rule == 1, &o);
+        while (n > 4096 && tol < 64) {   /* o window server aceita até 4096 pontos por polígono */
+            free(o); o = 0; tol *= 2;
+            if (bz_flatten(&p->e, tol, &fl) <= 0) break;
+            n = bz_fill_polygon(&fl, p->rule == 1, &o);
+        }
+        if (n >= 3 && n <= 4096) {
+            for (int i = 0; i < n; i++) { o[i * 2] = (float)px_x(o[i * 2]); o[i * 2 + 1] = (float)px_y(o[i * 2 + 1]); }
+            g_poly(o, (u32)n, ctx.fill, 1, 0);
+        }
+        free(o);
+    } else {
+        stroke_ctx sc = {p, ctx.stroke};
+        bz_dash(&fl, p->dash, p->ndash, p->phase, stroke_piece, &sc);
+    }
+    bz_flat_release(&fl);
 }
 static void bp_fill(id self, SEL c) { (void)c; draw_path(pth(self), 1); }
 static void bp_stroke(id self, SEL c) { (void)c; draw_path(pth(self), 0); }
 static void bp_cfill_rect(id cls, SEL c, NSRect r) { (void)cls; (void)c; double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, ctx.fill); }
 static void bp_cstroke_rect(id cls, SEL c, NSRect r) { (void)cls; (void)c; id p = bp_rect(0, 0, r); bp_stroke(p, 0); }
-static void bp_cstroke_line(id cls, SEL c, NSPoint a, NSPoint b) { (void)cls; (void)c; g_line(px_x(a.x), px_y(a.y), px_x(b.x), px_y(b.y), 1, ctx.stroke); }
-static NSRect bp_bounds(id self, SEL c) {
+static void bp_cstroke_line(id cls, SEL c, NSPoint a, NSPoint b) { (void)cls; (void)c; g_line(px_x(a.x), px_y(a.y), px_x(b.x), px_y(b.y), g_bp_lw, ctx.stroke); }
+static NSRect bp_bounds(id self, SEL c) { (void)c; bz_rect b = bz_bounds(&pth(self)->e); NSRect r = {{b.x, b.y}, {b.w, b.h}}; return r; }
+static void bp_add_clip(id self, SEL c) { NSRect r = bp_bounds(self, c); double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_clip(x, y, w, h); }
+
+/* resto do NSBezierPath: elementos, relativos, arcos, pontos, estilo de traço, regra, contenção, transformação */
+static NSPoint bp_cur(id self) { NSPoint p = {0, 0}; bz_current(&pth(self)->e, &p.x, &p.y); return p; }
+static NSPoint bp_current_point(id self, SEL c) { (void)c; return bp_cur(self); }
+static BOOL bp_is_empty(id self, SEL c) { (void)c; return pth(self)->e.n == 0; }
+static void bp_rmove(id self, SEL c, NSPoint d) { (void)c; NSPoint p = bp_cur(self); bz_move(&pth(self)->e, p.x + d.x, p.y + d.y); }
+static void bp_rline(id self, SEL c, NSPoint d) { (void)c; NSPoint p = bp_cur(self); bz_line(&pth(self)->e, p.x + d.x, p.y + d.y); }
+static void bp_rcurve(id self, SEL c, NSPoint e, NSPoint c1, NSPoint c2) {
+    (void)c; NSPoint p = bp_cur(self);
+    bz_curve(&pth(self)->e, p.x + c1.x, p.y + c1.y, p.x + c2.x, p.y + c2.y, p.x + e.x, p.y + e.y);
+}
+static void bp_append(id self, SEL c, id other) { (void)c; if (other) bz_append(&pth(self)->e, &pth(other)->e); }
+static void bp_append_points(id self, SEL c, const NSPoint *pts, i64 n) {
+    (void)c;
+    if (!pts || n <= 0) return;
+    path_t *p = pth(self);
+    if (!p->e.n) bz_move(&p->e, pts[0].x, pts[0].y); else bz_line(&p->e, pts[0].x, pts[0].y);
+    for (i64 i = 1; i < n; i++) bz_line(&p->e, pts[i].x, pts[i].y);
+}
+static void bp_arc_cw(id self, SEL c, NSPoint ct, double r, double a0, double a1, BOOL cw) { (void)c; bz_arc(&pth(self)->e, ct.x, ct.y, r, a0, a1, cw); }
+static void bp_arc(id self, SEL c, NSPoint ct, double r, double a0, double a1) { bp_arc_cw(self, c, ct, r, a0, a1, NO); }
+static void bp_arc_from(id self, SEL c, NSPoint p1, NSPoint p2, double r) { (void)c; bz_arc_to(&pth(self)->e, p1.x, p1.y, p2.x, p2.y, r); }
+static i64 bp_count(id self, SEL c) { (void)c; return pth(self)->e.n; }
+/* NSBezierPathElement: move 0, line 1, curve 2 (cubicCurveTo), close 3 */
+static i64 bp_element_pts(id self, SEL c, i64 i, NSPoint *pts) {
     (void)c;
     path_t *p = pth(self);
-    NSRect r = {{0, 0}, {0, 0}};
-    if (!p->n) return r;
-    double x0 = 1e30, y0 = 1e30, x1 = -1e30, y1 = -1e30;
-    for (u32 i = 0; i < p->n; i++) {
-        double x = p->xy[i * 2], y = p->xy[i * 2 + 1];
-        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-    }
-    r.o.x = x0; r.o.y = y0; r.s.w = x1 - x0; r.s.h = y1 - y0;
-    return r;
+    if (i < 0 || i >= p->e.n) return 0;
+    const bz_el *e = &p->e.el[i];
+    int np = e->kind == BZ_CURVE ? 3 : e->kind == BZ_CLOSE ? 0 : 1;
+    for (int k = 0; pts && k < np; k++) { pts[k].x = e->p[k * 2]; pts[k].y = e->p[k * 2 + 1]; }
+    return e->kind;
 }
-static void bp_add_clip(id self, SEL c) { NSRect r = bp_bounds(self, c); double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_clip(x, y, w, h); }
+static i64 bp_element(id self, SEL c, i64 i) { return bp_element_pts(self, c, i, 0); }
+static void bp_set_assoc(id self, SEL c, const NSPoint *pts, i64 i) {
+    (void)c;
+    path_t *p = pth(self);
+    if (!pts || i < 0 || i >= p->e.n) return;
+    bz_el *e = &p->e.el[i];
+    int np = e->kind == BZ_CURVE ? 3 : e->kind == BZ_CLOSE ? 0 : 1;
+    for (int k = 0; k < np; k++) { e->p[k * 2] = pts[k].x; e->p[k * 2 + 1] = pts[k].y; }
+}
+static NSRect bp_cbounds(id self, SEL c) { (void)c; bz_rect b = bz_control_bounds(&pth(self)->e); NSRect r = {{b.x, b.y}, {b.w, b.h}}; return r; }
+static BOOL bp_contains(id self, SEL c, NSPoint pt) { (void)c; return bz_contains(&pth(self)->e, pt.x, pt.y, pth(self)->rule == 1); }
+static i64 bp_cap(id self, SEL c) { (void)c; return pth(self)->cap; }
+static void bp_set_cap(id self, SEL c, i64 v) { (void)c; pth(self)->cap = (int)v; }
+static i64 bp_join(id self, SEL c) { (void)c; return pth(self)->join; }
+static void bp_set_join(id self, SEL c, i64 v) { (void)c; pth(self)->join = (int)v; }
+static i64 bp_rule(id self, SEL c) { (void)c; return pth(self)->rule; }
+static void bp_set_rule(id self, SEL c, i64 v) { (void)c; pth(self)->rule = (int)v; }
+static double bp_miter(id self, SEL c) { (void)c; return pth(self)->miter; }
+static void bp_set_miter(id self, SEL c, double v) { (void)c; pth(self)->miter = v; }
+static double bp_flat(id self, SEL c) { (void)c; return pth(self)->flat; }
+static void bp_set_flat(id self, SEL c, double v) { (void)c; pth(self)->flat = v > 0 ? v : 0.6; }
+static void bp_set_dash(id self, SEL c, const double *pat, i64 n, double phase) {
+    (void)c;
+    path_t *p = pth(self);
+    free(p->dash); p->dash = 0; p->ndash = 0; p->phase = phase;
+    if (pat && n > 0) { p->dash = malloc((size_t)n * sizeof(double)); if (p->dash) { memcpy(p->dash, pat, (size_t)n * sizeof(double)); p->ndash = (int)n; } }
+}
+static void bp_get_dash(id self, SEL c, double *pat, i64 *n, double *phase) {
+    (void)c;
+    path_t *p = pth(self);
+    if (pat) memcpy(pat, p->dash, (size_t)p->ndash * sizeof(double));
+    if (n) *n = p->ndash;
+    if (phase) *phase = p->phase;
+}
+static void bp_copy_style(path_t *d, const path_t *s) {
+    d->lw = s->lw; d->miter = s->miter; d->flat = s->flat; d->cap = s->cap; d->join = s->join; d->rule = s->rule; d->phase = s->phase;
+    d->ndash = 0; d->dash = 0;
+    if (s->ndash) { d->dash = malloc((size_t)s->ndash * sizeof(double)); if (d->dash) { memcpy(d->dash, s->dash, (size_t)s->ndash * sizeof(double)); d->ndash = s->ndash; } }
+}
+static id bp_copy(id self, SEL c, void *zone) {
+    (void)c; (void)zone;
+    id o = bp_new();
+    path_t *d = pth(o), *sp = pth(self);
+    bz_copy(&d->e, &sp->e);
+    bp_copy_style(d, sp);
+    return o;
+}
+static id bp_reversed(id self, SEL c) {
+    (void)c;
+    id o = bp_new();
+    bz_reverse(&pth(o)->e, &pth(self)->e);
+    bp_copy_style(pth(o), pth(self));
+    return objc_autorelease(o);
+}
+static id bp_flattened(id self, SEL c) {
+    (void)c;
+    id o = bp_new();
+    path_t *sp = pth(self), *d = pth(o);
+    bz_flat fl = {0, 0, 0, 0, 0, 0, 0};
+    if (bz_flatten(&sp->e, sp->flat > 0 ? sp->flat : 0.6, &fl) > 0)
+        for (int r = 0; r < fl.nr; r++) {
+            int a = fl.start[r], b = r + 1 < fl.nr ? fl.start[r + 1] : fl.n;
+            for (int i = a; i < b; i++) { if (i == a) bz_move(&d->e, fl.xy[i * 2], fl.xy[i * 2 + 1]); else bz_line(&d->e, fl.xy[i * 2], fl.xy[i * 2 + 1]); }
+            if (fl.closed[r]) bz_close(&d->e);
+        }
+    bz_flat_release(&fl);
+    bp_copy_style(d, sp);
+    return objc_autorelease(o);
+}
+/* matriz de um NSAffineTransform pelos pontos transformados (vale para qualquer implementação dele) */
+static void at_matrix(id t, double m[6]) {
+    NSPoint o = {0, 0}, x = {1, 0}, y = {0, 1};
+    NSPoint to = ((NSPoint (*)(id, SEL, NSPoint))objc_msgSend)(t, sel_registerName("transformPoint:"), o);
+    NSPoint tx = ((NSPoint (*)(id, SEL, NSPoint))objc_msgSend)(t, sel_registerName("transformPoint:"), x);
+    NSPoint ty = ((NSPoint (*)(id, SEL, NSPoint))objc_msgSend)(t, sel_registerName("transformPoint:"), y);
+    m[0] = tx.x - to.x; m[1] = tx.y - to.y; m[2] = ty.x - to.x; m[3] = ty.y - to.y; m[4] = to.x; m[5] = to.y;
+}
+static void bp_transform(id self, SEL c, id t) { (void)c; if (!t) return; double m[6]; at_matrix(t, m); bz_transform(&pth(self)->e, m); }
+static id at_transform_path(id self, SEL c, id path) {
+    (void)c;
+    if (!path) return 0;
+    id o = bp_copy(path, 0, 0);
+    bp_transform(o, 0, self);
+    return objc_autorelease(o);
+}
+/* CGPath (macOS 14): ida e volta com o CGPath do Core Graphics */
+typedef struct { i32 type; NSPoint *points; } bp_cgel;
+void *CGPathCreateMutable(void);
+void CGPathMoveToPoint(void *p, const void *m, double x, double y);
+void CGPathAddLineToPoint(void *p, const void *m, double x, double y);
+void CGPathAddCurveToPoint(void *p, const void *m, double c1x, double c1y, double c2x, double c2y, double x, double y);
+void CGPathAddQuadCurveToPoint(void *p, const void *m, double cx, double cy, double x, double y);
+void CGPathCloseSubpath(void *p);
+void CGPathApply(const void *path, void *info, void (*fn)(void *, const bp_cgel *));
+static char k_bp_cg;
+static void *bp_cgpath(id self, SEL c) {
+    (void)c;
+    void *cg = CGPathCreateMutable();
+    path_t *p = pth(self);
+    for (int i = 0; cg && i < p->e.n; i++) {
+        const bz_el *e = &p->e.el[i];
+        switch (e->kind) {
+        case BZ_MOVE: CGPathMoveToPoint(cg, 0, e->p[0], e->p[1]); break;
+        case BZ_LINE: CGPathAddLineToPoint(cg, 0, e->p[0], e->p[1]); break;
+        case BZ_CURVE: CGPathAddCurveToPoint(cg, 0, e->p[0], e->p[1], e->p[2], e->p[3], e->p[4], e->p[5]); break;
+        default: CGPathCloseSubpath(cg); break;
+        }
+    }
+    if (cg) objc_setAssociatedObject(self, &k_bp_cg, (id)cg, 1);   /* o caminho fica com o objeto, como a propriedade */
+    return cg;
+}
+static void cg_el_add(void *info, const bp_cgel *e) {
+    bz_path *p = info;
+    double x, y;
+    switch (e->type) {
+    case 0: bz_move(p, e->points[0].x, e->points[0].y); break;
+    case 1: bz_line(p, e->points[0].x, e->points[0].y); break;
+    case 2:   /* quadrática → cúbica */
+        if (!bz_current(p, &x, &y)) { x = e->points[0].x; y = e->points[0].y; }
+        bz_curve(p, x + 2.0 / 3 * (e->points[0].x - x), y + 2.0 / 3 * (e->points[0].y - y),
+                 e->points[1].x + 2.0 / 3 * (e->points[0].x - e->points[1].x), e->points[1].y + 2.0 / 3 * (e->points[0].y - e->points[1].y),
+                 e->points[1].x, e->points[1].y);
+        break;
+    case 3: bz_curve(p, e->points[0].x, e->points[0].y, e->points[1].x, e->points[1].y, e->points[2].x, e->points[2].y); break;
+    default: bz_close(p); break;
+    }
+}
+static void bp_set_cgpath(id self, SEL c, void *cg) { (void)c; bz_clear(&pth(self)->e); if (cg) CGPathApply(cg, &pth(self)->e, cg_el_add); }
+static id bp_with_cgpath(id cls, SEL c, void *cg) { (void)cls; (void)c; id o = bp_new(); bp_set_cgpath(o, 0, cg); return objc_autorelease(o); }
+static void bp_set_clip(id self, SEL c) { (void)c; g_unclip(); bp_add_clip(self, 0); }
+static void bp_clip_rect(id cls, SEL c, NSRect r) { (void)cls; (void)c; double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_clip(x, y, w, h); }
+static void bp_set_def_lw(id k, SEL c, double v) { (void)k; (void)c; g_bp_lw = v; }
+static double bp_def_lw(id k, SEL c) { (void)k; (void)c; return g_bp_lw; }
+static void bp_set_def_cap(id k, SEL c, i64 v) { (void)k; (void)c; g_bp_cap = (int)v; }
+static i64 bp_def_cap(id k, SEL c) { (void)k; (void)c; return g_bp_cap; }
+static void bp_set_def_join(id k, SEL c, i64 v) { (void)k; (void)c; g_bp_join = (int)v; }
+static i64 bp_def_join(id k, SEL c) { (void)k; (void)c; return g_bp_join; }
+static void bp_set_def_rule(id k, SEL c, i64 v) { (void)k; (void)c; g_bp_rule = (int)v; }
+static i64 bp_def_rule(id k, SEL c) { (void)k; (void)c; return g_bp_rule; }
+static void bp_set_def_miter(id k, SEL c, double v) { (void)k; (void)c; g_bp_miter = v; }
+static double bp_def_miter(id k, SEL c) { (void)k; (void)c; return g_bp_miter; }
+static void bp_set_def_flat(id k, SEL c, double v) { (void)k; (void)c; g_bp_flat = v > 0 ? v : 0.6; }
+static double bp_def_flat(id k, SEL c) { (void)k; (void)c; return g_bp_flat; }
 
 /* funções C de desenho do AppKit */
 void NSRectFill(NSRect r) { double x, y, w, h; px_rect(r, &x, &y, &w, &h); g_fill(x, y, w, h, ctx.fill); }
@@ -607,14 +782,8 @@ int cx_bm_set_join(const void *c, int v);
 int cx_bm_set_alpha(const void *c, double a);
 int cx_bm_set_aa(const void *c, int v);
 /* path da janela para o coregraphics_bm.inc: ponto atual e recorte pela caixa do path */
-int cx_win_current(double *x, double *y) {
-    path_t *p = pth(cgp());
-    if (!p->n) return 0;
-    *x = p->xy[(p->n - 1) * 2];
-    *y = p->xy[(p->n - 1) * 2 + 1];
-    return 1;
-}
-void cx_win_clip(void) { if (pth(cgp())->n) bp_add_clip(cgp(), 0); bp_remove_all(cgp(), 0); }
+int cx_win_current(double *x, double *y) { return bz_current(&pth(cgp())->e, x, y); }
+void cx_win_clip(void) { if (pth(cgp())->e.n) bp_add_clip(cgp(), 0); bp_remove_all(cgp(), 0); }
 void CGContextSetRGBFillColor(id c, double r, double g, double b, double a) {
     if (cx_bm_is(c)) { cx_bm_set_fill(c, argb(cx_color(r, g, b, a))); return; }
     ctx.fill = ga(argb(cx_color(r, g, b, a)));
@@ -4308,7 +4477,17 @@ static BOOL dt_write(id self, SEL c, id path, BOOL at) { (void)c; (void)at; FILE
 
 typedef struct { int w, h; u32 *px; double dw, dh; void *cg; } imgst_t;   /* cg: CGImage em cache (CGImageForProposedRect:) */
 static imgst_t *im(id o) { if (!ST(o)) ST(o) = calloc(1, sizeof(imgst_t)); return ST(o); }
+u32 *cx_icns_argb(const u8 *d, u64 n, int want, int *w, int *h);   /* appkit_icons.c */
 static BOOL decode_into(id img, const u8 *data, u64 n) {
+    if (n >= 8 && !memcmp(data, "icns", 4)) {   /* .icns: o melhor elemento até 512 px */
+        int w = 0, h = 0;
+        u32 *px = cx_icns_argb(data, n, 512, &w, &h);
+        if (!px) return NO;
+        imgst_t *s = im(img);
+        free(s->px);
+        s->px = px; s->w = w; s->h = h; s->dw = w; s->dh = h;
+        return YES;
+    }
     long need = SYS4(GUI_DECODE_IMAGE, data, n, 0, 0);
     if (need <= 8) return NO;
     u8 *out = malloc((size_t)need);
@@ -4376,19 +4555,25 @@ static void *im_cg_for_rect(id self, SEL c, NSRect *proposed, id ctx, id hints) 
     CGColorSpaceRelease(space);
     return s->cg;
 }
-static id im_init_file(id self, SEL c, id path) { (void)c; u64 n; u8 *b = read_whole(cx_cstr(path), &n); BOOL ok = b && decode_into(self, b, n); free(b); return ok ? self : 0; }
+/* pelo initWithData: (que o appkit_more.c estende para PDF/EPS) */
+static id im_init_file(id self, SEL c, id path) {
+    (void)c;
+    id d = path ? MSG(id, cx_class_named("NSData"), "dataWithContentsOfFile:", path) : 0;
+    return d ? MSG(id, self, "initWithData:", d) : 0;
+}
 static id im_init_data(id self, SEL c, id data) { (void)c; nsdata_t *d = (nsdata_t *)data; return d && decode_into(self, d->bytes, d->len) ? self : 0; }
 static id im_named(id cls, SEL c, id name) {
     (void)c;
     id bundle = MSG0(id, cx_class_named("NSBundle"), "mainBundle");
     id res = MSG0(id, bundle, "resourcePath");
-    static const char *exts[] = {"", ".png", ".jpg", ".jpeg", ".gif", ".bmp"};
-    for (u32 i = 0; i < ARRAYN(exts); i++) {
+    static const char *exts[] = {"", ".png", "@2x.png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".icns", ".pdf"};
+    for (u32 i = 0; name && res && i < ARRAYN(exts); i++) {
         char p[1200];
         snprintf(p, sizeof p, "%s/%s%s", cx_cstr(res), cx_cstr(name), exts[i]);
         if (access(p, 0) == 0) { id o = im_init_file(MSG0(id, cls, "alloc"), 0, cx_str(p)); if (o) return o; }
     }
-    return 0;
+    extern id cx_named_image_more(id cls, id name);   /* appkit_icons.c: imagens do sistema e nomes registrados */
+    return name ? cx_named_image_more(cls, name) : 0;
 }
 static id im_init_size(id self, SEL c, NSSize z) { (void)c; imgst_t *s = im(self); s->dw = z.w; s->dh = z.h; return self; }
 static NSSize im_size(id self, SEL c) { (void)c; imgst_t *s = im(self); NSSize z = {s->dw, s->dh}; return z; }
@@ -6140,12 +6325,37 @@ void cx_appkit_init(void) {
     CM(NSBezierPath, "bezierPath", bp_new); CM(NSBezierPath, "bezierPathWithRect:", bp_rect); CM(NSBezierPath, "bezierPathWithOvalInRect:", bp_oval);
     CM(NSBezierPath, "bezierPathWithRoundedRect:xRadius:yRadius:", bp_rrect); CM(NSBezierPath, "fillRect:", bp_cfill_rect);
     CM(NSBezierPath, "strokeRect:", bp_cstroke_rect); CM(NSBezierPath, "strokeLineFromPoint:toPoint:", bp_cstroke_line);
+    CM(NSBezierPath, "clipRect:", bp_clip_rect); CM(NSBezierPath, "bezierPathWithCGPath:", bp_with_cgpath);
+    CM(NSBezierPath, "defaultLineWidth", bp_def_lw); CM(NSBezierPath, "setDefaultLineWidth:", bp_set_def_lw);
+    CM(NSBezierPath, "defaultLineCapStyle", bp_def_cap); CM(NSBezierPath, "setDefaultLineCapStyle:", bp_set_def_cap);
+    CM(NSBezierPath, "defaultLineJoinStyle", bp_def_join); CM(NSBezierPath, "setDefaultLineJoinStyle:", bp_set_def_join);
+    CM(NSBezierPath, "defaultWindingRule", bp_def_rule); CM(NSBezierPath, "setDefaultWindingRule:", bp_set_def_rule);
+    CM(NSBezierPath, "defaultMiterLimit", bp_def_miter); CM(NSBezierPath, "setDefaultMiterLimit:", bp_set_def_miter);
+    CM(NSBezierPath, "defaultFlatness", bp_def_flat); CM(NSBezierPath, "setDefaultFlatness:", bp_set_def_flat);
     M(NSBezierPath, "moveToPoint:", bp_move); M(NSBezierPath, "lineToPoint:", bp_line); M(NSBezierPath, "curveToPoint:controlPoint1:controlPoint2:", bp_curve);
+    M(NSBezierPath, "relativeMoveToPoint:", bp_rmove); M(NSBezierPath, "relativeLineToPoint:", bp_rline);
+    M(NSBezierPath, "relativeCurveToPoint:controlPoint1:controlPoint2:", bp_rcurve);
     M(NSBezierPath, "closePath", bp_close); M(NSBezierPath, "appendBezierPathWithRect:", bp_app_rect); M(NSBezierPath, "appendBezierPathWithOvalInRect:", bp_app_oval);
     M(NSBezierPath, "appendBezierPathWithRoundedRect:xRadius:yRadius:", bp_app_rrect); M(NSBezierPath, "fill", bp_fill); M(NSBezierPath, "stroke", bp_stroke);
+    M(NSBezierPath, "appendBezierPath:", bp_append); M(NSBezierPath, "appendBezierPathWithPoints:count:", bp_append_points);
+    M(NSBezierPath, "appendBezierPathWithArcWithCenter:radius:startAngle:endAngle:clockwise:", bp_arc_cw);
+    M(NSBezierPath, "appendBezierPathWithArcWithCenter:radius:startAngle:endAngle:", bp_arc);
+    M(NSBezierPath, "appendBezierPathWithArcFromPoint:toPoint:radius:", bp_arc_from);
     M(NSBezierPath, "setLineWidth:", bp_set_lw); M(NSBezierPath, "lineWidth", bp_lw); M(NSBezierPath, "removeAllPoints", bp_remove_all);
-    M(NSBezierPath, "bounds", bp_bounds); M(NSBezierPath, "addClip", bp_add_clip); M(NSBezierPath, "setLineCapStyle:", noop1_m);
-    M(NSBezierPath, "setLineJoinStyle:", noop1_m); M(NSBezierPath, "setLineDash:count:phase:", noop1_m);
+    M(NSBezierPath, "bounds", bp_bounds); M(NSBezierPath, "controlPointBounds", bp_cbounds); M(NSBezierPath, "addClip", bp_add_clip); M(NSBezierPath, "setClip", bp_set_clip);
+    M(NSBezierPath, "lineCapStyle", bp_cap); M(NSBezierPath, "setLineCapStyle:", bp_set_cap);
+    M(NSBezierPath, "lineJoinStyle", bp_join); M(NSBezierPath, "setLineJoinStyle:", bp_set_join);
+    M(NSBezierPath, "windingRule", bp_rule); M(NSBezierPath, "setWindingRule:", bp_set_rule);
+    M(NSBezierPath, "miterLimit", bp_miter); M(NSBezierPath, "setMiterLimit:", bp_set_miter);
+    M(NSBezierPath, "flatness", bp_flat); M(NSBezierPath, "setFlatness:", bp_set_flat);
+    M(NSBezierPath, "setLineDash:count:phase:", bp_set_dash); M(NSBezierPath, "getLineDash:count:phase:", bp_get_dash);
+    M(NSBezierPath, "currentPoint", bp_current_point); M(NSBezierPath, "isEmpty", bp_is_empty); M(NSBezierPath, "elementCount", bp_count);
+    M(NSBezierPath, "elementAtIndex:", bp_element); M(NSBezierPath, "elementAtIndex:associatedPoints:", bp_element_pts);
+    M(NSBezierPath, "setAssociatedPoints:atIndex:", bp_set_assoc); M(NSBezierPath, "containsPoint:", bp_contains);
+    M(NSBezierPath, "transformUsingAffineTransform:", bp_transform); M(NSBezierPath, "bezierPathByReversingPath", bp_reversed);
+    M(NSBezierPath, "bezierPathByFlatteningPath", bp_flattened); M(NSBezierPath, "copyWithZone:", bp_copy);
+    M(NSBezierPath, "CGPath", bp_cgpath); M(NSBezierPath, "setCGPath:", bp_set_cgpath);
+    { cx_class_t *at = cx_class_named("NSAffineTransform"); if (at) cx_add_method(at, "transformBezierPath:", (void *)at_transform_path); }
 
     cx_add_method(&NSString_c, "drawAtPoint:withAttributes:", (void *)str_draw_at);
     cx_add_method(&NSString_c, "drawInRect:withAttributes:", (void *)str_draw_in);

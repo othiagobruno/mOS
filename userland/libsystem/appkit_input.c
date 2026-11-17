@@ -616,6 +616,7 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_toolbar_init(void); cx_appkit_toolbar_init(); }   /* appkit_toolbar.c: NSToolbar completa, grupos, personalização */
     { extern void cx_appkit_filepromise_init(void); cx_appkit_filepromise_init(); } /* appkit_filepromise.c: promessas de arquivo no arrasto */
     { extern void cx_appkit_offscreen_init(void); cx_appkit_offscreen_init(); }   /* appkit_offscreen.c: desenho em PDF/bitmap, lockFocus */
+    { extern void cx_appkit_icons_init(void); cx_appkit_icons_init(); }   /* appkit_icons.c: icns, imagens de sistema, iconForFile: */
     { extern void cx_appkit_print_init(void); cx_appkit_print_init(); }       /* appkit_print.c: impressão (PDF), NSPrintOperation, PM* */
     { extern void cx_appkit_cells_init(void); cx_appkit_cells_init(); }       /* appkit_cells.c: família NSCell, NSMatrix, NSSwitch */
     { extern void cx_appkit_more_init(void); cx_appkit_more_init(); }         /* appkit_more.c: gestos, NSAnimation, fontes, NSTextBlock, PDF/EPS */
