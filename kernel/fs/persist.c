@@ -282,6 +282,13 @@ static void load_tree(const char *vpath, int depth) {
 bool persist_load(void) {
     if (!open_origin_volume()) return false;
     read_state();
+    /* Primeiro boot no PC (docs/instalar-no-pc.md): modo seguro. Nada grava em disco neste boot; a sessão fica na RAM
+     * e o estado só sai de PRIMEIRO_BOOT pelo Ubuntu. A única escrita é o log, nos clusters já alocados do boot.log. */
+    if (sys_state == SYS_FIRSTBOOT) storage_seal();
+    {
+        extern void bootlog_start(fatfs_t *fs, int disk_index, u64 part_off);
+        bootlog_start(sys, sys_disk, origin_get()->part_off);
+    }
     fat_set_system(sys);
     kprintf("persist: volume do sistema \"%s\" (FAT, %llu MB) em %s, estado %s\n",
             fat_label(sys)[0] ? fat_label(sys) : "sem nome", origin_get()->part_size >> 20, storage_disk_name(sys_disk), sysstate_name());
@@ -325,7 +332,7 @@ static bool authorize(void) {
 void persist_enable(void) {
     enabled = false;
     if (!sys) return;
-    if (sys_state == SYS_INSTALLED || sys_state == SYS_FIRSTBOOT || sys_state == SYS_LIVE_PERSIST) enabled = authorize();
+    if (sys_state == SYS_INSTALLED || sys_state == SYS_LIVE_PERSIST) enabled = authorize();   /* PRIMEIRO_BOOT: modo seguro */
     kprintf("persist: gravação no disco do sistema %s (estado %s)\n", enabled ? "LIGADA" : "DESLIGADA", sysstate_name());
 }
 
@@ -546,6 +553,8 @@ static void save_klog(void) {
 }
 
 void persist_tick(void) {
+    extern void bootlog_tick(void);
+    bootlog_tick();                      /* \EFI\mOS\boot.log (fs/bootlog.c), também no modo seguro */
     pcache_tick(); /* writeback do page cache e um passo de aio */
     update_poll();                       /* atualização em andamento (fs/update.c), mesmo com Ajustes fechado */
     save_klog();

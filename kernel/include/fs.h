@@ -241,6 +241,7 @@ int      fat_list(fatfs_t *fs, const char *path, fat_list_cb cb, void *ctx); /* 
 typedef void (*fat_list2_cb)(void *ctx, const char *name, bool is_dir, u64 size, u32 first_cluster);
 int      fat_list2(fatfs_t *fs, const char *path, fat_list2_cb cb, void *ctx);
 bool     fat_read_chain(fatfs_t *fs, u32 first, u64 off, void *buf, u64 len); /* trecho pelo 1º cluster */
+int      fat_extents(fatfs_t *fs, const char *path, u64 *off, u64 *len, int max, u64 *size); /* faixas em disco (só leitura) */
 u8      *fat_read_file(fatfs_t *fs, const char *path, u64 *len);  /* kfree no retorno */
 bool     fat_write_file(fatfs_t *fs, const char *path, const void *data, u64 len); /* cria ou substitui */
 bool     fat_mkdir(fatfs_t *fs, const char *path);   /* o pai precisa existir; true se já existir */

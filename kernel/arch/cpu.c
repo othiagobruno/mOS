@@ -142,6 +142,8 @@ static void exc_panic(int_frame_t *f) {
         }
     }
     panic_screen(msg, f);
+    extern void bootlog_panic(void);
+    bootlog_panic();                    /* \EFI\mOS\boot.log no PC (fs/bootlog.c), depois da tela */
     for (;;) { cli(); hlt(); }
 }
 

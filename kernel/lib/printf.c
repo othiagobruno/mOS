@@ -106,7 +106,9 @@ int snprintf(char *buf, usize n, const char *fmt, ...) {
 char klog_buf[KLOG_SIZE];
 usize klog_len;
 
+void bootlog_putc(char c);   /* fs/bootlog.c: cópia do log para o \EFI\mOS\boot.log (sem E/S aqui) */
 static void klog_put(char c) {
+    bootlog_putc(c);
     if (klog_len >= KLOG_SIZE - 1) {
         memmove(klog_buf, klog_buf + KLOG_SIZE / 2, KLOG_SIZE / 2);
         klog_len -= KLOG_SIZE / 2;
@@ -141,5 +143,7 @@ void panic(const char *fmt, ...) {
     cli();
     kprintf("\n*** PANIC: %s\n", buf);
     panic_screen(buf, NULL);
+    extern void bootlog_panic(void);
+    bootlog_panic();                    /* depois da tela: se o disco travar, a mensagem já está visível */
     for (;;) hlt();
 }

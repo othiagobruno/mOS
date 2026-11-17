@@ -772,6 +772,34 @@ bool fat_stat(fatfs_t *fs, const char *path, bool *is_dir, u64 *size) {
     return true;
 }
 
+/* Faixas em disco (bytes, relativos ao dispositivo do volume) dos clusters de um arquivo, juntando clusters contíguos.
+ * Só lê. Devolve o número de faixas, ou -1 (não existe, é pasta, cadeia quebrada ou mais de max faixas). O boot.log do
+ * primeiro boot é reescrito por aqui (fs/bootlog.c), sem passar pelo FAT. */
+int fat_extents(fatfs_t *fs, const char *path, u64 *off, u64 *len, int max, u64 *size) {
+    fent_t f;
+    if (!fs || !resolve(fs, path, &f) || (f.attr & ATTR_DIR) || !f.size) return -1;
+    if (size) *size = f.size;
+    u64 need = ((u64)f.size + fs->clus - 1) / fs->clus;
+    int n = 0;
+    u32 c = f.clus;
+    for (u64 got = 0; got < need;) {
+        if (is_eoc(c) || c >= fs->nclus + 2) return -1;
+        u32 run = 1;
+        while (got + run < need) {
+            u32 nx = fat_get(fs, c + run - 1);
+            if (nx != c + run) break;
+            run++;
+        }
+        if (n >= max) return -1;
+        off[n] = clus_off(fs, c);
+        len[n] = (u64)run * fs->clus;
+        n++;
+        got += run;
+        c = fat_get(fs, c + run - 1);
+    }
+    return n;
+}
+
 static int list_any(fatfs_t *fs, const char *path, fat_list_cb cb, fat_list2_cb cb2, void *ctx);
 int fat_list(fatfs_t *fs, const char *path, fat_list_cb cb, void *ctx) { return list_any(fs, path, cb, NULL, ctx); }
 /* com o 1º cluster de cada entrada: o persist guarda só ele e lê o arquivo sob demanda (fat_read_chain) */
