@@ -50,11 +50,70 @@ typedef NS_ENUM(NSInteger, SKPaymentTransactionState) {
 - (void)mos_setState:(SKPaymentTransactionState)state error:(NSError *)error payment:(SKPayment *)payment;
 @end
 
-@interface SKProductsRequest : NSObject
+/* SKRequest: a base de SKProductsRequest e SKReceiptRefreshRequest, como na Apple */
+@interface SKRequest : NSObject
 @property (assign) id delegate;
-- (instancetype)initWithProductIdentifiers:(id)productIdentifiers;
 - (void)start;
 - (void)cancel;
+@end
+@interface SKProductsRequest : SKRequest
+- (instancetype)initWithProductIdentifiers:(id)productIdentifiers;
+@end
+/* recibo: não há App Store no mOS, então o pedido falha como o de produtos (SKErrorCloudServiceNetworkConnectionFailed) */
+@interface SKReceiptRefreshRequest : SKRequest
+@property (readonly, copy) NSDictionary *receiptProperties;
+- (instancetype)initWithReceiptProperties:(NSDictionary *)properties;
+@end
+@interface SKPaymentDiscount : NSObject
+@property (readonly, copy) NSString *identifier, *keyIdentifier, *signature;
+@property (readonly, copy) id nonce;
+@property (readonly, copy) NSNumber *timestamp;
+- (instancetype)initWithIdentifier:(NSString *)identifier keyIdentifier:(NSString *)keyIdentifier nonce:(id )nonce
+                         signature:(NSString *)signature timestamp:(NSNumber *)timestamp;
+@end
+@interface SKProductDiscount : NSObject
+@property (readonly) id price;
+@property (readonly) id priceLocale;
+@property (readonly) NSString *identifier;
+@property (readonly) id subscriptionPeriod;
+@property (readonly) NSUInteger numberOfPeriods;
+@property (readonly) NSUInteger paymentMode, type;
+@end
+@interface SKStoreReviewController : NSObject
++ (void)requestReview;
++ (void)requestReviewInScene:(id)scene;
+@end
+@interface SKAdNetwork : NSObject
++ (void)registerAppForAdNetworkAttribution;
++ (void)updateConversionValue:(NSInteger)value;
++ (void)updatePostbackConversionValue:(NSInteger)value completionHandler:(void (^)(NSError *))completion;
++ (void)startImpression:(id)impression completionHandler:(void (^)(NSError *))completion;
++ (void)endImpression:(id)impression completionHandler:(void (^)(NSError *))completion;
+@end
+@interface SKAdImpression : NSObject
+@property (copy) NSNumber *sourceAppStoreItemIdentifier, *advertisedAppStoreItemIdentifier, *adCampaignIdentifier, *sourceIdentifier;
+@property (copy) NSString *adNetworkIdentifier, *adImpressionIdentifier, *adType, *adDescription, *adPurchaserName, *signature, *version;
+@property (copy) NSNumber *timestamp;
+@end
+@interface SKDownload : NSObject
+@property (readonly) NSInteger state, downloadState;
+@property (readonly) float progress;
+@property (readonly) id contentURL;
+@property (readonly) NSError *error;
+@property (readonly) NSString *contentIdentifier, *contentVersion;
+@end
+@interface SKOverlayAppConfiguration : NSObject
+@property (copy) NSString *appIdentifier, *campaignToken, *providerToken;
+@property NSInteger position;
+@property BOOL userDismissible;
+- (instancetype)initWithAppIdentifier:(NSString *)appIdentifier position:(NSInteger)position;
+@end
+@interface SKOverlay : NSObject
+@property (readonly, copy) id configuration;
+@property (assign) id delegate;
+- (instancetype)initWithConfiguration:(id)configuration;
+- (void)presentInScene:(id)scene;
++ (void)dismissOverlayInScene:(id)scene;
 @end
 
 @interface SKPaymentQueue : NSObject
@@ -147,7 +206,7 @@ static void bind_tx(int tx) {
 }
 
 static void on_req(void *ctx, int err) {
-    SKProductsRequest *self = (SKProductsRequest *)ctx;
+    SKRequest *self = (SKRequest *)ctx;
     id del = self.delegate;
     if ([del respondsToSelector:@selector(request:didFailWithError:)])
         [del performSelector:@selector(request:didFailWithError:) withObject:self withObject:sk_nserr(err)];
@@ -196,13 +255,8 @@ static void on_req(void *ctx, int err) {
 }
 @end
 
-@implementation SKProductsRequest {
+@implementation SKRequest {
     BOOL _cancelled;
-}
-- (instancetype)initWithProductIdentifiers:(id)productIdentifiers {
-    self = [super init];
-    (void)productIdentifiers;
-    return self;
 }
 - (void)cancel { _cancelled = YES; }
 - (void)start {
@@ -210,6 +264,85 @@ static void on_req(void *ctx, int err) {
     sk_core_request((void *)self, on_req, _cancelled);
     sk_flush();
 }
+@end
+@implementation SKProductsRequest
+- (instancetype)initWithProductIdentifiers:(id)productIdentifiers {
+    self = [super init];
+    (void)productIdentifiers;
+    return self;
+}
+@end
+@implementation SKReceiptRefreshRequest {
+    NSDictionary *_props;
+}
+- (instancetype)initWithReceiptProperties:(NSDictionary *)properties { self = [super init]; _props = [properties copy]; return self; }
+- (NSDictionary *)receiptProperties { return _props; }
+@end
+@implementation SKPaymentDiscount {
+    NSString *_id, *_kid, *_sig;
+    id _nonce;
+    NSNumber *_ts;
+}
+- (instancetype)initWithIdentifier:(NSString *)identifier keyIdentifier:(NSString *)keyIdentifier nonce:(id )nonce
+                         signature:(NSString *)signature timestamp:(NSNumber *)timestamp {
+    self = [super init];
+    _id = [identifier copy]; _kid = [keyIdentifier copy]; _nonce = [nonce copy]; _sig = [signature copy]; _ts = [timestamp copy];
+    return self;
+}
+- (NSString *)identifier { return _id; }
+- (NSString *)keyIdentifier { return _kid; }
+- (NSString *)signature { return _sig; }
+- (id )nonce { return _nonce; }
+- (NSNumber *)timestamp { return _ts; }
+@end
+@implementation SKProductDiscount
+- (id )price { return nil; }
+- (id )priceLocale { return nil; }
+- (NSString *)identifier { return nil; }
+- (id)subscriptionPeriod { return nil; }
+- (NSUInteger)numberOfPeriods { return 0; }
+- (NSUInteger)paymentMode { return 0; }
+- (NSUInteger)type { return 0; }
+@end
+/* sem App Store no mOS: o pedido de avaliação não mostra nada (como a Apple, que pode recusar mostrar) */
+@implementation SKStoreReviewController
++ (void)requestReview {}
++ (void)requestReviewInScene:(id)scene { (void)scene; }
+@end
+/* atribuição de anúncio: não há postbacks no mOS; as chamadas terminam sem erro e sem efeito */
+@implementation SKAdNetwork
++ (void)registerAppForAdNetworkAttribution {}
++ (void)updateConversionValue:(NSInteger)value { (void)value; }
++ (void)updatePostbackConversionValue:(NSInteger)value completionHandler:(void (^)(NSError *))completion { (void)value; if (completion) completion(nil); }
++ (void)startImpression:(id)impression completionHandler:(void (^)(NSError *))completion { (void)impression; if (completion) completion(nil); }
++ (void)endImpression:(id)impression completionHandler:(void (^)(NSError *))completion { (void)impression; if (completion) completion(nil); }
+@end
+@implementation SKAdImpression
+@end
+@implementation SKDownload
+- (NSInteger)state { return 0; }
+- (NSInteger)downloadState { return 0; }
+- (float)progress { return 0; }
+- (id )contentURL { return nil; }
+- (NSError *)error { return nil; }
+- (NSString *)contentIdentifier { return nil; }
+- (NSString *)contentVersion { return nil; }
+@end
+@implementation SKOverlayAppConfiguration
+- (instancetype)initWithAppIdentifier:(NSString *)appIdentifier position:(NSInteger)position {
+    self = [super init];
+    _appIdentifier = [appIdentifier copy]; _position = position; _userDismissible = YES;
+    return self;
+}
+@end
+/* o painel da App Store (iOS) não existe no Mac nem no mOS: apresentar não faz nada */
+@implementation SKOverlay {
+    id _conf;
+}
+- (instancetype)initWithConfiguration:(id)configuration { self = [super init]; _conf = configuration; return self; }
+- (id)configuration { return _conf; }
+- (void)presentInScene:(id)scene { (void)scene; }
++ (void)dismissOverlayInScene:(id)scene { (void)scene; }
 @end
 
 @implementation SKPaymentQueue
