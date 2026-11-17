@@ -35,6 +35,9 @@ static const char *const mos_libswift_image[] = {
     "/usr/lib/swift/libswiftos.dylib",
     "/usr/lib/swift/libswift_errno.dylib",
     "/usr/lib/swift/libswift_StringProcessing.dylib",
+    /* Mutex/_Cell/Atomic e Observations (tools/build-swift-foundation-objc.sh) */
+    "/usr/lib/swift/libswiftSynchronization.dylib",
+    "/usr/lib/swift/libswiftObservation.dylib",
 };
 
 /* 1 se req é uma libswift* da imagem. out recebe o caminho canônico. */
