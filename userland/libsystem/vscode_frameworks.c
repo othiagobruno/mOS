@@ -503,7 +503,8 @@ static id tis_source(void) {
     }
     return src;
 }
-id TISCopyCurrentKeyboardInputSource(void) { return objc_retain(tis_source()); }
+id cx_tis_current_ime_source(void);   /* appkit_carbon.c: o método de entrada escolhido, se houver */
+id TISCopyCurrentKeyboardInputSource(void) { id ime = cx_tis_current_ime_source(); return objc_retain(ime ? ime : tis_source()); }
 id TISCopyCurrentKeyboardLayoutInputSource(void) { return objc_retain(tis_source()); }
 id TISCopyCurrentASCIICapableKeyboardLayoutInputSource(void) { return objc_retain(tis_source()); }
 id TISCreateASCIICapableInputSourceList(void) { id s = tis_source(); return CFArrayCreate(0, &s, 1, &kCFTypeArrayCallBacks); }

@@ -593,7 +593,9 @@ static int send_event(ae_node *ev, ae_node **reply_out, int mode, long timeout_m
         return noErr;
     }
     int interact = (mode & 0x30) != kAENeverInteract;
-    r = automation_ok(bundle, interact, timeout_ms < 0 ? -1 : timeout_ms);
+    /* 'mOSi': teclas para o método de entrada que o usuário escolheu nas fontes de entrada (imk.c); a escolha já é
+     * o consentimento, como no macOS, onde o método de entrada não passa pela automação */
+    r = ev->ev_class == AE_FCC('m', 'O', 'S', 'i') ? noErr : automation_ok(bundle, interact, timeout_ms < 0 ? -1 : timeout_ms);
     if (r) return r;
     u32 port = 0;
     if (bootstrap_look_up(bootstrap_port, svc, &port) || !port) {

@@ -173,6 +173,9 @@ static BOOL ti_handle(id self, SEL c, id e) {
     id cl = ((ticx_t *)self)->client;
     text_log("NSTextInputContext handleEvent:", cl, 0);
     if (!cl || !e) return NO;
+    extern int cx_imk_handle(id client, id event);       /* imk.c: método de entrada de terceiros escolhido */
+    int imk = cx_imk_handle(cl, e);
+    if (imk == 1) return YES;
     u64 t = MSG0(u64, e, "type");
     if (t != 10) return NO;                              /* só NSEventTypeKeyDown */
     if (MSG0(u64, e, "modifierFlags") & MOD_CMD) return NO;
@@ -186,11 +189,14 @@ static void ti_discard(id self, SEL c) {
     (void)c;
     id cl = ((ticx_t *)self)->client;
     cx_ime_client_gone(cl);                        /* a composição em andamento é descartada */
+    extern void cx_imk_commit(id client);
+    cx_imk_commit(cl);                             /* método de terceiros: fecha a composição dele */
     if (ain_resp(cl, "unmarkText")) MSG0(void, cl, "unmarkText");
 }
 static void ti_noop(id self, SEL c) { (void)self; (void)c; }
-static void ti_activate(id self, SEL c) { (void)c; ti_current = self; }
-static void ti_deactivate(id self, SEL c) { (void)c; if (ti_current == self) ti_current = 0; }
+void cx_imk_activate(id client, int on);
+static void ti_activate(id self, SEL c) { (void)c; ti_current = self; cx_imk_activate(((ticx_t *)self)->client, 1); }
+static void ti_deactivate(id self, SEL c) { (void)c; cx_imk_activate(((ticx_t *)self)->client, 0); if (ti_current == self) ti_current = 0; }
 static id ti_current_ctx(id cls, SEL c) { (void)cls; (void)c; return ti_current; }
 static id ti_source(id self, SEL c) { (void)self; (void)c; return cx_str(cx_ime_source_id()); }
 static id ti_sources(id self, SEL c) {
@@ -616,7 +622,8 @@ void cx_appkit_input_init(void) {
     { extern void cx_appkit_toolbar_init(void); cx_appkit_toolbar_init(); }   /* appkit_toolbar.c: NSToolbar completa, grupos, personalização */
     { extern void cx_appkit_filepromise_init(void); cx_appkit_filepromise_init(); } /* appkit_filepromise.c: promessas de arquivo no arrasto */
     { extern void cx_appkit_offscreen_init(void); cx_appkit_offscreen_init(); }   /* appkit_offscreen.c: desenho em PDF/bitmap, lockFocus */
-    { extern void cx_appkit_icons_init(void); cx_appkit_icons_init(); }   /* appkit_icons.c: icns, imagens de sistema, iconForFile: */
+    { extern void cx_appkit_icons_init(void); cx_appkit_icons_init(); }
+    { extern void cx_imk_init(void); cx_imk_init(); }   /* imk.c: InputMethodKit */   /* appkit_icons.c: icns, imagens de sistema, iconForFile: */
     { extern void cx_appkit_print_init(void); cx_appkit_print_init(); }       /* appkit_print.c: impressão (PDF), NSPrintOperation, PM* */
     { extern void cx_appkit_cells_init(void); cx_appkit_cells_init(); }       /* appkit_cells.c: família NSCell, NSMatrix, NSSwitch */
     { extern void cx_appkit_more_init(void); cx_appkit_more_init(); }         /* appkit_more.c: gestos, NSAnimation, fontes, NSTextBlock, PDF/EPS */

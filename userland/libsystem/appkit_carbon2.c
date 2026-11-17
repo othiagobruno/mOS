@@ -551,7 +551,6 @@ OSStatus HIMouseTrackingGetParameters(u32 selector, double *time, double *dist) 
     return noErr;
 }
 u32 GetApplicationTextEncoding(void) { return 0x08000100; }   /* kCFStringEncodingUTF8 */
-OSStatus TISRegisterInputSource(id url) { return url ? noErr : paramErr; }
 
 /* ================================================================ Apple Help e Internet Config */
 static id help_book_folder(id book) {
