@@ -413,6 +413,8 @@ echo "==> libc do corpus 2 (complex cexp/clog/cpow/catanh/OSAtomicEnqueue/tmpnam
 ZIG="$ZIG" bash "$ROOT/tools/libc_corpus2_hosttest.sh" "$OUT/libc-corpus2-hosttest"
 echo "==> funopen (fluxo stdio por callbacks de cookie; teste de host)"
 ZIG="$ZIG" bash "$ROOT/tools/funopen_hosttest.sh" "$OUT/funopen-hosttest"
+echo "==> libc do corpus 3 (getpass/readpassphrase + wide stdio swprintf/fwprintf/fputws; teste de host)"
+ZIG="$ZIG" bash "$ROOT/tools/libc_corpus3_hosttest.sh" "$OUT/libc-corpus3-hosttest"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
