@@ -84,7 +84,7 @@ static id im_name(id self, SEL c) { (void)c; return objc_getAssociatedObject(sel
 /* ================================================================ desenho das imagens de sistema
  * Caminho em unidades do quadrado (0..1, y para cima): M x y, L x y, C x1 y1 x2 y2 x y, Z, A cx cy r a0 a1 horário,
  * O x y w h (oval), R x y w h (retângulo), Q x y w h raio (retângulo arredondado). */
-static double g_s;
+static double g_s, g_ox, g_oy;   /* lado do desenho e deslocamento (glifo dentro de um anel) */
 static const char *num(const char *p, double *v) {
     while (*p == ' ' || *p == ',') p++;
     int neg = 0;
@@ -95,7 +95,7 @@ static const char *num(const char *p, double *v) {
     *v = neg ? -r : r;
     return p;
 }
-static P pt(double x, double y) { P p = {x * g_s, y * g_s}; return p; }
+static P pt(double x, double y) { P p = {g_ox + x * g_s, g_oy + y * g_s}; return p; }
 static id build_path(const char *d) {
     id path = MSG0(id, (id)kls("NSBezierPath"), "bezierPath");
     double v[7];
@@ -111,10 +111,10 @@ static id build_path(const char *d) {
         case 'Z': MSG0(void, path, "closePath"); break;
         case 'A': ((void (*)(id, SEL, P, double, double, double, BOOL))objc_msgSend)(path, sl("appendBezierPathWithArcWithCenter:radius:startAngle:endAngle:clockwise:"),
                                                                                    pt(v[0], v[1]), v[2] * g_s, v[3], v[4], (BOOL)(v[5] != 0)); break;
-        case 'O': ((void (*)(id, SEL, R))objc_msgSend)(path, sl("appendBezierPathWithOvalInRect:"), (R){v[0] * g_s, v[1] * g_s, v[2] * g_s, v[3] * g_s}); break;
-        case 'R': ((void (*)(id, SEL, R))objc_msgSend)(path, sl("appendBezierPathWithRect:"), (R){v[0] * g_s, v[1] * g_s, v[2] * g_s, v[3] * g_s}); break;
+        case 'O': ((void (*)(id, SEL, R))objc_msgSend)(path, sl("appendBezierPathWithOvalInRect:"), (R){g_ox + v[0] * g_s, g_oy + v[1] * g_s, v[2] * g_s, v[3] * g_s}); break;
+        case 'R': ((void (*)(id, SEL, R))objc_msgSend)(path, sl("appendBezierPathWithRect:"), (R){g_ox + v[0] * g_s, g_oy + v[1] * g_s, v[2] * g_s, v[3] * g_s}); break;
         case 'Q': ((void (*)(id, SEL, R, double, double))objc_msgSend)(path, sl("appendBezierPathWithRoundedRect:xRadius:yRadius:"),
-                                                                      (R){v[0] * g_s, v[1] * g_s, v[2] * g_s, v[3] * g_s}, v[4] * g_s, v[4] * g_s); break;
+                                                                      (R){g_ox + v[0] * g_s, g_oy + v[1] * g_s, v[2] * g_s, v[3] * g_s}, v[4] * g_s, v[4] * g_s); break;
         default: break;
         }
     }
@@ -139,7 +139,7 @@ static void paint(const layer_t *L) {
         MSG(void, attrs, "setObject:forKey:", col, NSForegroundColorAttributeName);
         id s = str(L->d);
         S z = ((S (*)(id, SEL, id))objc_msgSend)(s, sl("sizeWithAttributes:"), attrs);
-        P at = {(g_s - z.w) / 2, (g_s - z.h) / 2};
+        P at = {g_ox + (g_s - z.w) / 2, g_oy + (g_s - z.h) / 2};
         ((void (*)(id, SEL, P, id))objc_msgSend)(s, sl("drawAtPoint:withAttributes:"), at, attrs);
         objc_release(attrs);
         if (style == 2 || style == 3) {
@@ -180,8 +180,7 @@ G(gl_tri_r, {'f', "M .3 .18 L .8 .5 L .3 .82 Z", K, 0})
 G(gl_tri_l, {'f', "M .7 .18 L .2 .5 L .7 .82 Z", K, 0})
 G(gl_check, {'s', "M .2 .5 L .42 .26 L .82 .76", K, .11})
 G(gl_mixed, {'s', "M .25 .5 L .75 .5", K, .11})
-G(gl_gear, {'e', "O .2 .2 .6 .6 O .38 .38 .24 .24", K, 0}, {'s', "M .5 .08 L .5 .92 M .08 .5 L .92 .5 M .2 .2 L .8 .8 M .8 .2 L .2 .8", K, .12},
-  {'f', "O .38 .38 .24 .24", 1, 1, 1, 0, 0})
+G(gl_gear, {'s', "M .5 .76 L .5 .94 M .5 .24 L .5 .06 M .76 .5 L .94 .5 M .24 .5 L .06 .5 M .684 .684 L .811 .811 M .316 .316 L .189 .189 M .684 .316 L .811 .189 M .316 .684 L .189 .811", K, .13}, {'e', "O .17 .17 .66 .66 O .37 .37 .26 .26", K, 0})
 G(gl_refresh, {'s', "A .5 .5 .3 110 380 0", K, .09}, {'f', "M .64 .78 L .92 .64 L .74 .5 Z", K, 0})
 G(gl_lock, {'f', "Q .22 .08 .56 .44 .06", K, 0}, {'s', "M .34 .52 L .34 .66 A .5 .66 .16 180 0 1 L .66 .52", K, .09})
 G(gl_unlock, {'f', "Q .22 .08 .56 .44 .06", K, 0}, {'s', "M .66 .52 L .66 .7 A .82 .7 .16 180 0 1", K, .09})
@@ -267,6 +266,38 @@ G(gl_add_detail, {'s', "O .1 .1 .8 .8 M .5 .28 L .5 .72 M .28 .5 L .72 .5", K, .
 G(gl_path, {'s', "R .06 .4 .2 .2 R .4 .4 .2 .2 R .74 .4 .2 .2 M .26 .5 L .4 .5 M .6 .5 L .74 .5", K, .06})
 G(gl_smart, {'f', "O .1 .1 .8 .8", K, 0}, {'e', "O .3 .3 .4 .4 O .42 .42 .16 .16", 1, 1, 1, 1, 0})
 
+/* ---- glifos a mais para os nomes de símbolo (NSImage systemSymbolName:) */
+G(gl_arrow_l, {'s', "M .85 .5 L .15 .5 M .4 .24 L .14 .5 L .4 .76", K, .09})
+G(gl_arrow_r, {'s', "M .15 .5 L .85 .5 M .6 .24 L .86 .5 L .6 .76", K, .09})
+G(gl_arrow_u, {'s', "M .5 .15 L .5 .85 M .24 .6 L .5 .86 L .76 .6", K, .09})
+G(gl_arrow_d, {'s', "M .5 .85 L .5 .15 M .24 .4 L .5 .14 L .76 .4", K, .09})
+G(gl_arrow_ccw, {'s', "A .5 .5 .3 70 -200 1", K, .09}, {'f', "M .36 .78 L .08 .64 L .26 .5 Z", K, 0})
+G(gl_arrows_ud, {'s', "M .32 .12 L .32 .86 M .14 .68 L .32 .88 L .5 .68 M .68 .88 L .68 .14 M .5 .32 L .68 .12 L .86 .32", K, .08})
+G(gl_doc, {'s', "M .22 .08 L .22 .92 L .58 .92 L .78 .72 L .78 .08 Z M .58 .92 L .58 .72 L .78 .72", K, .07})
+G(gl_docs, {'s', "M .32 .2 L .32 .94 L .62 .94 L .8 .76 L .8 .2 Z M .2 .06 L .2 .8 M .2 .06 L .68 .06", K, .07})
+G(gl_star, {'s', "M .5 .92 L .62 .64 L .92 .62 L .69 .42 L .77 .12 L .5 .28 L .23 .12 L .31 .42 L .08 .62 L .38 .64 Z", K, .07})
+G(gl_heart, {'s', "M .5 .16 C .2 .38 .06 .56 .1 .72 C .14 .9 .42 .94 .5 .74 C .58 .94 .86 .9 .9 .72 C .94 .56 .8 .38 .5 .16 Z", K, .07})
+G(gl_bell, {'s', "M .2 .26 L .8 .26 C .7 .36 .72 .5 .72 .62 C .72 .78 .62 .86 .5 .86 C .38 .86 .28 .78 .28 .62 C .28 .5 .3 .36 .2 .26 Z M .42 .14 L .58 .14", K, .07})
+G(gl_warn, {'s', "M .5 .9 L .92 .12 L .08 .12 Z M .5 .66 L .5 .38", K, .07}, {'f', "O .46 .2 .08 .08", K, 0})
+G(gl_question, {'t', "?", K, 4})
+G(gl_ellipsis, {'f', "O .1 .43 .14 .14 O .43 .43 .14 .14 O .76 .43 .14 .14", K, 0})
+G(gl_paperplane, {'s', "M .1 .48 L .9 .86 L .62 .12 L .48 .4 Z M .48 .4 L .9 .86", K, .07})
+G(gl_link, {'s', "Q .1 .38 .44 .24 .12 Q .46 .38 .44 .24 .12 M .36 .5 L .64 .5", K, .07})
+G(gl_photo, {'s', "R .08 .18 .84 .64 M .08 .3 L .36 .56 L .54 .4 L .92 .7", K, .07}, {'f', "O .62 .6 .12 .12", K, 0})
+G(gl_calendar, {'s', "R .1 .12 .8 .7 M .1 .64 L .9 .64 M .3 .76 L .3 .9 M .7 .76 L .7 .9", K, .07})
+G(gl_bookmark, {'s', "M .26 .9 L .26 .1 L .5 .3 L .74 .1 L .74 .9 Z", K, .07})
+G(gl_eye_slash, {'s', "M .08 .5 C .3 .82 .7 .82 .92 .5 C .7 .18 .3 .18 .08 .5 Z M .16 .14 L .84 .86", K, .08})
+G(gl_bolt, {'f', "M .58 .94 L .2 .44 L .48 .44 L .4 .06 L .8 .56 L .52 .56 Z", K, 0})
+G(gl_cloud_t, {'s', "M .26 .24 C .06 .24 .06 .54 .26 .54 C .28 .8 .62 .84 .68 .6 C .9 .62 .94 .26 .72 .24 Z", K, .07})
+G(gl_wifi, {'s', "A .5 .2 .64 50 130 0 M .73 .49 A .5 .2 .4 50 130 0", K, .08}, {'f', "O .44 .14 .12 .12", K, 0})
+G(gl_terminal, {'s', "R .08 .14 .84 .72 M .22 .62 L .38 .5 L .22 .38 M .44 .34 L .66 .34", K, .07})
+G(gl_command, {'t', "\xE2\x8C\x98", K, 4})
+G(gl_power, {'s', "A .5 .46 .32 120 420 0 M .5 .9 L .5 .5", K, .09})
+G(gl_sliders, {'s', "M .1 .78 L .9 .78 M .1 .5 L .9 .5 M .1 .22 L .9 .22", K, .06}, {'f', "O .26 .7 .16 .16 O .58 .42 .16 .16 O .34 .14 .16 .16", K, 0})
+G(gl_lines3, {'s', "M .14 .76 L .86 .76 M .14 .5 L .86 .5 M .14 .24 L .86 .24", K, .08})
+G(gl_xcircle, {'s', "O .08 .08 .84 .84 M .34 .34 L .66 .66 M .66 .34 L .34 .66", K, .07})
+G(gl_ring, {'s', "O .06 .06 .88 .88", K, .07})
+
 /* ---- imagens coloridas */
 #define FOLDER_BACK {'f', "M .04 .14 L .04 .82 Q .04 .76 .36 .1 .04 M .04 .14 L .96 .14 L .96 .72 L .44 .72 L .38 .8 L .04 .8 Z", .29, .57, .89, 1, 0}
 #define FOLDER_FRONT {'f', "Q .04 .14 .92 .5 .05", .44, .72, .97, 1, 0}
@@ -301,8 +332,7 @@ G(ic_avail, {'f', "O .1 .1 .8 .8", .2, .78, .3, 1, 0})
 G(ic_partial, {'f', "O .1 .1 .8 .8", .98, .78, .1, 1, 0})
 G(ic_unavail, {'f', "O .1 .1 .8 .8", .92, .25, .22, 1, 0})
 G(ic_none, {'s', "O .14 .14 .72 .72", .55, .55, .58, 1, .1})
-G(ic_gear, {'f', "O .04 .04 .92 .92", .55, .57, .62, 1, 0}, {'e', "O .24 .24 .52 .52 O .4 .4 .2 .2", 1, 1, 1, 1, 0},
-  {'s', "M .5 .14 L .5 .86 M .14 .5 L .86 .5 M .25 .25 L .75 .75 M .75 .25 L .25 .75", 1, 1, 1, 1, .1}, {'f', "O .37 .37 .26 .26", .55, .57, .62, 1, 0})
+G(ic_gear, {'s', "M .5 .76 L .5 .94 M .5 .24 L .5 .06 M .76 .5 L .94 .5 M .24 .5 L .06 .5 M .684 .684 L .811 .811 M .316 .316 L .189 .189 M .684 .316 L .811 .189 M .316 .684 L .189 .811", .55, .57, .62, 1, .13}, {'e', "O .17 .17 .66 .66 O .37 .37 .26 .26", .55, .57, .62, 1, 0})
 G(ic_wheel, {'f', "M .5 .5 A .5 .5 .46 0 60 0 Z", .95, .2, .2, 1, 0}, {'f', "M .5 .5 A .5 .5 .46 60 120 0 Z", .98, .85, .1, 1, 0},
   {'f', "M .5 .5 A .5 .5 .46 120 180 0 Z", .3, .82, .25, 1, 0}, {'f', "M .5 .5 A .5 .5 .46 180 240 0 Z", .1, .78, .85, 1, 0},
   {'f', "M .5 .5 A .5 .5 .46 240 300 0 Z", .2, .35, .95, 1, 0}, {'f', "M .5 .5 A .5 .5 .46 300 360 0 Z", .8, .25, .85, 1, 0})
@@ -388,6 +418,88 @@ static id system_image(const char *name) {
         }
     return 0;
 }
+
+/* ================================================================ +[NSImage imageWithSystemSymbolName:...]
+ * Os símbolos da Apple são arte dela: aqui os nomes mais usados ganham glifos do mOS (imagens "template" de 16 pt).
+ * Sufixos: .fill e .square usam o mesmo glifo; .circle põe o glifo num anel; .slash risca. Nome sem glifo: imagem vazia
+ * (o Cocoa não devolveria nil para um nome válido e muitos apps desembrulham o resultado). */
+typedef struct { const char *name; const layer_t *g; } symbol_t;
+static const symbol_t g_symbols[] = {
+    {"plus", gl_plus}, {"minus", gl_minus}, {"xmark", gl_x}, {"checkmark", gl_check}, {"multiply", gl_x},
+    {"chevron.left", gl_left}, {"chevron.right", gl_right}, {"chevron.up", gl_up}, {"chevron.down", gl_down},
+    {"chevron.backward", gl_left}, {"chevron.forward", gl_right},
+    {"arrow.left", gl_arrow_l}, {"arrow.right", gl_arrow_r}, {"arrow.up", gl_arrow_u}, {"arrow.down", gl_arrow_d},
+    {"arrow.backward", gl_arrow_l}, {"arrow.forward", gl_arrow_r}, {"arrow.clockwise", gl_refresh}, {"arrow.counterclockwise", gl_arrow_ccw},
+    {"arrow.triangle.2.circlepath", gl_refresh}, {"arrow.up.arrow.down", gl_arrows_ud}, {"arrow.up.and.down", gl_arrows_ud},
+    {"arrow.down.circle", gl_download}, {"arrow.down.to.line", gl_download}, {"square.and.arrow.down", gl_download},
+    {"square.and.arrow.up", gl_share}, {"square.and.pencil", gl_compose}, {"pencil", gl_pencil}, {"trash", gl_trash},
+    {"folder", gl_folder}, {"folder.badge.plus", gl_folder_new}, {"doc", gl_doc}, {"doc.text", gl_doc}, {"doc.on.doc", gl_docs},
+    {"magnifyingglass", gl_search}, {"gear", gl_gear}, {"gearshape", gl_gear}, {"gearshape.2", gl_gear},
+    {"star", gl_star}, {"heart", gl_heart}, {"bell", gl_bell}, {"house", gl_house}, {"person", gl_user},
+    {"person.2", gl_users}, {"person.crop.circle", gl_user}, {"person.badge.plus", gl_user_add},
+    {"info", gl_info_t}, {"info.circle", gl_info_t}, {"exclamationmark.triangle", gl_warn}, {"questionmark", gl_question},
+    {"ellipsis", gl_ellipsis}, {"play", gl_play}, {"pause", gl_pause}, {"stop", gl_recstop}, {"record.circle", gl_rec},
+    {"backward", gl_rew}, {"forward", gl_ff}, {"backward.end", gl_tostart}, {"forward.end", gl_toend},
+    {"speaker", gl_vol0}, {"speaker.wave.1", gl_vol1}, {"speaker.wave.2", gl_vol2}, {"speaker.wave.3", gl_vol3},
+    {"speaker.slash", gl_mute}, {"mic", gl_mic}, {"mic.slash", gl_mic_mute}, {"sidebar.left", gl_sidebar}, {"sidebar.leading", gl_sidebar},
+    {"list.bullet", gl_textlist}, {"square.grid.2x2", gl_grid}, {"lock", gl_lock}, {"lock.open", gl_unlock},
+    {"globe", gl_globe}, {"network", gl_globe}, {"envelope", gl_mail}, {"paperplane", gl_paperplane}, {"link", gl_link},
+    {"photo", gl_photo}, {"clock", gl_clock}, {"alarm", gl_alarm}, {"calendar", gl_calendar}, {"tag", gl_tag},
+    {"bookmark", gl_bookmark}, {"book", gl_book}, {"eye", gl_eye}, {"eye.slash", gl_eye_slash}, {"bolt", gl_bolt},
+    {"cloud", gl_cloud_t}, {"wifi", gl_wifi}, {"terminal", gl_terminal}, {"command", gl_command}, {"power", gl_power},
+    {"slider.horizontal.3", gl_sliders}, {"line.3.horizontal", gl_lines3}, {"line.horizontal.3", gl_lines3},
+    {"xmark.circle", gl_xcircle}, {"bold", gl_bold}, {"italic", gl_italic}, {"underline", gl_under}, {"strikethrough", gl_strike},
+    {"text.alignleft", gl_al_left}, {"text.aligncenter", gl_al_center}, {"text.alignright", gl_al_right}, {"text.justify", gl_al_just},
+    {"rectangle.expand.vertical", gl_full_in}, {"arrow.up.left.and.arrow.down.right", gl_full_in},
+    {"arrow.down.right.and.arrow.up.left", gl_full_out}, {"bubble.left", gl_mail_new}, {"phone", gl_phone}, {"video", gl_video},
+    {"square.on.square", gl_docs}, {"rotate.left", gl_rot_l}, {"rotate.right", gl_rot_r}, {"shippingbox", gl_folder},
+};
+static const layer_t *symbol_glyph(const char *name, int *circle) {
+    char base[96];
+    snprintf(base, sizeof base, "%s", name);
+    *circle = 0;
+    for (int pass = 0; pass < 4; pass++) {
+        for (unsigned i = 0; i < sizeof g_symbols / sizeof g_symbols[0]; i++) if (!strcmp(g_symbols[i].name, base)) return g_symbols[i].g;
+        char *dot = strrchr(base, '.');
+        if (!dot) break;
+        if (!strcmp(dot, ".circle")) *circle = 1;
+        *dot = 0;   /* .fill, .circle, .square, .badge... */
+    }
+    return 0;
+}
+static id symbol_image(id name) {
+    const char *n = name && cx_is_str(name) ? cx_cstr(name) : "";
+    int circle = 0;
+    const layer_t *g = symbol_glyph(n, &circle);
+    if (!g_cache) g_cache = MSG0(id, MSG0(id, (id)kls("NSMutableDictionary"), "alloc"), "init");
+    char key[128];
+    snprintf(key, sizeof key, "sf:%s", n);
+    id img = MSG(id, g_cache, "objectForKey:", str(key));
+    if (img) return img;
+    double scale = 2, side = 16;
+    img = ((id (*)(id, SEL, S))objc_msgSend)(MSG0(id, (id)kls("NSImage"), "alloc"), sl("initWithSize:"), (S){side * scale, side * scale});
+    if (!img) return 0;
+    if (g) {
+        MSG0(void, img, "lockFocus");
+        g_s = side * scale; g_ox = g_oy = 0;
+        if (circle) {
+            static const layer_t ring[] = {{'s', "O .04 .04 .92 .92", K, .07}, {0, 0, 0, 0, 0, 0, 0}};
+            for (const layer_t *L = ring; L->op; L++) paint(L);
+            g_ox = g_oy = side * scale * 0.2;   /* o glifo menor, no centro do anel */
+            g_s = side * scale * 0.6;
+        }
+        for (const layer_t *L = g; L->op; L++) paint(L);
+        g_ox = g_oy = 0;
+        MSG0(void, img, "unlockFocus");
+    }
+    ((void (*)(id, SEL, S))objc_msgSend)(img, sl("setSize:"), (S){side, side});
+    MSG(void, img, "setTemplate:", (BOOL)YES);
+    MSG(void, g_cache, "setObject:forKey:", img, str(key));
+    objc_release(img);
+    return img;
+}
+static id im_symbol(id cls, SEL c, id name, id desc) { (void)cls; (void)c; (void)desc; return symbol_image(name); }
+static id im_symbol_v(id cls, SEL c, id name, double v, id desc) { (void)v; return im_symbol(cls, c, name, desc); }
 
 /* ================================================================ ícones de bundles e documentos */
 static id load_icns(id path) {
@@ -543,6 +655,8 @@ void cx_appkit_icons_init(void) {
         cx_add_method(im, "initByReferencingFile:", (void *)im_init_ref_file);
         cx_add_method(im, "setName:", (void *)im_set_name);
         cx_add_method(im, "name", (void *)im_name);
+        cx_add_cmethod(im, "imageWithSystemSymbolName:accessibilityDescription:", (void *)im_symbol);
+        cx_add_cmethod(im, "imageWithSystemSymbolName:variableValue:accessibilityDescription:", (void *)im_symbol_v);
     }
     if (ws) {
         cx_add_method(ws, "iconForFile:", (void *)ws_icon_for_file);
