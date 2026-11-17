@@ -45,3 +45,10 @@ void cc_shape_offset(cc_shape *s, double dx, double dy);
 int cc_shape_inset(cc_shape *s, double dx, double dy);
 double cc_shape_area(const cc_shape *s);
 #endif
+
+/* ---- trilhas do HITheme (barra de rolagem, slider, progresso): posição e tamanho do polegar ao longo do comprimento */
+typedef struct { double pos, len; } cc_thumb;
+/* kind: 0 barra de rolagem (viewsize define o tamanho, mínimo 16), 1 slider (polegar fixo de 15), 2 progresso (preenchido) */
+cc_thumb cc_track_thumb(int kind, double length, double minv, double maxv, double value, double viewsize);
+/* parte sob a coordenada ao longo da trilha: 129 polegar, 22 página acima/à esquerda, 23 página abaixo/à direita, 0 fora */
+int cc_track_hit(int kind, double length, double minv, double maxv, double value, double viewsize, double at);

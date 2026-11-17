@@ -3,12 +3,15 @@
 
 import Foundation
 
+// Fora do módulo Foundation o importador do mOS não faz a ponte nos tipos importados (NSString, NSIndexPath): as
+// conversões aqui são explícitas, como no CloudKit e no UIKit.
+
 // MARK: - NSEvent.specialKey
 
 extension NSEvent {
     /// A tecla especial do evento de teclado (keyDown 10, keyUp 11), pelo primeiro caractere sem modificadores.
     public var specialKey: SpecialKey? {
-        guard type == 10 || type == 11, let s = charactersIgnoringModifiers, let u = s.utf16.first else { return nil }
+        guard type == 10 || type == 11, let s = charactersIgnoringModifiers, let u = (s as String).utf16.first else { return nil }
         let c = Int(u)
         return SpecialKey._isSpecial(c) ? SpecialKey(rawValue: c) : nil
     }
@@ -19,7 +22,7 @@ extension NSEvent {
 extension NSImage {
     /// #imageLiteral(resourceName:): a imagem com esse nome no app; sem ela, uma imagem vazia (não nil, como no AppKit).
     public convenience init(imageLiteralResourceName name: String) {
-        if NSImage(named: name) != nil { self.init(named: name)! } else { self.init(size: CGSize(width: 0, height: 0)) }
+        if NSImage(named: name as NSString) != nil { self.init(named: name as NSString)! } else { self.init(size: CGSize(width: 0, height: 0)) }
     }
 }
 
@@ -190,7 +193,11 @@ open class NSCollectionViewDiffableDataSource<SectionIdentifierType: Hashable, I
     open func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
         section >= 0 && section < _snapshot._items.count ? _snapshot._items[section].count : 0
     }
-    open func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
+    // o importador do mOS não faz a ponte NSIndexPath ↔ IndexPath fora do módulo Foundation: conversão explícita
+    open func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt nsIndexPath: NSIndexPath) -> NSCollectionViewItem {
+        var idx: [Int] = []
+        for p in 0..<Int(nsIndexPath.length) { idx.append(Int(nsIndexPath.index(atPosition: p))) }
+        let indexPath = IndexPath(indexes: idx)
         guard let id = itemIdentifier(for: indexPath), let item = _provider(collectionView, indexPath, id) else {
             fatalError("NSCollectionViewDiffableDataSource: o itemProvider não devolveu item para \(indexPath)")
         }
