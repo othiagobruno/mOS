@@ -91,7 +91,8 @@ static void ed_insert(ed_t *e, const char *t, int n) {
 static void ed_load(ed_t *e, const char *path) {
     vnode_t *n = vfs_lookup(path);
     e->len = 0;
-    if (n && !n->dir) {
+    if (vfs_paged(n)) vfs_ensure(n);                  /* grande, ainda no disco (VFS sob demanda) */
+    if (n && !n->dir && (n->data || !n->size)) {
         ed_ensure(e, (int)n->size);
         memcpy(e->buf, n->data, n->size);
         e->len = (int)n->size;

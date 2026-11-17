@@ -114,6 +114,7 @@ static void mirror_dir(vnode_t *dir, dnode_t *d) {
 }
 
 bool vfs_ensure(vnode_t *n) {
+    if (n && !n->ext && !n->dir && n->dclus && !n->data && n->size) return persist_ensure(n);   /* sistema: do disco */
     if (!n || !n->ext) return true;
     dnode_t *d = n->ext;
     if (n->dir) {
@@ -127,8 +128,10 @@ bool vfs_ensure(vnode_t *n) {
     u64 len = 0;
     u8 *b = d->size <= MAX_FILE_LOAD ? dfs_read_all(d, MAX_FILE_LOAD, &len) : NULL;
     if (!b) {
-        kprintf("dfs: não foi possível ler %s\n", d->name);
-        n->size = 0; /* nunca deixa size > 0 com data == NULL para os apps */
+        kprintf("dfs: não foi possível ler %s inteiro (%llu bytes)\n", d->name, (u64)d->size);
+        /* grande: continua paginado (vfs_read_at lê aos pedaços); pequeno: size 0, como antes, para quem só olha data */
+        if (d->type != DN_LINK && d->size > VFS_PAGED_MIN) n->size = d->size;
+        else n->size = 0;
         return false;
     }
     u64 raw_len = len;                                  /* d->size fica com o tamanho no volume (releitura) */
@@ -154,6 +157,25 @@ bool vfs_ensure(vnode_t *n) {
     lru_push(d, n);
     enforce_budget();
     return true;
+}
+
+/* o que o vfs_lookup faz: pasta espelhada; arquivo pequeno (e link) inteiro na RAM; grande fica paginado */
+bool vfs_ensure_lookup(vnode_t *n) {
+    if (!n || !n->ext) return true;
+    dnode_t *d = n->ext;
+    if (!n->dir && !n->data && d->type != DN_LINK && d->size > VFS_PAGED_MIN) {
+        n->size = d->size;
+        return true;
+    }
+    return vfs_ensure(n);
+}
+
+/* leitura de um trecho direto do volume (vnode paginado) */
+i64 vfs_ext_read(vnode_t *n, u64 off, void *buf, u64 len) {
+    dnode_t *d = n ? n->ext : NULL;
+    if (!d || d->type == DN_DIR) return -1;
+    if (off >= d->size) return 0;
+    return dfs_read(d, off, buf, MIN(len, d->size - off));
 }
 
 /* ------------------------------------------------------------ ejetar */
@@ -305,7 +327,10 @@ static void scan(vnode_t *dir, int depth) {
     for (vnode_t *c = dir->child; c; c = c->next) {
         if (c->ext) continue; /* não entra nos volumes já montados */
         if (c->dir) { scan(c, depth + 1); continue; }
-        if (!is_image(c->name) || !c->data || !c->size) continue;
+        if (!is_image(c->name) || !c->size) continue;
+        if (!c->data && c->dclus && !persist_ensure(c)) continue;   /* do volume do sistema: inteira, em páginas fixas */
+        if (c->in_blru) persist_forget(c);                          /* montada direto do buffer: não pode ser devolvida */
+        if (!c->data) continue;
         char path[1024];
         vfs_path(c, path, sizeof(path));
         dmount_t *before = dfs_mounts();
@@ -386,7 +411,7 @@ static vnode_t *volume_by_path(const char *path, const char **rel) {
 static void detach_file(vnode_t *n) {
     dnode_t *d = n->ext;
     if (!d) return;
-    if (!n->data && n->size) vfs_ensure(n);
+    if (!n->data && n->size && !vfs_ensure(n)) return;   /* grande demais para a RAM: continua ligado ao volume */
     if (d->in_lru && d->vn == n) lru_unlink(d);
     n->ext = NULL;
 }

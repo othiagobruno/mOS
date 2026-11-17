@@ -365,8 +365,9 @@ static void noapp_answer(int button, void *ctx) {
 
 /* o documento parece texto? (sem bytes nulos no começo) */
 static bool looks_text(vnode_t *n) {
-    usize k = MIN(n->size, (usize)4096);
-    for (usize i = 0; i < k; i++) if (!n->data[i]) return false;
+    u8 head[4096];
+    i64 k = vfs_read_at(n, 0, head, sizeof head);         /* também o arquivo grande ainda no disco */
+    for (i64 i = 0; i < k; i++) if (!head[i]) return false;
     return true;
 }
 

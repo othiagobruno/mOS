@@ -203,7 +203,8 @@ static void run(term_t *t, char *line) {
             vnode_t *n = vfs_lookup(p);
             if (!n || n->dir) { ERR("cat: %s: Arquivo inexistente", argv[i]); continue; }
             char *tmp = kmalloc(n->size + 1);
-            memcpy(tmp, n->data, n->size);
+            if (!tmp) continue;
+            if (vfs_read_at(n, 0, tmp, n->size) != (i64)n->size && n->size) { kfree(tmp); ERR("cat: %s: erro de leitura", argv[i]); continue; }
             tmp[n->size] = 0;
             OUT("%s", tmp);
             kfree(tmp);

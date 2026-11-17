@@ -1370,6 +1370,7 @@ int proc_spawn_in(const char *path, const char *arg, tty_t *tty,
         if (path[0] != '/') v = vfs_lookup(alt);
         if (!v || v->dir) { kprintf("proc: %s: programa não encontrado\n", path); return -1; }
     }
+    if (vfs_paged(v)) vfs_ensure(v);
     if (!v->data || !v->size) { kprintf("proc: %s: arquivo vazio\n", path); return -1; }
     process_t *p = kcalloc(1, sizeof *p);
     if (!p) return -1;
@@ -2546,7 +2547,27 @@ static u64 pipe_op(int_frame_t *f, thread_t *t, pipe_t *pp, bool rd, u64 buf, u6
  * (quem chama acerta o size). Troca de buffer quando não cabe ou quando ele não é só do VFS: cap 0 = dados do pendrive;
  * kmalloc_pages = páginas que o macho.c (__TEXT) e o lazy.c (mmap) mapeiam direto nos processos, onde nada se escreve no
  * lugar (o vfs_append faz o mesmo). Folga de até 16 MiB por crescimento; encolher muito devolve a memória. */
+/* n bytes do arquivo (a partir de off) para a memória do processo; o vnode paginado (arquivo grande de um volume)
+ * é lido do disco aos pedaços, sem carregar o arquivo inteiro na RAM */
+static i64 file_read_user(process_t *p, vnode_t *v, u64 off, u64 ubuf, u64 n) {
+    if (!n) return 0;
+    if (v->data) return uvm_copy_out(p, ubuf, v->data + off, n) ? (i64)n : -MOS_EFAULT;
+    if (!vfs_paged(v)) return -MOS_EFAULT;
+    u64 chunk = MIN(n, 256ull << 10), done = 0;
+    u8 *bb = kmalloc(chunk);
+    if (!bb) return -MOS_ENOMEM;
+    while (done < n) {
+        i64 k = vfs_read_at(v, off + done, bb, MIN(chunk, n - done));
+        if (k <= 0) break;
+        if (!uvm_copy_out(p, ubuf + done, bb, (u64)k)) { kfree(bb); return done ? (i64)done : -MOS_EFAULT; }
+        done += (u64)k;
+    }
+    kfree(bb);
+    return done || !n ? (i64)done : -MOS_EIO;
+}
+
 static bool file_room(vnode_t *v, u64 nsz) {
+    if (vfs_paged(v) && !vfs_ensure(v)) return false;             /* arquivo grande de volume: o conteúdo atual antes */
     bool lent = v->cap && kmalloc_is_pages(v->data);
     bool shrink = v->cap > (1u << 20) && nsz + 1 < v->cap / 4;     /* journal do SQLite zerado, log reescrito... */
     if (v->cap && !lent && !shrink && nsz + 1 <= v->cap) return true;
@@ -2978,7 +2999,7 @@ static vnode_t *exec_follow(char *path, usize cap) {
     for (int hop = 0; hop < 8; hop++) {
         vnode_t *v = vfs_lookup(path);
         usize ml = sizeof LINK_MAGIC - 1;
-        if (!v || v->dir || v->size <= ml || memcmp(v->data, LINK_MAGIC, ml)) return v;
+        if (!v || v->dir || v->size <= ml || !v->data || memcmp(v->data, LINK_MAGIC, ml)) return v;   /* paginado: grande, nunca é link */
         char tgt[256];
         usize n = v->size - ml;
         if (n >= sizeof tgt) return NULL;
@@ -3030,6 +3051,7 @@ static vnode_t *exec_resolve(char *path, usize cap, char ***argv, int *argc) {
             strncpy(path, alt, cap - 1);
             v = exec_follow(path, cap);
         }
+        if (vfs_paged(v)) vfs_ensure(v);                   /* o exec precisa da imagem inteira */
         if (!v || v->dir || !v->data || v->size < 4) return NULL;
         if (v->data[0] != '#' || v->data[1] != '!') return v;
         char line[256];
@@ -3467,7 +3489,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!v) { r = -MOS_ENOENT; break; }
         if (v->dir) { r = -MOS_EISDIR; break; }
         u64 n = MIN((u64)v->size, c);
-        r = !n || (v->data && uvm_copy_out(p, b, v->data, n)) ? (i64)n : -MOS_EFAULT;
+        r = file_read_user(p, v, 0, b, n);
         break;
     }
     case SYS_FILESIZE: {
@@ -3828,9 +3850,8 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!v) { r = -MOS_ENOENT; break; }
         if (v->dir) { r = -MOS_EISDIR; break; }
         u64 off = p->fds[a].off, n = off < v->size ? MIN(c, v->size - off) : 0;
-        if (n && (!v->data || !uvm_copy_out(p, b, v->data + off, n))) { r = -MOS_EFAULT; break; }
-        p->fds[a].off += n;
-        r = (i64)n;
+        r = file_read_user(p, v, off, b, n);
+        if (r > 0) p->fds[a].off += (u64)r;
         break;
     }
     /* pread/pwrite: deslocamento explícito, posição do fd intocada. No libSystem eram lseek+read+lseek, o que quebrava
@@ -3843,8 +3864,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!v) { r = -MOS_ENOENT; break; }
         if (v->dir) { r = -MOS_EISDIR; break; }
         u64 off = f->r10, n = off < v->size ? MIN(c, v->size - off) : 0;
-        if (n && (!v->data || !uvm_copy_out(p, b, v->data + off, n))) { r = -MOS_EFAULT; break; }
-        r = (i64)n;
+        r = file_read_user(p, v, off, b, n);
         break;
     }
     case SYS_PWRITE: {
@@ -4610,6 +4630,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (!uvm_copy_in(p, &cb, b, sizeof cb)) { r = -MOS_EFAULT; break; }
         if (fd_get(p, (u64)cb.aio_fildes) < 0 || p->fds[cb.aio_fildes].kind != FD_FILE) { r = -MOS_EBADF; break; }
         vnode_t *v = vfs_lookup(p->fds[cb.aio_fildes].path);
+        if (vfs_paged(v)) vfs_ensure(v);
         if (!v || v->dir || !v->data) { r = -MOS_EBADF; break; }
         u8 *bounce = kmalloc(cb.aio_nbytes ? cb.aio_nbytes : 1);
         if (!bounce) { r = -MOS_ENOMEM; break; }

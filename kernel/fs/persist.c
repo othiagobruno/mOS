@@ -20,7 +20,7 @@
 #define STATE_FILE    "/Sistema/Biblioteca/estado-sistema"
 #define SYNC_DELAY_MS 1500
 #ifndef MAX_LOAD                       /* sobrescrevível em builds de teste (ex.: -DMAX_LOAD=...) */
-#define MAX_LOAD      (512ull << 20)  /* o Codex CLI (Rust, um binário só) tem 277 MB; antes 256 MB */
+#define MAX_LOAD      (512ull << 20)  /* maior arquivo que vai inteiro para a RAM (exec/dyld); o Codex CLI tem 277 MB */
 #endif
 
 static fatfs_t *sys;
@@ -113,20 +113,133 @@ static bool is_update_dir(const char *vp) {
     return !strncmp(vp, UPDATE_DIR, n) && (vp[n] == 0 || vp[n] == '/');
 }
 
-/* O persist põe o disco na RAM (o VFS sob demanda é da frente de arquivos). A imagem completa tem 6,7 GB só em
- * /Aplicativos: numa máquina de 2 GB ela esgotava a memória antes de chegar a /Sistema, o boot ficava com "0 programa(s)"
- * e o desktop não subia. Por isso /Aplicativos carrega por último e nenhum arquivo entra se deixar menos que a reserva
- * livre. O que fica de fora continua no disco, intacto: só não aparece no VFS desta sessão. */
-#define APPS_DIR      "/Aplicativos"
-#define LOAD_RESERVE  (512ull << 20)
-static int nskipped;
-static u64 skipped_bytes;
+/* VFS sob demanda: a carga do boot só cria os vnodes (nome, tamanho e o 1º cluster no FAT); nenhum conteúdo vem para a
+ * RAM. O conteúdo é lido quando alguém usa o arquivo: o vfs_lookup traz inteiro o que tem até VFS_PAGED_MIN (vfs.h); o
+ * maior fica paginado e read/pread/mmap leem só o trecho pedido (persist_read_at, pelo page cache). Carregado e sem
+ * mudança, o arquivo entra numa LRU com orçamento (SYS_CACHE_BUDGET): ao estourar, os mais antigos voltam a ficar só no
+ * disco. Antes a imagem inteira (6,7 GB em /Aplicativos) ia para a RAM e, numa máquina de 2 GB, 4,7 GB ficavam de fora. */
+#define APPS_DIR         "/Aplicativos"
+#define SYS_CACHE_BUDGET (48ull << 20)
+#define SYS_KEEP_RECENT  8
+#define LOAD_RESERVE     (64ull << 20)   /* carregar um arquivo nunca deixa menos que isto livre */
+/* Fora de /Aplicativos, o que tem até EAGER_MAX vem no boot e fica fixo (fora da LRU), como antes: os apps nativos do kernel
+ * (Notas, Calendário, scripts, contas...) percorrem a árvore e leem c->data direto, sem vfs_lookup. Os apps de terceiros
+ * (/Aplicativos) e os arquivos grandes do sistema ficam todos sob demanda. */
+#define EAGER_MAX        (1ull << 20)
 
-static void load_entry(void *ctx, const char *name, bool is_dir, u64 size) {
+static vnode_t *blru_head, *blru_tail;  /* head = mais antigo */
+static u64 blru_bytes;
+static int blru_count;
+static u64 sys_loads, sys_evicts;
+
+static void blru_unlink(vnode_t *v) {
+    if (!v->in_blru) return;
+    if (v->blru_prev) v->blru_prev->blru_next = v->blru_next; else blru_head = v->blru_next;
+    if (v->blru_next) v->blru_next->blru_prev = v->blru_prev; else blru_tail = v->blru_prev;
+    v->blru_prev = v->blru_next = NULL;
+    v->in_blru = false;
+    blru_bytes -= v->blru_bytes;
+    blru_count--;
+}
+static void blru_push(vnode_t *v) {
+    blru_unlink(v);
+    v->in_blru = true;
+    v->blru_prev = blru_tail;
+    if (blru_tail) blru_tail->blru_next = v; else blru_head = v;
+    blru_tail = v;
+    v->blru_bytes = v->cap;
+    blru_bytes += v->cap;
+    blru_count++;
+}
+/* devolve ao disco: só o que ainda é igual ao do disco e não está emprestado (páginas que o macho.c/lazy.c mapeiam) */
+static bool evictable(vnode_t *v) {
+    return v->dclus && v->data && !v->dirty && v->cap == v->size + 1 && !kmalloc_is_pages(v->data);
+}
+static void blru_enforce(void) {
+    for (vnode_t *v = blru_head, *nx; v && blru_bytes > SYS_CACHE_BUDGET && blru_count > SYS_KEEP_RECENT; v = nx) {
+        nx = v->blru_next;
+        if (!evictable(v)) { blru_unlink(v); continue; }
+        blru_unlink(v);
+        kfree(v->data);
+        v->data = NULL;
+        v->cap = 0;
+        sys_evicts++;
+    }
+}
+
+void persist_forget(vnode_t *n) { if (n) blru_unlink(n); }
+
+i64 persist_read_at(vnode_t *n, u64 off, void *buf, u64 len) {
+    if (!sys || !n || !n->dclus || n->dir) return -1;
+    if (off >= n->size) return 0;
+    len = MIN(len, (u64)n->size - off);
+    return fat_read_chain(sys, n->dclus, off, buf, len) ? (i64)len : -1;
+}
+
+/* o arquivo inteiro na RAM. A partir de 256 KiB em páginas próprias, como o fat_read_file: o macho.c mapeia o __TEXT dos
+ * frameworks e o lazy.c as páginas de mmap direto delas (essas não voltam para a LRU) */
+static bool load_full(vnode_t *n, bool pages, bool lru) {
+    if (n->data) return true;
+    if (!sys || !n->dclus) return false;
+    if (n->size > MAX_LOAD) { kprintf("persist: %s grande demais para ir inteiro à RAM (%llu MB); lido aos pedaços\n", n->name, (unsigned long long)(n->size >> 20)); return false; }
+    if (pmm_free_pages() * 4096ull < n->size + LOAD_RESERVE) {
+        blru_enforce();
+        if (pmm_free_pages() * 4096ull < n->size + LOAD_RESERVE) {
+            kprintf("persist: sem memória para carregar %s (%llu KiB)\n", n->name, (unsigned long long)(n->size >> 10));
+            return false;
+        }
+    }
+    u8 *b = pages && n->size >= (256u << 10) ? kmalloc_pages(n->size + 1) : kmalloc(n->size + 1);
+    if (!b) return false;
+    if (!fat_read_chain(sys, n->dclus, 0, b, n->size)) {
+        kprintf("persist: erro ao ler %s do disco\n", n->name);
+        kfree(b);
+        return false;
+    }
+    b[n->size] = 0;
+    n->data = b;
+    n->cap = n->size + 1;
+    sys_loads++;
+    if (lru && !kmalloc_is_pages(b)) { blru_push(n); blru_enforce(); }
+    return true;
+}
+
+/* quem pediu o arquivo inteiro (exec, dyld, apps do kernel): em páginas, para poder ser mapeado */
+bool persist_ensure(vnode_t *n) {
+    if (!n || n->dir) return false;
+    if (n->data) { if (n->in_blru) blru_push(n); return true; }
+    return load_full(n, true, true);
+}
+
+/* vfs_lookup: pequeno vem inteiro (e fica na LRU); grande fica paginado */
+bool persist_ensure_lookup(vnode_t *n) {
+    if (!n || n->dir || !n->dclus) return true;
+    if (n->data) { if (n->in_blru) blru_push(n); return true; }
+    if (n->size > VFS_PAGED_MIN) return true;
+    return load_full(n, false, true);
+}
+
+/* o conteúdo deixa de ser o do disco (vai mudar ou o arquivo sai do disco): carrega antes e solta o cluster */
+void persist_detach(vnode_t *n) {
+    if (!n || n->dir || !n->dclus) return;
+    if (!n->data && n->size && !load_full(n, true, false)) return;   /* sem memória: continua lendo do disco */
+    blru_unlink(n);
+    n->dclus = 0;
+}
+
+/* a subárvore inteira para a RAM (antes de o disco perdê-la); false se algum arquivo não coube */
+static bool detach_tree(vnode_t *n, int depth) {
+    if (depth > PERSIST_MAX_DEPTH) return false;
+    if (!n->dir) { persist_detach(n); return !n->dclus; }
+    bool ok = true;
+    for (vnode_t *c = n->child; c; c = c->next) ok &= detach_tree(c, depth + 1);
+    return ok;
+}
+
+static void load_entry(void *ctx, const char *name, bool is_dir, u64 size, u32 clus) {
     walk_t *w = ctx;
-    char vp[1024], fp[1040];
+    char vp[1024];
     snprintf(vp, sizeof vp, "%s/%s", w->vpath, name);
-    snprintf(fp, sizeof fp, SYS_DIR "%s", vp);
     if (is_update_dir(vp)) return;
     if (!strcmp(vp, APPS_DIR)) return;                              /* persist_load carrega depois do resto */
     if (!strcmp(vp, META_FILE) || !strcmp(vp, META_NEW)) return;   /* metadados do VFS: não são arquivos do VFS */
@@ -136,30 +249,15 @@ static void load_entry(void *ctx, const char *name, bool is_dir, u64 size) {
         load_tree(vp, w->depth + 1);
         return;
     }
-    if (size > MAX_LOAD) { kprintf("persist: %s grande demais (%llu MB), ignorado\n", vp, size >> 20); return; }
-    if (pmm_free_pages() * 4096ull < size + LOAD_RESERVE) {
-        if (!nskipped) kprintf("persist: memória no limite da reserva (%llu MiB): arquivos a partir de %s ficam só no disco\n",
-                               LOAD_RESERVE >> 20, vp);
-        nskipped++;
-        skipped_bytes += size;
-        return;
-    }
-    u64 len = 0;
-    u8 *data = fat_read_file(sys, fp, &len);
-    if (!data) {   /* o persist põe o disco inteiro na RAM: com pouca memória o que falta é RAM, não o disco */
-        u64 livre = pmm_free_pages() * 4096ull;
-        if (livre < size + (8ull << 20))
-            kprintf("persist: sem memória para %s (%llu KiB; livres %llu MiB)\n", fp, (unsigned long long)(size >> 10),
-                    (unsigned long long)(livre >> 20));
-        else kprintf("persist: erro ao ler %s\n", fp);
-        return;
-    }
     vnode_t *v = vfs_create(vp);
-    if (!v) { kfree(data); return; }
+    if (!v) return;
     if (v->cap) kfree(v->data);
-    v->data = data;
-    v->size = len;
-    v->cap = len + 1;
+    v->data = NULL;
+    v->cap = 0;
+    v->size = size;
+    v->dclus = size ? clus : 0;
+    if (!size) { v->data = kmalloc(1); if (v->data) { v->data[0] = 0; v->cap = 1; } }   /* vazio: buffer de 1 byte, como antes */
+    else if (size <= EAGER_MAX && strncmp(vp, APPS_DIR "/", sizeof APPS_DIR) != 0) load_full(v, true, false);
     v->mtime = 0;
     v->dirty = false;
     nfiles++;
@@ -176,7 +274,7 @@ static void load_tree(const char *vpath, int depth) {
     w->vpath[sizeof w->vpath - 1] = 0;
     snprintf(w->fpath, sizeof w->fpath, SYS_DIR "%s", vpath);
     w->depth = depth;
-    fat_list(sys, w->fpath, load_entry, w);
+    fat_list2(sys, w->fpath, load_entry, w);
     kfree(w);
 }
 
@@ -207,10 +305,7 @@ bool persist_load(void) {
     }
     meta_apply();
     quiet--;
-    kprintf("persist: %d arquivos e %d pastas carregados do disco em %llu ms\n", nfiles, ndirs, timer_ticks() - t0);
-    if (nskipped)
-        kprintf("persist: %d arquivo(s) (%llu MiB) ficaram só no disco por falta de RAM\n", nskipped,
-                (unsigned long long)(skipped_bytes >> 20));
+    kprintf("persist: %d arquivos e %d pastas do disco em %llu ms (conteúdo sob demanda)\n", nfiles, ndirs, timer_ticks() - t0);
     return true;
 }
 
@@ -334,6 +429,7 @@ static bool mkdirs_parent(const char *fpath) {
 
 __attribute__((noinline)) void persist_mark(vnode_t *n) {   /* noinline: o add_tree recursivo não leva o vp[] junto */
     char vp[1024];
+    if (n && !n->dir && n->dclus && !quiet) persist_detach(n);   /* mudou: o conteúdo passa a ser o da RAM */
     vol_mark(n);                         /* dentro de /Volumes/<gravável>: vai para aquele disco */
     if (!tracked(n, vp, sizeof vp)) return;
     if (n->dir) {
@@ -372,6 +468,8 @@ void persist_move(const char *old_vpath, vnode_t *n) {
     fpath_of(old_vpath, from, sizeof from);
     if (was && !now) {                                   /* saiu da área persistente */
         bool dir;
+        /* o conteúdo ainda no disco vem para a RAM antes; se não couber, o arquivo fica no disco (o vnode lê pelo cluster) */
+        if (!detach_tree(n, 0)) { kprintf("persist: %s saiu da área gravada mas não coube na RAM: mantido no disco\n", from); return; }
         if (fat_stat(sys, from, &dir, NULL)) fat_remove(sys, from);
         return;
     }
@@ -380,6 +478,7 @@ void persist_move(const char *old_vpath, vnode_t *n) {
     if (was && fat_stat(sys, from, &dir, NULL)) {
         if (mkdirs_parent(to) && fat_rename(sys, from, to)) return;
         kprintf("persist: não foi possível mover %s -> %s, regravando\n", from, to);
+        if (!detach_tree(n, 0)) { kprintf("persist: sem memória para regravar %s; fica no lugar antigo\n", from); return; }
         fat_remove(sys, from);
     }
     add_tree(n);
@@ -394,6 +493,7 @@ static __attribute__((noinline)) int write_one(vnode_t *c) {
     vfs_path(c, vp, sizeof vp);
     if (!tracked_path(vp)) return 0;
     fpath_of(vp, fp, sizeof fp);
+    if (!c->data && c->size) { kprintf("persist: %s sem conteúdo na RAM, não gravado\n", fp); return 0; }
     if (mkdirs_parent(fp) && fat_write_file(sys, fp, c->data, c->size)) return 1;
     kprintf("persist: falha ao gravar %s (%llu bytes)\n", fp, (u64)c->size);
     return 0;
