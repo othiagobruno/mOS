@@ -119,12 +119,14 @@ static void stop(pid_t p) { if (p > 0) { kill(p, SIGTERM); waitpid(p, NULL, 0); 
 static const u8 *cli_alpn; static u32 cli_alpn_len;   /* lista ALPN do cliente (0 = padrão) */
 static u8 *cli_chain, *cli_key; static u32 cli_chain_len, cli_key_len;   /* certificado de cliente (0 = nenhum) */
 static int cli_id_ret;
+static bool cli_skip; static int got_chain;          /* tls_set_skip_chain e tamanho da cadeia guardada */
 static char got_alpn[33]; static int got_ver;
 static int handshake(int port, const char *sni, char *err, size_t errlen, int *http_ok) {
     int s = tcp_connect(port);
     if (s < 0) { snprintf(err, errlen, "tcp"); return -1; }
     tls_conn_t *c = tls_new(s, sni);
     if (cli_alpn) tls_set_alpn(c, cli_alpn, cli_alpn_len);
+    if (cli_skip) tls_set_skip_chain(c, true);
     cli_id_ret = cli_chain ? tls_set_client_identity(c, cli_chain, cli_chain_len, cli_key, cli_key_len) : 0;
     u64 t0 = timer_ticks();
     int r;
@@ -134,6 +136,7 @@ static int handshake(int port, const char *sni, char *err, size_t errlen, int *h
     }
     snprintf(got_alpn, sizeof got_alpn, "%s", tls_get_alpn(c));
     got_ver = tls_get_version(c);
+    got_chain = tls_copy_peer_chain(c, NULL, 0);
     if (r != 1) {
         snprintf(err, errlen, "%s", r < 0 ? tls_error(c) : "tempo esgotado");
         tls_free(c); tcp_drop(s);
@@ -218,6 +221,24 @@ int main(void) {
     hr = p > 0 ? handshake(18446, "localhost", err, sizeof err, &http) : -1;
     check("recusa AC desconhecida", hr != 0 && strstr(err, "não confiável") != NULL);
     if (hr == 0 || !strstr(err, "não confiável")) printf("    motivo: %s\n", err);
+    stop(p);
+
+    /* tls_set_skip_chain (MOS_NET_TLS_NOVERIFY do SecureTransport): a cadeia não é validada no kernel, mas é
+     * guardada para o app validar; a assinatura do handshake continua conferida */
+    cli_skip = true;
+    p = serve("/tmp/mos-tls-test/unknown.pem", "/tmp/mos-tls-test/srv.key", 18452);
+    hr = p > 0 ? handshake(18452, "localhost", err, sizeof err, &http) : -1;
+    check("sem validar no kernel: AC desconhecida passa e a cadeia fica guardada", hr == 0 && got_chain > 0);
+    if (hr) printf("    motivo: %s\n", err);
+    stop(p);
+    p = serve("/tmp/mos-tls-test/badname.pem", "/tmp/mos-tls-test/srv.key", 18453);
+    hr = p > 0 ? handshake(18453, "localhost", err, sizeof err, &http) : -1;
+    check("sem validar no kernel: nome errado passa", hr == 0 && got_chain > 0);
+    stop(p);
+    cli_skip = false;
+    p = serve("/tmp/mos-tls-test/unknown.pem", "/tmp/mos-tls-test/srv.key", 18454);
+    hr = p > 0 ? handshake(18454, "localhost", err, sizeof err, &http) : -1;
+    check("sessão seguinte volta a validar", hr != 0 && strstr(err, "não confiável") != NULL);
     stop(p);
 
     /* ALPN (RFC 7301) em 1.3 e 1.2 */
