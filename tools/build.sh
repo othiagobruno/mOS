@@ -407,6 +407,8 @@ echo "==> rand48 (família drand48 vs glibc; teste de host)"
 ZIG="$ZIG" bash "$ROOT/tools/rand48_hosttest.sh" "$OUT/rand48-hosttest"
 echo "==> libc de apps (swab/putenv/getproto/getloadavg...; teste de host)"
 ZIG="$ZIG" bash "$ROOT/tools/libc_apps_hosttest.sh" "$OUT/libc-apps-hosttest"
+echo "==> libc do corpus (wide wcs*/pthread attr/getsect*fromheader_64/swap_fat; teste de host)"
+ZIG="$ZIG" bash "$ROOT/tools/libc_corpus_hosttest.sh" "$OUT/libc-corpus-hosttest"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \

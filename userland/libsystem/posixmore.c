@@ -85,6 +85,7 @@ wchar_t_ *wcsdup(const wchar_t_ *s) {
     return d;
 }
 wchar_t_ *wcscat(wchar_t_ *d, const wchar_t_ *s) { wchar_t_ *o = d; while (*d) d++; while ((*d++ = *s++)) {} return o; }
+/* wcscasecmp/wcsncasecmp/wcsncat/wcscspn/wcslcpy/wcslcat ficam em libc_corpus.c (autocontidos, testados no host) */
 wchar_t_ *wmemcpy(wchar_t_ *d, const wchar_t_ *s, size_t n) { return memcpy(d, s, n * sizeof *d); }
 wchar_t_ *wmemset(wchar_t_ *d, wchar_t_ c, size_t n) { for (size_t i = 0; i < n; i++) d[i] = c; return d; }
 wchar_t_ btowc(int c) { return c >= 0 && c < 0x80 ? c : -1; }   /* WEOF = -1 */
