@@ -113,12 +113,22 @@ static bool is_update_dir(const char *vp) {
     return !strncmp(vp, UPDATE_DIR, n) && (vp[n] == 0 || vp[n] == '/');
 }
 
+/* O persist põe o disco na RAM (o VFS sob demanda é da frente de arquivos). A imagem completa tem 6,7 GB só em
+ * /Aplicativos: numa máquina de 2 GB ela esgotava a memória antes de chegar a /Sistema, o boot ficava com "0 programa(s)"
+ * e o desktop não subia. Por isso /Aplicativos carrega por último e nenhum arquivo entra se deixar menos que a reserva
+ * livre. O que fica de fora continua no disco, intacto: só não aparece no VFS desta sessão. */
+#define APPS_DIR      "/Aplicativos"
+#define LOAD_RESERVE  (512ull << 20)
+static int nskipped;
+static u64 skipped_bytes;
+
 static void load_entry(void *ctx, const char *name, bool is_dir, u64 size) {
     walk_t *w = ctx;
     char vp[1024], fp[1040];
     snprintf(vp, sizeof vp, "%s/%s", w->vpath, name);
     snprintf(fp, sizeof fp, SYS_DIR "%s", vp);
     if (is_update_dir(vp)) return;
+    if (!strcmp(vp, APPS_DIR)) return;                              /* persist_load carrega depois do resto */
     if (!strcmp(vp, META_FILE) || !strcmp(vp, META_NEW)) return;   /* metadados do VFS: não são arquivos do VFS */
     if (is_dir) {
         vfs_mkdir(vp);
@@ -127,6 +137,13 @@ static void load_entry(void *ctx, const char *name, bool is_dir, u64 size) {
         return;
     }
     if (size > MAX_LOAD) { kprintf("persist: %s grande demais (%llu MB), ignorado\n", vp, size >> 20); return; }
+    if (pmm_free_pages() * 4096ull < size + LOAD_RESERVE) {
+        if (!nskipped) kprintf("persist: memória no limite da reserva (%llu MiB): arquivos a partir de %s ficam só no disco\n",
+                               LOAD_RESERVE >> 20, vp);
+        nskipped++;
+        skipped_bytes += size;
+        return;
+    }
     u64 len = 0;
     u8 *data = fat_read_file(sys, fp, &len);
     if (!data) {   /* o persist põe o disco inteiro na RAM: com pouca memória o que falta é RAM, não o disco */
@@ -182,9 +199,18 @@ bool persist_load(void) {
     u64 t0 = timer_ticks();
     meta_preload();                      /* antes da árvore: os inodes novos começam depois dos gravados */
     load_tree("", 0);
+    bool apps_dir = false;
+    if (fat_stat(sys, SYS_DIR APPS_DIR, &apps_dir, NULL) && apps_dir) {
+        vfs_mkdir(APPS_DIR);
+        ndirs++;
+        load_tree(APPS_DIR, 1);
+    }
     meta_apply();
     quiet--;
     kprintf("persist: %d arquivos e %d pastas carregados do disco em %llu ms\n", nfiles, ndirs, timer_ticks() - t0);
+    if (nskipped)
+        kprintf("persist: %d arquivo(s) (%llu MiB) ficaram só no disco por falta de RAM\n", nskipped,
+                (unsigned long long)(skipped_bytes >> 20));
     return true;
 }
 
