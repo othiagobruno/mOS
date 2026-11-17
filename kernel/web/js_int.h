@@ -622,7 +622,15 @@ void   web_bc_realm_gone(jsrealm *r);
 jsrealm *js_page_realm(struct js_page *p);
 void   js_page_set_origin(struct js_page *p, const char *origin);
 void   js_page_post_message(struct js_page *dst, jsv val, const char *origin);
-jsobj *js_port_pair(jsrealm *other, jsobj **other_port);   /* web_plat.c: MessagePort ligada a outro reino */
+jsobj *js_port_pair(jsrealm *other, jsobj **other_port);
+/* web_sw.c: service workers e Cache API */
+struct doc;
+struct js_page *web_sw_spawn(const char *url, const char *origin, struct doc **doc);   /* web_worker.c */
+void   web_sw_pump(struct js_page *owner);
+void   web_sw_drop(struct js_page *owner);
+void   js_sw_init(jsrealm *r);
+struct js_page *js_page_iter(struct js_page *prev);   /* páginas vivas (NULL = a primeira) */
+u64    js_page_created(struct js_page *p);   /* web_plat.c: MessagePort ligada a outro reino */
 void   js_page_add_module_source(struct js_page *p, const char *src, int len);
 void   web_obs_tick(struct js_page *p);
 void   js_mo_batch(int delta);

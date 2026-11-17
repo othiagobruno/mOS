@@ -184,12 +184,15 @@ NATIVE(wg_import) {
 NATIVE(illegal) { UNUSED_ARGS; return js_throw_err(E_TYPE, "Construtor ilegal"); }
 NATIVE(loc_tostring) { UNUSED_ARGS; return js_getn(thisv, "href"); }
 
-static void worker_scope(js_page_t *p, const char *url, const char *name, bool shared) {
+/* kind: 0 dedicado, 1 compartilhado, 2 service worker */
+static void worker_scope(js_page_t *p, const char *url, const char *name, int kind) {
     jsrealm *r = J.realm;
     jsobj *g = r->global;
     worker_strip(g);
-    /* (Dedicated|Shared)WorkerGlobalScope → WorkerGlobalScope → protótipo antigo do global */
-    const char *sn = shared ? "SharedWorkerGlobalScope" : "DedicatedWorkerGlobalScope";
+    bool shared = kind != 0;
+    js_defprop(g, js_intern("\x01" "worker", -1), jv_int(kind + 1), PF_NOENUM);
+    /* (Dedicated|Shared|Service)WorkerGlobalScope → WorkerGlobalScope → protótipo antigo do global */
+    const char *sn = kind == 2 ? "ServiceWorkerGlobalScope" : shared ? "SharedWorkerGlobalScope" : "DedicatedWorkerGlobalScope";
     jsobj *wgs = js_newobj(g->proto), *dwgs = js_newobj(wgs);
     g->proto = dwgs;
     jsobj *c1 = js_newctor(illegal, "WorkerGlobalScope", 0, wgs), *c2 = js_newctor(illegal, sn, 0, dwgs);
@@ -199,7 +202,7 @@ static void worker_scope(js_page_t *p, const char *url, const char *name, bool s
     js_defn(g, "self", jv_obj(g), PF_NOENUM);
     js_defn(g, "name", jv_str(js_strz(name)), 0);
     js_defn(g, "onerror", JS_NULL, 0);
-    if (shared) js_defn(g, "onconnect", JS_NULL, 0);
+    if (kind == 1) js_defn(g, "onconnect", JS_NULL, 0);
     else {
         js_defn(g, "onmessage", JS_NULL, 0);
         js_defn(g, "onmessageerror", JS_NULL, 0);
@@ -221,10 +224,10 @@ static void worker_scope(js_page_t *p, const char *url, const char *name, bool s
     (void)p;
 }
 
-typedef struct { const char *url, *name; bool shared; } wk_init_t;
+typedef struct { const char *url, *name; int kind; } wk_init_t;
 static void wk_init(js_page_t *p, int phase, void *ctx) {
     wk_init_t *c = ctx;
-    if (phase == 0) worker_scope(p, c->url, c->name, c->shared);
+    if (phase == 0) worker_scope(p, c->url, c->name, c->kind);
 }
 
 /* ============================================================ Worker (lado da dona) */
@@ -283,7 +286,7 @@ NATIVE(worker_ctor) {
         return jv_obj(o);
     }
     w->doc = doc_parse("", 0, url);
-    wk_init_t ic = { url, name->d, false };
+    wk_init_t ic = { url, name->d, 0 };
     w->page = js_page_new2(w->doc, url, 0, 0, wk_init, &ic);
     if (!w->page) { sb_free(&src); w->closing = true; w->errs_seen = -1; return jv_obj(o); }
     js_page_set_origin(w->page, js_page_origin(owner));   /* blob:/data: herdam a origem da dona */
@@ -330,6 +333,7 @@ static bool sw_busy(js_page_t *owner);
 /* no tick da dona: roda os workers dela e entrega o que eles mandaram */
 void web_worker_pump(js_page_t *owner) {
     sw_pump(owner);
+    web_sw_pump(owner);
     for (wk_t *w = workers; w; w = w->next) {
         if (w->owner != owner || w->freed) continue;
         jsobj *wo = w->obj;
@@ -385,11 +389,29 @@ bool web_worker_busy(js_page_t *owner) {
 
 void web_worker_drop(js_page_t *owner) {
     sw_drop(owner);
+    web_sw_drop(owner);
     for (wk_t **pp = &workers; *pp;) {
         wk_t *w = *pp;
         if (w->owner == owner) { *pp = w->next; wk_free(w); kfree(w); continue; }
         pp = &w->next;
     }
+}
+
+/* página de service worker (web_sw.c): busca o script e roda no escopo ServiceWorkerGlobalScope; NULL = falhou */
+js_page_t *web_sw_spawn(const char *url, const char *origin, doc_t **doc) {
+    sbuf_t src = { 0 };
+    *doc = NULL;
+    if (!load_source(url, &src)) { sb_free(&src); return NULL; }
+    *doc = doc_parse("", 0, url);
+    wk_init_t ic = { url, "", 2 };
+    js_page_t *pg = *doc ? js_page_new2(*doc, url, 0, 0, wk_init, &ic) : NULL;
+    if (pg) {
+        js_page_set_origin(pg, origin);
+        js_page_eval(pg, src.p ? src.p : "", src.len, url);
+    }
+    sb_free(&src);
+    if (!pg && *doc) { doc_free(*doc); *doc = NULL; }
+    return pg;
 }
 
 /* ============================================================ SharedWorker */
@@ -457,7 +479,7 @@ NATIVE(sw_ctor) {
         sbuf_t src = { 0 };
         if (load_source(url, &src)) {
             s->doc = doc_parse("", 0, url);
-            wk_init_t ic = { url, name->d, true };
+            wk_init_t ic = { url, name->d, 1 };
             s->page = js_page_new2(s->doc, url, 0, 0, wk_init, &ic);
             if (s->page) {
                 js_page_set_origin(s->page, org);

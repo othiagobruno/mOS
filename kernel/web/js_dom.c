@@ -1436,6 +1436,9 @@ void js_page_set_frames(js_page_t *p, js_page_t **kids, int n) {
 }
 
 /* preparo das páginas de iframe pelo anfitrião da página de cima (fases como js_page_new2) */
+js_page_t *js_page_iter(js_page_t *prev) { return prev ? prev->next : pages; }
+u64 js_page_created(js_page_t *p) { return p ? p->t0 : 0; }
+
 void js_page_set_frame_init(js_page_t *p, js_init_fn fn, void *ctx) { if (p) { p->frame_init = fn; p->frame_ctx = ctx; } }
 void js_page_run_frame_init(js_page_t *c, int phase) {
     js_page_t *t = c ? c->parent : NULL;
@@ -3714,6 +3717,7 @@ void js_dom_init(jsrealm *r) {
     js_obs_init(r);     /* MutationObserver, ResizeObserver, IntersectionObserver */
     js_worker_init(r);  /* Worker, BroadcastChannel */
     js_stream_init(r);  /* ReadableStream e companhia (carregados na primeira vez) */
+    js_sw_init(r);      /* navigator.serviceWorker e caches (carregados na primeira vez ou se a página é controlada) */
     jsobj *dpp = js_newobj(op);
     js_defnative(dpp, "parseFromString", domparser_parse, 2, 0);
     jsobj *xsp = js_newobj(op);
