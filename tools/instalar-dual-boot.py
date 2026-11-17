@@ -7,6 +7,7 @@ Só aparecem duas pastas novas na ESP:
     \\mOS\\                  o sistema (os arquivos do manifesto do payload, cada um conferido por SHA-256) e, depois,
                             as contas e os documentos criados no mOS
     \\EFI\\mOS\\BOOTX64.EFI   o carregador do mOS
+    \\EFI\\mOS\\boot.log      log de boot (4 MiB alocados aqui; o kernel só reescreve o conteúdo)
 \\EFI\\BOOT, \\EFI\\ubuntu e o resto da ESP não são lidos para escrita nem alterados.
 
 A mesma ordem de escrita do instalador do kernel (kernel/fs/install.c): estado INSTALANDO, cópia de cada arquivo
@@ -25,6 +26,7 @@ Padrão: SIMULA e mostra o plano; não grava nada. Gravar exige --gravar e a con
     sudo tools/instalar-dual-boot.py --imagem build/mOS.img --gravar        # instala (pede "sda1")
     sudo tools/instalar-dual-boot.py --imagem build/mOS.img --gravar --atualizar   # troca o sistema, mantém as contas
     sudo tools/instalar-dual-boot.py --desinstalar --gravar                 # tira o mOS da ESP, da NVRAM e do GRUB
+    sudo tools/instalar-dual-boot.py --concluir --gravar                    # depois do 1º boot: libera a persistência
 
 Teste de host sem root e sem disco: tools/instalar-dual-boot-teste.sh.
 """
@@ -48,6 +50,10 @@ CARREGADOR_MANIFESTO = "/EFI/BOOT/BOOTX64.EFI"          # nome do carregador no 
 CARREGADOR = "EFI/mOS/BOOTX64.EFI"                       # onde ele fica na ESP compartilhada
 CARREGADOR_TMP = "EFI/mOS/MOSNEW.TMP"
 CARREGADOR_EFI = "\\EFI\\mOS\\BOOTX64.EFI"
+# Log de boot: arquivo já alocado pelo instalador (2 slots de 2 MiB, zerados). No primeiro boot o kernel só escreve DENTRO
+# dele (os clusters dele, sem alocar nem mudar diretório); tools/ler-boot-log.py lê no Ubuntu. docs/instalar-no-pc.md
+BOOTLOG = "EFI/mOS/boot.log"
+BOOTLOG_TAM = 4 << 20
 ESTADO = "mOS/Sistema/Biblioteca/estado-sistema"
 PREFS = "mOS/Sistema/Biblioteca/Preferencias/com.mos.sistema.cfg"
 INSTALADO = "mOS/Sistema/Atualizacao/instalado.txt"
@@ -298,7 +304,7 @@ class Origem:
 # ------------------------------------------------------------------ instalar / desinstalar
 def plano(esp: Esp, itens, atualizar: bool) -> int:
     total = sum(t for _, t, _ in itens)
-    precisa = total + total // 4 + 32 * MIB
+    precisa = total + total // 4 + 32 * MIB + BOOTLOG_TAM
     if atualizar:
         precisa -= sum((esp.ponto / c.lstrip("/")).stat().st_size for _, _, c in itens
                        if c != CARREGADOR_MANIFESTO and (esp.ponto / c.lstrip("/")).is_file())
@@ -338,7 +344,8 @@ def instalar(a, esp: Esp, raiz: Path) -> None:
         total = sum(t for _, t, _ in itens)
         print(f"mOS {versao or '(sem versão)'}: {len(itens)} arquivos, {total / MIB:.1f} MiB")
         print(f"ESP {esp.dev} ({esp.ponto}): {livre / MIB:.0f} MiB livres, a instalação precisa de {precisa / MIB:.0f} MiB")
-        print(f"grava só em {esp.ponto}/mOS e {esp.ponto}/{CARREGADOR}; entrada '{ROTULO}' no fim da BootOrder e no GRUB")
+        print(f"grava só em {esp.ponto}/mOS, {esp.ponto}/{CARREGADOR} e {esp.ponto}/{BOOTLOG} "
+              f"({BOOTLOG_TAM // MIB} MiB); entrada '{ROTULO}' no fim da BootOrder e no GRUB")
         if precisa > livre:
             raise Recusa("a ESP não tem espaço livre suficiente")
         # a origem inteira é conferida antes da primeira escrita
@@ -372,6 +379,8 @@ def instalar(a, esp: Esp, raiz: Path) -> None:
             grava_arquivo(esp.alvo(PREFS), f"idioma={a.idioma}\nteclado={a.teclado}\n".encode())
         grava_arquivo(esp.alvo(INSTALADO), bruto)
         h_carr = next(h for h, _, c in itens if c == CARREGADOR_MANIFESTO)
+        if not esp.alvo(BOOTLOG).is_file():
+            grava_arquivo(esp.alvo(BOOTLOG), bytes(BOOTLOG_TAM))
         grava_arquivo(esp.alvo(CARREGADOR_TMP), orig.raiz / CARREGADOR_MANIFESTO.lstrip("/"), h_carr)
         if not a.atualizar or (esp.ponto / ESTADO).read_text().strip() in ("INSTALANDO", ""):
             grava_arquivo(esp.alvo(ESTADO), b"PRIMEIRO_BOOT\n")
@@ -393,6 +402,24 @@ def instalar(a, esp: Esp, raiz: Path) -> None:
         print("pronto: o Ubuntu continua como padrão; escolha 'mOS' no menu de boot do firmware ou do GRUB")
     finally:
         orig.fecha()
+
+
+def concluir(a, esp: Esp, raiz: Path) -> None:
+    """Fim do primeiro boot, rodado no Ubuntu depois de ler o log (tools/ler-boot-log.py): PRIMEIRO_BOOT -> INSTALADO.
+    Enquanto o estado for PRIMEIRO_BOOT, o kernel não escreve em partição nenhuma além do boot.log."""
+    if not esp.mos_anterior():
+        raise Recusa("não há mOS instalado nesta ESP")
+    est = (esp.ponto / ESTADO).read_text().strip()
+    if est != "PRIMEIRO_BOOT":
+        raise Recusa(f"o estado do mOS é {est or '(vazio)'}, não PRIMEIRO_BOOT: nada a concluir")
+    print("estado PRIMEIRO_BOOT -> INSTALADO: nos próximos boots o mOS grava as contas e os documentos em \\mOS da ESP")
+    if not a.gravar:
+        print("SIMULAÇÃO: nada foi gravado. Repita com --gravar.")
+        return
+    confirma(esp, a.confirmo)
+    grava_arquivo(esp.alvo(ESTADO), b"INSTALADO\n")
+    os.sync()
+    print("pronto")
 
 
 def desinstalar(a, esp: Esp, raiz: Path) -> None:
@@ -428,6 +455,7 @@ def main() -> int:
     p.add_argument("--confirmo", help="o nome da partição (ex.: sda1), no lugar de digitar")
     p.add_argument("--atualizar", action="store_true", help="troca o sistema de um mOS já instalado; mantém as contas")
     p.add_argument("--desinstalar", action="store_true")
+    p.add_argument("--concluir", action="store_true", help="depois do 1º boot e do log lido: PRIMEIRO_BOOT -> INSTALADO")
     p.add_argument("--proximo-boot", action="store_true", help="BootNext: só o próximo boot vai para o mOS")
     p.add_argument("--sem-nvram", action="store_true", help="não cria entrada na NVRAM (só GRUB)")
     p.add_argument("--sem-grub", action="store_true", help="não cria entrada no GRUB (só NVRAM)")
@@ -441,7 +469,7 @@ def main() -> int:
         return 2
     try:
         esp = Esp(Path(a.esp))
-        (desinstalar if a.desinstalar else instalar)(a, esp, raiz)
+        (desinstalar if a.desinstalar else concluir if a.concluir else instalar)(a, esp, raiz)
     except Recusa as e:
         print(f"recusado: {e}", file=sys.stderr)
         return 1

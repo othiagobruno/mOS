@@ -81,6 +81,12 @@ passo "Ubuntu continua primeiro, mOS no fim, BootNext" "grep -qx 'BootOrder: 000
 passo "entrada do GRUB com a UUID da ESP" "grep -q 'search --no-floppy --fs-uuid --set=root DE1A-023D' $SYS/etc/grub.d/42_mos && [ -x $SYS/etc/grub.d/42_mos ] && [ -s $T/update-grub.log ]"
 passo "cópia de segurança da NVRAM" "ls $SYS/var/backups/mos-dual-boot/*/efibootmgr-v.txt >/dev/null"
 passo "reinstalar sem --atualizar recusa" "! $I --gravar --confirmo sda1 2>/dev/null"
+passo "boot.log de 4 MiB, zerado, em \\EFI\\mOS" "[ \"\$(stat -c %s $ESP/EFI/mOS/boot.log)\" = 4194304 ] && cmp -s $ESP/EFI/mOS/boot.log <(head -c 4194304 /dev/zero)"
+passo "ler-boot-log sem boot registrado" "python3 $R/tools/ler-boot-log.py $ESP/EFI/mOS/boot.log | grep -q 'nenhum boot registrado'"
+passo "concluir simula sem gravar" "$I --concluir >/dev/null && grep -qx PRIMEIRO_BOOT $ESP/mOS/Sistema/Biblioteca/estado-sistema"
+passo "concluir grava INSTALADO" "$I --concluir --gravar --confirmo sda1 >/dev/null && grep -qx INSTALADO $ESP/mOS/Sistema/Biblioteca/estado-sistema"
+passo "concluir de novo recusa" "! $I --concluir --gravar --confirmo sda1 2>/dev/null"
+passo "Ubuntu intacto depois de concluir" "[ \"\$(ubuntu)\" = \"\$U0\" ]"
 mkdir -p "$ESP/mOS/Users/thiago"; echo doc > "$ESP/mOS/Users/thiago/nota.txt"; echo NORMAL > "$ESP/mOS/Sistema/Biblioteca/estado-sistema"
 printf 'kernel novo' > "$ORIG/EFI/BOOT/BOOTX64.EFI"
 python3 - "$ORIG" <<'P'
