@@ -593,8 +593,11 @@ fi
 if [ -f "$ROOT/build/swift/objc/dylib/usr/lib/swift/libswiftCore.dylib" ]; then
     MOS_ZIG="$ZIG" bash "$ROOT/tools/build-swift-foundation-objc.sh" || echo "aviso: Foundation Swift não compilou; continua o stub" >&2
 fi
-# frameworks cujo overlay Swift importa o Foundation acima (arquivo swift-needs, ex.: CloudKit): segunda passada
+# frameworks cujo overlay Swift importa o Foundation acima (arquivo swift-needs, ex.: CloudKit): segunda passada.
+# Antes dela, o DeveloperToolsSupport sozinho: o overlay do AppKit e o SwiftUI importam o módulo dele e a passada
+# segue a ordem alfabética (o AppKit viria antes e ficaria adiado)
 if [ -e "$ROOT/build/swift/objc/overlays/Foundation.swiftmodule" ]; then
+    MOS_ZIG="$ZIG" bash "$ROOT/tools/build-frameworks-objc.sh" "" "DeveloperToolsSupport" || echo "aviso: DeveloperToolsSupport não compilou" >&2
     precisa=$(cd "$ROOT/userland/frameworks" && grep -l . */swift-needs 2>/dev/null | cut -d/ -f1 | paste -sd, -)
     [ -n "$precisa" ] && { MOS_ZIG="$ZIG" bash "$ROOT/tools/build-frameworks-objc.sh" "" "$precisa" || echo "aviso: overlay Swift de $precisa não compilou" >&2; }
 fi
@@ -802,6 +805,7 @@ rm -rf "$A64FW/System"
 if [ -f "$A64FW/usr/lib/swift/libswiftCore.dylib" ]; then
     MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-swift-combine.sh" || echo "aviso: Combine arm64 não compilou" >&2
     MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-swift-foundation-objc.sh" || echo "aviso: Foundation Swift arm64 não compilou" >&2
+    MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-frameworks-objc.sh" "$A64FW" "DeveloperToolsSupport" || echo "aviso: DeveloperToolsSupport arm64 não compilou" >&2
     MOS_ZIG="$ZIG" MOS_ARCH=arm64 python3 "$ROOT/tools/build-swiftui-objc.py" || echo "aviso: SwiftUI.framework arm64 não compilou" >&2
 fi
 MOS_ZIG="$ZIG" MOS_ARCH=arm64 bash "$ROOT/tools/build-frameworks-objc.sh" "$A64FW" || echo "aviso: algum framework arm64 não compilou" >&2

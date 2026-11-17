@@ -1,0 +1,5 @@
+// mOS — módulo clang subjacente do DeveloperToolsSupport (só Swift; ver DeveloperToolsSupport.swift)
+module DeveloperToolsSupport [system] {
+    header "DeveloperToolsSupport_mos.h"
+    export *
+}

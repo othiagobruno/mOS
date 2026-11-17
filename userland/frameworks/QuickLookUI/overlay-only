@@ -1,0 +1,1 @@
+# só o overlay Swift (libswiftQuickLookUI): o QuickLookUI em si é servido pelo libSystem.mos (quicklook_fw.c)

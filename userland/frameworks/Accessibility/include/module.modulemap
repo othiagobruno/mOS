@@ -1,0 +1,5 @@
+// mOS — módulo clang subjacente do Accessibility (só Swift; ver Accessibility.swift)
+module Accessibility [system] {
+    header "Accessibility_mos.h"
+    export *
+}
