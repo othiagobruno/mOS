@@ -76,7 +76,9 @@ enum {
     SYS_THREADCTL,     /* 60: (op, tid, a) -> ...                   outra thread do processo: suspender, retomar, registradores (MOS_THR_* abaixo) */
     SYS_UNIX,          /* 61: (op, ...) -> ...                      AF_UNIX entre processos (MOS_UNIX_*, kernel/net/unix.c) */
     SYS_GPU = 62,      /* 62: (op, struct*, tamanho) -> 0 | -errno   GPU: kernel/include/mos_gpu.h e docs/gpu-abi.md */
-    SYS_COUNT,
+    /* Números novos: o maior hoje é SYS_VMCTL (120). Um número repetido entre duas syscalls tratadas no proc_syscall não
+     * compila ("duplicate case value"); confira também os blocos com número explícito (SYS_GUI_FIRST.., SYS_MACH_FIRST..).
+     * O antigo SYS_COUNT (aqui, valia 63 = SYS_DESKTOP e não contava nada) saiu. */
     /* 63: banner de notificação do app e selo do Dock (kernel/ui/deskbridge.c).
      * rdi = MOS_DESK_BANNER (título, corpo, token) | MOS_DESK_TAKE (int *token) | MOS_DESK_BADGE (rótulo)
      *     | MOS_DESK_BANNER_EX (mos_desk_banner_t *) | MOS_DESK_TAKE_EX (mos_desk_event_t *) | MOS_DESK_REMOVE (token). */

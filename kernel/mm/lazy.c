@@ -263,7 +263,9 @@ static u64 file_page(const char *path, u64 off) {
     if (!phys) return 0;
     memset((void *)phys, 0, 4096);
     vnode_t *v = vfs_lookup(path);
-    if (v && !v->dir && off < v->size) vfs_read_at(v, off, (void *)phys, 4096);   /* da RAM ou, paginado, do disco */
+    /* erro de disco: a falta falha (o processo recebe o sinal). Antes a página ficava zerada, e no MAP_SHARED zerada
+     * para todo mundo, porque ia para o cache abaixo */
+    if (v && !v->dir && off < v->size && vfs_read_at(v, off, (void *)phys, 4096) < 0) { pmm_free(phys, 1); return 0; }
     char *pc = dup_path(path);
     if (!pc) { pmm_free(phys, 1); return 0; }
     fl = spin_lock_irqsave(&lazy_lock);
@@ -340,7 +342,10 @@ bool lazy_fault(process_t *p, u64 va) {
             u64 pg = pmm_alloc(1);
             if (!pg) return false;
             memset((void *)pg, 0, 4096);
-            if (v && !v->dir && h.off < v->size) vfs_read_at(v, h.off, (void *)pg, 4096);   /* paginado: só esta página vem do disco */
+            if (v && !v->dir && h.off < v->size && vfs_read_at(v, h.off, (void *)pg, 4096) < 0) {   /* paginado: só esta página vem do disco */
+                pmm_free(pg, 1);                                /* erro de disco: falta falha, nunca página zerada */
+                return false;
+            }
             if (uvm_install(p, va, pg)) ok = true;
             else { pmm_free(pg, 1); ok = uvm_pte(p, va) != NULL; }
         }
