@@ -89,6 +89,12 @@ i64 deskbridge_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d) {
         if (token < 0) return -MOS_EINVAL;
         return notify_remove((int)p->pid, token);      /* eventos ainda não lidos ficam: o clique do usuário vale */
     }
+    if (op == MOS_DESK_SEARCH) {
+        char q[96];
+        if (!copy_user_str(p, b, q, (int)sizeof q)) return -MOS_EFAULT;
+        desktop_spotlight_query(q);
+        return 0;
+    }
     if (op == MOS_DESK_BADGE) {
         char label[64];
         if (!copy_user_str(p, b, label, (int)sizeof label)) return -MOS_EFAULT;

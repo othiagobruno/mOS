@@ -396,8 +396,11 @@ static int run_ctx(mpctx_t *c, R frame) {
     mpctx_t *prev = g_top;
     g_top = c;
     MSG(void, w, "makeFirstResponder:", v);
+    id nc = MSG0(id, (id)kls("NSNotificationCenter"), "defaultCenter");
+    MSG(void, nc, "postNotificationName:object:", cx_str("NSMenuDidBeginTrackingNotification"), c->menu);
     i64 r = MSG(i64, NSApp, "runModalForWindow:", w);
     g_top = prev;
+    MSG(void, nc, "postNotificationName:object:", cx_str("NSMenuDidEndTrackingNotification"), c->menu);
     MSG(void, w, "orderOut:", (id)0);
     MSG0(void, w, "close");
     c->win = c->view = 0;
@@ -410,6 +413,20 @@ static int run_ctx(mpctx_t *c, R frame) {
     for (int i = 0; i < 6; i++) objc_release(rel[i]);
     if (r == RES_CHOSEN || r == RES_BACK) return (int)r;
     return RES_DISMISS;
+}
+
+/* menu aberto agora (GetMenuTrackingData do Carbon): o menu mais interno, o item destacado (-1 nenhum), a moldura
+ * (Cocoa, na tela) e o topo/altura do item destacado medidos do topo do menu. 0 se nenhum menu está aberto. */
+int cx_menu_tracking_info(id *menu, int *hl, double frame[4], double *item_top, double *item_h) {
+    mpctx_t *c = g_top;
+    if (!c || !c->win) return 0;
+    if (menu) *menu = c->menu;
+    if (hl) *hl = c->hl;
+    if (frame) { frame[0] = c->frame.x; frame[1] = c->frame.y; frame[2] = c->frame.w; frame[3] = c->frame.h; }
+    int i = c->hl >= 0 && c->hl < c->m.n ? c->hl : -1;
+    if (item_top) *item_top = i >= 0 ? c->m.y[i] : 0;
+    if (item_h) *item_h = i >= 0 ? c->m.ih[i] : 0;
+    return 1;
 }
 
 /* API interna: abre o menu e devolve o item escolhido (sem enviar a ação).

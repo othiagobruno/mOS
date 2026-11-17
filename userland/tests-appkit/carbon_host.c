@@ -1,3 +1,4 @@
+#include <string.h>
 /* Teste de host do núcleo do Carbon (EventRef, tipos dos tratadores, HIShape). Roda no Linux, sem VM:
  *   gcc -std=c11 -Wall -Wextra -Wno-multichar -Iuserland/libsystem userland/libsystem/carbon_core.c \
  *       userland/tests-appkit/carbon_host.c -o /tmp/carbon-test && /tmp/carbon-test */
@@ -72,6 +73,15 @@ int main(void) {
     check(near(th.len, 50), "progresso: preenchido proporcional");
     check(cc_track_hit(0, 200, 0, 100, 50, 100, 10) == 22 && cc_track_hit(0, 200, 0, 100, 50, 100, 120) == 129 &&
           cc_track_hit(0, 200, 0, 100, 0, 100, 150) == 23 && cc_track_hit(0, 200, 0, 100, 0, 100, 250) == 0, "acerto: página, polegar, fora");
+    unsigned char fam[64], f2[96], f3[96];
+    long fl = cc_icns_set(0, 0, 0x69633037u, (const unsigned char *)"PNGDATA", 7, fam);   /* 'ic07' */
+    long off = 0, len = 0;
+    check(fl == 23 && cc_icns_find(fam, fl, 0x69633037u, &off, &len) && len == 7 && !memcmp(fam + off, "PNGDATA", 7), "icns: família nova com um elemento");
+    long f2l = cc_icns_set(fam, fl, 0x69633038u, (const unsigned char *)"AB", 2, f2);
+    check(f2l == 33 && cc_icns_find(f2, f2l, 0x69633038u, &off, &len) && len == 2 && cc_icns_find(f2, f2l, 0x69633037u, 0, 0), "icns: acrescenta");
+    long f3l = cc_icns_set(f2, f2l, 0x69633037u, (const unsigned char *)"X", 1, f3);
+    check(f3l == 27 && cc_icns_find(f3, f3l, 0x69633037u, &off, &len) && len == 1 && f3[off] == 'X' && cc_icns_find(f3, f3l, 0x69633038u, 0, 0), "icns: troca sem perder os outros");
+    check(!cc_icns_find(f3, f3l, 0x69633130u, 0, 0) && !cc_icns_find((const unsigned char *)"xxxxxxxx", 8, 0x69633037u, 0, 0), "icns: ausente e inválido");
     printf("%d/%d\n", ok, total);
     return ok == total ? 0 : 1;
 }

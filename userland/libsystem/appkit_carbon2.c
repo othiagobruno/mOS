@@ -590,3 +590,78 @@ OSStatus AEInteractWithUser(i32 timeout, void *nm, void *idle) {
 }
 OSStatus AEResetTimer(const void *reply) { (void)reply; return noErr; }   /* a resposta espera sem prazo fixo no mOS */
 OSStatus AEProcessAppleEvent(const void *event_record) { (void)event_record; return -1708; }   /* errAEEventNotHandled: EventRecord do Mac clássico */
+
+/* ================================================================ menus, busca, ícones e Launch */
+/* MenuTrackingData: menu, itemSelected e itemUnderMouse (1 em diante; 0 nenhum), itemRect (Rect: topo, esquerda, base,
+ * direita, em coordenadas globais), virtualMenuTop/Bottom. O MenuRef do mOS é o próprio NSMenu. */
+typedef struct { id menu; u16 selected, under_mouse; i16 top, left, bottom, right; i32 vtop, vbottom; } menu_tracking_t;
+int cx_menu_tracking_info(id *menu, int *hl, double frame[4], double *item_top, double *item_h);
+OSStatus GetMenuTrackingData(id menu, menu_tracking_t *out) {
+    id m = 0;
+    int hl = -1;
+    double f[4], it = 0, ih = 0;
+    if (!cx_menu_tracking_info(&m, &hl, f, &it, &ih) || (menu && menu != m)) return -5623;   /* menuNotFoundErr */
+    if (!out) return paramErr;
+    double top = screen_h() - (f[1] + f[3]);
+    out->menu = m;
+    out->selected = out->under_mouse = (u16)(hl >= 0 ? hl + 1 : 0);
+    out->top = (i16)(top + it); out->bottom = (i16)(top + it + ih);
+    out->left = (i16)f[0]; out->right = (i16)(f[0] + f[2]);
+    out->vtop = (i32)top; out->vbottom = (i32)(top + f[3]);
+    return noErr;
+}
+/* a janela de busca do sistema (Spotlight do mOS) com o texto */
+#include "../../kernel/include/syscall.h"
+OSStatus HISearchWindowShow(id text, u32 flags) {
+    (void)flags;
+    const char *q = text ? cx_cstr(text) : "";
+    return SYS2(SYS_DESKTOP, MOS_DESK_SEARCH, q) == 0 ? noErr : paramErr;
+}
+/* IconFamilyHandle: troca ou lê um elemento dos dados 'icns' (carbon_core.c, teste em carbon_host.c) */
+typedef char **Handle;
+Handle NewHandle(long size);
+long GetHandleSize(Handle h);
+void SetHandleSize(Handle h, long size);
+OSStatus SetIconFamilyData(Handle fam, u32 type, Handle data) {
+    if (!fam || !data) return paramErr;
+    long n = GetHandleSize(fam), dn = GetHandleSize(data);
+    u8 *tmp = malloc((usize)(n + dn + 16));
+    if (!tmp) return -108;
+    long w = cc_icns_set((const u8 *)*fam, n, type, (const u8 *)*data, dn, tmp);
+    if (w < 0) { free(tmp); return paramErr; }
+    SetHandleSize(fam, w);
+    if (GetHandleSize(fam) != w) { free(tmp); return -108; }
+    memcpy(*fam, tmp, (usize)w);
+    free(tmp);
+    return noErr;
+}
+OSStatus GetIconFamilyData(Handle fam, u32 type, Handle data) {
+    if (!fam || !data) return paramErr;
+    long off = 0, len = 0;
+    if (!cc_icns_find((const u8 *)*fam, GetHandleSize(fam), type, &off, &len)) { SetHandleSize(data, 0); return noErr; }   /* sem esse tipo: dados vazios */
+    SetHandleSize(data, len);
+    if (GetHandleSize(data) != len) return -108;
+    memcpy(*data, *fam + off, (usize)len);
+    return noErr;
+}
+/* LaunchApplication: LaunchParamBlockRec (pack 2) com o FSRef do app; devolve o PSN do processo aberto */
+typedef struct __attribute__((packed, aligned(2))) {
+    u32 reserved1; u16 reserved2, block_id; u32 epb_len; u16 file_flags, control_flags;
+    const FSRef *app; psn_t psn; u32 preferred, minimum, available; void *params;
+} launch_pb_t;
+int FSRefMakePath(const FSRef *ref, u8 *path, u32 max);
+OSStatus LaunchApplication(launch_pb_t *pb) {
+    if (!pb || !pb->app) return paramErr;
+    char path[1024];
+    if (FSRefMakePath(pb->app, (u8 *)path, sizeof path)) return -43;   /* fnfErr */
+    id url = MSG(id, (id)kls("NSURL"), "fileURLWithPath:", cx_str(path));
+    id ws = MSG0(id, (id)kls("NSWorkspace"), "sharedWorkspace");
+    /* launchDontSwitch (0x0200) → NSWorkspaceLaunchWithoutActivation; launchContinue e os tamanhos de memória do Mac
+     * clássico não valem mais (como no macOS: quem chama segue rodando) */
+    u64 opts = (pb->control_flags & 0x0200) ? 0x200 : 0;
+    id err = 0;
+    id app = ((id (*)(id, SEL, id, u64, id, id *))objc_msgSend)(ws, sl("launchApplicationAtURL:options:configuration:error:"), url, opts, (id)0, &err);
+    if (!app) return -10810;   /* kLSUnknownErr / procNotFound */
+    pb->psn.hi = 1; pb->psn.lo = (u32)MSG0(int, app, "processIdentifier");
+    return noErr;
+}

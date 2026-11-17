@@ -562,7 +562,9 @@ OSStatus PMCreatePrintSettings(id *out) { if (!out) return kPMInvalidParameter; 
 OSStatus PMCreatePageFormat(id *out) { if (!out) return kPMInvalidParameter; *out = new_pi(); return 0; }
 OSStatus PMRetain(id o) { if (o) objc_retain(o); return 0; }
 OSStatus PMRelease(id o) { if (o) objc_release(o); return 0; }
-OSStatus PMSessionError(id s) { (void)s; return 0; }
+/* o erro da sessão fica no próprio objeto (PMSessionSetError/PMSessionError, como o app usa para cancelar) */
+OSStatus PMSessionError(id s) { return s ? (OSStatus)pn(s, "_PMSessionError", 0) : kPMInvalidParameter; }
+OSStatus PMSessionSetError(id s, OSStatus e) { if (!s) return kPMInvalidParameter; pset(s, "_PMSessionError", e ? num_i(e) : 0); return 0; }
 OSStatus PMSessionDefaultPrintSettings(id s, id ps) { (void)s; if (!ps) return kPMInvalidParameter; MSG(void, pi_d(ps), "addEntriesFromDictionary:", pi_d(pi_shared((id)kls("NSPrintInfo"), 0))); return 0; }
 OSStatus PMSessionDefaultPageFormat(id s, id pf) { return PMSessionDefaultPrintSettings(s, pf); }
 OSStatus PMGetCopies(id ps, u32 *n) { if (!ps || !n) return kPMInvalidParameter; *n = (u32)pn(ps, "NSCopies", 1); return 0; }
@@ -574,6 +576,14 @@ OSStatus PMGetLastPage(id ps, u32 *p) { if (!ps || !p) return kPMInvalidParamete
 OSStatus PMSetPageRange(id ps, u32 a, u32 b) {
     if (!ps || a < 1 || b < a) return kPMInvalidParameter;
     pset(ps, "NSFirstPage", num_i(a)); pset(ps, "NSLastPage", num_i(b)); pset(ps, "NSAllPages", num_i(a == 1 && b >= 9999));
+    pset(ps, "_PMMinPage", num_i(a)); pset(ps, "_PMMaxPage", num_i(b));
+    return 0;
+}
+/* faixa permitida (a que o diálogo aceita): 1 até kPMPrintAllPages (0xFFFFFFFF) se o app não limitou */
+OSStatus PMGetPageRange(id ps, u32 *mn, u32 *mx) {
+    if (!ps || !mn || !mx) return kPMInvalidParameter;
+    *mn = (u32)pn(ps, "_PMMinPage", 1);
+    *mx = (u32)pn(ps, "_PMMaxPage", 0xFFFFFFFFll);
     return 0;
 }
 OSStatus PMPrintSettingsGetJobName(id ps, id *name) { if (!ps || !name) return kPMInvalidParameter; id n = pget(ps, "NSJobName"); *name = n ? n : cx_str("Sem t\xC3\xADtulo"); return 0; }
@@ -585,6 +595,46 @@ OSStatus PMGetUnadjustedPaperRect(id pf, PMRect *r) {
     return 0;
 }
 OSStatus PMGetAdjustedPaperRect(id pf, PMRect *r) { return PMGetUnadjustedPaperRect(pf, r); }
+/* área da página (o papel menos as margens do NSPrintInfo), em pontos, sem a escala */
+OSStatus PMGetUnadjustedPageRect(id pf, PMRect *r) {
+    if (!pf || !r) return kPMInvalidParameter;
+    S z = pi_paper(pf, 0);
+    r->top = pd(pf, "NSTopMargin", 90); r->left = pd(pf, "NSLeftMargin", 72);
+    r->bottom = z.h - pd(pf, "NSBottomMargin", 90); r->right = z.w - pd(pf, "NSRightMargin", 72);
+    return 0;
+}
+OSStatus PMGetAdjustedPageRect(id pf, PMRect *r) {
+    int e = PMGetUnadjustedPageRect(pf, r);
+    if (e) return e;
+    double k = pi_scale(pf, 0);
+    if (k > 0) { r->top /= k; r->left /= k; r->bottom /= k; r->right /= k; }
+    return 0;
+}
+/* escala em porcentagem (100 = tamanho real); o NSPrintInfo guarda o fator */
+OSStatus PMGetScale(id pf, double *pct) { if (!pf || !pct) return kPMInvalidParameter; *pct = pi_scale(pf, 0) * 100.0; return 0; }
+OSStatus PMSetScale(id pf, double pct) { if (!pf || pct <= 0) return kPMInvalidParameter; pi_set_scale(pf, 0, pct / 100.0); return 0; }
+/* um page format por papel que a impressora PDF aceita */
+OSStatus PMSessionCreatePageFormatList(id s, id pr, id *list) {
+    (void)s; (void)pr;
+    if (!list) return kPMInvalidParameter;
+    id a = MSG0(id, MSG0(id, (id)kls("NSMutableArray"), "alloc"), "init");
+    for (int i = 0; i < 5; i++) {
+        id pf = new_pi();
+        pi_set_paper_name(pf, 0, cx_str(paper_names[i]));
+        MSG(void, a, "addObject:", pf);
+        objc_release(pf);
+    }
+    *list = a;
+    return 0;
+}
+OSStatus PMSessionCreatePrinterList(id s, id *names, i64 *cur_index, id *cur) {
+    (void)s;
+    if (!names) return kPMInvalidParameter;
+    *names = objc_retain(MSG(id, (id)kls("NSArray"), "arrayWithObject:", cx_str(PDF_PRINTER)));
+    if (cur_index) *cur_index = 0;
+    if (cur) *cur = printer_pdf();
+    return 0;
+}
 OSStatus PMPaperCreateLocalizedName(id paper, id printer, id *name) { (void)printer; if (!name) return kPMInvalidParameter; *name = objc_retain(paper ? pi_local_paper(paper, 0) : cx_str("A4")); return 0; }
 OSStatus PMServerCreatePrinterList(void *server, id *list) { (void)server; if (!list) return kPMInvalidParameter; *list = objc_retain(MSG(id, (id)kls("NSArray"), "arrayWithObject:", printer_pdf())); return 0; }
 id PMPrinterGetName(id pr) { (void)pr; return cx_str(PDF_PRINTER); }
@@ -595,6 +645,47 @@ u8 PMPrinterIsDefault(id pr) { (void)pr; return 1; }
 u8 PMPrinterIsRemote(id pr, u8 *remote) { (void)pr; if (remote) *remote = 0; return 0; }
 OSStatus PMPrinterGetMimeTypes(id pr, id ps, id *types) { (void)pr; (void)ps; if (!types) return kPMInvalidParameter; *types = MSG(id, (id)kls("NSArray"), "arrayWithObject:", cx_str("application/pdf")); return 0; }
 OSStatus PMPrinterGetOutputResolution(id pr, id ps, PMResolution *r) { (void)pr; (void)ps; if (!r) return kPMInvalidParameter; r->h = r->v = 300; return 0; }
+/* a impressora PDF grava em ~/Documents: esse é o destino dela */
+OSStatus PMPrinterCopyDeviceURI(id pr, id *uri) {
+    (void)pr;
+    if (!uri) return kPMInvalidParameter;
+    extern id NSHomeDirectory(void);
+    id dir = MSG(id, NSHomeDirectory(), "stringByAppendingPathComponent:", cx_str("Documents"));
+    *uri = objc_retain(MSG(id, (id)kls("NSURL"), "fileURLWithPath:isDirectory:", dir, (BOOL)YES));
+    return 0;
+}
+OSStatus PMPrinterCopyHostName(id pr, id *host) {
+    (void)pr;
+    if (!host) return kPMInvalidParameter;
+    id h = MSG0(id, MSG0(id, (id)kls("NSProcessInfo"), "processInfo"), "hostName");
+    *host = objc_retain(h ? h : cx_str("localhost"));
+    return 0;
+}
+OSStatus PMPrinterGetDriverCreator(id pr, u32 *creator) { (void)pr; if (!creator) return kPMInvalidParameter; *creator = ('m' << 24) | ('O' << 16) | ('S' << 8) | ' '; return 0; }
+/* VersRec: NumVersion (maior BCD, menor/correção, estágio, revisão), país, versão curta e longa em Str255 */
+typedef struct __attribute__((packed)) { u8 major, minor_bug, stage, rev; i16 country; u8 short_v[256], long_v[256]; } pm_vers;
+static void pstr(u8 *d, const char *s, int cap) { int n = (int)strlen(s); if (n > cap - 1) n = cap - 1; d[0] = (u8)n; memcpy(d + 1, s, (size_t)n); }
+OSStatus PMPrinterGetDriverReleaseInfo(id pr, pm_vers *v) {
+    (void)pr;
+    if (!v) return kPMInvalidParameter;
+    memset(v, 0, sizeof *v);
+    v->major = 0x01; v->minor_bug = 0x00; v->stage = 0x80; v->rev = 0;   /* 1.0 final */
+    pstr(v->short_v, "1.0", 256);
+    pstr(v->long_v, "1.0, mOS PDF", 256);
+    return 0;
+}
+/* PMLanguageInfo: três Str32 (nível, versão, release) da linguagem da impressora; a do mOS é PDF 1.7 (pdf_write.c) */
+typedef struct { u8 level[33], version[33], release[33]; } pm_lang;
+OSStatus PMPrinterGetLanguageInfo(id pr, pm_lang *li) {
+    (void)pr;
+    if (!li) return kPMInvalidParameter;
+    memset(li, 0, sizeof *li);
+    pstr(li->level, "PDF", 33);
+    pstr(li->version, "1.7", 33);
+    pstr(li->release, "1", 33);
+    return 0;
+}
+u8 PMPrinterIsFavorite(id pr) { (void)pr; return 1; }   /* a única impressora está sempre na lista */
 OSStatus PMPrinterCopyDescriptionURL(id pr, id type, id *url) { (void)pr; (void)type; if (url) *url = 0; return kPMInvalidParameter; }   /* sem PPD */
 /* imprimir um PDF pronto na impressora PDF: grava em ~/Documents com o nome do trabalho */
 OSStatus PMPrinterPrintWithFile(id pr, id ps, id pf, id mime, id file) {
