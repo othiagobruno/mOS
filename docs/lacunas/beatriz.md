@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Beatriz (AppKit) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**884** símbolos distintos.
+**917** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -191,6 +191,29 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Carbon.framework | `_PopSymbolicHotKeyMode` | 7 | anydesk, bartender, bettertouchtool, flycut |
 | Carbon.framework | `_PushSymbolicHotKeyMode` | 7 | anydesk, bartender, bettertouchtool, flycut |
 | Carbon.framework | `_kTISPropertyInputSourceIsSelectCapable` | 7 | bettertouchtool, clipy, easydict, hammerspoon |
+| JavaRuntimeSupport.framework | `_JRSUIControlCreate` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlDraw` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetHitPart` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarOffsetFor` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlGetScrollBarPartBounds` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlRelease` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentHorizontal` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAlignmentVertical` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetAnimating` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetDirection` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetOrientation` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetScrollBarPart` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetSegmentPosition` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetShowArrows` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetSize` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetState` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetValueByKey` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetVariant` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetWidget` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlSetWindowType` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIControlShouldScrollToClick` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIGetKey` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
+| JavaRuntimeSupport.framework | `_JRSUIRendererCreate` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
 | libswiftAppKit.dylib | `_$sSo13NSWindowLevela6AppKit01_cdD23NumericRawRepresentableACMc` | 7 | betterdisplay, bettertouchtool, cleanshot, raycast |
 | AppKit.framework | `_NSAccessibilityTextAlignmentAttribute` | 6 | godot, hammerspoon, openlogi, pixelorama |
 | AppKit.framework | `_NSAccessibilityUnderlineColorTextAttribute` | 6 | godot, libreoffice, openlogi, pixelorama |
@@ -211,6 +234,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Carbon.framework | `_SendEventToEventTargetWithOptions` | 6 | adobe-acrobat-reader, another-redis-desktop-manager, battery, openmtp |
 | Carbon.framework | `_SetEventParameter` | 6 | adobe-acrobat-reader, another-redis-desktop-manager, battery, openmtp |
 | Carbon.framework | `_SetEventTime` | 6 | adobe-acrobat-reader, another-redis-desktop-manager, battery, openmtp |
+| JavaRuntimeSupport.framework | `_JRSFontAlignStyleForFractionalMeasurement` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSFontCreateFallbackFontForCharacters` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSFontGetBoundingBoxesForGlyphsAndStyle` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSFontGetRenderingStyleForHints` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSFontSetRenderingStyleOnContext` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
+| JavaRuntimeSupport.framework | `_JRSFontStyleUsesFractionalMetrics` | 6 | android-studio, cryptomator, dbeaver-community, intellij-idea |
 | QuickLookThumbnailing.framework | `_OBJC_CLASS_$_QLThumbnailProvider` | 6 | blender, cleanshot, krita, libreoffice |
 | QuickLookThumbnailing.framework | `_OBJC_CLASS_$_QLThumbnailReply` | 6 | blender, cleanshot, krita, libreoffice |
 | QuickLookThumbnailing.framework | `_OBJC_METACLASS_$_QLThumbnailProvider` | 6 | blender, cleanshot, krita, libreoffice |
@@ -806,6 +835,10 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Carbon.framework | `_kTISPropertyIconRef` | 1 | hammerspoon |
 | Carbon.framework | `_kTISPropertyKeyLayoutName` | 1 | mac-mouse-fix |
 | Carbon.framework | `_kTISTypeKeyboardInputMethodModeEnabled` | 1 | raycast |
+| CoreUI.framework | `_CUIDraw` | 1 | zotero |
+| InputMethodKit.framework | `_OBJC_CLASS_$_IMKInputController` | 1 | squirrel-app |
+| InputMethodKit.framework | `_OBJC_CLASS_$_IMKServer` | 1 | squirrel-app |
+| InputMethodKit.framework | `_OBJC_METACLASS_$_IMKInputController` | 1 | squirrel-app |
 | QuickLook.framework | `_OBJC_CLASS_$_QLPreviewController` | 1 | whatsapp |
 | QuickLook.framework | `_OBJC_METACLASS_$_QLPreviewController` | 1 | whatsapp |
 | QuickLook.framework | `_QLPreviewRequestGetGeneratorBundle` | 1 | skim |

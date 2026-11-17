@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Vinicius (arquivos e volumes) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**44** símbolos distintos.
+**66** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -33,6 +33,28 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | DiskArbitration.framework | `_kDADiskDescriptionMediaKindKey` | 1 | daisydisk |
 | DiskArbitration.framework | `_kDADiskDescriptionMediaUUIDKey` | 1 | stats |
 | DiskArbitration.framework | `_kDADiskDescriptionMediaWholeKey` | 1 | hex-fiend |
+| FSKit.framework | `_$s10FileSystem5FSKit05UnaryaB9ExtensionPTl` | 1 | fuse-t |
+| FSKit.framework | `_$s5FSKit24UnaryFileSystemExtensionMp` | 1 | fuse-t |
+| FSKit.framework | `_$s5FSKit24UnaryFileSystemExtensionP04fileD00cD0QzvgTq` | 1 | fuse-t |
+| FSKit.framework | `_$s5FSKit24UnaryFileSystemExtensionP0E10Foundation03AppE0Tb` | 1 | fuse-t |
+| FSKit.framework | `_$s5FSKit24UnaryFileSystemExtensionPAAE13configurationQrvg` | 1 | fuse-t |
+| FSKit.framework | `_$s5FSKit24UnaryFileSystemExtensionPAAE13configurationQrvpQOMQ` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSClient` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSContainerIdentifier` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSContainerStatus` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSFileName` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSItem` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSItemAttributes` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSProbeResult` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSStatFSResult` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSUnaryFileSystem` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSVolume` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSVolumeIdentifier` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_CLASS_$_FSVolumeSupportedCapabilities` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_METACLASS_$_FSItem` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_METACLASS_$_FSUnaryFileSystem` | 1 | fuse-t |
+| FSKit.framework | `_OBJC_METACLASS_$_FSVolume` | 1 | fuse-t |
+| NetFS.framework | `_NetFSMountURLSync` | 1 | adobe-acrobat-reader |
 | libSystem.B.dylib | `_fs_snapshot_list` | 1 | daisydisk |
 | libarchive.2.dylib | `_archive_entry_clear` | 1 | utm |
 | libarchive.2.dylib | `_archive_entry_free` | 1 | utm |

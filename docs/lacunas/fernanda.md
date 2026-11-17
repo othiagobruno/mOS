@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Fernanda (Swift runtime, Dispatch) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**838** símbolos distintos.
+**772** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -128,8 +128,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftos.dylib | `_$s2os12OSSignpostIDVMn` | 5 | bettertouchtool, protonvpn, supacode, utm |
 | libswiftos.dylib | `_$s2os12OSSignposterV9subsystem8categoryACSS_SStcfC` | 5 | bettertouchtool, chatgpt, cmux, fluidvoice |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA0Mp` | 4 | cmux, fuse-t, qlmarkdown, syntax-highlight |
-| libswiftNaturalLanguage.dylib | `_$sSo11NLTokenizerC15NaturalLanguageE6tokens3forSaySnySS5IndexVGGAH_tF` | 4 | markedit, raycast, superwhisper, voiceink |
-| libswiftNaturalLanguage.dylib | `_$sSo8NLTaggerC15NaturalLanguageE13enumerateTags2in4unit6scheme7options5usingySnySS5IndexVG_So11NLTokenUnitVSo11NLTagSchemeaSo0A7OptionsVSbSo0N0aSg_ALtXEtF` | 4 | fluidvoice, openclaw, superwhisper, voiceink |
 | libswiftSynchronization.dylib | `_$s15Synchronization5MutexVMn` | 4 | coteditor, homebrew-app, openclaw, thaw |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorV5_open__7options11permissions16retryOnInterrupts6ResultOyAcA5ErrnoVGSPys4Int8VG_AC10AccessModeVAC11OpenOptionsVAA0B11PermissionsVSgSbtFZ` | 4 | homebrew-app, macpacker, openclaw, thaw |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorVN` | 4 | homebrew-app, macpacker, openclaw, thaw |
@@ -142,7 +140,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftos.dylib | `_$s2os12OSSignposterV9subsystem8categoryACSS_So03OS_A4_logCAAE8CategoryVtcfC` | 4 | cmux, fluidvoice, opensuperwhisper, superwhisper |
 | libswiftos.dylib | `_$s2os23OSSignpostIntervalStateCMn` | 4 | cmux, protonvpn, raycast, whatsapp |
 | libswiftos.dylib | `_$sSo9OS_os_logC0B0E8CategoryVMa` | 4 | cmux, fluidvoice, opensuperwhisper, superwhisper |
-| CoreML.framework | `_$sSf6CoreML19MLShapedArrayScalarAAWP` | 3 | fluidvoice, openclaw, voiceink |
 | ExtensionFoundation.framework | `_$s13Configuration19ExtensionFoundation03AppB0PTl` | 3 | fuse-t, qlmarkdown, syntax-highlight |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA0P13ConfigurationAC_AA0caD0Tn` | 3 | fuse-t, qlmarkdown, syntax-highlight |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA0P13configuration13ConfigurationQzvgTq` | 3 | fuse-t, qlmarkdown, syntax-highlight |
@@ -177,14 +174,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftData.framework | `_$s9SwiftData6SchemaC16PropertyMetadataVMa` | 3 | bartender, maccy, voiceink |
 | SwiftData.framework | `_$s9SwiftData6SchemaC16PropertyMetadataVMn` | 3 | bartender, maccy, voiceink |
 | libobjc.A.dylib | `_protocol_addProtocol` | 3 | bitwarden, emacs-app, orbstack |
-| libswiftCoreML.dylib | `_$s6CoreML13MLShapedArrayVMn` | 3 | macwhisper, opensuperwhisper, superwhisper |
-| libswiftCoreML.dylib | `_$s6CoreML13MLShapedArrayVyxGAA0cD8ProtocolAAMc` | 3 | macwhisper, opensuperwhisper, superwhisper |
-| libswiftCoreML.dylib | `_$s6CoreML21MLShapedArrayProtocolPAAE7scalarsSay6ScalarQzGvg` | 3 | macwhisper, opensuperwhisper, superwhisper |
-| libswiftCoreML.dylib | `_$sSf6CoreML19MLShapedArrayScalarAAWP` | 3 | macwhisper, opensuperwhisper, superwhisper |
-| libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLE30withUnsafeMutableBufferPointer6ofType_q_xm_q_SryxG_SaySiGtKXEtKAC08MLShapedB6ScalarRzr0_lF` | 3 | macwhisper, opensuperwhisper, superwhisper |
-| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE4load10contentsOf13configurationAB10Foundation3URLV_So0A13ConfigurationCtYaKFZ` | 3 | macwhisper, opensuperwhisper, superwhisper |
-| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE4load10contentsOf13configurationAB10Foundation3URLV_So0A13ConfigurationCtYaKFZTu` | 3 | macwhisper, opensuperwhisper, superwhisper |
-| libswiftCoreML.dylib | `_$ss5Int32V6CoreML19MLShapedArrayScalarACWP` | 3 | macwhisper, opensuperwhisper, superwhisper |
 | libswiftDispatch.dylib | `_$sSo24OS_dispatch_queue_serialC8DispatchE10AttributesVMa` | 3 | macwhisper, supacode, voiceink |
 | libswiftDispatch.dylib | `_$sSo24OS_dispatch_queue_serialC8DispatchE10AttributesVMn` | 3 | macwhisper, supacode, voiceink |
 | libswiftDispatch.dylib | `_$sSo24OS_dispatch_queue_serialC8DispatchE10AttributesVs10SetAlgebraACMc` | 3 | macwhisper, supacode, voiceink |
@@ -207,17 +196,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswift_StringProcessing.dylib | `_$sSm17_StringProcessingSQ7ElementRpzrlE7replace_4with15maxReplacementsyqd___qd_0_SitSlRd__SlRd_0_ABQyd__ACRSABQyd_0_AGRSr0_lF` | 3 | chatgpt, coteditor, superwhisper |
 | libswift_StringProcessing.dylib | `_$sSm17_StringProcessingSs11SubSequenceRtzrlE7replace_4with15maxReplacementsyqd_0__qd__SitSlRd__AA14RegexComponentRd_0_SJ7ElementRtd__r0_lF` | 3 | coteditor, easydict, squirrel-app |
 | libswiftos.dylib | `_$sSo9OS_os_logC0B0E8CategoryV16pointsOfInterestAEvgZ` | 3 | fluidvoice, opensuperwhisper, superwhisper |
-| CoreML.framework | `_$s6CoreML13MLShapedArrayVMn` | 2 | fluidvoice, openclaw |
-| CoreML.framework | `_$s6CoreML13MLShapedArrayVyxGAA0cD8ProtocolAAMc` | 2 | fluidvoice, openclaw |
-| CoreML.framework | `_$s6CoreML21MLShapedArrayProtocolPAAE7scalarsSay6ScalarQzGvg` | 2 | fluidvoice, openclaw |
-| CoreML.framework | `_$sSo12MLMultiArrayC6CoreMLE30withUnsafeMutableBufferPointer6ofType_q_xm_q_SryxG_SaySiGtKXEtKAC08MLShapedB6ScalarRzr0_lF` | 2 | fluidvoice, voiceink |
-| CoreML.framework | `_$sSo7MLModelC6CoreMLE10prediction4from7optionsSo17MLFeatureProvider_pSoAG_p_So19MLPredictionOptionsCtYaKF` | 2 | fluidvoice, voiceink |
-| CoreML.framework | `_$sSo7MLModelC6CoreMLE10prediction4from7optionsSo17MLFeatureProvider_pSoAG_p_So19MLPredictionOptionsCtYaKFTu` | 2 | fluidvoice, voiceink |
-| CoreML.framework | `_$sSo7MLModelC6CoreMLE12compileModel2at10Foundation3URLVAH_tYaKFZ` | 2 | fluidvoice, voiceink |
-| CoreML.framework | `_$sSo7MLModelC6CoreMLE12compileModel2at10Foundation3URLVAH_tYaKFZTu` | 2 | fluidvoice, voiceink |
-| CoreML.framework | `_$sSo7MLModelC6CoreMLE4load10contentsOf13configurationAB10Foundation3URLV_So0A13ConfigurationCtYaKFZ` | 2 | fluidvoice, voiceink |
-| CoreML.framework | `_$sSo7MLModelC6CoreMLE4load10contentsOf13configurationAB10Foundation3URLV_So0A13ConfigurationCtYaKFZTu` | 2 | fluidvoice, voiceink |
-| CoreML.framework | `_$ss5Int32V6CoreML19MLShapedArrayScalarACWP` | 2 | fluidvoice, openclaw |
 | SwiftData.framework | `_$s9SwiftData10ModelActorMp` | 2 | bartender, voiceink |
 | SwiftData.framework | `_$s9SwiftData10ModelActorP13modelExecutorAA0cF0_pvgTq` | 2 | bartender, voiceink |
 | SwiftData.framework | `_$s9SwiftData10ModelActorP14modelContainerAA0cF0CvgTq` | 2 | bartender, voiceink |
@@ -288,9 +266,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libobjc.A.dylib | `_protocol_addMethodDescription` | 2 | bitwarden, orbstack |
 | libobjc.A.dylib | `_protocol_copyPropertyList` | 2 | easydict, teamviewer |
 | libswiftCore.dylib | `_$sSs17UnicodeScalarViewVMn` | 2 | opensuperwhisper, vorssaint |
-| libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLE15withUnsafeBytesyxxSWKXEKlF` | 2 | macwhisper, superwhisper |
-| libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLE22withUnsafeMutableBytesyxxSw_SaySiGtKXEKlF` | 2 | macwhisper, superwhisper |
-| libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLEyABxcAC08MLShapedB8ProtocolRzlufC` | 2 | macwhisper, superwhisper |
 | libswiftDispatch.dylib | `_$s8Dispatch0A12TimeIntervalOMa` | 2 | opensuperwhisper, vorssaint |
 | libswiftDispatch.dylib | `_$s8Dispatch0A13WorkItemFlagsVMa` | 2 | opensuperwhisper, vorssaint |
 | libswiftDispatch.dylib | `_$s8Dispatch0A13WorkItemFlagsVMn` | 2 | opensuperwhisper, vorssaint |
@@ -313,9 +288,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceP8DispatchE6resumeyyF` | 2 | opensuperwhisper, vorssaint |
 | libswiftDispatch.dylib | `_$sSo21OS_dispatch_semaphoreC8DispatchE4wait7timeoutAC0D13TimeoutResultOAC0D4TimeV_tF` | 2 | opensuperwhisper, vorssaint |
 | libswiftDispatch.dylib | `_$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF` | 2 | opensuperwhisper, vorssaint |
-| libswiftNaturalLanguage.dylib | `_$sSo11NLTokenizerC15NaturalLanguageE10tokenRange2atSnySS5IndexVGAG_tF` | 2 | easydict, markedit |
-| libswiftNaturalLanguage.dylib | `_$sSo8NLTaggerC15NaturalLanguageE03setC0_5rangeySo10NLLanguagea_SnySS5IndexVGtF` | 2 | openclaw, voiceink |
-| libswiftNaturalLanguage.dylib | `_$sSo8NLTaggerC15NaturalLanguageE3tag2at4unit6schemeSo5NLTagaSg_SnySS5IndexVGtAL_So11NLTokenUnitVSo0H6SchemeatF` | 2 | fluidvoice, superwhisper |
 | libswiftObservation.dylib | `_$s11Observation12ObservationsV17makeAsyncIteratorAC0E0Vyxq__GyF` | 2 | coteditor, thaw |
 | libswiftObservation.dylib | `_$s11Observation12ObservationsV8IteratorV4next9isolationxSgScA_pSgYi_tYaq_YKF` | 2 | coteditor, thaw |
 | libswiftObservation.dylib | `_$s11Observation12ObservationsV8IteratorV4next9isolationxSgScA_pSgYi_tYaq_YKFTu` | 2 | coteditor, thaw |
@@ -371,12 +343,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftos.dylib | `_$s2os12OSSignpostIDV3log6objectACSo03OS_a1_D0C_yXltcfC` | 2 | bartender, raycast |
 | libswiftos.dylib | `_$s2os12OSSignpostIDV7invalidACvgZ` | 2 | bettertouchtool, utm |
 | libswiftos.dylib | `_$sSo9OS_os_logC0B0E8disabledABvgZ` | 2 | chatgpt, clipy |
-| CoreML.framework | `_$s6CoreML13MLShapedArrayV5shapeSaySiGvg` | 1 | openclaw |
-| CoreML.framework | `_$s6CoreML21MLShapedArrayProtocolPAAE7scalarsSay6ScalarQzGvM` | 1 | openclaw |
-| CoreML.framework | `_$sSo12MLMultiArrayC6CoreMLE15withUnsafeBytesyxxSWKXEKlF` | 1 | voiceink |
-| CoreML.framework | `_$sSo12MLMultiArrayC6CoreMLE22withUnsafeMutableBytesyxxSw_SaySiGtKXEKlF` | 1 | voiceink |
-| CoreML.framework | `_$sSo12MLMultiArrayC6CoreMLE23withUnsafeBufferPointer6ofType_q_xm_q_SRyxGKXEtKAC08MLShapedB6ScalarRzr0_lF` | 1 | voiceink |
-| CoreML.framework | `_$sSo14MLFeatureValueC6CoreMLE011shapedArrayB02ofAC08MLShapedF0VyxGSgxm_tAC0hF6ScalarRzlF` | 1 | fluidvoice |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA5PointV10IdentifierVMa` | 1 | fuse-t |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA5PointV10IdentifierVyAEs12StaticStringVcfC` | 1 | fuse-t |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA5PointV10identifierACs12StaticStringV_tKcfC` | 1 | fuse-t |
@@ -403,27 +369,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA8IdentityVMa` | 1 | cmux |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA8IdentityVMn` | 1 | cmux |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA8IdentityVSQAAMc` | 1 | cmux |
-| ExtensionKit.framework | `_$s12ExtensionKit012PrimitiveAppA5SceneV2id7content12onConnectionACSS_xycSbSo15NSXPCConnectionCctc7SwiftUI4ViewRzlufC` | 1 | cmux |
-| ExtensionKit.framework | `_$s12ExtensionKit012PrimitiveAppA5SceneVAA0daE0AAWP` | 1 | cmux |
-| ExtensionKit.framework | `_$s12ExtensionKit012PrimitiveAppA5SceneVMn` | 1 | cmux |
-| ExtensionKit.framework | `_$s12ExtensionKit03AppA18SceneConfigurationVMn` | 1 | cmux |
-| ExtensionKit.framework | `_$s12ExtensionKit03AppA18SceneConfigurationVyACxyXAcAA0caD0RzlufC` | 1 | cmux |
-| ExtensionKit.framework | `_$s12ExtensionKit03AppA5SceneMp` | 1 | cmux |
-| ExtensionKit.framework | `_$s12ExtensionKit03AppA5SceneP05_makeD04withAA09PrimitivecaD0VSgSS_tFTq` | 1 | cmux |
-| ExtensionKit.framework | `_$s12ExtensionKit03AppA5SceneP4BodyAC_AaBTn` | 1 | cmux |
-| ExtensionKit.framework | `_$s12ExtensionKit03AppA5SceneP4body4BodyQzvgTq` | 1 | cmux |
-| ExtensionKit.framework | `_$s12ExtensionKit03AppA5ScenePAAE05_makeD04withAA09PrimitivecaD0VSgSS_tF` | 1 | cmux |
-| ExtensionKit.framework | `_$s4Body12ExtensionKit03AppB5ScenePTl` | 1 | cmux |
-| ExtensionKit.framework | `_$sSo20EXHostViewControllerC12ExtensionKitE13ConfigurationV03appD07sceneIDAE0D10Foundation03AppD8IdentityV_SStcfC` | 1 | cmux |
-| ExtensionKit.framework | `_$sSo20EXHostViewControllerC12ExtensionKitE13ConfigurationVMa` | 1 | cmux |
-| ExtensionKit.framework | `_$sSo20EXHostViewControllerC12ExtensionKitE13ConfigurationVMn` | 1 | cmux |
-| ExtensionKit.framework | `_$sSo20EXHostViewControllerC12ExtensionKitE13configurationAbCE13ConfigurationVSgvs` | 1 | cmux |
-| FSKit.framework | `_$s10FileSystem5FSKit05UnaryaB9ExtensionPTl` | 1 | fuse-t |
-| FSKit.framework | `_$s5FSKit24UnaryFileSystemExtensionMp` | 1 | fuse-t |
-| FSKit.framework | `_$s5FSKit24UnaryFileSystemExtensionP04fileD00cD0QzvgTq` | 1 | fuse-t |
-| FSKit.framework | `_$s5FSKit24UnaryFileSystemExtensionP0E10Foundation03AppE0Tb` | 1 | fuse-t |
-| FSKit.framework | `_$s5FSKit24UnaryFileSystemExtensionPAAE13configurationQrvg` | 1 | fuse-t |
-| FSKit.framework | `_$s5FSKit24UnaryFileSystemExtensionPAAE13configurationQrvpQOMQ` | 1 | fuse-t |
 | FoundationModels.framework | `_$s16FoundationModels17GenerationOptionsV12SamplingModeV6greedyAEvgZ` | 1 | markedit |
 | FoundationModels.framework | `_$s16FoundationModels17GenerationOptionsV12SamplingModeV6random20probabilityThreshold4seedAESd_s6UInt64VSgtFZ` | 1 | markedit |
 | FoundationModels.framework | `_$s16FoundationModels17GenerationOptionsV12SamplingModeV6random3top4seedAESi_s6UInt64VSgtFZ` | 1 | markedit |
@@ -562,10 +507,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Translation.framework | `_$s11Translation20LanguageAvailabilityC6status4from2toAC6StatusO10Foundation6LocaleV0B0V_AMSgtYaFTjTu` | 1 | macwhisper |
 | Translation.framework | `_$s11Translation20LanguageAvailabilityCACycfc` | 1 | macwhisper |
 | Translation.framework | `_$s11Translation20LanguageAvailabilityCMa` | 1 | macwhisper |
-| Virtualization.framework | `_$sSo16VZVirtualMachineC14VirtualizationE5pause17completionHandleryys6ResultOyyts5Error_pGc_tF` | 1 | orbstack |
-| Virtualization.framework | `_$sSo16VZVirtualMachineC14VirtualizationE5start17completionHandleryys6ResultOyyts5Error_pGc_tF` | 1 | orbstack |
-| Virtualization.framework | `_$sSo16VZVirtualMachineC14VirtualizationE6resume17completionHandleryys6ResultOyyts5Error_pGc_tF` | 1 | orbstack |
-| Virtualization.framework | `_$sSo20VZVirtioSocketDeviceC14VirtualizationE7connect6toPort17completionHandlerys6UInt32V_ys6ResultOySo0aB10ConnectionCs5Error_pGctF` | 1 | orbstack |
 | WeatherKit.framework | `_$s10WeatherKit03DayA0V10symbolNameSSvg` | 1 | bartender |
 | WeatherKit.framework | `_$s10WeatherKit03DayA0V14rainfallAmount10Foundation11MeasurementVySo12NSUnitLengthCGvg` | 1 | raycast |
 | WeatherKit.framework | `_$s10WeatherKit03DayA0V14snowfallAmount10Foundation11MeasurementVySo12NSUnitLengthCGvg` | 1 | raycast |
@@ -718,12 +659,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftCore.dylib | `_$ss7UnicodeO6ScalarV10PropertiesV19isEmojiModifierBaseSbvg` | 1 | vorssaint |
 | libswiftCore.dylib | `_$ss8DurationV2peoiyyABz_ABtFZ` | 1 | opensuperwhisper |
 | libswiftCore.dylib | `_$ss8RepeatedVyxGSKsMc` | 1 | opensuperwhisper |
-| libswiftCoreML.dylib | `_$s6CoreML21MLShapedArrayProtocolPAAE10convertingxSo07MLMultiD0C_tcfC` | 1 | superwhisper |
-| libswiftCoreML.dylib | `_$sSo14MLFeatureValueC6CoreMLE011shapedArrayB02ofAC08MLShapedF0VyxGSgxm_tAC0hF6ScalarRzlF` | 1 | opensuperwhisper |
-| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE10prediction4from7optionsSo17MLFeatureProvider_pSoAG_p_So19MLPredictionOptionsCtYaKF` | 1 | opensuperwhisper |
-| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE10prediction4from7optionsSo17MLFeatureProvider_pSoAG_p_So19MLPredictionOptionsCtYaKFTu` | 1 | opensuperwhisper |
-| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE12compileModel2at10Foundation3URLVAH_tYaKFZ` | 1 | opensuperwhisper |
-| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE12compileModel2at10Foundation3URLVAH_tYaKFZTu` | 1 | opensuperwhisper |
 | libswiftDarwin.dylib | `_$s6Darwin10SEM_FAILEDSpys5Int32VGSgvg` | 1 | orbstack |
 | libswiftDarwin.dylib | `_$s6Darwin14POSIXErrorCodeO5ELASTACvgZ` | 1 | protonvpn |
 | libswiftDarwin.dylib | `_$s6Darwin8sem_openySpys5Int32VGSgSPys4Int8VG_ADs6UInt16Vs6UInt32VtF` | 1 | orbstack |
@@ -746,7 +681,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventVs9OptionSetACMc` | 1 | vorssaint |
 | libswiftDispatch.dylib | `_$sSo24OS_dispatch_source_timerP8DispatchE8schedule8deadline9repeating6leewayyAC0E4TimeV_AC0eJ8IntervalOAKtF` | 1 | vorssaint |
 | libswiftDispatch.dylib | `_$sSo24OS_dispatch_source_vnodeP8DispatchE4dataSo0a1_b1_C0CACE15FileSystemEventVvg` | 1 | vorssaint |
-| libswiftNaturalLanguage.dylib | `_$sSo20NLLanguageRecognizerC15NaturalLanguageE13languageHintsSDySo0A0aSdGvs` | 1 | easydict |
 | libswiftObservation.dylib | `_$s11Observation12ObservationsV8IteratorVyxq__GScIAAMc` | 1 | coteditor |
 | libswiftRegexBuilder.dylib | `_$s12RegexBuilder10TryCaptureVMn` | 1 | raycast |
 | libswiftRegexBuilder.dylib | `_$s12RegexBuilder10TryCaptureVyACyxG17_StringProcessing0A0VyxGcfC` | 1 | raycast |

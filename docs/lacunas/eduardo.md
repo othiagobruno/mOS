@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Eduardo (Foundation/CoreFoundation) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**4223** símbolos distintos.
+**4310** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -1144,6 +1144,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Foundation.framework | `_NSUndefinedKeyException` | 9 | bartender, calibre, clipy, iina |
 | Foundation.framework | `_OBJC_CLASS_$_NSExtensionItem` | 9 | bettertouchtool, bitwarden, cleanshot, localsend |
 | Foundation.framework | `_OBJC_CLASS_$_NSUnarchiver` | 9 | bettertouchtool, hex-fiend, iina, keycastr |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLLanguageRecognizer` | 9 | bettertouchtool, easydict, fluidvoice, macwhisper |
 | libswiftFoundation.dylib | `_$s10Foundation10URLRequestV8httpBodyAA4DataVSgvg` | 9 | amethyst, bettertouchtool, duckduckgo, fork |
 | libswiftFoundation.dylib | `_$s10Foundation12CharacterSetV13decimalDigitsACvgZ` | 9 | amethyst, bettertouchtool, duckduckgo, iina |
 | libswiftFoundation.dylib | `_$s10Foundation12CharacterSetV17controlCharactersACvgZ` | 9 | 1password, aldente, alt-tab, bettertouchtool |
@@ -1333,6 +1334,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Foundation.framework | `_NSProgressFileOperationKindKey` | 7 | firefox, floorp, librewolf, mullvad-browser |
 | Foundation.framework | `_OBJC_CLASS_$_NSUnit` | 7 | aldente, alt-tab, betterdisplay, clipy |
 | Foundation.framework | `_OBJC_CLASS_$_NSUnitTemperature` | 7 | aldente, bartender, bettertouchtool, raycast |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLTokenizer` | 7 | easydict, fluidvoice, markedit, raycast |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV4CodeV15fileReadUnknownAEvgZ` | 7 | drawio, duckduckgo, marta, obsidian |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV4CodeV18fileReadNoSuchFileAEvgZ` | 7 | duckduckgo, marta, obsidian, protonvpn |
 | libswiftFoundation.dylib | `_$s10Foundation10URLRequestV5value18forHTTPHeaderFieldSSSgSS_tF` | 7 | bettertouchtool, duckduckgo, stats, tableplus |
@@ -1770,6 +1772,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Foundation.framework | `_NSFileHandleReadToEndOfFileCompletionNotification` | 4 | daisydisk, gemini, macdown, the-unarchiver |
 | Foundation.framework | `_NSLocalizedFailureErrorKey` | 4 | coteditor, duckduckgo, quicklook-video, raycast |
 | Foundation.framework | `_NSRegistrationDomain` | 4 | bbedit, coteditor, sequel-ace, superwhisper |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLTagger` | 4 | fluidvoice, openclaw, superwhisper, voiceink |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV18fileReadNoSuchFileAC4CodeVvgZ` | 4 | duckduckgo, krita, linearmouse, whatsapp |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV4CodeV16fileWriteUnknownAEvgZ` | 4 | bettertouchtool, duckduckgo, marta, whatsapp |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV4CodeV20fileReadNoPermissionAEvgZ` | 4 | duckduckgo, marta, obsidian, utm |
@@ -1858,6 +1861,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftFoundation.dylib | `_$ss10ArraySliceVyxG10Foundation15ContiguousBytesADs5UInt8VRszlMc` | 4 | bettertouchtool, claude, linearmouse, tableplus |
 | libswiftFoundation.dylib | `_$ss5ErrorP10FoundationAC13CustomNSErrorRzSYRzs17FixedWidthInteger8RawValueSYRpzrlE5_codeSivg` | 4 | amethyst, duckduckgo, teamviewer, whatsapp |
 | libswiftFoundation.dylib | `_$ss6UInt64V10FoundationE19_bridgeToObjectiveCSo8NSNumberCyF` | 4 | iina, teamviewer, utm, whatsapp |
+| libswiftNaturalLanguage.dylib | `_$sSo11NLTokenizerC15NaturalLanguageE6tokens3forSaySnySS5IndexVGGAH_tF` | 4 | markedit, raycast, superwhisper, voiceink |
+| libswiftNaturalLanguage.dylib | `_$sSo8NLTaggerC15NaturalLanguageE13enumerateTags2in4unit6scheme7options5usingySnySS5IndexVG_So11NLTokenUnitVSo11NLTagSchemeaSo0A7OptionsVSbSo0N0aSg_ALtXEtF` | 4 | fluidvoice, openclaw, superwhisper, voiceink |
 | CoreData.framework | `_OBJC_CLASS_$_NSExpressionDescription` | 3 | bettertouchtool, duckduckgo, whatsapp |
 | CoreFoundation.framework | `_CFAttributedStringBeginEditing` | 3 | openttd, telegram, warp |
 | CoreFoundation.framework | `_CFAttributedStringEndEditing` | 3 | openttd, telegram, warp |
@@ -2123,6 +2128,16 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Foundation.framework | `_OBJC_CLASS_$_NSUnitMass` | 3 | bettertouchtool, raycast, vorssaint |
 | Foundation.framework | `_OBJC_CLASS_$_NSUnitPressure` | 3 | bartender, bettertouchtool, raycast |
 | Foundation.framework | `_OBJC_CLASS_$_NSUserAppleScriptTask` | 3 | coteditor, iterm2, raycast |
+| NaturalLanguage.framework | `_NLLanguageFrench` | 3 | easydict, fluidvoice, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageGerman` | 3 | easydict, fluidvoice, superwhisper |
+| NaturalLanguage.framework | `_NLLanguagePortuguese` | 3 | easydict, fluidvoice, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageSpanish` | 3 | easydict, fluidvoice, superwhisper |
+| NaturalLanguage.framework | `_NLTagNoun` | 3 | fluidvoice, openclaw, superwhisper |
+| NaturalLanguage.framework | `_NLTagOrganizationName` | 3 | openclaw, superwhisper, voiceink |
+| NaturalLanguage.framework | `_NLTagPersonalName` | 3 | openclaw, superwhisper, voiceink |
+| NaturalLanguage.framework | `_NLTagPlaceName` | 3 | openclaw, superwhisper, voiceink |
+| NaturalLanguage.framework | `_NLTagVerb` | 3 | fluidvoice, openclaw, superwhisper |
+| NaturalLanguage.framework | `_OBJC_CLASS_$_NLEmbedding` | 3 | bettertouchtool, fluidvoice, whatsapp |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV14fileNoSuchFileAC4CodeVvgZ` | 3 | bettertouchtool, iina, whatsapp |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV4CodeV13userCancelledAEvgZ` | 3 | marta, tableplus, whatsapp |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV4CodeV16coderReadCorruptAEvgZ` | 3 | bettertouchtool, duckduckgo, marta |
@@ -2601,6 +2616,42 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Foundation.framework | `_OBJC_CLASS_$_NSUnitSpeed` | 2 | bettertouchtool, raycast |
 | Foundation.framework | `_OBJC_CLASS_$_NSUnitVolume` | 2 | bettertouchtool, vorssaint |
 | Foundation.framework | `_OBJC_CLASS_$_NSUserUnixTask` | 2 | 1password, coteditor |
+| NaturalLanguage.framework | `_NLLanguageArabic` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageBulgarian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageCatalan` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageCroatian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageCzech` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageDanish` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageDutch` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageFinnish` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageGreek` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageHebrew` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageHindi` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageHungarian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageIndonesian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageItalian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageJapanese` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageKorean` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageMalay` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageNorwegian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguagePolish` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageRomanian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageRussian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageSimplifiedChinese` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageSlovak` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageSwedish` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageThai` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageTraditionalChinese` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageTurkish` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageUkrainian` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLLanguageVietnamese` | 2 | easydict, superwhisper |
+| NaturalLanguage.framework | `_NLTagAdjective` | 2 | fluidvoice, openclaw |
+| NaturalLanguage.framework | `_NLTagAdverb` | 2 | fluidvoice, openclaw |
+| NaturalLanguage.framework | `_NLTagPronoun` | 2 | openclaw, superwhisper |
+| NaturalLanguage.framework | `_NLTagPunctuation` | 2 | fluidvoice, openclaw |
+| NaturalLanguage.framework | `_NLTagSchemeLexicalClass` | 2 | fluidvoice, superwhisper |
+| NaturalLanguage.framework | `_NLTagSchemeNameType` | 2 | superwhisper, voiceink |
+| NaturalLanguage.framework | `_NLTagSchemeNameTypeOrLexicalClass` | 2 | openclaw, superwhisper |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV4CodeV25ubiquitousFileUnavailableAEvgZ` | 2 | marta, whatsapp |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV4CodeV34fileReadInapplicableStringEncodingAEvgZ` | 2 | marta, obsidian |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV4CodeV35ubiquitousFileNotUploadedDueToQuotaAEvgZ` | 2 | marta, whatsapp |
@@ -2791,6 +2842,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftFoundation.dylib | `_$ss10ArraySliceV10Foundations5UInt8VRszlE7regionss15CollectionOfOneVyAByAEGGvg` | 2 | bettertouchtool, tableplus |
 | libswiftFoundation.dylib | `_$ss5Int32V10FoundationE7exactlyABSgSo8NSNumberCh_tcfC` | 2 | whatsapp, zoom |
 | libswiftFoundation.dylib | `_$ss6UInt16V10FoundationE19_bridgeToObjectiveCSo8NSNumberCyF` | 2 | whatsapp, zoom |
+| libswiftNaturalLanguage.dylib | `_$sSo11NLTokenizerC15NaturalLanguageE10tokenRange2atSnySS5IndexVGAG_tF` | 2 | easydict, markedit |
+| libswiftNaturalLanguage.dylib | `_$sSo8NLTaggerC15NaturalLanguageE03setC0_5rangeySo10NLLanguagea_SnySS5IndexVGtF` | 2 | openclaw, voiceink |
+| libswiftNaturalLanguage.dylib | `_$sSo8NLTaggerC15NaturalLanguageE3tag2at4unit6schemeSo5NLTagaSg_SnySS5IndexVGtAL_So11NLTokenUnitVSo0H6SchemeatF` | 2 | fluidvoice, superwhisper |
 | CoreData.framework | `_NSSQLiteManualVacuumOption` | 1 | iterm2 |
 | CoreData.framework | `_NSStoreTypeKey` | 1 | bettertouchtool |
 | CoreData.framework | `_OBJC_CLASS_$_NSBatchInsertRequest` | 1 | whatsapp |
@@ -2890,6 +2944,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreFoundation.framework | `_kCFUserNotificationOtherButtonTitleKey` | 1 | tunnelblick |
 | CoreFoundation.framework | `_kCFUserNotificationTextFieldTitlesKey` | 1 | sourcetree |
 | CoreFoundation.framework | `_kCFUserNotificationTextFieldValuesKey` | 1 | sourcetree |
+| ExceptionHandling.framework | `_NSStackTraceKey` | 1 | r-app |
+| ExceptionHandling.framework | `_OBJC_CLASS_$_NSExceptionHandler` | 1 | r-app |
 | Foundation.framework | `_$s10Foundation10CocoaErrorV16fileWriteUnknownAC4CodeVvgZ` | 1 | iterm2 |
 | Foundation.framework | `_$s10Foundation10CocoaErrorV21fileWriteNoPermissionAC4CodeVvgZ` | 1 | iterm2 |
 | Foundation.framework | `_$s10Foundation10CocoaErrorV4CodeV17coderInvalidValueAEvgZ` | 1 | codexbar |
@@ -3744,6 +3800,36 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Foundation.framework | `_OBJC_METACLASS_$_NSDeleteCommand` | 1 | utm |
 | Foundation.framework | `_OBJC_METACLASS_$_NSScriptSuiteRegistry` | 1 | bbedit |
 | Foundation.framework | `__NSSetLogCStringFunction` | 1 | bettertouchtool |
+| NaturalLanguage.framework | `_NLLanguageBengali` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageBurmese` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageGeorgian` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageKhmer` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageLao` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageMongolian` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguagePersian` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageTamil` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageTelugu` | 1 | easydict |
+| NaturalLanguage.framework | `_NLLanguageUrdu` | 1 | easydict |
+| NaturalLanguage.framework | `_NLTagClassifier` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagCloseParenthesis` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagCloseQuote` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagConjunction` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagDash` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagDeterminer` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagIdiom` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagInterjection` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagNumber` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagOpenParenthesis` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagOpenQuote` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagOtherPunctuation` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagOtherWord` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagParagraphBreak` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagParticle` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagPreposition` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagSentenceTerminator` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagWhitespace` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagWord` | 1 | openclaw |
+| NaturalLanguage.framework | `_NLTagWordJoiner` | 1 | openclaw |
 | libswiftCoreData.dylib | `_$s10Foundation10CocoaErrorV4CodeV8CoreDataE24persistentStoreOperationAEvgZ` | 1 | bettertouchtool |
 | libswiftCoreData.dylib | `_$sSo22NSManagedObjectContextC8CoreDataE26didSaveObjectsNotificationSo18NSNotificationNameavgZ` | 1 | duckduckgo |
 | libswiftFoundation.dylib | `_$s10Foundation10CocoaErrorV13userCancelledAC4CodeVvgZ` | 1 | iina |
@@ -4229,4 +4315,5 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftFoundation.dylib | `_$ss6UInt64V10FoundationE10truncatingABSo8NSNumberCh_tcfC` | 1 | whatsapp |
 | libswiftFoundation.dylib | `_$ss6UInt64V10FoundationE26_forceBridgeFromObjectiveC_6resultySo8NSNumberC_ABSgztFZ` | 1 | mac-mouse-fix |
 | libswiftFoundation.dylib | `_$ss6UInt64Vs21_ObjectiveCBridgeable10FoundationMc` | 1 | whatsapp |
+| libswiftNaturalLanguage.dylib | `_$sSo20NLLanguageRecognizerC15NaturalLanguageE13languageHintsSDySo0A0aSdGvs` | 1 | easydict |
 | self) | `_CFBundleGetBundleWithIdentifier` | 1 | libreoffice |

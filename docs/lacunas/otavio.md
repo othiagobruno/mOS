@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Otavio (OpenGL, Metal, Core Animation) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**210** símbolos distintos.
+**266** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -15,10 +15,14 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AppKit.framework | `_NSOpenGLGetVersion` | 7 | bitwarden, gemini, monitorcontrol, mos |
 | AppKit.framework | `_NSOpenGLSetOption` | 7 | bitwarden, gemini, monitorcontrol, mos |
 | CoreVideo.framework | `_CVImageBufferGetEncodedSize` | 7 | adobe-acrobat-reader, calibre, iina, jellyfin |
+| CoreML.framework | `_OBJC_CLASS_$_MLFeatureDescription` | 6 | fluidvoice, macwhisper, openclaw, opensuperwhisper |
 | CoreVideo.framework | `_CVOpenGLTextureCacheCreate` | 5 | calibre, nextcloud, shotcut, telegram |
 | CoreVideo.framework | `_CVOpenGLTextureCacheCreateTextureFromImage` | 5 | calibre, nextcloud, shotcut, telegram |
 | CoreVideo.framework | `_CVOpenGLTextureGetName` | 5 | calibre, nextcloud, shotcut, telegram |
+| CoreML.framework | `_OBJC_CLASS_$_MLArrayBatchProvider` | 4 | fluidvoice, macwhisper, opensuperwhisper, voiceink |
 | CoreVideo.framework | `_CVOpenGLTextureCacheFlush` | 4 | calibre, shotcut, telegram, wireshark-app |
+| CoreML.framework | `_$sSf6CoreML19MLShapedArrayScalarAAWP` | 3 | fluidvoice, openclaw, voiceink |
+| CoreML.framework | `_OBJC_CLASS_$_MLModelAsset` | 3 | macwhisper, microsoft-teams, voiceink |
 | CoreVideo.framework | `_CVOpenGLTextureRelease` | 3 | calibre, shotcut, wireshark-app |
 | OpenCL.framework | `_clBuildProgram` | 3 | jellyfin, shotcut, stremio |
 | OpenCL.framework | `_clCreateBuffer` | 3 | jellyfin, shotcut, stremio |
@@ -57,8 +61,28 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | OpenCL.framework | `_clRetainCommandQueue` | 3 | jellyfin, shotcut, stremio |
 | OpenCL.framework | `_clSetKernelArg` | 3 | jellyfin, shotcut, stremio |
 | OpenCL.framework | `_clWaitForEvents` | 3 | jellyfin, shotcut, stremio |
+| libswiftCoreML.dylib | `_$s6CoreML13MLShapedArrayVMn` | 3 | macwhisper, opensuperwhisper, superwhisper |
+| libswiftCoreML.dylib | `_$s6CoreML13MLShapedArrayVyxGAA0cD8ProtocolAAMc` | 3 | macwhisper, opensuperwhisper, superwhisper |
+| libswiftCoreML.dylib | `_$s6CoreML21MLShapedArrayProtocolPAAE7scalarsSay6ScalarQzGvg` | 3 | macwhisper, opensuperwhisper, superwhisper |
+| libswiftCoreML.dylib | `_$sSf6CoreML19MLShapedArrayScalarAAWP` | 3 | macwhisper, opensuperwhisper, superwhisper |
+| libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLE30withUnsafeMutableBufferPointer6ofType_q_xm_q_SryxG_SaySiGtKXEtKAC08MLShapedB6ScalarRzr0_lF` | 3 | macwhisper, opensuperwhisper, superwhisper |
+| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE4load10contentsOf13configurationAB10Foundation3URLV_So0A13ConfigurationCtYaKFZ` | 3 | macwhisper, opensuperwhisper, superwhisper |
+| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE4load10contentsOf13configurationAB10Foundation3URLV_So0A13ConfigurationCtYaKFZTu` | 3 | macwhisper, opensuperwhisper, superwhisper |
+| libswiftCoreML.dylib | `_$ss5Int32V6CoreML19MLShapedArrayScalarACWP` | 3 | macwhisper, opensuperwhisper, superwhisper |
 | AppKit.framework | `_OBJC_CLASS_$_NSOpenGLLayer` | 2 | epic-games, zoom |
 | AppKit.framework | `_OBJC_METACLASS_$_NSOpenGLLayer` | 2 | epic-games, zoom |
+| CoreML.framework | `_$s6CoreML13MLShapedArrayVMn` | 2 | fluidvoice, openclaw |
+| CoreML.framework | `_$s6CoreML13MLShapedArrayVyxGAA0cD8ProtocolAAMc` | 2 | fluidvoice, openclaw |
+| CoreML.framework | `_$s6CoreML21MLShapedArrayProtocolPAAE7scalarsSay6ScalarQzGvg` | 2 | fluidvoice, openclaw |
+| CoreML.framework | `_$sSo12MLMultiArrayC6CoreMLE30withUnsafeMutableBufferPointer6ofType_q_xm_q_SryxG_SaySiGtKXEtKAC08MLShapedB6ScalarRzr0_lF` | 2 | fluidvoice, voiceink |
+| CoreML.framework | `_$sSo7MLModelC6CoreMLE10prediction4from7optionsSo17MLFeatureProvider_pSoAG_p_So19MLPredictionOptionsCtYaKF` | 2 | fluidvoice, voiceink |
+| CoreML.framework | `_$sSo7MLModelC6CoreMLE10prediction4from7optionsSo17MLFeatureProvider_pSoAG_p_So19MLPredictionOptionsCtYaKFTu` | 2 | fluidvoice, voiceink |
+| CoreML.framework | `_$sSo7MLModelC6CoreMLE12compileModel2at10Foundation3URLVAH_tYaKFZ` | 2 | fluidvoice, voiceink |
+| CoreML.framework | `_$sSo7MLModelC6CoreMLE12compileModel2at10Foundation3URLVAH_tYaKFZTu` | 2 | fluidvoice, voiceink |
+| CoreML.framework | `_$sSo7MLModelC6CoreMLE4load10contentsOf13configurationAB10Foundation3URLV_So0A13ConfigurationCtYaKFZ` | 2 | fluidvoice, voiceink |
+| CoreML.framework | `_$sSo7MLModelC6CoreMLE4load10contentsOf13configurationAB10Foundation3URLV_So0A13ConfigurationCtYaKFZTu` | 2 | fluidvoice, voiceink |
+| CoreML.framework | `_$ss5Int32V6CoreML19MLShapedArrayScalarACWP` | 2 | fluidvoice, openclaw |
+| CoreML.framework | `_MLModelCreatorDefinedKey` | 2 | microsoft-teams, openclaw |
 | CoreVideo.framework | `_CVImageBufferGetColorSpace` | 2 | cleanshot, microsoft-teams |
 | CoreVideo.framework | `_kCVImageBufferFieldDetailTemporalBottomFirst` | 2 | handbrake-app, libndi |
 | CoreVideo.framework | `_kCVImageBufferFieldDetailTemporalTopFirst` | 2 | handbrake-app, libndi |
@@ -84,6 +108,16 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | OpenGL.framework | `_gluTessVertex` | 2 | kicad, openscad |
 | OpenGL.framework | `_gluUnProject` | 2 | lmms, openscad |
 | QuartzCore.framework | `_OBJC_CLASS_$_CABackdropLayer` | 2 | bettertouchtool, zoom |
+| libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLE15withUnsafeBytesyxxSWKXEKlF` | 2 | macwhisper, superwhisper |
+| libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLE22withUnsafeMutableBytesyxxSw_SaySiGtKXEKlF` | 2 | macwhisper, superwhisper |
+| libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLEyABxcAC08MLShapedB8ProtocolRzlufC` | 2 | macwhisper, superwhisper |
+| CoreML.framework | `_$s6CoreML13MLShapedArrayV5shapeSaySiGvg` | 1 | openclaw |
+| CoreML.framework | `_$s6CoreML21MLShapedArrayProtocolPAAE7scalarsSay6ScalarQzGvM` | 1 | openclaw |
+| CoreML.framework | `_$sSo12MLMultiArrayC6CoreMLE15withUnsafeBytesyxxSWKXEKlF` | 1 | voiceink |
+| CoreML.framework | `_$sSo12MLMultiArrayC6CoreMLE22withUnsafeMutableBytesyxxSw_SaySiGtKXEKlF` | 1 | voiceink |
+| CoreML.framework | `_$sSo12MLMultiArrayC6CoreMLE23withUnsafeBufferPointer6ofType_q_xm_q_SRyxGKXEtKAC08MLShapedB6ScalarRzr0_lF` | 1 | voiceink |
+| CoreML.framework | `_$sSo14MLFeatureValueC6CoreMLE011shapedArrayB02ofAC08MLShapedF0VyxGSgxm_tAC0hF6ScalarRzlF` | 1 | fluidvoice |
+| CoreML.framework | `_MLModelDescriptionKey` | 1 | openclaw |
 | CoreVideo.framework | `_CVImageBufferGetDisplaySize` | 1 | adobe-acrobat-reader |
 | CoreVideo.framework | `_CVOpenGLTextureGetTarget` | 1 | telegram |
 | CoreVideo.framework | `_kCVImageBufferChromaLocation_DV420` | 1 | vlc |
@@ -98,6 +132,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreVideo.framework | `_kCVPixelBufferExtendedPixelsRightKey` | 1 | handbrake-app |
 | CoreVideo.framework | `_kCVPixelFormatComponentRange_VideoRange` | 1 | handbrake-app |
 | CoreVideo.framework | `_kCVPixelFormatOpenGLCompatibility` | 1 | telegram |
+| GameplayKit.framework | `_OBJC_CLASS_$_GKNoise` | 1 | shottr |
+| GameplayKit.framework | `_OBJC_CLASS_$_GKNoiseMap` | 1 | shottr |
+| GameplayKit.framework | `_OBJC_CLASS_$_GKPerlinNoiseSource` | 1 | shottr |
 | Metal.framework | `_MTLMakeShaderCacheWritableByAllUsers` | 1 | utm |
 | Metal.framework | `_MTLSetShaderCachePath` | 1 | utm |
 | Metal.framework | `_MTLTextureSwizzleChannelsToKey` | 1 | utm |
@@ -106,6 +143,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Metal.framework | `_OBJC_CLASS_$_MTLAccelerationStructurePassDescriptor` | 1 | utm |
 | Metal.framework | `_OBJC_CLASS_$_MTLMeshRenderPipelineDescriptor` | 1 | utm |
 | Metal.framework | `_OBJC_CLASS_$_MTLVisibleFunctionTableDescriptor` | 1 | utm |
+| MetalFX.framework | `_OBJC_CLASS_$_MTLFXSpatialScalerDescriptor` | 1 | utm |
+| MetalFX.framework | `_OBJC_CLASS_$_MTLFXTemporalScalerDescriptor` | 1 | utm |
 | OpenCL.framework | `_clCompileProgram` | 1 | shotcut |
 | OpenCL.framework | `_clCreateContextFromType` | 1 | shotcut |
 | OpenCL.framework | `_clCreateKernelsInProgram` | 1 | shotcut |
@@ -214,6 +253,23 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | QuartzCore.framework | `_kCAFilterScreenBlendMode` | 1 | zoom |
 | QuartzCore.framework | `_kCAFilterSoftLightBlendMode` | 1 | zoom |
 | QuartzCore.framework | `_kCAFilterSubtractBlendMode` | 1 | zoom |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNAction` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNMaterial` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNNode` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNParticlePropertyController` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNParticleSystem` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNScene` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNTransaction` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNView` | 1 | telegram |
+| SceneKit.framework | `_SCNParticlePropertyColor` | 1 | telegram |
+| SceneKit.framework | `_SCNParticlePropertyOpacity` | 1 | telegram |
+| SceneKit.framework | `_SCNParticlePropertySize` | 1 | telegram |
+| libswiftCoreML.dylib | `_$s6CoreML21MLShapedArrayProtocolPAAE10convertingxSo07MLMultiD0C_tcfC` | 1 | superwhisper |
+| libswiftCoreML.dylib | `_$sSo14MLFeatureValueC6CoreMLE011shapedArrayB02ofAC08MLShapedF0VyxGSgxm_tAC0hF6ScalarRzlF` | 1 | opensuperwhisper |
+| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE10prediction4from7optionsSo17MLFeatureProvider_pSoAG_p_So19MLPredictionOptionsCtYaKF` | 1 | opensuperwhisper |
+| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE10prediction4from7optionsSo17MLFeatureProvider_pSoAG_p_So19MLPredictionOptionsCtYaKFTu` | 1 | opensuperwhisper |
+| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE12compileModel2at10Foundation3URLVAH_tYaKFZ` | 1 | opensuperwhisper |
+| libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE12compileModel2at10Foundation3URLVAH_tYaKFZTu` | 1 | opensuperwhisper |
 | libswiftMetal.dylib | `_$sSo23MTLRenderCommandEncoderP5MetalE16setVertexBuffers_7offsets5rangeySaySo9MTLBuffer_pSgG_SaySiGSnySiGtF` | 1 | obs |
 | libswiftMetal.dylib | `_$sSo23MTLRenderCommandEncoderP5MetalE19setFragmentTextures_5rangeySaySo10MTLTexture_pSgG_SnySiGtF` | 1 | raycast |
 | libswiftQuartzCore.dylib | `_$sSo13CATransform3DV10QuartzCoreE34_conditionallyBridgeFromObjectiveC_6resultSbSo7NSValueC_ABSgztFZ` | 1 | mac-mouse-fix |

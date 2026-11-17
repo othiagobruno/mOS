@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Camila (desktop e window server) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**190** símbolos distintos.
+**191** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -106,6 +106,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | ApplicationServices.framework | `_CGDisplayIOServicePort` | 1 | the-unarchiver |
 | ApplicationServices.framework | `_CGReleaseDisplayFadeReservation` | 1 | vlc |
 | ApplicationServices.framework | `_CGSCreateRegisteredCursorImage` | 1 | vlc |
+| BezelServices.framework | `_ALCALSCopyALSServiceClient` | 1 | betterdisplay |
 | CoreGraphics.framework | `_CGConfigureDisplayFadeEffect` | 1 | betterdisplay |
 | CoreGraphics.framework | `_CGDisplayForceToGray` | 1 | hammerspoon |
 | CoreGraphics.framework | `_CGDisplayModeGetIODisplayModeID` | 1 | zoom |
