@@ -624,11 +624,6 @@ static id bir_with_data(id k, SEL c, id data) { (void)c; id o = bir_init_data(ne
 static id bir_retag(id self, SEL c, id space) { (void)c; (void)space; return self; }   /* um espaço de cor só (sRGB) */
 /* +[NSImage imageWithSize:flipped:drawingHandler:]: o mOS não tem lockFocus em bitmap, então a imagem fica do tamanho
  * pedido e sem desenho. O Chromium a usa como imagem de erro (GetErrorNSImage) quando o PNG não decodifica. */
-static id img_with_size_handler(id k, SEL c, ax_size_t z, BOOL flipped, id handler) {
-    (void)c; (void)flipped; (void)handler;
-    id o = ((id (*)(id, SEL, ax_size_t))objc_msgSend)(MSG0(id, k, "alloc"), sel_registerName("initWithSize:"), z);
-    return o ? objc_autorelease(o) : 0;
-}
 
 /* ---- toolbar e Touch Bar */
 static id tb_init_ident(id self, SEL c, id ident) { (void)c; pset(self, "identifier", ident); return self; }
@@ -805,7 +800,6 @@ void cx_appkit_extra_init(void) {
     IM(NSBitmapImageRep, "representationUsingType:properties:", bir_repr);
     IM(NSBitmapImageRep, "initWithData:", bir_init_data); CM(NSBitmapImageRep, "imageRepWithData:", bir_with_data);
     IM(NSBitmapImageRep, "bitmapImageRepByRetaggingWithColorSpace:", bir_retag);
-    { cx_class_t *ni = cx_class_named("NSImage"); if (ni) cx_add_cmethod(ni, "imageWithSize:flipped:drawingHandler:", (void *)img_with_size_handler); }
     DEF(NSImageSymbolConfiguration, "NSObject"); DEF(NSColorList, "NSObject"); DEF(NSTextAttachment, "NSObject");
     DEF(NSColorSampler, "NSObject"); DEF(NSSpeechSynthesizer, "NSObject");
     REG_PROP(NSTextAttachment, image, setImage);
