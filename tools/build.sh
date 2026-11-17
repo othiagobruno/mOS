@@ -568,7 +568,7 @@ else
 fi
 
 echo "==> git (/usr/bin/git, /usr/libexec/git-core; do fonte, com a libz e a libcurl acima)"
-MOS_ZIG="$ZIG" bash "$ROOT/tools/build-git.sh"
+MOS_ZIG="$ZIG" MOS_JOBS="$(( JOBS < 2 ? JOBS : 2 ))" bash "$ROOT/tools/build-git.sh"
 cp -a "$ROOT/build/git-x86_64/mos/." "$ESP/mOS/"
 
 echo "==> libswift"
@@ -764,8 +764,9 @@ else
     echo "aviso: CryptoKit.framework não saiu de tools/build-frameworks-objc.sh (falta o Foundation Swift real?)" >&2
 fi
 
-echo "==> apps oficiais em /Aplicativos"
-bash "$ROOT/tools/stage-apps-oficiais.sh" "$OUT"
+# Apps de terceiros (WhatsApp, ChatGPT, Claude, Cursor...) não entram na imagem do sistema: vão para o disco de dados
+# build/apps.img, feito só quando pedido por tools/build-apps-img.sh (docs/disco-de-apps.md).
+rm -rf "$ESP/mOS/Aplicativos"
 mkdir -p "$ESP/mOS/usr/lib"
 cp -f "$ROOT/build/libcxx/libc++.1.dylib" "$ESP/mOS/usr/lib/libc++.1.dylib"
 

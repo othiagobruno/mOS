@@ -19,6 +19,9 @@
 #endif
 #include "../kernel/include/ed25519_impl.h"
 #include "../kernel/include/fwlink.h"
+/* rótulo do volume FAT (--dados <RÓTULO> troca; ver main) */
+static char vol_label[12] = "MOS        ";
+static const char *dados_label = NULL;
 
 #define SECTOR 512
 #define SPC 2 /* setores por cluster (1 KiB) */
@@ -340,7 +343,7 @@ static void write_node(node *n) {
         uint32_t pc = n->parent->parent ? n->parent->cluster : 0;
         put_entry(e, "..         ", 0x10, pc, 0); e += 32;
     } else {
-        put_entry(e, "MOS        ", 0x08, 0, 0); e += 32;
+        put_entry(e, vol_label, 0x08, 0, 0); e += 32;
     }
     for (node *c = n->child; c; c = c->next) {
         int nl = lfn_count(c);
@@ -642,15 +645,31 @@ static void make_manifest(node *root) {
     free(m);
 }
 
+/* --dados <RÓTULO>: disco de dados (ex.: build/apps.img com os apps do corpus, segundo disco no QEMU). Sem \mOS\,
+ * sem manifesto e sem partição ESP: o kernel monta em /Volumes/<RÓTULO> e nunca o toma por disco de sistema. */
 static void guid(uint8_t *g) { for (int i = 0; i < 16; i++) g[i] = rand() & 0xFF; g[7] = (g[7] & 0x0F) | 0x40; g[8] = (g[8] & 0x3F) | 0x80; }
 
 int main(int argc, char **argv) {
-    if (argc < 4) { fprintf(stderr, "uso: mkimg <saida.img> <dir> <MiB> [--live-overlay <dir>] [--test-overlay <dir>] [--key <semente>] [--manifest-out <arquivo>] [--versao <texto>]\n"); return 1; }
+    if (argc < 4) { fprintf(stderr, "uso: mkimg <saida.img> <dir> <MiB> [--live-overlay <dir>] [--test-overlay <dir>] [--key <semente>] [--manifest-out <arquivo>] [--versao <texto>] | mkimg <saida.img> <dir> <MiB> --dados <RÓTULO>\n"); return 1; }
     const char *overlay_dir = NULL, *test_dir = NULL;
     for (int i = 4; i < argc; i++) {
         if (!strcmp(argv[i], "--live-overlay") && i + 1 < argc) overlay_dir = argv[++i];
         else if (!strcmp(argv[i], "--test-overlay") && i + 1 < argc) test_dir = argv[++i];
         else if (!strcmp(argv[i], "--key") && i + 1 < argc) load_key(argv[++i]);
+        else if (!strcmp(argv[i], "--dados") && i + 1 < argc) {
+            dados_label = argv[++i];
+            size_t l = strlen(dados_label);
+            if (!l || l > 11) { fprintf(stderr, "mkimg: --dados precisa de um rótulo de 1 a 11 caracteres\n"); return 1; }
+            for (size_t k = 0; k < l; k++) {
+                char ch = dados_label[k];
+                if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+                if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_')) {
+                    fprintf(stderr, "mkimg: rótulo de --dados só com letras, números, - e _\n"); return 1;
+                }
+                vol_label[k] = ch;
+            }
+            for (size_t k = l; k < 11; k++) vol_label[k] = ' ';
+        }
         else if (!strcmp(argv[i], "--manifest-out") && i + 1 < argc) manifest_out = argv[++i];
         else if (!strcmp(argv[i], "--versao") && i + 1 < argc) {
             payload_version = argv[++i];
@@ -659,6 +678,9 @@ int main(int argc, char **argv) {
             }
         }
         else { fprintf(stderr, "mkimg: argumento desconhecido: %s\n", argv[i]); return 1; }
+    }
+    if (dados_label && (overlay_dir || test_dir || have_key || manifest_out)) {
+        fprintf(stderr, "mkimg: --dados não leva overlay, chave nem manifesto (é disco de dados, não de sistema)\n"); return 1;
     }
     remove(argv[1]);   /* fail-closed: se o build falhar, nunca sobra uma imagem antiga para ser gravada por engano */
     img_path = argv[1];
@@ -686,11 +708,12 @@ int main(int argc, char **argv) {
     /* ---- GPT ---- */
     uint8_t entries[128 * 128] = {0};
     static const uint8_t esp_type[16] = {0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11, 0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B};
-    memcpy(entries, esp_type, 16);
+    static const uint8_t dados_type[16] = {0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44, 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7};
+    memcpy(entries, dados_label ? dados_type : esp_type, 16);   /* dados: Microsoft basic data, não ESP */
     guid(entries + 16);
     wr64(entries + 32, part_lba);
     wr64(entries + 40, part_lba + part_sectors - 1);
-    const char *pname = "mOS";
+    const char *pname = dados_label ? dados_label : "mOS";
     for (int i = 0; pname[i]; i++) wr16(entries + 56 + i * 2, pname[i]);
     uint32_t ecrc = crc32(entries, sizeof entries);
     uint8_t disk_guid[16];
@@ -730,13 +753,17 @@ int main(int argc, char **argv) {
     wr32(bs + 28, part_lba); wr32(bs + 32, part_sectors);
     wr32(bs + 36, fat_sectors); wr32(bs + 44, 2); wr16(bs + 48, 1); wr16(bs + 50, 6);
     bs[64] = 0x80; bs[66] = 0x29; wr32(bs + 67, (uint32_t)rand());
-    memcpy(bs + 71, "MOS        ", 11); memcpy(bs + 82, "FAT32   ", 8);
+    memcpy(bs + 71, vol_label, 11); memcpy(bs + 82, "FAT32   ", 8);
     bs[510] = 0x55; bs[511] = 0xAA;
 
     node *root = load_tree(argv[2], "", NULL);
     canon_fw_links(root, "");
     validate_staging(root, "");
-    make_manifest(root);
+    if (dados_label) {
+        int tem_mos = 0;
+        for (node *c = root->child; c; c = c->next) if (c->is_dir && !strcmp(c->name, "mOS")) tem_mos = 1;
+        if (tem_mos) { fprintf(stderr, "mkimg: --dados com uma pasta mOS/ na raiz: o kernel a tomaria por sistema\n"); return 1; }
+    } else make_manifest(root);
     if (overlay_dir) {
         node *ov = load_tree(overlay_dir, "", NULL);
         canon_fw_links(ov, "");

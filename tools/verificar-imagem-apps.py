@@ -125,9 +125,28 @@ def libsystem_substitui(root):
 
 
 def main():
-    esp = sys.argv[1]
+    """verificar-imagem-apps.py <esp>: o sistema (dylibs e programas de /usr).
+    verificar-imagem-apps.py --apps <árvore>: os apps de terceiros do disco de dados (build/apps.img), em
+    <árvore>/Aplicativos; eles não vão mais na imagem do sistema (tools/build-apps-img.sh)."""
+    so_apps = sys.argv[1] == "--apps"
+    esp = sys.argv[2] if so_apps else sys.argv[1]
     mos = os.path.join(esp, "mOS")
-    apps = os.path.join(mos, "Aplicativos")
+    apps = os.path.join(esp, "Aplicativos")
+    fails = 0
+
+    def bad(msg):
+        nonlocal fails
+        fails += 1
+        print("FALHA:", msg)
+
+    if so_apps:
+        return confere_apps(apps)
+    if os.path.isdir(os.path.join(mos, "Aplicativos")) and any(os.scandir(os.path.join(mos, "Aplicativos"))):
+        bad("a imagem do sistema tem apps de terceiros em /Aplicativos (vão para build/apps.img)")
+    return confere_sistema(mos, bad, lambda: fails)
+
+
+def confere_apps(apps):
     fails = 0
 
     def bad(msg):
@@ -147,6 +166,14 @@ def main():
     for rel in WHATSAPP_MIN:
         if not os.path.isdir(os.path.join(apps, rel)):
             bad("WhatsApp sem " + rel)
+    if fails:
+        print("%d falha(s)" % fails)
+        return 1
+    print("verificar-imagem-apps: apps ok")
+    return 0
+
+
+def confere_sistema(mos, bad, falhas):
     for rel in REAL_DYLIB:
         p = os.path.join(mos, rel)
         if not os.path.isfile(p):
@@ -216,15 +243,15 @@ def main():
                 print("real dylib", "usr/lib/swift/" + name, len(data))
             else:
                 bad("usr/lib/swift/%s não é Mach-O nem stub marcado" % name)
-    if fails:
-        print("%d falha(s)" % fails)
+    if falhas():
+        print("%d falha(s)" % falhas())
         return 1
     print("verificar-imagem-apps: ok")
     return 0
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("uso: verificar-imagem-apps.py <esp>", file=sys.stderr)
+    if not (len(sys.argv) == 2 or (len(sys.argv) == 3 and sys.argv[1] == "--apps")):
+        print("uso: verificar-imagem-apps.py <esp> | --apps <árvore do disco de apps>", file=sys.stderr)
         sys.exit(2)
     sys.exit(main())

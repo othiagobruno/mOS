@@ -20,7 +20,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ZIG=${MOS_ZIG:-zig}
 TGT=x86_64-macos.11.0
-JOBS=$(nproc 2>/dev/null || echo 4)
+JOBS=${MOS_JOBS:-2}                              # regra de RAM do PC: no máximo -j2
 VER=2.56.1
 SHA=f0b0bf89264b9bd2e1c640363e7529643989da76281600473c50745cd34a607f
 MKVER=4.4.1
