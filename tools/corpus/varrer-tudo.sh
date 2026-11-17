@@ -10,9 +10,17 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 H=tools/corpus/harness.py
-# libSystem: o do build/ local (o build final pela fila renova; build/libSystem.origem diz de onde veio)
-LIBS=(--lib build/libSystem.mos --disco build/disco-x86 --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
-echo "varrer-tudo: libSystem local ($(cat build/libSystem.origem 2>/dev/null))"
+# libSystem e disco: os do build/ local. Depois do tools/build.sh, o disco é a própria árvore da imagem (build/esp/mOS:
+# /usr/lib/swift com libswiftFoundation, libswiftAppKit..., os frameworks do mOS como CryptoKit, CoreImage e CloudKit, e
+# /usr/lib); sem ela, os discos copiados de antes (build/disco-x86). build/libSystem.origem diz de onde veio.
+if [ -d build/esp/mOS/usr/lib/swift ]; then
+    [ -d build/esp/mOS/Aplicativos ] && { echo "varrer-tudo: build/esp/mOS tem /Aplicativos (apps de terceiros contariam como sistema); apague" >&2; exit 1; }
+    [ -f build/libSystem.origem ] || echo "build final $(git log -1 --format='%h %cs' 2>/dev/null)" > build/libSystem.origem
+    LIBS=(--lib build/libSystem.mos --disco build/esp/mOS --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/esp/mOS)
+else
+    LIBS=(--lib build/libSystem.mos --disco build/disco-x86 --lib-arm64 build/libSystem-arm64.mos --disco-arm64 build/disco-arm64)
+fi
+echo "varrer-tudo: libSystem local ($(cat build/libSystem.origem 2>/dev/null)), disco ${LIBS[3]}"
 # libSystem diferente do da última medida: tudo o que foi medido com o outro é refeito
 atual=$(sha256sum "${LIBS[1]}" | cut -c1-16)
 if [ "$(cat build/corpus/libsystem-medido.txt 2>/dev/null)" != "$atual" ]; then
