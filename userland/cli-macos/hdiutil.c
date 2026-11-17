@@ -17,7 +17,11 @@
 #include "../pkg/volfmt.c"
 #ifdef __APPLE__
 #include <sys/mount.h>
-#include <sys/xattr.h>
+/* <sys/xattr.h> não está no include dos programas do cli-macos: as assinaturas do Darwin, exportadas pelo libSystem */
+ssize_t listxattr(const char *path, char *namebuf, size_t size, int options);
+ssize_t getxattr(const char *path, const char *name, void *value, size_t size, unsigned int position, int options);
+int setxattr(const char *path, const char *name, const void *value, size_t size, unsigned int position, int options);
+#define XATTR_NOFOLLOW 0x0001
 #endif
 
 static int quiet, plist;
