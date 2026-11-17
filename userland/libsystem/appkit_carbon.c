@@ -12,7 +12,8 @@
 #include "foundation.h"
 #include "sys.h"
 #include "libc.h"
-extern const char kCFTypeArrayCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
+extern const char kCFTypeArrayCallBacks[];
+extern const char kCFTypeDictionaryKeyCallBacks[], kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callbacks de objeto CF (retain/isEqual:) */
 
 typedef int OSStatus;
 id objc_retain(id o);
@@ -229,28 +230,233 @@ static id tis_src(void) {
     CFDictionarySetValue(src, kTISPropertyBundleID, cx_str("com.apple.keylayout.Brazilian-ABNT2"));
     return src;
 }
-id TISCopyInputMethodKeyboardLayoutOverride(void) { return 0; }   /* sem método de entrada com layout próprio */
+/* ---- métodos de entrada de terceiros (InputMethodKit, imk.c): instalados em /Library/Input Methods,
+ * ~/Library/Input Methods ou registrados por TISRegisterInputSource; habilitados e o escolhido ficam nas preferências
+ * com.apple.HIToolbox (AppleEnabledInputSources/AppleSelectedInputSources), lidas por todos os apps */
+double CFAbsoluteTimeGetCurrent(void);
+extern id NSHomeDirectory(void);
+static id hit_domain(void) {
+    id ud = MSG0(id, (id)kls("NSUserDefaults"), "standardUserDefaults");
+    id d = MSG(id, ud, "persistentDomainForName:", cx_str("com.apple.HIToolbox"));
+    return d ? MSG0(id, d, "mutableCopy") : MSG0(id, MSG0(id, (id)kls("NSMutableDictionary"), "alloc"), "init");
+}
+static void hit_save(id d) {
+    id ud = MSG0(id, (id)kls("NSUserDefaults"), "standardUserDefaults");
+    MSG(void, ud, "setPersistentDomain:forName:", d, cx_str("com.apple.HIToolbox"));
+}
+static id entry_bundle(id e) { return e ? MSG(id, e, "objectForKey:", cx_str("Bundle ID")) : 0; }
+static id ime_entry(id bid) {
+    id d = MSG0(id, MSG0(id, (id)kls("NSMutableDictionary"), "alloc"), "init");
+    MSG(void, d, "setObject:forKey:", cx_str("Keyboard Input Method"), cx_str("InputSourceKind"));
+    MSG(void, d, "setObject:forKey:", bid, cx_str("Bundle ID"));
+    return objc_autorelease(d);
+}
+/* bundle id do método de entrada escolhido (vazio: o teclado); cache de meio segundo */
+static double g_tis_at;
+void cx_tis_cache_reset(void) { g_tis_at = 0; }
+const char *cx_tis_selected_ime(void) {
+    static char cur[256];
+    double at = g_tis_at;
+    double now = CFAbsoluteTimeGetCurrent();
+    if (now - at < 0.5 && at) return cur[0] ? cur : 0;
+    g_tis_at = now;
+    cur[0] = 0;
+    id d = hit_domain();
+    id sel = MSG(id, d, "objectForKey:", cx_str("AppleSelectedInputSources"));
+    u64 n = sel ? MSG0(u64, sel, "count") : 0;
+    for (u64 i = 0; i < n; i++) {
+        id e = MSG(id, sel, "objectAtIndex:", i);
+        id kind = MSG(id, e, "objectForKey:", cx_str("InputSourceKind"));
+        id bid = entry_bundle(e);
+        if (bid && kind && !strcmp(cx_cstr(kind), "Keyboard Input Method")) { snprintf(cur, sizeof cur, "%s", cx_cstr(bid)); break; }
+    }
+    objc_release(d);
+    return cur[0] ? cur : 0;
+}
+static void tis_changed(void) {
+    id nc = MSG0(id, (id)kls("NSDistributedNotificationCenter"), "defaultCenter");
+    if (nc) MSG(void, nc, "postNotificationName:object:", cx_str("com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged"), (id)0);
+    if (nc) MSG(void, nc, "postNotificationName:object:", cx_str("AppleSelectedInputSourcesChangedNotification"), (id)0);
+}
+/* caminhos dos métodos de entrada instalados (bundle id → caminho) */
+static id ime_paths(void) {
+    id out = MSG0(id, MSG0(id, (id)kls("NSMutableDictionary"), "alloc"), "init");
+    id dirs[2] = {cx_str("/Library/Input Methods"), MSG(id, NSHomeDirectory(), "stringByAppendingPathComponent:", cx_str("Library/Input Methods"))};
+    id fm = MSG0(id, (id)kls("NSFileManager"), "defaultManager");
+    for (int k = 0; k < 2; k++) {
+        id items = ((id (*)(id, SEL, id, id *))objc_msgSend)(fm, sel_registerName("contentsOfDirectoryAtPath:error:"), dirs[k], (id *)0);
+        u64 n = items ? MSG0(u64, items, "count") : 0;
+        for (u64 i = 0; i < n; i++) {
+            id item = MSG(id, items, "objectAtIndex:", i);
+            id path = MSG(id, dirs[k], "stringByAppendingPathComponent:", item);
+            id b = MSG(id, (id)kls("NSBundle"), "bundleWithPath:", path);
+            id bid = b ? MSG0(id, b, "bundleIdentifier") : 0;
+            if (bid) MSG(void, out, "setObject:forKey:", path, bid);
+        }
+    }
+    id d = hit_domain();
+    id reg = MSG(id, d, "objectForKey:", cx_str("_mOSRegisteredInputMethods"));   /* TISRegisterInputSource: bundle id → caminho */
+    if (reg) MSG(void, out, "addEntriesFromDictionary:", reg);
+    objc_release(d);
+    return objc_autorelease(out);
+}
+static BOOL list_has(id list, id bid) {
+    u64 n = list ? MSG0(u64, list, "count") : 0;
+    for (u64 i = 0; i < n; i++) { id b = entry_bundle(MSG(id, list, "objectAtIndex:", i)); if (b && MSG(BOOL, b, "isEqualToString:", bid)) return YES; }
+    return NO;
+}
+extern id kTISPropertyInputSourceID, kTISPropertyLocalizedName;
+static id ime_source(id bid, id path, BOOL enabled, BOOL selected) {
+    id src = CFDictionaryCreateMutable(0, 12, kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks);
+    id yes = MSG(id, (id)kls("NSNumber"), "numberWithBool:", (BOOL)YES), no = MSG(id, (id)kls("NSNumber"), "numberWithBool:", (BOOL)NO);
+    id b = MSG(id, (id)kls("NSBundle"), "bundleWithPath:", path);
+    id name = b ? MSG(id, b, "objectForInfoDictionaryKey:", cx_str("CFBundleDisplayName")) : 0;
+    if (!name && b) name = MSG(id, b, "objectForInfoDictionaryKey:", cx_str("CFBundleName"));
+    CFDictionarySetValue(src, kTISPropertyInputSourceID, bid);
+    CFDictionarySetValue(src, kTISPropertyBundleID, bid);
+    CFDictionarySetValue(src, kTISPropertyLocalizedName, name ? name : bid);
+    CFDictionarySetValue(src, kTISPropertyInputSourceType, kTISTypeKeyboardInputMethodWithoutModes);
+    CFDictionarySetValue(src, kTISPropertyInputSourceCategory, kTISCategoryKeyboardInputSource);
+    CFDictionarySetValue(src, kTISPropertyInputSourceIsASCIICapable, no);
+    CFDictionarySetValue(src, kTISPropertyInputSourceIsEnabled, enabled ? yes : no);
+    CFDictionarySetValue(src, kTISPropertyInputSourceIsSelectCapable, yes);
+    CFDictionarySetValue(src, kTISPropertyInputSourceIsSelected, selected ? yes : no);
+    CFDictionarySetValue(src, cx_str("_mOSBundlePath"), path);
+    return objc_autorelease(src);
+}
+/* todas as fontes: o teclado e os métodos de entrada (habilitados, ou todos com include_all) */
+static id all_sources(BOOL include_all) {
+    id out = MSG0(id, (id)kls("NSMutableArray"), "array");
+    const char *sel = cx_tis_selected_ime();
+    id kb = tis_src();
+    if (kb) {
+        CFDictionarySetValue(kb, kTISPropertyInputSourceIsSelected, MSG(id, (id)kls("NSNumber"), "numberWithBool:", (BOOL)(sel == 0)));
+        MSG(void, out, "addObject:", kb);
+    }
+    id d = hit_domain();
+    id enabled = MSG(id, d, "objectForKey:", cx_str("AppleEnabledInputSources"));
+    id paths = ime_paths();
+    id keys = MSG0(id, paths, "allKeys");
+    u64 n = MSG0(u64, keys, "count");
+    for (u64 i = 0; i < n; i++) {
+        id bid = MSG(id, keys, "objectAtIndex:", i);
+        BOOL en = list_has(enabled, bid);
+        if (!en && !include_all) continue;
+        id ipath = MSG(id, paths, "objectForKey:", bid);
+        MSG(void, out, "addObject:", ime_source(bid, ipath, en, sel && !strcmp(sel, cx_cstr(bid))));
+    }
+    objc_release(d);
+    return out;
+}
+/* a fonte atual quando é um método de entrada (vscode_frameworks.c: TISCopyCurrentKeyboardInputSource) */
+id cx_tis_current_ime_source(void) {
+    const char *sel = cx_tis_selected_ime();
+    if (!sel) return 0;
+    id paths = ime_paths();
+    id path = MSG(id, paths, "objectForKey:", cx_str(sel));
+    return path ? ime_source(cx_str(sel), path, YES, YES) : 0;
+}
+id TISCopyInputMethodKeyboardLayoutOverride(void) { return 0; }   /* os métodos de entrada usam o layout do teclado */
 id TISCopyCurrentASCIICapableKeyboardInputSource(void) { id s = tis_src(); return s ? objc_retain(s) : 0; }
 id TISCopyInputSourceForLanguage(id lang) { (void)lang; id s = tis_src(); return s ? objc_retain(s) : 0; }
 /* lista filtrada pelas propriedades pedidas (cada chave tem que bater com a da fonte) */
 id TISCreateInputSourceList(id props, BOOL include_all) {
-    (void)include_all;
-    id s = tis_src();
+    id all = all_sources(include_all);
     id keys = props ? MSG0(id, props, "allKeys") : 0;
-    u64 n = keys ? MSG0(u64, keys, "count") : 0;
-    BOOL ok = s != 0;
-    for (u64 i = 0; ok && i < n; i++) {
-        id k = MSG(id, keys, "objectAtIndex:", i);
-        id want = MSG(id, props, "objectForKey:", k);
-        id have = (id)CFDictionaryGetValue(s, k);
-        ok = have && want && MSG(BOOL, have, "isEqual:", want);
+    u64 n = keys ? MSG0(u64, keys, "count") : 0, m = MSG0(u64, all, "count");
+    const void *vals[64];
+    long k = 0;
+    for (u64 j = 0; j < m && k < 64; j++) {
+        id s = MSG(id, all, "objectAtIndex:", j);
+        BOOL ok = YES;
+        for (u64 i = 0; ok && i < n; i++) {
+            id key = MSG(id, keys, "objectAtIndex:", i);
+            id want = MSG(id, props, "objectForKey:", key);
+            id have = (id)CFDictionaryGetValue(s, key);
+            ok = have && want && MSG(BOOL, have, "isEqual:", want);
+        }
+        if (ok) vals[k++] = s;
     }
-    const void *one = s;
-    return CFArrayCreate(0, ok ? &one : 0, ok ? 1 : 0, &kCFTypeArrayCallBacks);
+    return CFArrayCreate(0, vals, k, &kCFTypeArrayCallBacks);
 }
-OSStatus TISSelectInputSource(id src) { return src == tis_src() || (src && MSG(BOOL, src, "isEqual:", tis_src())) ? 0 : paramErr; }
-OSStatus TISEnableInputSource(id src) { return TISSelectInputSource(src); }
-OSStatus TISDisableInputSource(id src) { (void)src; return paramErr; }   /* a única fonte não pode sair */
+static id src_bundle(id src) { return src ? (id)CFDictionaryGetValue(src, kTISPropertyBundleID) : 0; }
+static BOOL is_keyboard(id src) { return src == tis_src() || (src && MSG(BOOL, src, "isEqual:", tis_src())); }
+OSStatus TISSelectInputSource(id src) {
+    if (!src) return paramErr;
+    id d = hit_domain();
+    if (is_keyboard(src)) MSG(void, d, "removeObjectForKey:", cx_str("AppleSelectedInputSources"));
+    else {
+        id bid = src_bundle(src);
+        if (!bid || !MSG(id, ime_paths(), "objectForKey:", bid)) { objc_release(d); return paramErr; }
+        id one = MSG(id, (id)kls("NSArray"), "arrayWithObject:", ime_entry(bid));
+        MSG(void, d, "setObject:forKey:", one, cx_str("AppleSelectedInputSources"));
+        id en = MSG(id, d, "objectForKey:", cx_str("AppleEnabledInputSources"));
+        if (!list_has(en, bid)) {
+            id l = en ? MSG0(id, en, "mutableCopy") : MSG0(id, MSG0(id, (id)kls("NSMutableArray"), "alloc"), "init");
+            MSG(void, l, "addObject:", ime_entry(bid));
+            MSG(void, d, "setObject:forKey:", l, cx_str("AppleEnabledInputSources"));
+            objc_release(l);
+        }
+    }
+    hit_save(d);
+    objc_release(d);
+    extern void cx_tis_cache_reset(void);
+    cx_tis_cache_reset();
+    tis_changed();
+    return 0;
+}
+OSStatus TISDeselectInputSource(id src) { return src && !is_keyboard(src) ? TISSelectInputSource(tis_src()) : paramErr; }
+OSStatus TISEnableInputSource(id src) {
+    if (is_keyboard(src)) return 0;
+    id bid = src_bundle(src);
+    if (!bid) return paramErr;
+    id d = hit_domain();
+    id en = MSG(id, d, "objectForKey:", cx_str("AppleEnabledInputSources"));
+    if (!list_has(en, bid)) {
+        id l = en ? MSG0(id, en, "mutableCopy") : MSG0(id, MSG0(id, (id)kls("NSMutableArray"), "alloc"), "init");
+        MSG(void, l, "addObject:", ime_entry(bid));
+        MSG(void, d, "setObject:forKey:", l, cx_str("AppleEnabledInputSources"));
+        objc_release(l);
+        hit_save(d);
+    }
+    objc_release(d);
+    return 0;
+}
+OSStatus TISDisableInputSource(id src) {
+    if (is_keyboard(src)) return paramErr;   /* o teclado não sai */
+    id bid = src_bundle(src);
+    if (!bid) return paramErr;
+    id d = hit_domain();
+    id en = MSG(id, d, "objectForKey:", cx_str("AppleEnabledInputSources"));
+    id l = MSG0(id, MSG0(id, (id)kls("NSMutableArray"), "alloc"), "init");
+    u64 n = en ? MSG0(u64, en, "count") : 0;
+    for (u64 i = 0; i < n; i++) { id e = MSG(id, en, "objectAtIndex:", i); id b = entry_bundle(e); if (!b || !MSG(BOOL, b, "isEqualToString:", bid)) MSG(void, l, "addObject:", e); }
+    MSG(void, d, "setObject:forKey:", l, cx_str("AppleEnabledInputSources"));
+    objc_release(l);
+    const char *sel = cx_tis_selected_ime();
+    if (sel && !strcmp(sel, cx_cstr(bid))) MSG(void, d, "removeObjectForKey:", cx_str("AppleSelectedInputSources"));
+    hit_save(d);
+    objc_release(d);
+    tis_changed();
+    return 0;
+}
+/* registra um método de entrada fora das pastas padrão (o instalador do app chama com a URL do bundle) */
+OSStatus TISRegisterInputSource(id url) {
+    if (!url) return paramErr;
+    id path = MSG0(id, url, "path");
+    id b = path ? MSG(id, (id)kls("NSBundle"), "bundleWithPath:", path) : 0;
+    id bid = b ? MSG0(id, b, "bundleIdentifier") : 0;
+    if (!bid) return paramErr;
+    id d = hit_domain();
+    id reg = MSG(id, d, "objectForKey:", cx_str("_mOSRegisteredInputMethods"));
+    id r = reg ? MSG0(id, reg, "mutableCopy") : MSG0(id, MSG0(id, (id)kls("NSMutableDictionary"), "alloc"), "init");
+    MSG(void, r, "setObject:forKey:", path, bid);
+    MSG(void, d, "setObject:forKey:", r, cx_str("_mOSRegisteredInputMethods"));
+    objc_release(r);
+    hit_save(d);
+    objc_release(d);
+    return 0;
+}
 
 /* ================================================================ Process Manager */
 typedef struct { u32 hi, lo; } psn_t;
