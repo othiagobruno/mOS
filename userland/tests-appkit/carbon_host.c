@@ -62,6 +62,16 @@ int main(void) {
     check(!cc_shape_contains(&R, 0.5, 0.5) && cc_shape_contains(&R, 1.5, 1.5) && !cc_shape_contains(&R, 10.5, 1.5), "inset de L erode as bordas");
     cc_shape_clear(&R);
     check(cc_shape_empty(&R) && cc_shape_rectangular(&R), "vazio");
+    cc_thumb th = cc_track_thumb(0, 200, 0, 100, 50, 100);
+    check(near(th.len, 100) && near(th.pos, 50), "rolagem: polegar proporcional à parte visível");
+    th = cc_track_thumb(0, 200, 0, 100000, 0, 1);
+    check(near(th.len, 16) && near(th.pos, 0), "rolagem: polegar mínimo de 16");
+    th = cc_track_thumb(1, 115, 0, 10, 10, 0);
+    check(near(th.len, 15) && near(th.pos, 100), "slider: polegar no fim");
+    th = cc_track_thumb(2, 200, 0, 1, 0.25, 0);
+    check(near(th.len, 50), "progresso: preenchido proporcional");
+    check(cc_track_hit(0, 200, 0, 100, 50, 100, 10) == 22 && cc_track_hit(0, 200, 0, 100, 50, 100, 120) == 129 &&
+          cc_track_hit(0, 200, 0, 100, 0, 100, 150) == 23 && cc_track_hit(0, 200, 0, 100, 0, 100, 250) == 0, "acerto: página, polegar, fora");
     printf("%d/%d\n", ok, total);
     return ok == total ? 0 : 1;
 }

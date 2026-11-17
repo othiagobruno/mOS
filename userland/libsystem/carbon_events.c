@@ -365,8 +365,15 @@ static void send_raw(u32 kind, u16 code, u32 mods) {
     cc_event_release(e);
 }
 /* chamado pelo AppKit em cada tecla: 0 descida, 1 subida, 2 modificadores. Devolve 1 se um atalho tomou a tecla. */
+/* teclas apertadas agora (GetKeys do Carbon) */
+static u8 g_keys_down[16];
+int cx_carbon_key_down(u16 code) { return code < 128 && (g_keys_down[code >> 3] >> (code & 7)) & 1; }
 int cx_carbon_key(int phase, u16 code, u64 nsmods) {
     targets_init();
+    if (phase != 2 && code < 128) {
+        if (phase == 0) g_keys_down[code >> 3] |= (u8)(1u << (code & 7));
+        else g_keys_down[code >> 3] &= (u8)~(1u << (code & 7));
+    }
     u32 mods = carbon_mods(nsmods);
     if (phase == 2) { send_raw(4 /* kEventRawKeyModifiersChanged */, 0, mods); return 0; }
     int taken = 0;

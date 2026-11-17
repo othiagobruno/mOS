@@ -60,12 +60,15 @@ enum {
  * 21 é DEV_AUDIO_READ. Estes ficam em 22 e 23.
  * DEV_STATUS: b = SB_SET, c = pacote, d = bytes (formato em kernel/ui/statusdock.h);
  *             b = SB_REMOVE, c = id.
- * DEV_DOCK:   b = DK_VISIBLE, c = 1 mostra o ícone, 0 esconde (LSUIElement / prohibited). */
+ * DEV_DOCK:   b = DK_VISIBLE, c = 1 mostra o ícone, 0 esconde (LSUIElement / prohibited);
+ *             b = DK_AUTOHIDE / DK_MAGNIFY, c = 0 ou 1 grava a preferência do Dock, c < 0 devolve o valor atual. */
 #define DEV_STATUS 22
 #define SB_SET 1
 #define SB_REMOVE 2
 #define DEV_DOCK 23
 #define DK_VISIBLE 1
+#define DK_AUTOHIDE 2
+#define DK_MAGNIFY 3
 /* teclas de GEV_FLAGS (os mesmos números de KEY_LSHIFT … em kernel.h) */
 #define GUI_KEY_LSHIFT 0x116
 #define GUI_KEY_RSHIFT 0x117

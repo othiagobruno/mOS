@@ -208,3 +208,29 @@ int cc_shape_inset(cc_shape *s, double dx, double dy) {
     cc_free(outside.r); cc_free(frame.r); cc_free(grown.r); cc_free(one.r);
     return rc;
 }
+
+/* ================================================================ trilhas */
+cc_thumb cc_track_thumb(int kind, double length, double minv, double maxv, double value, double viewsize) {
+    cc_thumb t = {0, 0};
+    double range = maxv - minv;
+    if (length <= 0) return t;
+    if (value < minv) value = minv;
+    if (value > maxv) value = maxv;
+    double frac = range > 0 ? (value - minv) / range : 0;
+    if (kind == 2) { t.pos = 0; t.len = length * frac; return t; }
+    if (kind == 1) t.len = length < 15 ? length : 15;
+    else {
+        t.len = range + viewsize > 0 ? length * viewsize / (range + viewsize) : length;
+        if (t.len < 16) t.len = length < 16 ? length : 16;
+        if (t.len > length) t.len = length;
+    }
+    t.pos = (length - t.len) * frac;
+    return t;
+}
+int cc_track_hit(int kind, double length, double minv, double maxv, double value, double viewsize, double at) {
+    if (at < 0 || at > length) return 0;
+    cc_thumb t = cc_track_thumb(kind, length, minv, maxv, value, viewsize);
+    if (kind == 2) return 0;
+    if (at >= t.pos && at <= t.pos + t.len) return 129;
+    return at < t.pos ? 22 : 23;
+}

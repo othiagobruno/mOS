@@ -736,6 +736,14 @@ static i64 gui_status_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d) {
             dock_apply(ga);
             return 0;
         }
+        /* preferências do Dock (CoreDock* do ApplicationServices): c < 0 lê; 0/1 grava (o desktop_tick salva no disco) */
+        if (b == DK_AUTOHIDE || b == DK_MAGNIFY) {
+            bool *v = b == DK_AUTOHIDE ? &g_dock_autohide : &g_dock_magnify;
+            if ((i64)c < 0) return *v ? 1 : 0;
+            *v = c != 0;
+            wm_damage_all();
+            return 0;
+        }
         return -MOS_EINVAL;
     }
     return -MOS_EINVAL;
