@@ -63,7 +63,10 @@ int AEReplaceDescData(u32 type, const void *ptr, long size, AEDesc *d) {
     return AECreateDesc(type, ptr, size, d);
 }
 u8 AECheckIsRecord(const AEDesc *d) { ae_node *n = desc_node(d); return n && (n->kind == AEK_RECORD || n->kind == AEK_EVENT); }
+/* handlers de coerção instalados pelo app (AEInstallCoercionHandler, ae_build.inc) têm prioridade */
+static int (*ae_user_coerce)(const AEDesc *d, u32 to, AEDesc *result);
 int AECoerceDesc(const AEDesc *d, u32 to, AEDesc *result) {
+    if (ae_user_coerce && d) { int ue = ae_user_coerce(d, to, result); if (ue != errAECoercionFail) return ue; }
     if (!result) return paramErr;
     AEInitializeDesc(result);
     ae_node *n = desc_node(d);
