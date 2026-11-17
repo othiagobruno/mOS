@@ -28,6 +28,8 @@ __attribute__((swift_name("_UTTypeObjC")))
 @property (readonly, nullable, copy) NSString *localizedDescription;
 @property (readonly, getter=isDynamic) BOOL dynamic;
 - (BOOL)conformsToType:(UTType *)type;
+/* todos os supertipos (a árvore do Launch Services); na Apple é um NSSet, aqui o libSystem devolve NSArray */
+@property (readonly, copy) NSArray<UTType *> *supertypes;
 @end
 
 NS_ASSUME_NONNULL_END
