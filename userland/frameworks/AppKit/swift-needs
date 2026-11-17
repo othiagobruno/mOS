@@ -1,2 +1,4 @@
 # o IndexPath dos diffables
 Foundation
+# ImageResource/ColorResource de NSImage/NSColor(resource:)
+DeveloperToolsSupport

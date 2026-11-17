@@ -152,6 +152,10 @@ public struct NSDiffableDataSourceSnapshot<SectionIdentifierType: Hashable, Item
 /// Fonte de dados de um NSCollectionView a partir de snapshots: o item de cada posição sai do itemProvider.
 open class NSCollectionViewDiffableDataSource<SectionIdentifierType: Hashable, ItemIdentifierType: Hashable>: NSObject, NSCollectionViewDataSource {
     public typealias ItemProvider = (NSCollectionView, IndexPath, ItemIdentifierType) -> NSCollectionViewItem?
+    public typealias SupplementaryViewProvider = (NSCollectionView, String, IndexPath) -> (NSView & NSCollectionViewElement)?
+
+    /// Cabeçalhos e rodapés das seções (viewForSupplementaryElementOfKind:atIndexPath:).
+    open var supplementaryViewProvider: SupplementaryViewProvider?
 
     internal weak var _collectionView: NSCollectionView?
     internal let _provider: ItemProvider
@@ -194,6 +198,14 @@ open class NSCollectionViewDiffableDataSource<SectionIdentifierType: Hashable, I
         section >= 0 && section < _snapshot._items.count ? _snapshot._items[section].count : 0
     }
     // o importador do mOS não faz a ponte NSIndexPath ↔ IndexPath fora do módulo Foundation: conversão explícita
+    open func collectionView(_ collectionView: NSCollectionView, viewForSupplementaryElementOfKind kind: NSString, at nsIndexPath: NSIndexPath) -> NSView & NSCollectionViewElement {
+        var idx: [Int] = []
+        for p in 0..<Int(nsIndexPath.length) { idx.append(Int(nsIndexPath.index(atPosition: p))) }
+        guard let provider = supplementaryViewProvider, let v = provider(collectionView, kind as String, IndexPath(indexes: idx)) else {
+            fatalError("NSCollectionViewDiffableDataSource: sem supplementaryViewProvider para \(kind as String)")
+        }
+        return v
+    }
     open func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt nsIndexPath: NSIndexPath) -> NSCollectionViewItem {
         var idx: [Int] = []
         for p in 0..<Int(nsIndexPath.length) { idx.append(Int(nsIndexPath.index(atPosition: p))) }

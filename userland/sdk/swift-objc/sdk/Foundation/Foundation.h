@@ -274,6 +274,27 @@ FOUNDATION_EXPORT NSErrorUserInfoKey const NSURLErrorFailingURLStringErrorKey;
 @property (nullable, copy) NSTimeZone *timeZone;
 @end
 
+/* NSBundle: no Swift é Bundle (o mangling continua So8NSBundleC, como no macOS: ImageResource(name:bundle:) do
+ * DeveloperToolsSupport e NSColor/NSImage(resource:) do AppKit dependem disso) */
+__attribute__((swift_name("Bundle")))
+@interface NSBundle : NSObject
+@property (class, readonly, strong) NSBundle *mainBundle;
++ (nullable instancetype)bundleWithPath:(NSString *)path;
++ (nullable instancetype)bundleWithURL:(NSURL *)url;
++ (NSBundle *)bundleForClass:(Class)aClass;
++ (nullable NSBundle *)bundleWithIdentifier:(NSString *)identifier;
+@property (readonly, copy) NSString *bundlePath;
+@property (readonly, copy) NSURL *bundleURL;
+@property (nullable, readonly, copy) NSString *resourcePath;
+@property (nullable, readonly, copy) NSURL *resourceURL;
+@property (nullable, readonly, copy) NSString *bundleIdentifier;
+@property (nullable, readonly, copy) NSDictionary<NSString *, id> *infoDictionary;
+- (nullable id)objectForInfoDictionaryKey:(NSString *)key;
+- (nullable NSString *)pathForResource:(nullable NSString *)name ofType:(nullable NSString *)ext;
+- (nullable NSURL *)URLForResource:(nullable NSString *)name withExtension:(nullable NSString *)ext;
+- (NSString *)localizedStringForKey:(NSString *)key value:(nullable NSString *)value table:(nullable NSString *)tableName;
+@end
+
 __attribute__((swift_name("FileHandle")))
 @interface NSFileHandle : NSObject <NSSecureCoding>
 - (void)writeData:(NSData *)data;

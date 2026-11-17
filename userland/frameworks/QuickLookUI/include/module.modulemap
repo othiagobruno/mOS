@@ -1,0 +1,5 @@
+// mOS — módulo clang QuickLookUI mínimo para o overlay Swift (QuickLookUI.swift); o framework é o do libSystem.mos
+module QuickLookUI [system] {
+    header "QuickLookUI_mos.h"
+    export *
+}
