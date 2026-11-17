@@ -57,6 +57,7 @@ id CFDateCreate(void *alloc, double at);
 double CFDateGetAbsoluteTime(id d);
 
 #include "ae_capi.inc"
+#include "ae_build.inc"
 
 #define AE_SVC_PREFIX "com.mos.ae."
 #define AE_OP_EVENT 1u

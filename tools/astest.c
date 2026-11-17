@@ -16,6 +16,12 @@ typedef size_t usize;
 #include <stddef.h>
 #include "ae_core.inc"
 #include "ae_capi.inc"
+#include <stdarg.h>
+/* Memory Manager mínimo para o AEBuild/AEPrint (no libSystem é o de cs_legacy.c) */
+typedef struct { char *p; long n; } th_t;
+char **NewHandle(long n) { th_t *h = calloc(1, sizeof *h); h->p = calloc(1, (size_t)(n ? n : 1)); h->n = n; return &h->p; }
+long GetHandleSize(char **h) { return h ? ((th_t *)h)->n : 0; }
+#include "ae_build.inc"
 #include "as_interp.inc"
 
 static int ok, total;
@@ -86,6 +92,122 @@ static void eq(const char *src, const char *want) {
     snprintf(what, sizeof what, "%s  =>  [%s] (esperado [%s])", src, g, want);
     check(!strcmp(g, want), what);
     free(g);
+}
+
+/* ---- AEBuild, AEPrint, AEStream, AEResolve */
+static int acc_calls;
+static int acc_doc(u32 cls, const AEDesc *c, u32 ccls, u32 form, const AEDesc *data, AEDesc *tok, long refcon) {
+    (void)c; (void)form; (void)refcon;
+    acc_calls++;
+    if (cls != AE_FCC('d', 'o', 'c', 'u') || ccls != AE_NULL) return -1728;
+    i32 idx = 0; u32 ty; long got;
+    AEGetDescData(data, &idx, 4); (void)ty; (void)got;
+    char name[16]; snprintf(name, sizeof name, "doc%d", idx);
+    return AECreateDesc(AE_FCC('D', 'O', 'C', 'T'), name, (long)strlen(name), tok);
+}
+static int acc_word(u32 cls, const AEDesc *c, u32 ccls, u32 form, const AEDesc *data, AEDesc *tok, long refcon) {
+    (void)form; (void)data; (void)refcon;
+    acc_calls++;
+    if (cls != AE_FCC('c', 'w', 'o', 'r') || ccls != AE_FCC('d', 'o', 'c', 'u') || c->descriptorType != AE_FCC('D', 'O', 'C', 'T')) return -1728;
+    char buf[32] = {0};
+    AEGetDescData(c, buf, sizeof buf - 1);
+    strcat(buf, ":palavra");
+    return AECreateDesc(AE_TEXT, buf, (long)strlen(buf), tok);
+}
+static int coerce_hits;
+static int my_coerce(u32 from, const void *p, long n, u32 to, long refcon, AEDesc *r) {
+    (void)from; (void)to; (void)refcon; coerce_hits++;
+    char b[64]; snprintf(b, sizeof b, "[%.*s]", (int)n, (const char *)p);
+    return AECreateDesc(AE_FCC('B', 'R', 'K', 'T'), b, (long)strlen(b), r);
+}
+static char *printed(const AEDesc *d) { char **h = 0; if (AEPrintDescToHandle(d, &h)) return strdup("?"); return strdup(*h); }
+static void aebuild_tests(void) {
+    AEDesc d = {0, 0}, x = {0, 0};
+    AEBuildError e = {0, 0};
+    check(AEBuildDesc(&d, &e, "[1, -2, 'TEXT'(@), {kfoo: \"oi\", bar: abcd}]", 3L, "abc") == 0, "AEBuildDesc lista com @, registro e código");
+    long c = 0; AECountItems(&d, &c);
+    char *s = printed(&d);
+    check(c == 4 && !strcmp(s, "[1, -2, \xe2\x80\x9c" "abc" "\xe2\x80\x9d, {kfoo:\xe2\x80\x9c" "oi" "\xe2\x80\x9d, bar:abcd}]"), "AEPrint da lista");
+    if (strcmp(s, "[1, -2, \xe2\x80\x9c" "abc" "\xe2\x80\x9d, {kfoo:\xe2\x80\x9c" "oi" "\xe2\x80\x9d, bar:abcd}]")) printf("  impresso: %s\n", s);
+    free(s); AEDisposeDesc(&d);
+    check(AEBuildDesc(&d, &e, "'shor'(7)") == 0 && d.descriptorType == AE_SHOR && AEGetDescDataSize(&d) == 2, "coerção de inteiro para shor");
+    AEDisposeDesc(&d);
+    check(AEBuildDesc(&d, &e, "'utf8'(\xc2\xab" "41 42" "\xc2\xbb)") == 0 && d.descriptorType == AE_UTF8 && AEGetDescDataSize(&d) == 2, "hex coagido");
+    AEDisposeDesc(&d);
+    check(AEBuildDesc(&d, &e, "\xc2\xab" "41" "\xc2\xbb") == errAEBuildSyntaxError && e.fError == aeBuildSyntaxUncoercedHex, "hex sem coerção = erro 9");
+    check(AEBuildDesc(&d, &e, "[1, 2") == errAEBuildSyntaxError && e.fError == aeBuildSyntaxNoCloseBracket, "lista sem ] = erro 14");
+    check(AEBuildDesc(&d, &e, "{a: 1 b: 2}") == errAEBuildSyntaxError && e.fError == aeBuildSyntaxNoCloseBrace && e.fErrorPos == 6, "registro sem vírgula: erro 15 na posição 6");
+    char **h = NewHandle(3); memcpy(*h, "xyz", 3);
+    AEDesc inner = {0, 0}; AECreateDesc(AE_LONG, &(i32){42}, 4, &inner);
+    check(AEBuildDesc(&d, &e, "{a: 'TEXT'(@@), b: @}", h, &inner) == 0, "@@ (Handle) e @ (AEDesc*)");
+    char buf[8] = {0}; u32 ty; long got = 0; i32 v = 0;
+    AEGetKeyPtr(&d, AE_FCC('a', ' ', ' ', ' '), AE_TEXT, &ty, buf, 7, &got);
+    AEGetKeyPtr(&d, AE_FCC('b', ' ', ' ', ' '), AE_LONG, &ty, &v, 4, &got);
+    check(!strcmp(buf, "xyz") && v == 42, "valores de @@ e @");
+    AEDisposeDesc(&d);
+    check(AEBuildDesc(&d, &e, "'TEXT'(@@)", (char **)0) == 0, "@@ com Handle nulo");
+    AEDisposeDesc(&d);
+    check(AEBuildDesc(&d, &e, "@@", h) == errAEBuildSyntaxError && e.fError == aeBuildSyntaxUncoercedDoubleAt, "@@ sem coerção = erro 19");
+    u32 sig = AE_FCC('M', 'A', 'C', 'S');
+    check(AEBuildAppleEvent(AE_FCC('a', 'e', 'v', 't'), AE_FCC('o', 'd', 'o', 'c'), AE_FCC('s', 'i', 'g', 'n'), &sig, 4, -1, 0, &x, &e,
+                            "'----':[\"/tmp/a\", \"/tmp/b\"], ~prdt:'TEXT'(@)", 2L, "hi") == 0, "AEBuildAppleEvent com parâmetros");
+    s = printed(&x);
+    check(strstr(s, "aevt\\odoc{") == s && strstr(s, "'----':[") && strstr(s, "prdt:"), "AEPrint do evento");
+    free(s);
+    check(AEBuildParameters(&x, &e, "kmsg: 5") == 0 && AEGetParamPtr(&x, AE_FCC('k', 'm', 's', 'g'), AE_LONG, &ty, &v, 4, &got) == 0 && v == 5, "AEBuildParameters acrescenta");
+    AEDisposeDesc(&x);
+    /* AEStream: evento com lista e registro aninhados */
+    AEStream *st = AEStreamCreateEvent(AE_FCC('c', 'o', 'r', 'e'), AE_FCC('s', 'e', 't', 'd'), AE_FCC('s', 'i', 'g', 'n'), &sig, 4, -1, 0);
+    check(st != 0, "AEStreamCreateEvent");
+    AEStreamWriteKey(st, AE_FCC('-', '-', '-', '-'));
+    AEStreamOpenList(st);
+    AEStreamWriteDesc(st, AE_LONG, &(i32){1}, 4);
+    AEStreamOpenRecord(st, AE_RECO);
+    AEStreamWriteKeyDesc(st, AE_FCC('n', 'a', 'm', 'e'), AE_TEXT, "x", 1);
+    AEStreamCloseRecord(st);
+    AEStreamCloseList(st);
+    AEStreamOpenKeyDesc(st, AE_FCC('d', 'a', 't', 'a'), AE_TEXT);
+    AEStreamWriteData(st, "ab", 2); AEStreamWriteData(st, "cd", 2);
+    AEStreamCloseDesc(st);
+    AEStreamOptionalParam(st, AE_FCC('d', 'a', 't', 'a'));
+    check(AEStreamClose(st, &x) == 0, "AEStreamClose");
+    AEDesc lst = {0, 0};
+    check(AEGetParamDesc(&x, AE_FCC('-', '-', '-', '-'), AE_LIST, &lst) == 0 && (AECountItems(&lst, &c), c == 2), "lista do stream com 2 itens");
+    memset(buf, 0, sizeof buf);
+    check(AEGetParamPtr(&x, AE_FCC('d', 'a', 't', 'a'), AE_TEXT, &ty, buf, 7, &got) == 0 && !strcmp(buf, "abcd"), "OpenDesc/WriteData em pedaços");
+    AEDisposeDesc(&lst); AEDisposeDesc(&x);
+    st = AEStreamOpen();
+    AEStreamOpenList(st);
+    check(AEStreamClose(st, &x) == errAECorruptData, "fechar com lista aberta = erro");
+    /* AEResolve: palavra 1 do documento 2 */
+    AEObjectInit();
+    AEInstallObjectAccessor(AE_FCC('d', 'o', 'c', 'u'), AE_NULL, acc_doc, 0, 0);
+    AEInstallObjectAccessor(AE_FCC('c', 'w', 'o', 'r'), AE_FCC('D', 'O', 'C', 'T'), acc_word, 0, 0);
+    check(AEBuildDesc(&d, &e, "'obj '{want: type(cwor), from: 'obj '{want: type(docu), from: 'null'(), form: enum(indx), seld: 2}, form: enum(indx), seld: 1}") == 0
+          && d.descriptorType == AE_FCC('o', 'b', 'j', ' '), "especificador aninhado pelo AEBuild");
+    AEDesc tok = {0, 0};
+    int re = AEResolve(&d, 0, &tok);
+    memset(buf, 0, sizeof buf);
+    char tb[32] = {0};
+    AEGetDescData(&tok, tb, sizeof tb - 1);
+    check(re == 0 && acc_calls == 2 && !strcmp(tb, "doc2:palavra"), "AEResolve chama os 2 acessores de fora para dentro");
+    if (re || strcmp(tb, "doc2:palavra")) printf("  AEResolve: %d '%s' chamadas %d\n", re, tb, acc_calls);
+    AEDisposeDesc(&d); AEDisposeToken(&tok);
+    /* handler de coerção do app */
+    AEInstallCoercionHandler(AE_TEXT, AE_FCC('B', 'R', 'K', 'T'), (void *)my_coerce, 0, 0, 0);
+    AECreateDesc(AE_TEXT, "oi", 2, &d);
+    memset(tb, 0, sizeof tb);
+    check(AECoerceDesc(&d, AE_FCC('B', 'R', 'K', 'T'), &x) == 0 && coerce_hits == 1 && (AEGetDescData(&x, tb, 31), !strcmp(tb, "[oi]")), "AEInstallCoercionHandler é usado pelo AECoerceDesc");
+    AEDisposeDesc(&d); AEDisposeDesc(&x);
+    AEDesc r1 = {0, 0}, r2 = {0, 0};
+    CreateOffsetDescriptor(3, &r1); CreateOffsetDescriptor(5, &r2);
+    check(CreateRangeDescriptor(&r1, &r2, 1, &d) == 0 && d.descriptorType == AE_FCC('r', 'a', 'n', 'g'), "CreateRangeDescriptor");
+    AEDisposeDesc(&d);
+    AEDesc arr[2] = {{0, 0}, {0, 0}};
+    AECreateDesc(AE_LONG, &(i32){7}, 4, &arr[0]); AECreateDesc(AE_TEXT, "z", 1, &arr[1]);
+    AECreateList(0, 0, 0, &d);
+    check(AEPutArray(&d, 3, arr, 0, 0, 2) == 0 && (AECountItems(&d, &c), c == 2), "AEPutArray de AEDesc");
+    AEDisposeDesc(&d);
 }
 
 int main(void) {
@@ -339,6 +461,7 @@ int main(void) {
         as_free(&res); as_free(&a[0]); as_free(&a[1]);
     }
 
+    aebuild_tests();
     printf("astest: %d/%d %s\n", ok, total, ok == total ? "ok" : "FALHOU");
     return ok == total ? 0 : 1;
 }
