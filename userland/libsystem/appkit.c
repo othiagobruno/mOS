@@ -1228,7 +1228,14 @@ static NSRect v_convert_rect_from(id self, SEL c, NSRect r, id from) {
 
 /* ================================================================ controles */
 static id dflt_font(void) { static id f; if (!f) f = ft_make(13, 0, 0); return f; }
-static u32 accent = 0xFF007AFF;
+static u32 accent = 0xFF007AFF;   /* cor de destaque do sistema (draw_builtin a lê do tema a cada desenho) */
+static BOOL g_dark_draw;          /* aparência de desenho escura (draw_builtin) */
+BOOL cx_appearance_dark(void);    /* appkit_appearance.c */
+u32 cx_appearance_accent(void);
+#define D(l, d) (g_dark_draw ? (u32)(d) : (u32)(l))
+#define INK(a) ((u32)(a) << 24 | (g_dark_draw ? 0xFFFFFFu : 0u))   /* traço/sombra translúcido: preto no claro, branco no escuro */
+static u32 accent_a(u32 a) { return (a << 24) | (accent & 0xFFFFFF); }
+static u32 accent_dim(void) { u32 r = ((accent >> 16) & 255) * 4 / 5, g = ((accent >> 8) & 255) * 4 / 5, b = (accent & 255) * 4 / 5; return 0xFF000000u | r << 16 | g << 8 | b; }
 
 static void draw_view_tree(id v, absr_t *a);
 static void draw_builtin(id v, absr_t *a);
@@ -1566,6 +1573,8 @@ BOOL cx_is_secure_field(id v) {
     return sec && v && cx_is_subclass(v->isa, sec);
 }
 static void draw_builtin(id v, absr_t *a) {
+    g_dark_draw = cx_appearance_dark();
+    accent = cx_appearance_accent();
     vstate_t *s = vs(v);
     id f = s->font ? s->font : dflt_font();
     double size = fnt(f)->size;
@@ -1574,32 +1583,32 @@ static void draw_builtin(id v, absr_t *a) {
     switch (s->kind) {
     case K_BUTTON: {
         const char *t = cx_cstr(s->title ? s->title : cx_str(""));
-        if (s->image && !t[0]) { draw_image_ctl(s->image, x + 2, y + 2, w - 4, h - 4, 0, !s->enabled ? 0x55000000 : s->tint ? argb(s->tint) : 0xD9000000); break; }
+        if (s->image && !t[0]) { draw_image_ctl(s->image, x + 2, y + 2, w - 4, h - 4, 0, !s->enabled ? INK(0x55) : s->tint ? argb(s->tint) : INK(0xD9)); break; }
         u32 n = (u32)strlen(t);
         gui_metrics_t m = measure(t, n, size, wt);
-        u32 tc = s->enabled ? 0xFF1D1D1F : 0xFF9A9A9E;
+        u32 tc = s->enabled ? D(0xFF1D1D1F, 0xFFEBEBEB) : D(0xFF9A9A9E, 0xFF6E6E70);
         if (s->btype == BT_PUSH) {
             BOOL def = s->key_equiv && !strcmp(cx_cstr(s->key_equiv), "\r");
             double bh = h > 28 ? h : 22, by = y + (h - bh) / 2;
             if (s->bezeled) {
-                if (def && s->enabled) g_rrect(x + 1, by + 1, w - 2, bh - 2, 6, s->highlighted ? 0xFF0060D0 : accent);
+                if (def && s->enabled) g_rrect(x + 1, by + 1, w - 2, bh - 2, 6, s->highlighted ? accent_dim() : accent);
                 else {
-                    g_rrect(x + 1, by + 1, w - 2, bh - 2, 6, s->highlighted ? 0xFFDCDCE0 : 0xFFFFFFFF);
-                    g_rstroke(x + 1, by + 1, w - 2, bh - 2, 6, 1, 0x30000000);
+                    g_rrect(x + 1, by + 1, w - 2, bh - 2, 6, s->highlighted ? D(0xFFDCDCE0, 0xFF7A7A7C) : D(0xFFFFFFFF, 0xFF656567));
+                    g_rstroke(x + 1, by + 1, w - 2, bh - 2, 6, 1, INK(0x30));
                 }
                 if (def && s->enabled) tc = 0xFFFFFFFF;
-            } else if (s->highlighted) g_rrect(x, y, w, h, 5, 0x18000000);
+            } else if (s->highlighted) g_rrect(x, y, w, h, 5, INK(0x18));
             g_text(x + (w - m.width) / 2, by + (bh + m.ascent - m.descent) / 2, size, wt, tc, t, n);
         } else {
             double bs = 14, bx = x + 1, byy = y + (h - bs) / 2;
             BOOL on = s->state == 1;
             if (s->btype == BT_CHECK) {
-                g_rrect(bx, byy, bs, bs, 3.5, on ? accent : 0xFFFFFFFF);
-                if (!on) g_rstroke(bx, byy, bs, bs, 3.5, 1, 0x40000000);
+                g_rrect(bx, byy, bs, bs, 3.5, on ? accent : D(0xFFFFFFFF, 0xFF3A3A3C));
+                if (!on) g_rstroke(bx, byy, bs, bs, 3.5, 1, INK(0x40));
                 if (on) { g_line(bx + 3.2, byy + 7.2, bx + 6, byy + 10, 2, 0xFFFFFFFF); g_line(bx + 6, byy + 10, bx + 11, byy + 4, 2, 0xFFFFFFFF); }
             } else {
-                g_rrect(bx, byy, bs, bs, bs / 2, on ? accent : 0xFFFFFFFF);
-                if (!on) g_rstroke(bx, byy, bs, bs, bs / 2, 1, 0x40000000);
+                g_rrect(bx, byy, bs, bs, bs / 2, on ? accent : D(0xFFFFFFFF, 0xFF3A3A3C));
+                if (!on) g_rstroke(bx, byy, bs, bs, bs / 2, 1, INK(0x40));
                 if (on) g_rrect(bx + 4.5, byy + 4.5, 5, 5, 2.5, 0xFFFFFFFF);
             }
             g_text(bx + bs + 6, y + (h + m.ascent - m.descent) / 2, size, wt, tc, t, n);
@@ -1623,13 +1632,13 @@ static void draw_builtin(id v, absr_t *a) {
             secure_caret = (int)chars * 3;
             t = masked; n = o;
         }
-        u32 tc = s->text_color ? argb(s->text_color) : (s->enabled ? 0xF0000000 : 0x80000000);
+        u32 tc = s->text_color ? argb(s->text_color) : (s->enabled ? INK(0xF0) : INK(0x80));
         BOOL focused = s->window && ws(s->window)->first == v && s->editable;
         if (s->draws_bg || s->bezeled) {
-            u32 bg = s->bg_color ? argb(s->bg_color) : 0xFFFFFFFF;
+            u32 bg = s->bg_color ? argb(s->bg_color) : D(0xFFFFFFFF, 0xFF1E1E1E);
             if (s->bezeled) {
                 g_rrect(x, y, w, h, 5, bg);
-                g_rstroke(x + 0.5, y + 0.5, w - 1, h - 1, 5, focused ? 2.5 : 1, focused ? 0x99007AFF : 0x33000000);
+                g_rstroke(x + 0.5, y + 0.5, w - 1, h - 1, 5, focused ? 2.5 : 1, focused ? accent_a(0x99) : INK(0x33));
             } else g_fill(x, y, w, h, bg);
         }
         gui_metrics_t m = measure(t, n, size, wt);
@@ -1637,7 +1646,7 @@ static void draw_builtin(id v, absr_t *a) {
         set_clip(x + 1, y + 1, w - 2, h - 2);
         if (!n && s->placeholder) {
             const char *p = cx_cstr(s->placeholder);
-            g_text(x + pad, y + (h + m.ascent - m.descent) / 2, size, wt, 0x55000000, p, (u32)strlen(p));
+            g_text(x + pad, y + (h + m.ascent - m.descent) / 2, size, wt, INK(0x55), p, (u32)strlen(p));
         } else if (!s->bezeled && !s->editable && h > (m.ascent + m.descent) * 1.8 && !s->tf_single && s->tf_max_lines != 1
                    && (s->tf_lbm1 == 0 || s->tf_lbm1 - 1 == TFIT_WORD || s->tf_lbm1 - 1 == TFIT_CHAR)) {
             int mode = s->tf_lbm1 - 1 == TFIT_CHAR ? TFIT_CHAR : TFIT_WORD;
@@ -1666,7 +1675,7 @@ static void draw_builtin(id v, absr_t *a) {
                     sa = ca * 3; sb = cb * 3;
                 }
                 double x0 = measure(t, (u32)sa, size, wt).width, x1 = measure(t, (u32)sb, size, wt).width;
-                g_fill(tx + x0, base - m.ascent, x1 - x0, m.ascent + m.descent, 0x55007AFF);
+                g_fill(tx + x0, base - m.ascent, x1 - x0, m.ascent + m.descent, accent_a(0x55));
             }
             g_text(tx, base, size, wt, tc, t, n);
             if (focused) {
@@ -1682,10 +1691,10 @@ static void draw_builtin(id v, absr_t *a) {
         double range = s->maxv - s->minv, t = range > 0 ? (s->dval - s->minv) / range : 0;
         if (t < 0) t = 0; if (t > 1) t = 1;
         double cy = y + h / 2, x0 = x + 9, x1 = x + w - 9, kx = x0 + (x1 - x0) * t;
-        g_rrect(x0, cy - 2, x1 - x0, 4, 2, 0x26000000);
+        g_rrect(x0, cy - 2, x1 - x0, 4, 2, INK(0x26));
         g_rrect(x0, cy - 2, kx - x0, 4, 2, accent);
-        g_rrect(kx - 9, cy - 9, 18, 18, 9, 0xFFFFFFFF);
-        g_rstroke(kx - 9, cy - 9, 18, 18, 9, 1, 0x33000000);
+        g_rrect(kx - 9, cy - 9, 18, 18, 9, D(0xFFFFFFFF, 0xFFCFCFD1));
+        g_rstroke(kx - 9, cy - 9, 18, 18, 9, 1, INK(0x33));
         break;
     }
     case K_PROGRESS: {
@@ -1706,10 +1715,10 @@ static void draw_builtin(id v, absr_t *a) {
                     double ang = i * 3.14159265358979 / 6 - 3.14159265358979 / 2, cs = cos(ang), sn = sin(ang);
                     int age = (head - i + 12) % 12;
                     u32 a = (u32)(0xD0 - age * 0x10);
-                    g_line(cx + cs * r * 0.48, cy + sn * r * 0.48, cx + cs * r * 0.95, cy + sn * r * 0.95, r * 0.17 > 1.2 ? r * 0.17 : 1.2, (a << 24) | 0x3C3C43);
+                    g_line(cx + cs * r * 0.48, cy + sn * r * 0.48, cx + cs * r * 0.95, cy + sn * r * 0.95, r * 0.17 > 1.2 ? r * 0.17 : 1.2, (a << 24) | (g_dark_draw ? 0xEBEBF0u : 0x3C3C43u));
                 }
             } else {               /* determinado: anel e pizza do valor, a partir do topo no sentido horário */
-                g_rstroke(cx - r, cy - r, 2 * r, 2 * r, r, 1.2, 0x40000000);
+                g_rstroke(cx - r, cy - r, 2 * r, 2 * r, r, 1.2, INK(0x40));
                 if (t > 0) {
                     float xy[2 * 66];
                     int n = 0;
@@ -1725,7 +1734,7 @@ static void draw_builtin(id v, absr_t *a) {
             break;
         }
         double cy = y + h / 2;
-        g_rrect(x, cy - 3, w, 6, 3, 0x1F000000);
+        g_rrect(x, cy - 3, w, 6, 3, INK(0x1F));
         if (s->pg_indet) {         /* faixa de 30% que corre da esquerda para a direita */
             if (s->pg_anim) {
                 double ph = now * 0.7 - floor(now * 0.7), sw = w * 0.3, p0 = x + (ph * 1.3 - 0.3) * w;
@@ -1737,16 +1746,16 @@ static void draw_builtin(id v, absr_t *a) {
     }
     case K_TABLE: draw_table(v, a); break;
     case K_BOX: {
-        if (s->btype == 2) { g_fill(x, y + h / 2, w, 1, 0x1F000000); break; }            /* NSBoxSeparator */
+        if (s->btype == 2) { g_fill(x, y + h / 2, w, 1, INK(0x1F)); break; }            /* NSBoxSeparator */
         if (s->bg_color) { g_rrect(x, y, w, h, s->dval, argb(s->bg_color)); break; }   /* NSBoxCustom com fillColor */
         const char *t = cx_cstr(s->title ? s->title : cx_str(""));
         if (s->image && !t[0]) { draw_image_fit(s->image, x + 2, y + 2, w - 4, h - 4); break; }
         u32 n = (u32)strlen(t);
         gui_metrics_t m = measure(t, n, 11, 0);
         double top = n ? m.ascent + m.descent + 4 : 0;
-        g_rrect(x, y + top, w, h - top, 6, 0x0D000000);
-        g_rstroke(x + 0.5, y + top + 0.5, w - 1, h - top - 1, 6, 1, 0x1A000000);
-        if (n) g_text(x + 4, y + m.ascent, 11, 0, 0xB0000000, t, n);
+        g_rrect(x, y + top, w, h - top, 6, INK(0x0D));
+        g_rstroke(x + 0.5, y + top + 0.5, w - 1, h - top - 1, 6, 1, INK(0x1A));
+        if (n) g_text(x + 4, y + m.ascent, 11, 0, INK(0xB0), t, n);
         break;
     }
     }
@@ -1760,6 +1769,8 @@ static void set_clip(double x, double y, double w, double h) {
     g_clip(x0, y0, x1 > x0 ? x1 - x0 : 0, y1 > y0 ? y1 - y0 : 0);
 }
 static void draw_view_tree_inner(id v, absr_t *a);
+id cx_appearance_enter_view(id v);     /* appkit_appearance.c: aparência de desenho da view (com alguma explícita) */
+void cx_appearance_leave(id saved);
 static void draw_view_tree(id v, absr_t *a) {
     vstate_t *s = vs(v);
     double saved = g_view_alpha;
@@ -1767,7 +1778,9 @@ static void draw_view_tree(id v, absr_t *a) {
         if (s->valpha <= 0.001) return;   /* alfa 0: nada a desenhar */
         g_view_alpha = saved * s->valpha;
     }
+    id ap = cx_appearance_enter_view(v);
     draw_view_tree_inner(v, a);
+    cx_appearance_leave(ap);
     g_view_alpha = saved;
 }
 static void draw_view_tree_inner(id v, absr_t *a) {
@@ -1780,7 +1793,7 @@ static void draw_view_tree_inner(id v, absr_t *a) {
     set_clip(a->tlx, a->tly, a->w, a->h);
     if (cx_layer_draw_hook) cx_layer_draw_hook(v, 0, a->tlx, a->tly, a->w, a->h, clip_x0, clip_y0, clip_x1, clip_y1);   /* gancho QuartzCore */
     if (s->kind == K_IMAGE && s->image) draw_image_ctl(s->image, a->tlx, a->tly, a->w, a->h, s->img_scaling, s->tint ? argb(s->tint) : 0xD9000000);
-    if (s->kind == K_SCROLL && s->draws_bg) g_fill(a->tlx, a->tly, a->w, a->h, s->bg_color ? argb(s->bg_color) : 0xFFFFFFFF);
+    if (s->kind == K_SCROLL && s->draws_bg) g_fill(a->tlx, a->tly, a->w, a->h, s->bg_color ? argb(s->bg_color) : (cx_appearance_dark() ? 0xFF1E1E1E : 0xFFFFFFFF));
     if (s->kind != K_VIEW && s->kind != K_STACK && s->kind != K_IMAGE && s->kind != K_SCROLL) draw_builtin(v, a);
     set_clip(a->tlx, a->tly, a->w, a->h);
     ctx.tlx = a->tlx; ctx.tly = a->tly; ctx.w = a->w; ctx.h = a->h; ctx.flipped = a->flipped;
@@ -1808,25 +1821,27 @@ static void draw_view_tree_inner(id v, absr_t *a) {
     if (s->kind == K_SCROLL && s->doc) {
         vstate_t *d = vs(s->doc);
         BOOL vbar = !s->sv_vset || s->sv_v, hbar = !s->sv_hset || s->sv_h;
+        g_dark_draw = cx_appearance_dark();
         BOOL track = s->sv_vset && s->sv_v && !s->sv_autohide;   /* sem esconder: a calha fica à vista */
         set_clip(a->tlx, a->tly, a->w, a->h);
         if (vbar && (d->frame.s.h > a->h || track)) {
-            if (track) g_fill(a->tlx + a->w - 11, a->tly, 11, a->h, 0x0C000000);
+            if (track) g_fill(a->tlx + a->w - 11, a->tly, 11, a->h, INK(0x0C));
             if (d->frame.s.h > a->h) {
                 double vis = a->h / d->frame.s.h, bh = a->h * vis, by = a->tly + s->scroll_y / d->frame.s.h * a->h;
-                g_rrect(a->tlx + a->w - 8, by + 2, 5, bh - 4 < 12 ? 12 : bh - 4, 2.5, 0x55000000);
+                g_rrect(a->tlx + a->w - 8, by + 2, 5, bh - 4 < 12 ? 12 : bh - 4, 2.5, INK(0x55));
             }
         }
         if (hbar && d->frame.s.w > a->w + 0.5) {
             double vis = a->w / d->frame.s.w, bw = a->w * vis, bx = a->tlx + s->scroll_x / d->frame.s.w * a->w;
-            g_rrect(bx + 2, a->tly + a->h - 8, bw - 4 < 12 ? 12 : bw - 4, 5, 2.5, 0x55000000);
+            g_rrect(bx + 2, a->tly + a->h - 8, bw - 4 < 12 ? 12 : bw - 4, 5, 2.5, INK(0x55));
         }
     }
     if (s->kind == K_SCROLL && s->sv_border) {   /* NSLineBorder, NSBezelBorder, NSGrooveBorder */
         set_clip(a->tlx, a->tly, a->w, a->h);
-        if (s->sv_border == 1) g_rstroke(a->tlx + 0.5, a->tly + 0.5, a->w - 1, a->h - 1, 0, 1, 0x80000000);
-        else if (s->sv_border == 2) { g_rstroke(a->tlx + 0.5, a->tly + 0.5, a->w - 1, a->h - 1, 0, 1, 0x33000000); g_fill(a->tlx, a->tly, a->w, 1, 0x40000000); }
-        else { g_rstroke(a->tlx + 0.5, a->tly + 0.5, a->w - 1, a->h - 1, 0, 1, 0x40000000); g_rstroke(a->tlx + 1.5, a->tly + 1.5, a->w - 3, a->h - 3, 0, 1, 0x60FFFFFF); }
+        g_dark_draw = cx_appearance_dark();
+        if (s->sv_border == 1) g_rstroke(a->tlx + 0.5, a->tly + 0.5, a->w - 1, a->h - 1, 0, 1, INK(0x80));
+        else if (s->sv_border == 2) { g_rstroke(a->tlx + 0.5, a->tly + 0.5, a->w - 1, a->h - 1, 0, 1, INK(0x33)); g_fill(a->tlx, a->tly, a->w, 1, INK(0x40)); }
+        else { g_rstroke(a->tlx + 0.5, a->tly + 0.5, a->w - 1, a->h - 1, 0, 1, INK(0x40)); g_rstroke(a->tlx + 1.5, a->tly + 1.5, a->w - 3, a->h - 3, 0, 1, g_dark_draw ? 0x60000000u : 0x60FFFFFFu); }
     }
     clip_x0 = sx0; clip_y0 = sy0; clip_x1 = sx1; clip_y1 = sy1;
     g_unclip();
@@ -1841,7 +1856,8 @@ static id w_init(id self, SEL c, NSRect r, u64 style, u64 backing, BOOL defer) {
     s->title = cx_str("");
     s->released_when_closed = YES;
     s->restorable = YES;
-    s->bg = cx_color(0.93, 0.93, 0.93, 1);
+    s->bg = MSG0(id, (id)&NSColor_c, "windowBackgroundColor");   /* do sistema: acompanha claro/escuro */
+    if (!s->bg) s->bg = cx_color(0.93, 0.93, 0.93, 1);
     id cv = MSG(id, MSG0(id, &NSView_c, "alloc"), "initWithFrame:", r_make(0, 0, r.s.w, r.s.h));
     s->content = cv;
     set_window_rec(cv, self);
@@ -2848,13 +2864,15 @@ static void draw_textview(id v, absr_t *a) {
     id f = s->font ? s->font : dflt_font();
     double size = fnt(f)->size;
     int wt = fnt(f)->weight;
-    if (s->draws_bg) g_fill(a->tlx, a->tly, a->w, a->h, s->bg_color ? argb(s->bg_color) : 0xFFFFFFFF);
+    g_dark_draw = cx_appearance_dark();
+    accent = cx_appearance_accent();
+    if (s->draws_bg) g_fill(a->tlx, a->tly, a->w, a->h, s->bg_color ? argb(s->bg_color) : D(0xFFFFFFFF, 0xFF1E1E1E));
     const char *t = cx_cstr(s->value ? s->value : cx_str(""));
     tx_line_t *L;
     u32 n = tx_lines(t, a->w - 2 * TV_INSET, size, wt, &L);
     gui_metrics_t m = measure("Ag", 2, size, wt);
     double lh = tx_line_h(v), y = a->tly + TV_INSET;
-    u32 tc = s->text_color ? argb(s->text_color) : 0xE6000000;
+    u32 tc = s->text_color ? argb(s->text_color) : INK(0xE6);
     BOOL focused = s->window && ws(s->window)->first == v && s->editable;
     tx_draw_selection(v, a, t, L, n, size, wt, lh);
     for (u32 i = 0; i < n; i++, y += lh) {
@@ -5433,6 +5451,8 @@ static void tv_layout_views(id self) {
 }
 static void draw_table(id t, absr_t *a) {
     tv_layout_views(t);
+    g_dark_draw = cx_appearance_dark();
+    accent = cx_appearance_accent();
     vstate_t *s = vs(t);
     nsarr_t *cols = (nsarr_t *)s->cols;
     i64 rows = tv_rows(t);
@@ -5449,7 +5469,7 @@ static void draw_table(id t, absr_t *a) {
         if (ry + row_hh < clip_y0 || ry > clip_y1) continue;       /* fora da área visível da rolagem */
         BOOL sel = tv_sel_contains(t, r);
         if (sel) g_rrect(x0 + 4, ry + 1, a->w - 8, row_hh - 2, 5, accent);
-        else if (s->alt_rows && (r & 1)) g_fill(x0, ry, a->w, row_hh, 0x08000000);
+        else if (s->alt_rows && (r & 1)) g_fill(x0, ry, a->w, row_hh, INK(0x08));
         tv_draw_drop_line(t, r, x0, ry, a->w, row_hh);
         int level = -1; double per = 16; id ocol = 0;
         if (outline) tv_outline_metrics(t, r, &level, &per, &ocol);
@@ -5467,7 +5487,7 @@ static void draw_table(id t, absr_t *a) {
                     float tri[6];
                     if (open) { tri[0] = (float)(dx + 2); tri[1] = (float)(mid - 3); tri[2] = (float)(dx + 10); tri[3] = (float)(mid - 3); tri[4] = (float)(dx + 6); tri[5] = (float)(mid + 3); }
                     else { tri[0] = (float)(dx + 3); tri[1] = (float)(mid - 5); tri[2] = (float)(dx + 3); tri[3] = (float)(mid + 5); tri[4] = (float)(dx + 9); tri[5] = (float)mid; }
-                    g_poly(tri, 3, sel ? 0xFFFFFFFF : 0xFF666666, 1, 0);
+                    g_poly(tri, 3, sel ? 0xFFFFFFFF : D(0xFF666666, 0xFFAAAAAA), 1, 0);
                 }
             }
             int got = eng ? cx_tv_engine_cell_view(eng, (int)r, (int)k) : 0;
@@ -5482,7 +5502,7 @@ static void draw_table(id t, absr_t *a) {
                     double tx = x0 + cx_tv_cell_x(local, level, per, ocol_here);
                     double tw = cx_tv_cell_w(cs->width, local, tx - x0);
                     set_clip(tx, ry, tw - 4 > 1 ? tw - 4 : 1, row_hh);
-                    g_text(tx + 8, ry + (row_hh + m.ascent - m.descent) / 2, 13, 0, sel ? 0xFFFFFFFF : 0xE6000000, tt, (u32)strlen(tt));
+                    g_text(tx + 8, ry + (row_hh + m.ascent - m.descent) / 2, 13, 0, sel ? 0xFFFFFFFF : INK(0xE6), tt, (u32)strlen(tt));
                     set_clip(a->tlx, a->tly, a->w, a->h);
                 }
             }
@@ -5493,17 +5513,17 @@ static void draw_table(id t, absr_t *a) {
         double hy = a->tly;
         if (s->superview && vs(s->superview)->kind == K_SCROLL && clip_y0 > hy) hy = clip_y0;
         set_clip(a->tlx, a->tly, a->w, a->h);
-        g_fill(x0, hy, a->w, 24, 0xFFF5F5F7);
-        g_fill(x0, hy + 23, a->w, 1, 0x22000000);
+        g_fill(x0, hy, a->w, 24, D(0xFFF5F5F7, 0xFF2A2A2C));
+        g_fill(x0, hy + 23, a->w, 1, INK(0x22));
         double x = x0;
         for (u64 k = 0; k < cols->n; k++) {
             colst_t *cs = cs_(cols->items[k]);
             const char *tt = cs->title ? cx_cstr(cs->title) : "";
             gui_metrics_t m = measure(tt, (u32)strlen(tt), 11, 2);
-            g_text(x + 8, hy + (24 + m.ascent - m.descent) / 2, 11, 2, 0xB0000000, tt, (u32)strlen(tt));
+            g_text(x + 8, hy + (24 + m.ascent - m.descent) / 2, 11, 2, INK(0xB0), tt, (u32)strlen(tt));
             tv_draw_sort_indicator(t, cols->items[k], x, hy, cs->width);
             x += cs->width;
-            if (k + 1 < cols->n) g_fill(x - 1, hy + 4, 1, 16, 0x1A000000);
+            if (k + 1 < cols->n) g_fill(x - 1, hy + 4, 1, 16, INK(0x1A));
         }
     }
 }

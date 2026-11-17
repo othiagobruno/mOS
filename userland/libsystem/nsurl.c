@@ -496,34 +496,11 @@ static id b_pref_locs(id self, SEL c) {
     return a;
 }
 
-/* NSAppearance: o mOS tem claro/escuro, mas por ora o app vê sempre "Aqua" (claro) */
+/* NSAppearance: a classe nasce aqui (o cx_darwin_init roda depois do AppKit); aparências, claro/escuro e cores do
+ * sistema em appkit_appearance.c */
 cx_class_t NSAppearance_c __asm__("OBJC_CLASS_$_NSAppearance");
 cx_class_t NSAppearance_m __asm__("OBJC_METACLASS_$_NSAppearance");
 typedef struct { cx_class_t *isa; id name; } nsappearance_t;
-static id appearance_named(id cls, SEL c, id name) {
-    (void)cls; (void)c;
-    nsappearance_t *a = (nsappearance_t *)cx_alloc_instance(&NSAppearance_c);
-    a->name = objc_retain(name ? name : cx_str("NSAppearanceNameAqua"));
-    return a ? MSG0(id, (id)a, "autorelease") : 0;
-}
-static id appearance_aqua(id cls, SEL c) {
-    (void)c;
-    static id a;
-    if (!a) a = objc_retain(appearance_named(cls, 0, cx_str("NSAppearanceNameAqua")));
-    return a;
-}
-static id appearance_name(id self, SEL c) { (void)c; return ((nsappearance_t *)self)->name; }
-static id appearance_best(id self, SEL c, id names) {
-    (void)self; (void)c;
-    return names && MSG0(u64, names, "count") ? MSG(id, names, "objectAtIndex:", (u64)0) : 0;
-}
-/* -performAsCurrentDrawingAppearance: executa o bloco (sem trocar de aparência por enquanto) */
-static void appearance_perform(id self, SEL c, void *block) {
-    (void)self; (void)c;
-    typedef struct { void *isa; int flags, reserved; void (*invoke)(void *); } blk_t;
-    if (block) ((blk_t *)block)->invoke(block);
-}
-static id app_appearance(id self, SEL c) { (void)self; (void)c; return appearance_aqua((id)&NSAppearance_c, 0); }
 static void nc_add_suspension(id self, SEL c, id obs, SEL sel, id name, id obj, long behavior) {
     (void)c; (void)behavior;
     MSG(void, self, "addObserver:selector:name:object:", obs, sel, name, obj);
@@ -568,23 +545,16 @@ void cx_darwin_init(void) {
     cx_add_method(&NSAppleEventManager_c, "removeEventHandlerForEventClass:andEventID:", (void *)aem_remove);
     cx_class_t *app = cx_class_named("NSApplication");
     cx_define_class(&NSAppearance_c, &NSAppearance_m, "NSAppearance", ob, sizeof(nsappearance_t) - 8);
-    cx_add_cmethod(&NSAppearance_c, "appearanceNamed:", (void *)appearance_named);
-    cx_add_cmethod(&NSAppearance_c, "currentAppearance", (void *)appearance_aqua);
-    cx_add_cmethod(&NSAppearance_c, "currentDrawingAppearance", (void *)appearance_aqua);
-    cx_add_method(&NSAppearance_c, "name", (void *)appearance_name);
-    cx_add_method(&NSAppearance_c, "performAsCurrentDrawingAppearance:", (void *)appearance_perform);
-    cx_add_method(&NSAppearance_c, "bestMatchFromAppearancesWithNames:", (void *)appearance_best);
     { cx_class_t *ncs = cx_class_named("NSNotificationCenter");
       if (ncs) cx_add_method(ncs, "addObserver:selector:name:object:suspensionBehavior:", (void *)nc_add_suspension); }
     if (app) {
-        cx_add_method(app, "effectiveAppearance", (void *)app_appearance);
-        cx_add_method(app, "appearance", (void *)app_appearance);
         cx_add_method(app, "isRunning", (void *)app_running);
         extern void *class_replaceMethod(cx_class_t *c, SEL s, void *imp, const char *types);
         orig_run = (void (*)(id, SEL))class_replaceMethod(app, sel_registerName("run"), (void *)app_run, "v@:");
         orig_stop = (void (*)(id, SEL, id))class_replaceMethod(app, sel_registerName("stop:"), (void *)app_stop, "v@:@");
         /* -nextEventMatchingMask:untilDate:inMode:dequeue: é do AppKit (appkit.c): fila de eventos de verdade */
     }
+    { extern void cx_appkit_appearance_init(void); cx_appkit_appearance_init(); }   /* appkit_appearance.c: com a classe já criada */
     cx_class_t *bu = cx_class_named("NSBundle");
     if (bu) {
         cx_add_method(bu, "preferredLocalizations", (void *)b_pref_locs);
