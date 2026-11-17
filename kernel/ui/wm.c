@@ -1074,7 +1074,25 @@ static surface_t *make_cursor(int kind) {
 static surface_t *cursor_surface(int k, int *hx, int *hy);
 /* imagem do cursor atual e onde ela fica na tela (ScreenCaptureKit, kernel/compat/sccapture.c: showsCursor) */
 surface_t *wm_cursor_image(int *x, int *y) { int hx, hy; surface_t *c = cursor_surface(cursor_kind, &hx, &hy); *x = mx - hx; *y = my - hy; return c; }
+/* cursor com imagem do app (CURSOR_CUSTOM) e o cursor oculto (CURSOR_NONE, superfície transparente) */
+static surface_t *cur_custom, *cur_none;
+static int cur_custom_hx, cur_custom_hy;
+void wm_set_cursor_image(const u32 *argb, int w, int h, int hx, int hy) {
+    if (!cur_custom) { cur_custom = surface_new(CUR_SZ, CUR_SZ); if (!cur_custom) return; }
+    memset(cur_custom->px, 0, (usize)cur_custom->stride * CUR_SZ * 4);
+    if (w > CUR_SZ) w = CUR_SZ;
+    if (h > CUR_SZ) h = CUR_SZ;
+    for (int y = 0; argb && y < h; y++) for (int x = 0; x < w; x++) cur_custom->px[y * cur_custom->stride + x] = argb[y * w + x];
+    cur_custom_hx = hx < 0 ? 0 : hx > 16 ? 16 : hx;
+    cur_custom_hy = hy < 0 ? 0 : hy > 16 ? 16 : hy;
+    if (cursor_kind == CURSOR_CUSTOM) wm_damage(rect_make(mx - 16, my - 16, 48, 48));
+}
 static surface_t *cursor_surface(int k, int *hx, int *hy) {
+    if (k == CURSOR_CUSTOM && cur_custom) { *hx = cur_custom_hx; *hy = cur_custom_hy; return cur_custom; }
+    if (k == CURSOR_NONE) {
+        if (!cur_none && (cur_none = surface_new(1, 1)) != NULL) cur_none->px[0] = 0;
+        if (cur_none) { *hx = *hy = 0; return cur_none; }
+    }
     if (k < 0 || k >= CURSOR_KINDS || !cursors[k]) k = CURSOR_ARROW;
     switch (k) {
     case CURSOR_ARROW: case CURSOR_COPY: *hx = 2; *hy = 1; break;

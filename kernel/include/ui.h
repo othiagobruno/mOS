@@ -139,6 +139,9 @@ enum {
     CURSOR_RESIZE_COL, CURSOR_RESIZE_ROW,
     CURSOR_KINDS
 };
+/* fora da tabela: imagem do app (wm_set_cursor_image) e cursor oculto */
+#define CURSOR_CUSTOM 100
+#define CURSOR_NONE   101
 
 /* ============================================================ janelas e apps */
 enum {
@@ -203,6 +206,7 @@ typedef struct app {
     int badge;                  /* número no selo vermelho do ícone (0 = sem selo) */
     char badge_label[8];        /* texto do selo; vazio desenha o número */
     bool attention;             /* pula no Dock até o app ficar ativo */
+    bool attention_once;        /* pula uma vez, mesmo com janelas abertas (NSInformationalRequest) */
     bool open_at_login;         /* Opções > Abrir ao Iniciar */
     bool always_tick;           /* tick roda mesmo com o app fechado (alarmes, lembretes) */
     int dock_suppressed;        /* o processo pediu para sair do Dock (LSUIElement / prohibited) */
@@ -253,6 +257,8 @@ int       wm_count_for(app_t *a);
 void      wm_compose(void);
 bool      wm_handle_event(input_event_t *e);
 surface_t *wm_cursor_image(int *x, int *y);   /* cursor atual e o canto dele na tela */
+/* copia a imagem ARGB (até 32x32) para o cursor CURSOR_CUSTOM; o ponto quente é limitado a 16 */
+void      wm_set_cursor_image(const u32 *argb, int w, int h, int hx, int hy);
 int       wm_mouse_x(void);
 int       wm_mouse_y(void);
 int       wm_mouse_buttons(void);         /* bit 0 esquerdo, bit 1 direito */
@@ -328,6 +334,7 @@ void   app_force_quit(app_t *a);   /* SIGKILL no processo macOS; apps do kernel 
 
 /* ícones desenhados vetorialmente */
 surface_t *icon_for(app_t *a, int size);
+void       icon_forget(app_t *a);          /* descarta os ícones guardados do app (o ícone mudou) */
 bool tahoe_icon(const char *exec, surface_t *s, int x, int y, int size);   /* ícone do sistema no estilo Tahoe */
 void icon_folder(surface_t *s, int x, int y, int size, u32 tint);
 void icon_document(surface_t *s, int x, int y, int size, const char *ext);

@@ -61,7 +61,11 @@ enum {
  * DEV_STATUS: b = SB_SET, c = pacote, d = bytes (formato em kernel/ui/statusdock.h);
  *             b = SB_REMOVE, c = id.
  * DEV_DOCK:   b = DK_VISIBLE, c = 1 mostra o ícone, 0 esconde (LSUIElement / prohibited);
- *             b = DK_AUTOHIDE / DK_MAGNIFY, c = 0 ou 1 grava a preferência do Dock, c < 0 devolve o valor atual. */
+ *             b = DK_AUTOHIDE / DK_MAGNIFY, c = 0 ou 1 grava a preferência do Dock, c < 0 devolve o valor atual;
+ *             b = DK_ATTENTION, c = 0 cancela, 1 pula uma vez (NSInformationalRequest), 2 pula até o app ficar ativo
+ *                 (NSCriticalRequest);
+ *             b = DK_ICON, c = gui_dock_icon_t * (ARGB não pré-multiplicado, até 256x256) troca o ícone do app no Dock
+ *                 (-[NSApplication setApplicationIconImage:]); c = 0 volta ao ícone do bundle. */
 #define DEV_STATUS 22
 #define SB_SET 1
 #define SB_REMOVE 2
@@ -69,6 +73,10 @@ enum {
 #define DK_VISIBLE 1
 #define DK_AUTOHIDE 2
 #define DK_MAGNIFY 3
+#define DK_ATTENTION 4
+#define DK_ICON 5
+#define GUI_DOCK_ICON_MAX 256
+typedef struct { unsigned int w, h; unsigned int px[GUI_DOCK_ICON_MAX * GUI_DOCK_ICON_MAX]; } gui_dock_icon_t;
 /* teclas de GEV_FLAGS (os mesmos números de KEY_LSHIFT … em kernel.h) */
 #define GUI_KEY_LSHIFT 0x116
 #define GUI_KEY_RSHIFT 0x117
@@ -289,6 +297,26 @@ typedef struct {
 #define GUI_FOCUS_GETFRAME 0x47465241
 #define GUI_FOCUS_LIMITS   0x4C494D53
 #define GUI_FOCUS_LEVEL    0x4C45564C
+/* Cursor sobre o conteúdo da janela (-[NSCursor set], push/pop, hide/unhide, cursorRect):
+ *   GUI_WIN_FOCUS (id, GUI_FOCUS_CURSOR, forma)  forma GUI_CURSOR_* (mesma numeração do window server); GUI_CURSOR_HIDDEN
+ *                                                esconde o cursor enquanto ele está sobre a janela. Vale na hora se o
+ *                                                cursor já está sobre ela.
+ *   GUI_WIN_FOCUS (id, GUI_FOCUS_CURSOR_IMAGE, gui_cursor_image_t *in)  cursor com imagem do app (NSCursor
+ *                                                initWithImage:hotSpot:): ARGB não pré-multiplicado, até 32x32, ponto
+ *                                                quente em pixels a partir do canto superior esquerdo (limitado a 16).
+ * Devolvem 0, -MOS_EBADF, -MOS_EFAULT ou -MOS_EINVAL (forma ou tamanho fora do intervalo). */
+#define GUI_FOCUS_CURSOR       0x43555253
+#define GUI_FOCUS_CURSOR_IMAGE 0x43494D47
+enum {
+    GUI_CURSOR_ARROW, GUI_CURSOR_IBEAM, GUI_CURSOR_HAND, GUI_CURSOR_RESIZE_H, GUI_CURSOR_RESIZE_V, GUI_CURSOR_RESIZE_D,
+    GUI_CURSOR_WAIT, GUI_CURSOR_RESIZE_D2, GUI_CURSOR_CROSS, GUI_CURSOR_MOVE, GUI_CURSOR_ZOOM_IN, GUI_CURSOR_ZOOM_OUT,
+    GUI_CURSOR_GRAB, GUI_CURSOR_GRABBING, GUI_CURSOR_COPY, GUI_CURSOR_RESIZE_LEFT, GUI_CURSOR_RESIZE_RIGHT,
+    GUI_CURSOR_RESIZE_UP, GUI_CURSOR_RESIZE_DOWN, GUI_CURSOR_RESIZE_COL, GUI_CURSOR_RESIZE_ROW,
+    GUI_CURSOR_FORMS,       /* as outras formas do NSCursor (proibido, atalho, menu, sumir) vão como imagem */
+    GUI_CURSOR_HIDDEN = -1
+};
+#define GUI_CURSOR_MAX 32
+typedef struct { unsigned int w, h, hx, hy; unsigned int px[GUI_CURSOR_MAX * GUI_CURSOR_MAX]; } gui_cursor_image_t;
 typedef struct { int x, y, w, h; } gui_frame_t;
 typedef struct { int min_w, min_h, max_w, max_h; } gui_limits_t;
 

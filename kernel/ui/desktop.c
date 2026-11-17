@@ -3930,10 +3930,10 @@ void desktop_tick(void) {
     for (int i = 0; i < nnotif; i++) if (now - notifs[i].t0 < 5600) wm_damage(rect_make(SW - 400, MENUBAR_H, 400, 110));
     for (int i = 0; i < apps_count(); i++) {
         app_t *a = apps_get(i);
-        if (a->attention && a == wm_active_app()) a->attention = false;   /* o usuário veio ao app */
+        if ((a->attention || a->attention_once) && a == wm_active_app()) a->attention = a->attention_once = false;   /* o usuário veio ao app */
         if (a->bounce > 0) {
             a->bounce -= 0.012f;
-            if (a->bounce < 0 || (!a->attention && wm_count_for(a))) a->bounce = 0;
+            if (a->bounce < 0 || (!a->attention && !a->attention_once && wm_count_for(a))) { a->bounce = 0; a->attention_once = false; }
             if (a->bounce == 0 && a->attention) a->bounce = 1;              /* pede atenção: continua pulando */
             wm_damage(rect_make(0, SH - 220, SW, 220));
         }

@@ -66,6 +66,7 @@ static void tv_install_archived(id table, id arch);
 static void set_clip(double x, double y, double w, double h);
 struct absr;
 static void draw_image_fit(id img, double x, double y, double w, double h);
+static void draw_image_ctl(id img, double x, double y, double w, double h, int scaling, u32 tint);
 static void perform_menu(int k);
 
 /* ================================================================ estado dos objetos */
@@ -111,6 +112,27 @@ typedef struct {
     int tv_dirty;                  /* NSTableView: o delegate precisa ser perguntado de novo */
     BOOL show_idle;                /* NSProgressIndicator: displayedWhenStopped */
     float hug_h, hug_v, cr_h, cr_v; /* Auto Layout: 0 = padrão (hugging 250, resistência 750) */
+    BOOL pg_indet, pg_anim;         /* NSProgressIndicator: indeterminada, animando */
+    int pg_style;                   /* 0 barra, 1 giratório */
+    id pg_timer;                    /* quadros da animação (NSTimer, retido) */
+    int st_align, st_dist;          /* NSStackView: alignment (NSLayoutAttribute) e distribution; st_align_set = 1 se o app pôs */
+    BOOL st_align_set;
+    double st_ins[4];               /* NSStackView edgeInsets: top, left, bottom, right */
+    int img_scaling;                /* NSImageView imageScaling (0 = proporcional para baixo) */
+    /* NSScrollView: barras pedidas (o *_set diz se o app escolheu; sem escolha, a barra aparece quando o documento passa
+     * da área), autohidesScrollers, borderType (0 nenhuma, 1 linha, 2 bezel, 3 sulco) e fundo */
+    BOOL sv_vset, sv_v, sv_hset, sv_h, sv_autohide;
+    int sv_border;
+    id tint;                        /* contentTintColor (NSButton, NSImageView), retido */
+    float valpha;                   /* alphaValue da view (vale com valpha_set) */
+    BOOL valpha_set;
+    /* NSTextField: lineBreakMode + 1 (0 = o padrão do campo), maximumNumberOfLines (0 = sem limite), usesSingleLineMode,
+     * preferredMaxLayoutWidth (0 = nenhuma) */
+    int tf_lbm1;
+    i64 tf_max_lines;
+    BOOL tf_single;
+    double tf_pref_w;
+    int cont;                       /* NSControl continuous: 0 padrão (o slider é contínuo), 1 sim, 2 não */
 } vstate_t;
 
 typedef struct {
@@ -131,6 +153,11 @@ typedef struct {
     id next_responder;              /* nextResponder explícito; senão o NSApp */
     id tb_host;                     /* view que hospeda os itens da NSToolbar (fraco: a toolbar retém) */
     double tb_top;                  /* faixa da toolbar acima do conteúdo (0 sem toolbar ou com fullSizeContentView) */
+    BOOL title_hidden;              /* titleVisibility = NSWindowTitleHidden: o window server mostra a barra sem texto */
+    BOOL titlebar_transparent, movable_bg, accepts_moved, no_shadow, not_opaque, initial_done;
+    u64 collection;                 /* collectionBehavior */
+    id initial_fr;                  /* initialFirstResponder (fraco, como no Cocoa) */
+    id autosave;                    /* frameAutosaveName (retido) */
 } wstate_t;
 
 typedef struct { double r, g, b, a; } rgba_t;     /* NSColor: campos logo após o isa */
@@ -259,12 +286,29 @@ static id ft_name(id self, SEL c) {
 /* ================================================================ lote de comandos */
 static u8 *cmd;
 static u32 ncmd, capcmd;
+/* alphaValue das views em desenho (produto dos ancestrais): o lote não tem opacidade de grupo, então cada cor e cada
+ * pixel dos comandos sai com o alfa multiplicado */
+static double g_view_alpha = 1;
+static void alpha_u32(u8 *p, double a) { u32 c; memcpy(&c, p, 4); c = ((u32)((c >> 24) * a + 0.5) << 24) | (c & 0xFFFFFF); memcpy(p, &c, 4); }
 static void put(u32 op, const void *payload, u32 n) {
     u32 len = 8 + n;
     if (ncmd + len > capcmd) { capcmd = (ncmd + len) * 2 + 4096; cmd = realloc(cmd, capcmd); }
     memcpy(cmd + ncmd, &op, 4);
     memcpy(cmd + ncmd + 4, &len, 4);
     if (n) memcpy(cmd + ncmd + 8, payload, n);
+    if (g_view_alpha < 0.999 && n) {
+        u8 *b = cmd + ncmd + 8;
+        double a = g_view_alpha;
+        switch (op) {
+        case GC_FILL: case GC_RRECT: case GC_LINE: if (n >= 24) alpha_u32(b + 20, a); break;
+        case GC_RRECT_STROKE: if (n >= 28) alpha_u32(b + 24, a); break;
+        case GC_POLY: case GC_POLYLINE: if (n >= 8) alpha_u32(b + 4, a); break;
+        case GC_TEXT: case GC_COMP_FILL: if (n >= 20) alpha_u32(b + 16, a); break;
+        case GC_GRAD: if (n >= 24) { alpha_u32(b + 16, a); alpha_u32(b + 20, a); } break;
+        case GC_IMAGE: for (u32 o = 16; o + 4 <= n; o += 4) alpha_u32(b + o, a); break;
+        case GC_COMP_IMAGE: for (u32 o = 20; o + 4 <= n; o += 4) alpha_u32(b + o, a); break;
+        }
+    }
     ncmd += len;
 }
 static int g_offscreen;   /* > 0: o lote está sendo gravado para um CGContext (cx_gc_record_*); nada vai à janela */
@@ -332,6 +376,7 @@ static void px_rect(NSRect r, double *x, double *y, double *w, double *h) {
  * só (o window server tem a regra não-zero; o par-ímpar é convertido), o traço passa pelo tracejado e ganha pontas e
  * junções redondas/quadradas. addClip/setClip recortam pela caixa do caminho (o recorte do window server é retangular). */
 #include "bezier_core.h"
+#include "textfit_core.h"
 void *bz_alloc(unsigned long n) { return malloc(n); }
 void *bz_realloc(void *p, unsigned long n) { return realloc(p, n); }
 void bz_free(void *p) { free(p); }
@@ -709,6 +754,27 @@ static NSSize str_size(id self, SEL c, id attrs) {
     return text_size(cx_cstr(self), size, weight);
 }
 /* quebra de linha por palavras dentro de um retângulo (pixels) */
+typedef struct { double size; int weight; } tfm_ctx;
+static double tfm_measure(const char *s, int n, void *ctx) { tfm_ctx *t = ctx; return measure(s, (u32)n, t->size, t->weight).width; }
+/* texto quebrado em linhas (TFIT_WORD ou TFIT_CHAR), no máximo maxl linhas (0 = até a altura acabar) */
+static void draw_wrapped_mode(const char *s, double x, double y, double w, double h, double size, int weight, u32 color, int align, int mode, i64 maxl) {
+    gui_metrics_t m0 = measure("Ag", 2, size, weight);
+    double lh = m0.ascent + m0.descent + 2, base = y + m0.ascent;
+    tfm_ctx tc = {size, weight};
+    const char *p = s;
+    i64 line = 0;
+    while (*p && base - m0.ascent < y + h && (!maxl || line < maxl)) {
+        int skip, n = tfit_break(p, w, mode, tfm_measure, &tc, &skip);
+        double tw = measure(p, (u32)n, size, weight).width, tx = x;
+        if (align == 2) tx = x + (w - tw) / 2;
+        else if (align == 1) tx = x + w - tw;
+        if (n) g_text(tx, base, size, weight, color, p, (u32)n);
+        p += n + skip;
+        if (!n && !skip) p++;
+        base += lh;
+        line++;
+    }
+}
 static void draw_wrapped(const char *s, double x, double y, double w, double h, double size, int weight, u32 color, int align) {
     gui_metrics_t m0 = measure("Ag", 2, size, weight);
     double lh = m0.ascent + m0.descent + 2, base = y + m0.ascent;
@@ -1295,6 +1361,44 @@ static id pg_init_frame(id self, SEL c, NSRect f) {
 static void pg_set_idle(id self, SEL c, BOOL v) { (void)c; vs(self)->show_idle = v ? YES : NO; mark(self); }
 static BOOL pg_idle(id self, SEL c) { (void)c; return vs(self)->show_idle; }
 static void pg_inc(id self, SEL c, double d) { (void)c; vs(self)->dval += d; mark(self); }
+static void pg_set_indet(id self, SEL c, BOOL v) { (void)c; vs(self)->pg_indet = v ? YES : NO; mark(self); }
+static BOOL pg_indet(id self, SEL c) { (void)c; return vs(self)->pg_indet; }
+static void pg_set_style(id self, SEL c, i64 st) {
+    (void)c;
+    vstate_t *s = vs(self);
+    s->pg_style = st == 1 ? 1 : 0;   /* NSProgressIndicatorStyleBar 0, Spinning 1 */
+    mark(self);
+}
+static i64 pg_style(id self, SEL c) { (void)c; return vs(self)->pg_style; }
+static void pg_tick(id self, SEL c, id timer) { (void)c; (void)timer; mark(self); }
+static void pg_start(id self, SEL c, id sender) {
+    (void)c; (void)sender;
+    vstate_t *s = vs(self);
+    if (s->pg_anim) return;
+    s->pg_anim = YES;
+    if (s->pg_indet || s->pg_style == 1) {   /* a determinada não anima no Cocoa */
+        id t = MSG(id, (id)cx_class_named("NSTimer"), "scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:", 1.0 / 30, self,
+                   sel_registerName("_cxProgressTick:"), (id)0, (BOOL)YES);
+        s->pg_timer = t ? objc_retain(t) : 0;
+    }
+    mark(self);
+}
+static void pg_stop(id self, SEL c, id sender) {
+    (void)c; (void)sender;
+    vstate_t *s = vs(self);
+    if (!s->pg_anim) return;
+    s->pg_anim = NO;
+    if (s->pg_timer) { MSG0(void, s->pg_timer, "invalidate"); objc_release(s->pg_timer); s->pg_timer = 0; }
+    mark(self);
+}
+static void pg_set_threaded(id self, SEL c, BOOL v) { (void)self; (void)c; (void)v; }   /* a animação é sempre no laço principal */
+static BOOL pg_threaded(id self, SEL c) { (void)self; (void)c; return NO; }
+static NSSize pg_size_to_fit_size(id self) { return vs(self)->pg_style == 1 ? (NSSize){32, 32} : (NSSize){vs(self)->frame.s.w, 20}; }
+static void pg_size_to_fit(id self, SEL c) {
+    (void)c;
+    NSSize z = pg_size_to_fit_size(self);
+    ((void (*)(id, SEL, NSSize))objc_msgSend)(self, sel_registerName("setFrameSize:"), z);
+}
 static id bx_init_frame(id self, SEL c, NSRect f) { v_init_frame(self, c, f); vstate_t *s = vs(self); s->kind = K_BOX; s->title = cx_str(""); return self; }
 static id st_init_frame(id self, SEL c, NSRect f) { v_init_frame(self, c, f); vstate_t *s = vs(self); s->kind = K_STACK; s->spacing = 8; s->orientation = 0; return self; }
 static id st_with_views(id cls, SEL c, id views) {
@@ -1304,7 +1408,55 @@ static id st_with_views(id cls, SEL c, id views) {
     for (u64 i = 0; views && i < a->n; i++) v_add_sub(s, 0, a->items[i]);
     return s;
 }
-static void st_add(id self, SEL c, id v) { v_add_sub(self, c, v); }
+/* views arrumadas: lista própria (removeArrangedSubview: deixa a view como subview comum); sem lista, todas as subviews
+ * (stacks vindas de nib que não trazem a lista) */
+static char k_arranged;
+static id st_list(id self, BOOL make) {
+    id l = objc_getAssociatedObject(self, &k_arranged);
+    if (!l && make) {
+        l = cx_arr_new(&NSMutableArray_c);
+        vstate_t *s = vs(self);
+        for (u32 i = 0; i < s->nsub; i++) cx_arr_add(l, s->sub[i]);
+        objc_setAssociatedObject(self, &k_arranged, l, 1);
+        objc_release(l);
+    }
+    return l;
+}
+static void st_add(id self, SEL c, id v) {
+    if (!v) return;
+    id l = st_list(self, YES);
+    if (!MSG(BOOL, l, "containsObject:", v)) MSG(void, l, "addObject:", v);
+    if (vs(v)->superview != self) v_add_sub(self, c, v);
+    mark(self);
+}
+static void st_insert(id self, SEL c, id v, i64 at) {
+    (void)c;
+    if (!v) return;
+    id l = st_list(self, YES);
+    MSG(void, l, "removeObject:", v);
+    u64 n = MSG0(u64, l, "count");
+    MSG(void, l, "insertObject:atIndex:", v, (u64)(at < 0 ? 0 : (u64)at > n ? n : (u64)at));
+    if (vs(v)->superview != self) v_add_sub(self, 0, v);
+    mark(self);
+}
+static void st_remove(id self, SEL c, id v) { (void)c; id l = st_list(self, YES); if (v) MSG(void, l, "removeObject:", v); mark(self); }
+static id st_arranged(id self, SEL c) {
+    (void)c;
+    id l = st_list(self, NO), r = cx_arr_new(&NSMutableArray_c);
+    vstate_t *s = vs(self);
+    if (l) { u64 n = MSG0(u64, l, "count"); for (u64 i = 0; i < n; i++) { id v = MSG(id, l, "objectAtIndex:", i); if (vs(v)->superview == self) cx_arr_add(r, v); } }
+    else for (u32 i = 0; i < s->nsub; i++) cx_arr_add(r, s->sub[i]);
+    return objc_autorelease(r);
+}
+static void st_set_align(id self, SEL c, i64 a) { (void)c; vs(self)->st_align = (int)a; vs(self)->st_align_set = YES; mark(self); }
+static i64 st_align(id self, SEL c) { (void)c; vstate_t *s = vs(self); return s->st_align_set ? s->st_align : (s->orientation == 0 ? 10 : 9); }
+static void st_set_dist(id self, SEL c, i64 d) { (void)c; vs(self)->st_dist = (int)d + 1; mark(self); }   /* guarda +1: 0 = padrão (GravityAreas) */
+static i64 st_dist(id self, SEL c) { (void)c; return vs(self)->st_dist ? vs(self)->st_dist - 1 : -1; }
+typedef struct { double top, left, bottom, right; } st_insets_t;
+static void st_set_insets(id self, SEL c, st_insets_t e) { (void)c; vstate_t *s = vs(self); s->st_ins[0] = e.top; s->st_ins[1] = e.left; s->st_ins[2] = e.bottom; s->st_ins[3] = e.right; mark(self); }
+static st_insets_t st_insets(id self, SEL c) { (void)c; vstate_t *s = vs(self); return (st_insets_t){s->st_ins[0], s->st_ins[1], s->st_ins[2], s->st_ins[3]}; }
+static double st_spacing(id self, SEL c) { (void)c; return vs(self)->spacing; }
+static i64 st_orient(id self, SEL c) { (void)c; return vs(self)->orientation; }
 static void st_set_orient(id self, SEL c, i64 o) { (void)c; vs(self)->orientation = (int)o; mark(self); }
 static void st_set_spacing(id self, SEL c, double sp) { (void)c; vs(self)->spacing = sp; mark(self); }
 static id iv_init_frame(id self, SEL c, NSRect f) { v_init_frame(self, c, f); vs(self)->kind = K_IMAGE; return self; }
@@ -1320,34 +1472,90 @@ static NSSize v_intrinsic(id self, SEL c) {
         if (s->btype == BT_PUSH) { z.w = t.w + 28; if (z.w < 70) z.w = 70; z.h = 24; }
         else { z.w = t.w + 24; z.h = 18; }
     } else if (s->kind == K_TEXT) {
-        NSSize t = text_size(cx_cstr(s->value ? s->value : cx_str("")), size, fnt(f)->weight);
+        const char *txt = cx_cstr(s->value ? s->value : cx_str(""));
+        NSSize t = text_size(txt, size, fnt(f)->weight);
         z.w = t.w + (s->bezeled ? 10 : 4);
         z.h = t.h + (s->bezeled ? 6 : 1);
+        /* rótulo de várias linhas: preferredMaxLayoutWidth limita a largura e a altura cresce com as linhas */
+        int lbm = s->tf_lbm1 - 1;
+        if (s->tf_pref_w > 0 && !s->tf_single && s->tf_max_lines != 1 && (s->tf_lbm1 == 0 || lbm == TFIT_WORD || lbm == TFIT_CHAR)) {
+            double pad = s->bezeled ? 10 : 4, inner = s->tf_pref_w - pad;
+            if (inner < 1) inner = 1;
+            tfm_ctx tcx = {size, fnt(f)->weight};
+            i64 lines = tfit_lines(txt, inner, lbm == TFIT_CHAR ? TFIT_CHAR : TFIT_WORD, tfm_measure, &tcx);
+            if (s->tf_max_lines > 0 && lines > s->tf_max_lines) lines = s->tf_max_lines;
+            gui_metrics_t m0 = measure("Ag", 2, size, fnt(f)->weight);
+            double lh = m0.ascent + m0.descent + 2;
+            if (lines > 1 || t.w + pad > s->tf_pref_w) { z.w = s->tf_pref_w; z.h = lines * lh + (s->bezeled ? 6 : 1); }
+        }
     } else if (s->kind == K_SLIDER) { z.w = 160; z.h = 22; }
     return z;
 }
 
-/* empilhamento simples para NSStackView */
+/* NSStackView: as views arrumadas lado a lado (horizontal) ou de cima para baixo (vertical), dentro das margens.
+ * distribution: -1 GravityAreas (empacota no início), 0 Fill (a de menor hugging absorve a sobra), 1 FillEqually,
+ * 2 FillProportionally, 3 EqualSpacing, 4 EqualCentering. alignment no eixo cruzado: Top 3 / Bottom 4 / CenterY 10 /
+ * Height 8 (horizontal); Leading 5, Left 1 / Trailing 6, Right 2 / CenterX 9 / Width 7 (vertical). */
 static void layout_stack(id v) {
     vstate_t *s = vs(v);
-    double pos = 0, cross = 0;
-    for (u32 i = 0; i < s->nsub; i++) {
-        vstate_t *cs = vs(s->sub[i]);
-        if (cs->hidden) continue;
-        NSSize z = v_intrinsic(s->sub[i], 0);
-        if (z.w > 0 && cs->frame.s.w <= 0) cs->frame.s = z;
-        if (s->orientation == 0) { if (cs->frame.s.h > cross) cross = cs->frame.s.h; }
-        else if (cs->frame.s.w > cross) cross = cs->frame.s.w;
+    id views[256];
+    int n = 0;
+    id l = st_list(v, NO);
+    if (l) { u64 c = MSG0(u64, l, "count"); for (u64 i = 0; i < c && n < 256; i++) { id x = MSG(id, l, "objectAtIndex:", i); if (vs(x)->superview == v && !vs(x)->hidden) views[n++] = x; } }
+    else for (u32 i = 0; i < s->nsub && n < 256; i++) if (!vs(s->sub[i])->hidden) views[n++] = s->sub[i];
+    if (!n) return;
+    BOOL hz = s->orientation == 0;
+    double top = s->st_ins[0], left = s->st_ins[1], bottom = s->st_ins[2], right = s->st_ins[3];
+    double W = s->frame.s.w, H = s->frame.s.h;
+    double avail = hz ? W - left - right : H - top - bottom, cross_avail = hz ? H - top - bottom : W - left - right;
+    double m[256], cr[256], sum = 0;
+    for (int i = 0; i < n; i++) {
+        vstate_t *cs = vs(views[i]);
+        NSSize z = v_intrinsic(views[i], 0);
+        if (z.w > 0 && cs->frame.s.w <= 0) cs->frame.s.w = z.w;
+        if (z.h > 0 && cs->frame.s.h <= 0) cs->frame.s.h = z.h;
+        m[i] = hz ? cs->frame.s.w : cs->frame.s.h;
+        cr[i] = hz ? cs->frame.s.h : cs->frame.s.w;
+        sum += m[i];
     }
-    /* horizontal: da esquerda para a direita; vertical: de cima para baixo */
-    double top = s->frame.s.h;
-    for (u32 i = 0; i < s->nsub; i++) {
-        vstate_t *cs = vs(s->sub[i]);
-        if (cs->hidden) continue;
-        if (s->orientation == 0) { cs->frame.o.x = pos; cs->frame.o.y = (s->frame.s.h - cs->frame.s.h) / 2; pos += cs->frame.s.w + s->spacing; }
-        else { cs->frame.o.x = 0; top -= cs->frame.s.h; cs->frame.o.y = top; top -= s->spacing; }
+    int dist = s->st_dist ? s->st_dist - 1 : -1;
+    double gap = s->spacing, gaps = gap * (n - 1);
+    if (dist == 0) {          /* Fill: a sobra (ou a falta) vai para a view de menor hugging; empate, a última */
+        int k = n - 1;
+        double best = 1e9;
+        for (int i = 0; i < n; i++) { double hp = hz ? vs(views[i])->hug_h : vs(views[i])->hug_v; if (hp <= 0) hp = 250; if (hp <= best) { best = hp; k = i; } }
+        m[k] += avail - sum - gaps;
+        if (m[k] < 0) m[k] = 0;
+    } else if (dist == 1) {   /* FillEqually */
+        double e = (avail - gaps) / n;
+        for (int i = 0; i < n; i++) m[i] = e > 0 ? e : 0;
+    } else if (dist == 2 && sum > 0) {   /* FillProportionally */
+        double f = (avail - gaps) / sum;
+        for (int i = 0; i < n; i++) m[i] *= f > 0 ? f : 0;
+    } else if (dist == 3 && n > 1) {     /* EqualSpacing: o espaçamento é o mínimo */
+        double g = (avail - sum) / (n - 1);
+        gap = g > gap ? g : gap;
     }
-    (void)cross;
+    double pos = 0;
+    double step_c = 0;
+    if (dist == 4 && n > 1) step_c = (avail - m[0] / 2 - m[n - 1] / 2) / (n - 1);   /* EqualCentering */
+    int al = s->st_align_set ? s->st_align : (hz ? 10 : 9);
+    for (int i = 0; i < n; i++) {
+        vstate_t *cs = vs(views[i]);
+        double a0 = dist == 4 && n > 1 ? m[0] / 2 + step_c * i - m[i] / 2 : pos;
+        double c = cr[i], co;
+        if ((hz && al == 8) || (!hz && al == 7)) c = cross_avail;   /* Height / Width: ocupa o eixo cruzado */
+        if (hz) {
+            co = al == 3 ? H - top - c : al == 4 || al == 11 || al == 12 ? bottom : bottom + (cross_avail - c) / 2;
+            if (al == 8) co = bottom;
+            cs->frame = r_make(left + a0, co, m[i], c);
+        } else {
+            co = al == 5 || al == 1 ? left : al == 6 || al == 2 ? W - right - c : left + (cross_avail - c) / 2;
+            if (al == 7) co = left;
+            cs->frame = r_make(co, H - top - a0 - m[i], c, m[i]);   /* de cima para baixo */
+        }
+        pos += m[i] + gap;
+    }
 }
 
 /* desenho dos controles nativos (coordenadas em pixels do conteúdo) */
@@ -1366,7 +1574,7 @@ static void draw_builtin(id v, absr_t *a) {
     switch (s->kind) {
     case K_BUTTON: {
         const char *t = cx_cstr(s->title ? s->title : cx_str(""));
-        if (s->image && !t[0]) { draw_image_fit(s->image, x + 2, y + 2, w - 4, h - 4); break; }
+        if (s->image && !t[0]) { draw_image_ctl(s->image, x + 2, y + 2, w - 4, h - 4, 0, !s->enabled ? 0x55000000 : s->tint ? argb(s->tint) : 0xD9000000); break; }
         u32 n = (u32)strlen(t);
         gui_metrics_t m = measure(t, n, size, wt);
         u32 tc = s->enabled ? 0xFF1D1D1F : 0xFF9A9A9E;
@@ -1430,9 +1638,21 @@ static void draw_builtin(id v, absr_t *a) {
         if (!n && s->placeholder) {
             const char *p = cx_cstr(s->placeholder);
             g_text(x + pad, y + (h + m.ascent - m.descent) / 2, size, wt, 0x55000000, p, (u32)strlen(p));
-        } else if (!s->bezeled && !s->editable && h > (m.ascent + m.descent) * 1.8) {
-            draw_wrapped(t, x + pad, y + 1, w - 2 * pad, h, size, wt, tc, s->alignment);
+        } else if (!s->bezeled && !s->editable && h > (m.ascent + m.descent) * 1.8 && !s->tf_single && s->tf_max_lines != 1
+                   && (s->tf_lbm1 == 0 || s->tf_lbm1 - 1 == TFIT_WORD || s->tf_lbm1 - 1 == TFIT_CHAR)) {
+            int mode = s->tf_lbm1 - 1 == TFIT_CHAR ? TFIT_CHAR : TFIT_WORD;
+            if (s->tf_lbm1 == 0 && s->tf_max_lines <= 0) draw_wrapped(t, x + pad, y + 1, w - 2 * pad, h, size, wt, tc, s->alignment);
+            else draw_wrapped_mode(t, x + pad, y + 1, w - 2 * pad, h, size, wt, tc, s->alignment, mode, s->tf_max_lines);
         } else {
+            /* uma linha: truncamento com reticências (fora da edição), como NSLineBreakByTruncating* */
+            static char trunc[1024];
+            int lbm = s->tf_lbm1 - 1;
+            if (!focused && (lbm == TFIT_HEAD || lbm == TFIT_TAIL || lbm == TFIT_MIDDLE) && m.width > w - 2 * pad) {
+                tfm_ctx tcx = {size, wt};
+                int tn = tfit_truncate(t, (int)n, w - 2 * pad, lbm, tfm_measure, &tcx, trunc, (int)sizeof trunc);
+                t = trunc; n = (u32)tn;
+                m = measure(t, n, size, wt);
+            }
             double tx = x + pad;
             if (s->alignment == 2) tx = x + (w - m.width) / 2;          /* NSTextAlignmentCenter */
             else if (s->alignment == 1) tx = x + w - pad - m.width;     /* direita */
@@ -1469,12 +1689,50 @@ static void draw_builtin(id v, absr_t *a) {
         break;
     }
     case K_PROGRESS: {
-        if (!cx_progress_draws(s->show_idle, s->dval, s->minv)) break;
+        /* parada: o giratório e a indeterminada somem com displayedWhenStopped = NO; a barra determinada segue a regra antiga */
+        if (!s->pg_anim) {
+            if (s->pg_style == 1 || s->pg_indet) { if (!s->show_idle) break; }
+            else if (!cx_progress_draws(s->show_idle, s->dval, s->minv)) break;
+        }
         double range = s->maxv - s->minv, t = range > 0 ? (s->dval - s->minv) / range : 0;
         if (t < 0) t = 0; if (t > 1) t = 1;
+        double now = cx_now();
+        if (s->pg_style == 1) {   /* giratório */
+            double cx = x + w / 2, cy = y + h / 2, r = (w < h ? w : h) / 2 - 1;
+            if (r < 3) break;
+            if (s->pg_indet) {     /* 12 raios; o mais escuro gira (12 passos por segundo) */
+                int head = s->pg_anim ? (int)(now * 12) % 12 : 0;
+                for (int i = 0; i < 12; i++) {
+                    double ang = i * 3.14159265358979 / 6 - 3.14159265358979 / 2, cs = cos(ang), sn = sin(ang);
+                    int age = (head - i + 12) % 12;
+                    u32 a = (u32)(0xD0 - age * 0x10);
+                    g_line(cx + cs * r * 0.48, cy + sn * r * 0.48, cx + cs * r * 0.95, cy + sn * r * 0.95, r * 0.17 > 1.2 ? r * 0.17 : 1.2, (a << 24) | 0x3C3C43);
+                }
+            } else {               /* determinado: anel e pizza do valor, a partir do topo no sentido horário */
+                g_rstroke(cx - r, cy - r, 2 * r, 2 * r, r, 1.2, 0x40000000);
+                if (t > 0) {
+                    float xy[2 * 66];
+                    int n = 0;
+                    xy[n++] = (float)cx; xy[n++] = (float)cy;
+                    int steps = (int)(t * 64) + 1;
+                    for (int k = 0; k <= steps; k++) {
+                        double ang = -3.14159265358979 / 2 + (t * 2 * 3.14159265358979) * k / steps;
+                        xy[n++] = (float)(cx + cos(ang) * (r - 2)); xy[n++] = (float)(cy + sin(ang) * (r - 2));
+                    }
+                    g_poly(xy, (u32)(n / 2), accent, 1, 0);
+                }
+            }
+            break;
+        }
         double cy = y + h / 2;
         g_rrect(x, cy - 3, w, 6, 3, 0x1F000000);
-        if (t > 0) g_rrect(x, cy - 3, w * t, 6, 3, accent);
+        if (s->pg_indet) {         /* faixa de 30% que corre da esquerda para a direita */
+            if (s->pg_anim) {
+                double ph = now * 0.7 - floor(now * 0.7), sw = w * 0.3, p0 = x + (ph * 1.3 - 0.3) * w;
+                double a0 = p0 < x ? x : p0, a1 = p0 + sw > x + w ? x + w : p0 + sw;
+                if (a1 > a0) g_rrect(a0, cy - 3, a1 - a0, 6, 3, accent);
+            }
+        } else if (t > 0) g_rrect(x, cy - 3, w * t, 6, 3, accent);
         break;
     }
     case K_TABLE: draw_table(v, a); break;
@@ -1501,7 +1759,18 @@ static void set_clip(double x, double y, double w, double h) {
     double x1 = x + w < clip_x1 ? x + w : clip_x1, y1 = y + h < clip_y1 ? y + h : clip_y1;
     g_clip(x0, y0, x1 > x0 ? x1 - x0 : 0, y1 > y0 ? y1 - y0 : 0);
 }
+static void draw_view_tree_inner(id v, absr_t *a);
 static void draw_view_tree(id v, absr_t *a) {
+    vstate_t *s = vs(v);
+    double saved = g_view_alpha;
+    if (s->valpha_set) {
+        if (s->valpha <= 0.001) return;   /* alfa 0: nada a desenhar */
+        g_view_alpha = saved * s->valpha;
+    }
+    draw_view_tree_inner(v, a);
+    g_view_alpha = saved;
+}
+static void draw_view_tree_inner(id v, absr_t *a) {
     vstate_t *s = vs(v);
     if (s->hidden || a->w <= 0 || a->h <= 0) return;
     if (s->kind == K_STACK) layout_stack(v);
@@ -1510,7 +1779,8 @@ static void draw_view_tree(id v, absr_t *a) {
     ctx.tlx = a->tlx; ctx.tly = a->tly; ctx.w = a->w; ctx.h = a->h; ctx.flipped = a->flipped;
     set_clip(a->tlx, a->tly, a->w, a->h);
     if (cx_layer_draw_hook) cx_layer_draw_hook(v, 0, a->tlx, a->tly, a->w, a->h, clip_x0, clip_y0, clip_x1, clip_y1);   /* gancho QuartzCore */
-    if (s->kind == K_IMAGE && s->image) draw_image_fit(s->image, a->tlx, a->tly, a->w, a->h);
+    if (s->kind == K_IMAGE && s->image) draw_image_ctl(s->image, a->tlx, a->tly, a->w, a->h, s->img_scaling, s->tint ? argb(s->tint) : 0xD9000000);
+    if (s->kind == K_SCROLL && s->draws_bg) g_fill(a->tlx, a->tly, a->w, a->h, s->bg_color ? argb(s->bg_color) : 0xFFFFFFFF);
     if (s->kind != K_VIEW && s->kind != K_STACK && s->kind != K_IMAGE && s->kind != K_SCROLL) draw_builtin(v, a);
     set_clip(a->tlx, a->tly, a->w, a->h);
     ctx.tlx = a->tlx; ctx.tly = a->tly; ctx.w = a->w; ctx.h = a->h; ctx.flipped = a->flipped;
@@ -1537,11 +1807,26 @@ static void draw_view_tree(id v, absr_t *a) {
     }
     if (s->kind == K_SCROLL && s->doc) {
         vstate_t *d = vs(s->doc);
-        if (d->frame.s.h > a->h) {
-            double vis = a->h / d->frame.s.h, bh = a->h * vis, by = a->tly + s->scroll_y / d->frame.s.h * a->h;
-            set_clip(a->tlx, a->tly, a->w, a->h);
-            g_rrect(a->tlx + a->w - 8, by + 2, 5, bh - 4 < 12 ? 12 : bh - 4, 2.5, 0x55000000);
+        BOOL vbar = !s->sv_vset || s->sv_v, hbar = !s->sv_hset || s->sv_h;
+        BOOL track = s->sv_vset && s->sv_v && !s->sv_autohide;   /* sem esconder: a calha fica à vista */
+        set_clip(a->tlx, a->tly, a->w, a->h);
+        if (vbar && (d->frame.s.h > a->h || track)) {
+            if (track) g_fill(a->tlx + a->w - 11, a->tly, 11, a->h, 0x0C000000);
+            if (d->frame.s.h > a->h) {
+                double vis = a->h / d->frame.s.h, bh = a->h * vis, by = a->tly + s->scroll_y / d->frame.s.h * a->h;
+                g_rrect(a->tlx + a->w - 8, by + 2, 5, bh - 4 < 12 ? 12 : bh - 4, 2.5, 0x55000000);
+            }
         }
+        if (hbar && d->frame.s.w > a->w + 0.5) {
+            double vis = a->w / d->frame.s.w, bw = a->w * vis, bx = a->tlx + s->scroll_x / d->frame.s.w * a->w;
+            g_rrect(bx + 2, a->tly + a->h - 8, bw - 4 < 12 ? 12 : bw - 4, 5, 2.5, 0x55000000);
+        }
+    }
+    if (s->kind == K_SCROLL && s->sv_border) {   /* NSLineBorder, NSBezelBorder, NSGrooveBorder */
+        set_clip(a->tlx, a->tly, a->w, a->h);
+        if (s->sv_border == 1) g_rstroke(a->tlx + 0.5, a->tly + 0.5, a->w - 1, a->h - 1, 0, 1, 0x80000000);
+        else if (s->sv_border == 2) { g_rstroke(a->tlx + 0.5, a->tly + 0.5, a->w - 1, a->h - 1, 0, 1, 0x33000000); g_fill(a->tlx, a->tly, a->w, 1, 0x40000000); }
+        else { g_rstroke(a->tlx + 0.5, a->tly + 0.5, a->w - 1, a->h - 1, 0, 1, 0x40000000); g_rstroke(a->tlx + 1.5, a->tly + 1.5, a->w - 3, a->h - 3, 0, 1, 0x60FFFFFF); }
     }
     clip_x0 = sx0; clip_y0 = sy0; clip_x1 = sx1; clip_y1 = sy1;
     g_unclip();
@@ -1565,11 +1850,13 @@ static id w_init(id self, SEL c, NSRect r, u64 style, u64 backing, BOOL defer) {
 }
 static id w_init_simple(id self, SEL c) { return w_init(self, c, r_make(0, 0, 480, 320), 15, 2, NO); }
 static id w_with_vc(id cls, SEL c, id vc) { (void)vc; return w_init(MSG0(id, cls, "alloc"), c, r_make(0, 0, 480, 320), 15, 2, NO); }
+/* texto da barra de título no window server: vazio com titleVisibility = NSWindowTitleHidden */
+static const char *w_shown_title(id self) { wstate_t *s = ws(self); return s->title_hidden || !s->title ? "" : cx_cstr(s->title); }
 static void w_set_title(id self, SEL c, id t) {
     (void)c;
     wstate_t *s = ws(self);
     { id nt = t ? MSG0(id, t, "copy") : cx_str(""); objc_release(s->title); s->title = nt; }
-    if (s->gid > 0) SYS2(GUI_WIN_TITLE, s->gid, cx_cstr(s->title));
+    if (s->gid > 0) SYS2(GUI_WIN_TITLE, s->gid, w_shown_title(self));
 }
 static id w_title(id self, SEL c) { (void)c; return ws(self)->title; }
 static void w_set_next(id self, SEL c, id n) { (void)c; ws(self)->next_responder = n; }
@@ -1785,6 +2072,7 @@ static id app_windows;
  * chave anterior recebe windowDidResignKey:. É no windowDidBecomeKey: que o Chromium devolve o foco à view web
  * (makeFirstResponder: na RenderWidgetHostViewCocoa); sem isso as teclas iam para a BridgedContentView até o 1º clique. */
 static id g_key_window;
+static void w_autosave(id self);   /* frameAutosaveName: grava o frame (mais abaixo) */
 static void w_become_key(id self) {
     if (g_key_window == self) return;
     extern int cx_ca_diag(void);
@@ -1836,7 +2124,7 @@ static void w_order_in(id self) {
         u32 fl = (s->style & 8) ? GUI_WF_RESIZABLE : 0;
         if (w_title_h(self) == 0 && (s->style & 1)) fl |= GUI_WF_FULLSIZE;   /* FullSizeContentView ou sem moldura */
         if (!(s->style & 1)) fl |= GUI_WF_NO_TITLE;                          /* borderless: sem barra nem semáforos */
-        long id_ = SYS4(GUI_WIN_CREATE, cx_cstr(s->title), (long)s->frame.s.w, (long)s->frame.s.h, fl);
+        long id_ = SYS4(GUI_WIN_CREATE, w_shown_title(self), (long)s->frame.s.w, (long)s->frame.s.h, fl);
         if (id_ <= 0) { cx_fdprintf(2, "AppKit[mOS]: não foi possível criar a janela (%ld)\n", id_); return; }
         s->gid = (int)id_;
         if (objc_getAssociatedObject(self, &k_pos_set)) w_push_frame(self, 0);   /* o app pediu um lugar */
@@ -1883,6 +2171,7 @@ static void w_post_occlusion(id self) {
 static void w_order_out_core(id self) {
     wstate_t *s = ws(self);
     if (!s->visible) return;
+    w_autosave(self);
     s->visible = NO;
     if (s->gid > 0) SYS2(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_HIDE);
     if (g_key_window == self) {
@@ -1910,6 +2199,13 @@ static void w_show(id self, SEL c, id sender) {
     (void)sender;
     ((void (*)(id, SEL, i64, i64))objc_msgSend)(self, sel_registerName("orderWindow:relativeTo:"), 1, 0);   /* NSWindowAbove */
     if (c == sel_registerName("makeKeyAndOrderFront:") || c == sel_registerName("makeKeyWindow")) w_become_key(self);
+    {   /* initialFirstResponder: vira o primeiro respondedor na primeira vez que a janela aparece */
+        wstate_t *s = ws(self);
+        if (!s->initial_done && s->visible) {
+            s->initial_done = YES;
+            if (s->initial_fr && (!s->first || s->first == self)) w_make_first(self, 0, s->initial_fr);
+        }
+    }
 }
 static void w_order_out(id self, SEL c, id sender) {
     (void)c; (void)sender;
@@ -2028,6 +2324,7 @@ static void w_set_content_size(id self, SEL c, NSSize z) {
 static void close_window(id self, BOOL from_wm) {
     wstate_t *s = ws(self);
     if (s->closed) return;
+    w_autosave(self);   /* antes de destruir: o frame ainda está no window server */
     s->closed = YES;
     s->visible = NO;
     if (g_key_window == self) g_key_window = 0;
@@ -2052,6 +2349,7 @@ static void w_perform_close(id self, SEL c, id sender) {
 static void w_display(id self, SEL c) { (void)c; ws(self)->needs = YES; }
 
 static void autolayout_window(id w);
+static void v_update_constraints_subtree(id self, SEL c);
 /* diagnóstico (ca-log): a árvore de views da janela (classe, frame, oculta), a cada ~15 s nas primeiras vezes.
  * Mostra se uma WebContentsView filha (Electron addChildView) entrou na árvore e com que frame. */
 static void dump_view_tree(id v, int depth) {
@@ -2157,8 +2455,11 @@ static BOOL tree_needs(id v) {
 /* ================================================================ NSEvent */
 typedef struct { u64 type; double x, y; u64 mods; u16 keycode; id chars; i64 clicks; id window; double dy;
                  double ts; i64 wnum, d1, d2; short subtype; double dx;
-                 gui_event_t g; u8 has_g; } evstate_t;   /* g: o evento do window server de origem (sendEvent:) */
+                 gui_event_t g; u8 has_g; u8 repeat; } evstate_t;   /* repeat: tecla mantida (isARepeat) */   /* g: o evento do window server de origem (sendEvent:) */
 static evstate_t *evs(id e) { return ST(e); }
+static u8 g_key_held[128];       /* tecla (código do Mac) apertada sem keyUp ainda */
+static double g_key_time[128];
+static BOOL ev_is_repeat(id self, SEL c) { (void)c; return evs(self)->repeat; }
 /* o Chromium lê estes em todo evento de teclado/mouse (ui/events/cocoa); os que devolvem double/float não podem cair no
  * "ainda não implementado" (que só zera rax: xmm0 voltaria com lixo) */
 u64 mach_absolute_time(void);
@@ -2308,6 +2609,9 @@ static double slider_value_at(id v, double px) {
     if (t < 0) t = 0; if (t > 1) t = 1;
     return s->minv + t * (s->maxv - s->minv);
 }
+static BOOL ctl_is_continuous_s(vstate_t *s) { return s->cont == 1 || (s->cont == 0 && s->kind == K_SLIDER); }
+static void ctl_set_continuous(id self, SEL c, BOOL v) { (void)c; vs(self)->cont = v ? 1 : 2; }
+static BOOL ctl_is_continuous(id self, SEL c) { (void)c; return ctl_is_continuous_s(vs(self)); }
 static void ctl_mouse_down(id self, SEL c, id ev) {
     (void)c;
     vstate_t *s = vs(self);
@@ -2317,7 +2621,7 @@ static void ctl_mouse_down(id self, SEL c, id ev) {
         absr_t a;
         abs_rect(self, &a);
         s->dval = slider_value_at(self, evs(ev)->x);
-        send_action(self);
+        if (ctl_is_continuous_s(s)) send_action(self);   /* não contínuo: a ação sai só ao soltar */
         mark(self);
     } else if (s->kind == K_TEXT && s->editable) {
         id w = s->window;
@@ -2345,11 +2649,12 @@ static void ctl_mouse_down(id self, SEL c, id ev) {
 static void ctl_mouse_dragged(id self, SEL c, id ev) {
     (void)c;
     vstate_t *s = vs(self);
-    if (s->kind == K_SLIDER && s->enabled) { s->dval = slider_value_at(self, evs(ev)->x); send_action(self); mark(self); }
+    if (s->kind == K_SLIDER && s->enabled) { s->dval = slider_value_at(self, evs(ev)->x); if (ctl_is_continuous_s(s)) send_action(self); mark(self); }
 }
 static void ctl_mouse_up(id self, SEL c, id ev) {
     (void)c;
     vstate_t *s = vs(self);
+    if (s->kind == K_SLIDER && s->enabled && !ctl_is_continuous_s(s)) { send_action(self); return; }
     if (s->kind != K_BUTTON || !s->highlighted) return;
     s->highlighted = NO;
     mark(self);
@@ -2402,6 +2707,10 @@ static void tf_move(vstate_t *s, int to, BOOL shift) {
     else s->has_anchor = NO;
     s->caret = to;
 }
+/* cadeia de teclado (mais abaixo) */
+static void w_select_next_kv(id self, SEL c, id sender);
+static void w_select_prev_kv(id self, SEL c, id sender);
+static BOOL kv_tab_key(id view, id ev);
 static void tf_key(id self, id ev) {
     vstate_t *s = vs(self);
     evstate_t *e = evs(ev);
@@ -2456,6 +2765,15 @@ static void tf_key(id self, id ev) {
     } else if (e->keycode == 115 || e->keycode == 126) { tf_move(s, 0, shift); mark(self); return; }
     else if (e->keycode == 119 || e->keycode == 125) { tf_move(s, n, shift); mark(self); return; }
     else if (e->keycode == 36 || e->keycode == 76) { send_action(self); return; }
+    else if (e->keycode == 48 && !cmd) {          /* Tab / ⇧Tab: fim da edição (NSTabTextMovement/NSBacktabTextMovement) */
+        id d = s->delegate;
+        if (d && cx_responds(d->isa, sel_registerName("controlTextDidEndEditing:"))) {
+            id info = MSG(id, (id)cx_class_named("NSDictionary"), "dictionaryWithObject:forKey:", cx_num_i(shift ? 0x12 : 0x11), cx_str("NSTextMovement"));
+            MSG(void, d, "controlTextDidEndEditing:", cx_note(cx_str("NSControlTextDidEndEditingNotification"), self, info));
+        }
+        if (s->window) { if (shift) w_select_prev_kv(s->window, 0, 0); else w_select_next_kv(s->window, 0, 0); }
+        return;
+    }
     else if (ch[0] && (u8)ch[0] >= 32 && (u8)ch[0] != 127) {
         if (sel) tf_replace(s, a, b, ch); else tf_replace(s, s->caret, s->caret, ch);
     } else return;
@@ -3318,6 +3636,7 @@ static void r_key_down(id self, SEL c, id e) {
         if (s->kind == K_TV) { tx_key(self, e); return; }
         id next = s->next_responder ? s->next_responder : s->superview;
         if (next && next != self) { MSG(void, next, "keyDown:", e); return; }
+        kv_tab_key(self, e);   /* topo da cadeia de views: Tab muda o foco */
     }
 }
 static void r_key_up(id self, SEL c, id e) {
@@ -3438,6 +3757,7 @@ static void ap_terminate(id self, SEL c, id sender) {
     if (d && cx_responds(d->isa, sel_registerName("applicationShouldTerminate:")) && MSG(u64, d, "applicationShouldTerminate:", self) == 0) return;
     if (d && cx_responds(d->isa, sel_registerName("applicationWillTerminate:"))) MSG(void, d, "applicationWillTerminate:", cx_note(NSApplicationWillTerminateNotification, self, 0));
     cx_post(cx_note(NSApplicationWillTerminateNotification, self, 0));
+    { nsarr_t *aw = (nsarr_t *)app_windows; for (u64 i = 0; aw && i < aw->n; i++) w_autosave(aw->items[i]); }
     exit(0);
 }
 static void ap_stop(id self, SEL c, id sender) { (void)self; (void)c; (void)sender; app.running = NO; }
@@ -3481,6 +3801,7 @@ static id find_window(int gid) {
 }
 static BOOL menu_shortcut(gui_event_t *g);
 id cx_hover_view(id w);              /* appkit_input.c */
+void cx_cursor_moved(id w, id hit, double x, double y);   /* appkit_cursor.c */
 void cx_set_hover_view(id w, id v);
 int cx_gr_mouse(id view, id ev, int phase);   /* appkit_more.c: NSGestureRecognizer */
 int cx_carbon_key(int phase, u16 code, u64 nsmods);   /* carbon_events.c */
@@ -3539,6 +3860,7 @@ static void dispatch(gui_event_t *g) {
         s->frame.s.h = g->h;
         v_set_frame(s->content, 0, r_make(0, 0, g->w, g->h));
         if (s->delegate && cx_responds(s->delegate->isa, sel_registerName("windowDidResize:"))) MSG(void, s->delegate, "windowDidResize:", cx_note(NSWindowDidResizeNotification, w, 0));
+        w_autosave(w);
         s->needs = YES;
         break;
     }
@@ -3563,6 +3885,9 @@ static void dispatch(gui_event_t *g) {
             }
             if (!inside) cx_pop_close_transients(); /* NSPopoverBehaviorTransient */
             if (w != g_key_window) w_become_key(w);   /* o clique torna chave a janela que aceita (Cocoa); popups não */
+            /* movableByWindowBackground: o clique num fundo que deixa (mouseDownCanMoveWindow) arrasta a janela */
+            if (s->movable_bg && !(g->mods & 2) && s->gid > 0 && MSG0(BOOL, v, "mouseDownCanMoveWindow")
+                && SYS2(GUI_WIN_FOCUS, s->gid, GUI_FOCUS_MOVE) == 0) break;
             if (MSG0(BOOL, v, "acceptsFirstResponder")) w_make_first(w, 0, v);
             else if (s->first && vs(s->first)->kind == K_TEXT) w_make_first(w, 0, 0);
             s->mouse_view = v;
@@ -3611,6 +3936,7 @@ static void dispatch(gui_event_t *g) {
                 cx_set_hover_view(w, v);
             }
             MSG(void, v, "mouseMoved:", make_event(5, w, g->x, g->y, g));
+            cx_cursor_moved(w, v, g->x, g->y);   /* appkit_cursor.c: cursor rects e setHiddenUntilMouseMoves: */
         }
         break;
     case GEV_FLAGS: {
@@ -3630,6 +3956,7 @@ static void dispatch(gui_event_t *g) {
             if (target) MSG(void, target, "flagsChanged:", make_event(12, w, 0, 0, g));
         }
         id e = make_event(11, w, 0, 0, g);
+        { u16 kc = mac_keycode(g->key); if (kc < 128) g_key_held[kc] = 0; }
         cx_gc_keyboard_event(mac_keycode(g->key), mac_mods(g->mods), 0);
         if (cx_carbon_key(1, mac_keycode(g->key), mac_mods(g->mods))) break;   /* atalho do Carbon solto */
         id target = s->first ? s->first : s->content;
@@ -3643,6 +3970,11 @@ static void dispatch(gui_event_t *g) {
             if (target) MSG(void, target, "flagsChanged:", make_event(12, w, 0, 0, g));
         }
         id e = make_event(10, w, 0, 0, g);
+        {   /* repetição automática: a mesma tecla desce de novo sem ter subido, pouco depois */
+            u16 kc = mac_keycode(g->key);
+            double now = cx_now();
+            if (kc < 128) { evs(e)->repeat = g_key_held[kc] && now - g_key_time[kc] < 0.75; g_key_held[kc] = 1; g_key_time[kc] = now; }
+        }
         { extern void cx_gc_keyboard_event(u16 mac_keycode, u64 mods, int down); cx_gc_keyboard_event(mac_keycode(g->key), mac_mods(g->mods), 1); }
         if (cx_carbon_key(0, mac_keycode(g->key), mac_mods(g->mods))) break;   /* RegisterEventHotKey do app (carbon_events.c) */
         if (menu_shortcut(g)) break;
@@ -3704,6 +4036,7 @@ static int pump(void) {
     gui_event_t g;
     int got = 0;
     sync_menus();
+    { extern void cx_app_more_tick(void); cx_app_more_tick(); }   /* appkit_app_more.c: ativação e menu Janela */
     bind_refresh();
     got += drain_posted();
     while (evq_pop_front(&g_pend, &g)) { deliver(&g); got++; }   /* o que um laço de rastreio deixou para depois */
@@ -3904,11 +4237,12 @@ static id ev_mouse_make(id cls, SEL c, u64 type, NSPoint loc, u64 mods, double t
     return e;
 }
 static id ev_key_make(id cls, SEL c, u64 type, NSPoint loc, u64 mods, double ts, i64 wnum, id ctx, id chars, id chars_nomods, BOOL rep, u16 code) {
-    (void)rep; (void)chars_nomods;
+    (void)chars_nomods;
     id e = ev_mouse_make(cls, c, type, loc, mods, ts, wnum, ctx, 0, 0, 0);
     evstate_t *s = evs(e);
     s->chars = chars ? objc_retain(chars) : 0;
     s->keycode = code;
+    s->repeat = rep ? 1 : 0;
     return e;
 }
 static id ev_enter_exit_make(id cls, SEL c, u64 type, NSPoint loc, u64 mods, double ts, i64 wnum, id ctx, i64 evnum, i64 tag, void *ud) {
@@ -4440,7 +4774,7 @@ static void perform_menu(int k) {
         return;
     }
     if (k == GUI_MENU_PREFS) { id it = find_item(app.menu, pred_comma, 0); if (it) perform_item(it); return; }
-    if (k == GUI_MENU_HIDE) return;
+    if (k == GUI_MENU_HIDE) { extern void cx_app_menu_hide(void); cx_app_menu_hide(); return; }   /* ⌘H: appkit_app_more.c */
     if (k >= 1 && (u32)k <= nmenu_tab && menu_tab[k - 1]) perform_item(menu_tab[k - 1]);
 }
 static BOOL menu_shortcut(gui_event_t *g) {
@@ -4475,7 +4809,7 @@ static const void *dt_bytes(id self, SEL c) { (void)c; return ((nsdata_t *)self)
 static u64 dt_length(id self, SEL c) { (void)c; return ((nsdata_t *)self)->len; }
 static BOOL dt_write(id self, SEL c, id path, BOOL at) { (void)c; (void)at; FILE_ *f = fopen(cx_cstr(path), "w"); if (!f) return NO; fwrite(((nsdata_t *)self)->bytes, 1, ((nsdata_t *)self)->len, f); fclose(f); return YES; }
 
-typedef struct { int w, h; u32 *px; double dw, dh; void *cg; } imgst_t;   /* cg: CGImage em cache (CGImageForProposedRect:) */
+typedef struct { int w, h; u32 *px; double dw, dh; void *cg; BOOL tmpl; } imgst_t;   /* cg: CGImage em cache (CGImageForProposedRect:); tmpl: isTemplate */
 static imgst_t *im(id o) { if (!ST(o)) ST(o) = calloc(1, sizeof(imgst_t)); return ST(o); }
 u32 *cx_icns_argb(const u8 *d, u64 n, int want, int *w, int *h);   /* appkit_icons.c */
 static BOOL decode_into(id img, const u8 *data, u64 n) {
@@ -4580,8 +4914,11 @@ static NSSize im_size(id self, SEL c) { (void)c; imgst_t *s = im(self); NSSize z
 static void im_set_size(id self, SEL c, NSSize z) { (void)c; im(self)->dw = z.w; im(self)->dh = z.h; }
 static BOOL im_valid(id self, SEL c) { (void)c; return im(self)->px != 0; }
 /* desenha a imagem escalada para um retângulo em pixels */
+/* cor das imagens template desenhadas por controles (0 = sem tinta: a imagem vai com as cores dela) */
+static u32 g_img_tint;
 static void blit_image(imgst_t *s, double x, double y, double w, double h, double alpha, u32 op) {
     if (!s->px || w < 1 || h < 1) return;
+    u32 tint = s->tmpl ? g_img_tint : 0;
     int dw = (int)(w + 0.5), dh = (int)(h + 0.5);
     if (dw > 2048) dw = 2048;
     if (dh > 2048) dh = 2048;
@@ -4594,6 +4931,7 @@ static void blit_image(imgst_t *s, double x, double y, double w, double h, doubl
         for (int i = 0; i < dw; i++) {
             int sx = (int)((i + 0.5) * s->w / dw);
             u32 p = s->px[sy * s->w + sx];
+            if (tint) p = (((p >> 24) * (tint >> 24) / 255) << 24) | (tint & 0xFFFFFF);   /* template: só o alfa conta */
             if (a8 < 255) p = (((p >> 24) * a8 / 255) << 24) | (p & 0xFFFFFF);
             buf[j * dw + i] = p;
         }
@@ -4637,6 +4975,40 @@ static void draw_image_fit(id img, double x, double y, double w, double h) {
     double iw = s->dw * sc, ih = s->dh * sc;
     blit_image(s, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, 1, 2);
 }
+/* imagem de controle: NSImageScaling (0 proporcional só para baixo, 1 eixos independentes, 2 nenhuma, 3 proporcional
+ * para cima ou para baixo), centrada; tint pinta as imagens template */
+static void draw_image_ctl(id img, double x, double y, double w, double h, int scaling, u32 tint) {
+    imgst_t *s = im(img);
+    if (!s->px || s->dw <= 0 || s->dh <= 0) return;
+    double iw = s->dw, ih = s->dh;
+    if (scaling == 1) { iw = w; ih = h; }
+    else if (scaling == 3 || (scaling == 0 && (s->dw > w || s->dh > h))) { double a = w / s->dw, b = h / s->dh, sc = a < b ? a : b; iw = s->dw * sc; ih = s->dh * sc; }
+    g_img_tint = tint;
+    blit_image(s, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, 1, 2);
+    g_img_tint = 0;
+}
+static void tf_set_lbm(id self, SEL c, u64 m) { (void)c; vs(self)->tf_lbm1 = m <= 5 ? (int)m + 1 : 0; mark(self); }
+static u64 tf_lbm(id self, SEL c) { (void)c; vstate_t *s = vs(self); return s->tf_lbm1 ? (u64)(s->tf_lbm1 - 1) : (s->editable || s->bezeled ? TFIT_CLIP : TFIT_WORD); }
+static void tf_set_max_lines(id self, SEL c, i64 n) { (void)c; vs(self)->tf_max_lines = n < 0 ? 0 : n; mark(self); }
+static i64 tf_max_lines(id self, SEL c) { (void)c; return vs(self)->tf_max_lines; }
+static void tf_set_single(id self, SEL c, BOOL v) { (void)c; vs(self)->tf_single = v ? YES : NO; mark(self); }
+static BOOL tf_single(id self, SEL c) { (void)c; return vs(self)->tf_single; }
+static void tf_set_pref_w(id self, SEL c, double w) { (void)c; vs(self)->tf_pref_w = w > 0 ? w : 0; mark(self); }
+static double tf_pref_w(id self, SEL c) { (void)c; return vs(self)->tf_pref_w; }
+static void v_set_alpha(id self, SEL c, double a) {
+    (void)c;
+    vstate_t *s = vs(self);
+    s->valpha = (float)(a < 0 ? 0 : a > 1 ? 1 : a);
+    s->valpha_set = s->valpha < 0.999f;
+    mark(self);
+}
+static double v_alpha(id self, SEL c) { (void)c; vstate_t *s = vs(self); return s->valpha_set ? s->valpha : 1.0; }
+static void im_set_template(id self, SEL c, BOOL v) { (void)c; im(self)->tmpl = v ? YES : NO; }
+static BOOL im_is_template(id self, SEL c) { (void)c; return im(self)->tmpl; }
+static void iv_set_scaling(id self, SEL c, u64 v) { (void)c; vs(self)->img_scaling = v <= 3 ? (int)v : 0; mark(self); }
+static u64 iv_scaling(id self, SEL c) { (void)c; return (u64)vs(self)->img_scaling; }
+static void v_set_tint(id self, SEL c, id col) { (void)c; keep(&vs(self)->tint, col); mark(self); }
+static id v_tint(id self, SEL c) { (void)c; return vs(self)->tint; }
 const u32 *cx_nsimage_pixels(id img, int *w, int *h) {
     imgst_t *s;
     if (w) *w = 0;
@@ -4659,6 +5031,18 @@ static void sv_set_doc(id self, SEL c, id doc) {
     s->scroll_y = 0;
 }
 static id sv_doc(id self, SEL c) { (void)c; return vs(self)->doc; }
+static void sv_set_has_v(id self, SEL c, BOOL v) { (void)c; vstate_t *s = vs(self); s->sv_vset = YES; s->sv_v = v ? YES : NO; mark(self); }
+static BOOL sv_has_v(id self, SEL c) { (void)c; vstate_t *s = vs(self); return s->sv_vset ? s->sv_v : NO; }
+static void sv_set_has_h(id self, SEL c, BOOL v) { (void)c; vstate_t *s = vs(self); s->sv_hset = YES; s->sv_h = v ? YES : NO; mark(self); }
+static BOOL sv_has_h(id self, SEL c) { (void)c; vstate_t *s = vs(self); return s->sv_hset ? s->sv_h : NO; }
+static void sv_set_autohide(id self, SEL c, BOOL v) { (void)c; vs(self)->sv_autohide = v ? YES : NO; mark(self); }
+static BOOL sv_autohide(id self, SEL c) { (void)c; return vs(self)->sv_autohide; }
+static void sv_set_border(id self, SEL c, u64 b) { (void)c; vs(self)->sv_border = b <= 3 ? (int)b : 0; mark(self); }
+static u64 sv_border(id self, SEL c) { (void)c; return (u64)vs(self)->sv_border; }
+static void sv_set_draws_bg(id self, SEL c, BOOL v) { (void)c; vs(self)->draws_bg = v ? YES : NO; mark(self); }
+static BOOL sv_draws_bg(id self, SEL c) { (void)c; return vs(self)->draws_bg; }
+static void sv_set_bg(id self, SEL c, id col) { (void)c; keep(&vs(self)->bg_color, col); mark(self); }
+static id sv_bg(id self, SEL c) { (void)c; id col = vs(self)->bg_color; return col ? col : cx_color(1, 1, 1, 1); }
 static id sv_content(id self, SEL c) { (void)c; return self; }
 static void layout_scroll(id v) {
     vstate_t *s = vs(v);
@@ -5700,6 +6084,7 @@ static void apply_inequalities(void) {
 }
 static int lv_depth_cmp(const void *a, const void *b) { return ((const lv_t *)a)->depth - ((const lv_t *)b)->depth; }
 static void autolayout_window(id w) {
+    if (ws(w)->content) v_update_constraints_subtree(ws(w)->content, 0);   /* updateConstraints antes do layout */
     if (!nlc) return;
     wstate_t *ww = ws(w);
     lw_content = ww->content;
@@ -6074,6 +6459,323 @@ void cx_gc_record_view(id v, double rx, double ry, double rw, double rh) {
     (void)rw;
 }
 
+/* ---- NSView: updateConstraints de baixo para cima nas views marcadas (setNeedsUpdateConstraints:), antes de cada
+ * passada do Auto Layout, como no Cocoa */
+static char k_needs_uc;
+static void v_set_needs_uc(id self, SEL c, BOOL b) { (void)c; objc_setAssociatedObject(self, &k_needs_uc, b ? cx_num_i(1) : 0, 1); if (b) mark(self); }
+static BOOL v_needs_uc(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_needs_uc) != 0; }
+static void v_update_constraints_subtree(id self, SEL c) {
+    (void)c;
+    if (!self || !cx_is_subclass(self->isa, &NSView_c)) return;
+    vstate_t *s = vs(self);
+    for (u32 i = 0; i < s->nsub; i++) v_update_constraints_subtree(s->sub[i], 0);
+    if (objc_getAssociatedObject(self, &k_needs_uc)) {
+        objc_setAssociatedObject(self, &k_needs_uc, 0, 1);
+        MSG0(void, self, "updateConstraints");
+    }
+}
+static void v_update_constraints(id self, SEL c) { (void)c; objc_setAssociatedObject(self, &k_needs_uc, 0, 1); }   /* a base só limpa a marca */
+/* ---- NSTableView: a última coluna ocupa o que sobra da largura visível */
+static void tv_size_last(id self, SEL c) {
+    (void)c;
+    id cols = MSG0(id, self, "tableColumns");
+    u64 n = cols ? MSG0(u64, cols, "count") : 0;
+    if (!n) return;
+    vstate_t *s = vs(self);
+    double avail = s->superview && vs(s->superview)->kind == K_SCROLL ? vs(s->superview)->frame.s.w : s->frame.s.w;
+    NSSize sp = cx_responds(self->isa, sel_registerName("intercellSpacing")) ? ((NSSize (*)(id, SEL))objc_msgSend)(self, sel_registerName("intercellSpacing")) : (NSSize){3, 2};
+    double used = 0;
+    for (u64 i = 0; i + 1 < n; i++) used += MSG0(double, MSG(id, cols, "objectAtIndex:", i), "width") + sp.w;
+    id last = MSG(id, cols, "objectAtIndex:", n - 1);
+    double w = avail - used - sp.w;
+    double mn = cx_responds(last->isa, sel_registerName("minWidth")) ? MSG0(double, last, "minWidth") : 10;
+    double mx = cx_responds(last->isa, sel_registerName("maxWidth")) ? MSG0(double, last, "maxWidth") : 1e6;
+    if (w < mn) w = mn;
+    if (w > mx) w = mx;
+    MSG(void, last, "setWidth:", w);
+    mark(self);
+}
+static char k_tv_style;
+static void tv_set_style(id self, SEL c, i64 st) { (void)c; objc_setAssociatedObject(self, &k_tv_style, cx_num_i(st), 1); mark(self); }
+static i64 tv_style(id self, SEL c) { (void)c; id v = objc_getAssociatedObject(self, &k_tv_style); return v ? MSG0(i64, v, "longLongValue") : 0; }
+/* NSTableViewStyleAutomatic (0) vira Inset (2) em janelas com toolbar unificada e FullWidth (1) nas outras; SourceList
+ * é a da barra lateral (NSTableViewSelectionHighlightStyleSourceList) */
+static i64 tv_effective_style(id self, SEL c) {
+    i64 st = tv_style(self, c);
+    if (st) return st;
+    if (cx_responds(self->isa, sel_registerName("selectionHighlightStyle")) && MSG0(i64, self, "selectionHighlightStyle") == 1) return 3;
+    return 1;
+}
+/* ---- NSEvent: rolagem natural (preferência com.apple.swipescrolldirection do domínio global; ligada por padrão) */
+static BOOL ev_direction_inverted(id self, SEL c) {
+    (void)self; (void)c;
+    id ud = MSG0(id, (id)cx_class_named("NSUserDefaults"), "standardUserDefaults");
+    id v = ud ? MSG(id, ud, "objectForKey:", cx_str("com.apple.swipescrolldirection")) : 0;
+    return v ? MSG0(BOOL, v, "boolValue") : YES;
+}
+
+/* ================================================================ cadeia de teclado (key view loop)
+ * nextKeyView/previousKeyView explícitos (fracos, como no Cocoa); sem o seguinte explícito, a ordem automática é a do
+ * recalculateKeyViewLoop: de cima para baixo e da esquerda para a direita, entre as views que podem ser chave.
+ * Tab e ⇧Tab andam pela cadeia (NSTextField, NSTextView de campo e qualquer view que deixe o keyDown: subir). */
+static char k_next_kv, k_prev_kv, k_auto_kv;
+static BOOL v_hidden_or_ancestor(id v) {
+    for (id cur = v; cur && cx_is_subclass(cur->isa, &NSView_c); cur = vs(cur)->superview) if (vs(cur)->hidden) return YES;
+    return NO;
+}
+static BOOL v_can_become_key_view(id self, SEL c) {
+    (void)c;
+    if (!cx_is_subclass(self->isa, &NSView_c)) return NO;
+    vstate_t *s = vs(self);
+    if (!s->window || s->frame.s.w <= 0 || s->frame.s.h <= 0 || v_hidden_or_ancestor(self)) return NO;
+    return MSG0(BOOL, self, "acceptsFirstResponder");
+}
+static void v_set_next_kv(id self, SEL c, id n) {
+    (void)c;
+    id old = objc_getAssociatedObject(self, &k_next_kv);
+    if (old && objc_getAssociatedObject(old, &k_prev_kv) == self) objc_setAssociatedObject(old, &k_prev_kv, 0, 0);
+    objc_setAssociatedObject(self, &k_next_kv, n, 0);
+    if (n) objc_setAssociatedObject(n, &k_prev_kv, self, 0);
+}
+static id v_next_kv(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_next_kv); }
+static id v_prev_kv(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_prev_kv); }
+/* ordem automática: todas as views da janela que podem ser chave, por posição na janela */
+typedef struct { id v; double top, left; } kv_ent;
+static void kv_collect(id v, kv_ent *out, int *n, int cap) {
+    if (!v || *n >= cap || vs(v)->hidden) return;
+    if (MSG0(BOOL, v, "canBecomeKeyView")) {
+        NSRect r = ((NSRect (*)(id, SEL, NSRect, id))objc_msgSend)(v, sel_registerName("convertRect:toView:"), vs(v)->frame.s.w > 0 ? r_make(0, 0, vs(v)->frame.s.w, vs(v)->frame.s.h) : r_make(0, 0, 0, 0), (id)0);
+        out[*n].v = v; out[*n].top = r.o.y + r.s.h; out[*n].left = r.o.x;
+        (*n)++;
+    }
+    vstate_t *s = vs(v);
+    for (u32 i = 0; i < s->nsub && *n < cap; i++) kv_collect(s->sub[i], out, n, cap);
+}
+static int kv_auto(id w, kv_ent *out, int cap) {
+    int n = 0;
+    kv_collect(ws(w)->content, out, &n, cap);
+    for (int i = 1; i < n; i++) {   /* inserção: de cima (top maior) para baixo, depois da esquerda */
+        kv_ent e = out[i];
+        int j = i - 1;
+        while (j >= 0 && (out[j].top < e.top - 2 || (out[j].top <= e.top + 2 && out[j].top >= e.top - 2 && out[j].left > e.left))) { out[j + 1] = out[j]; j--; }
+        out[j + 1] = e;
+    }
+    return n;
+}
+static id kv_step(id w, id from, int dir) {
+    if (!w) return 0;
+    /* cadeia explícita primeiro */
+    if (from) {
+        id cur = from;
+        for (int guard = 0; guard < 256; guard++) {
+            cur = objc_getAssociatedObject(cur, dir > 0 ? &k_next_kv : &k_prev_kv);
+            if (!cur || cur == from) break;
+            if (MSG0(BOOL, cur, "canBecomeKeyView")) return cur;
+        }
+        if (cur == from && cur) return 0;   /* laço explícito sem ninguém válido */
+    }
+    kv_ent e[512];
+    int n = kv_auto(w, e, 512);
+    if (!n) return 0;
+    int at = -1;
+    for (int i = 0; from && i < n; i++) if (e[i].v == from) { at = i; break; }
+    if (at < 0) return e[dir > 0 ? 0 : n - 1].v;
+    return e[(at + (dir > 0 ? 1 : n - 1)) % n].v;
+}
+static id v_next_valid_kv(id self, SEL c) { (void)c; return kv_step(vs(self)->window, self, 1); }
+static id v_prev_valid_kv(id self, SEL c) { (void)c; return kv_step(vs(self)->window, self, -1); }
+static void kv_select(id w, id v) {
+    if (!v || !w_make_first(w, 0, v)) return;
+    vstate_t *s = vs(v);
+    if (s->kind == K_TEXT && s->editable) {   /* entrar num campo pelo Tab seleciona o texto todo */
+        s->anchor = 0; s->has_anchor = YES; s->caret = s->value ? (int)strlen(cx_cstr(s->value)) : 0;
+        mark(v);
+    } else if (cx_responds(v->isa, sel_registerName("selectAll:")) && s->kind == K_TV && cx_responds(v->isa, sel_registerName("isFieldEditor")) && MSG0(BOOL, v, "isFieldEditor"))
+        MSG(void, v, "selectAll:", (id)0);
+}
+static void w_select_following(id self, SEL c, id v) { (void)c; kv_select(self, kv_step(self, v, 1)); }
+static void w_select_preceding(id self, SEL c, id v) { (void)c; kv_select(self, kv_step(self, v, -1)); }
+static id kv_origin(id w) { id f = ws(w)->first; return f && f != w && cx_is_subclass(f->isa, &NSView_c) ? f : 0; }
+static void w_select_next_kv(id self, SEL c, id sender) { (void)c; (void)sender; kv_select(self, kv_step(self, kv_origin(self), 1)); }
+static void w_select_prev_kv(id self, SEL c, id sender) { (void)c; (void)sender; kv_select(self, kv_step(self, kv_origin(self), -1)); }
+static void w_recalc_kv(id self, SEL c) {
+    (void)c;
+    kv_ent e[512];
+    int n = kv_auto(self, e, 512);
+    for (int i = 0; i < n; i++) v_set_next_kv(e[i].v, 0, e[(i + 1) % n].v);
+}
+static void w_set_auto_kv(id self, SEL c, BOOL v) { (void)c; objc_setAssociatedObject(self, &k_auto_kv, v ? cx_num_i(1) : 0, 1); }
+static BOOL w_auto_kv(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_auto_kv) != 0; }
+/* Tab/⇧Tab que ninguém tratou: a janela anda pela cadeia */
+static BOOL kv_tab_key(id view, id ev) {
+    evstate_t *e = evs(ev);
+    if (e->keycode != 48 || (e->mods & ((1u << 20) | (1u << 18)))) return NO;   /* sem ⌘ nem ⌃ */
+    id w = cx_is_subclass(view->isa, &NSView_c) ? vs(view)->window : 0;
+    if (!w) return NO;
+    if (e->mods & (1u << 17)) w_select_prev_kv(w, 0, 0); else w_select_next_kv(w, 0, 0);
+    return YES;
+}
+
+/* ================================================================ NSWindow: chave/principal, título, autosave do frame
+ * e as propriedades guardadas. A janela principal é a chave quando ela pode ser principal (NSPanel não pode); senão a
+ * última janela visível que pode. O frame salvo segue o formato do Cocoa em NSUserDefaults ("NSWindow Frame <nome>":
+ * x y w h da janela e x y w h da área visível da tela) e é gravado ao fechar, esconder, redimensionar e sair. */
+static BOOL w_is_key(id self, SEL c) { (void)c; return g_key_window ? g_key_window == self : ap_key_window(NSApp, 0) == self; }
+static BOOL w_can_main(id self, SEL c) {
+    (void)c;
+    if (cx_is_subclass(self->isa, &NSPanel_c)) return NO;
+    return (ws(self)->style & (1 | 8)) != 0;   /* com barra de título ou redimensionável */
+}
+static BOOL can_be_main(id w) { return w && !ws(w)->closed && MSG0(BOOL, w, "canBecomeMainWindow"); }
+static id ap_main_window(id self, SEL c) {
+    (void)self; (void)c;
+    if (g_key_window && can_be_main(g_key_window)) return g_key_window;
+    nsarr_t *a = (nsarr_t *)app_windows;
+    for (u64 i = a ? a->n : 0; i-- > 0;) if (ws(a->items[i])->visible && can_be_main(a->items[i])) return a->items[i];
+    return 0;
+}
+static BOOL w_is_main(id self, SEL c) { (void)c; return ap_main_window(NSApp, 0) == self; }
+static id w_repr_filename(id self, SEL c) {
+    (void)c;
+    id u = ws(self)->represented_url, p = u && cx_responds(u->isa, sel_registerName("path")) ? MSG0(id, u, "path") : 0;
+    return p ? p : cx_str("");
+}
+static void w_set_repr_filename(id self, SEL c, id path) {
+    (void)c;
+    id u = path && MSG0(u64, path, "length") ? MSG(id, (id)cx_class_named("NSURL"), "fileURLWithPath:", path) : 0;
+    MSG(void, self, "setRepresentedURL:", u);
+}
+static void w_set_title_vis(id self, SEL c, i64 v) {
+    (void)c;
+    wstate_t *s = ws(self);
+    s->title_hidden = v == 1;   /* NSWindowTitleHidden */
+    if (s->gid > 0) SYS2(GUI_WIN_TITLE, s->gid, w_shown_title(self));
+}
+static i64 w_title_vis(id self, SEL c) { (void)c; return ws(self)->title_hidden ? 1 : 0; }
+#define WBOOL(get, set, field, inv) \
+    static void set(id self, SEL c, BOOL v) { (void)c; ws(self)->field = (v ? YES : NO) ^ (inv); } \
+    static BOOL get(id self, SEL c) { (void)c; return ws(self)->field ^ (inv); }
+WBOOL(w_titlebar_transparent, w_set_titlebar_transparent, titlebar_transparent, 0)
+WBOOL(w_movable_bg, w_set_movable_bg, movable_bg, 0)
+WBOOL(w_accepts_moved, w_set_accepts_moved, accepts_moved, 0)
+WBOOL(w_has_shadow, w_set_has_shadow, no_shadow, 1)
+WBOOL(w_is_opaque, w_set_opaque, not_opaque, 1)
+#undef WBOOL
+static void w_set_collection(id self, SEL c, u64 v) { (void)c; ws(self)->collection = v; }
+static u64 w_collection(id self, SEL c) { (void)c; return ws(self)->collection; }
+static void w_set_initial_fr(id self, SEL c, id v) { (void)c; ws(self)->initial_fr = v; }
+static id w_initial_fr(id self, SEL c) { (void)c; return ws(self)->initial_fr; }
+static void w_layout_if_needed(id self, SEL c) {
+    (void)c;
+    id cv = ws(self)->content;
+    if (cv && cx_responds(cv->isa, sel_registerName("layoutSubtreeIfNeeded"))) MSG0(void, cv, "layoutSubtreeIfNeeded");
+}
+/* NSView: o clique pode arrastar a janela (movableByWindowBackground) num fundo transparente; controles e texto não */
+static BOOL v_can_move_window(id self, SEL c) {
+    (void)c;
+    int k = vs(self)->kind;
+    if (k == K_BUTTON || k == K_TEXT || k == K_SLIDER || k == K_TV || k == K_TABLE || k == K_SCROLL || k == K_PROGRESS) return NO;
+    if (cx_is_subclass(self->isa, &NSControl_c)) return NO;
+    return cx_responds(self->isa, sel_registerName("isOpaque")) ? !MSG0(BOOL, self, "isOpaque") : YES;
+}
+static BOOL ctl_can_move_window(id self, SEL c) { (void)self; (void)c; return NO; }
+/* touchBar do NSResponder: guardada; sem uma, pergunta a makeTouchBar uma vez (não há Touch Bar no hardware do mOS,
+ * mas os apps montam e consultam a barra) */
+static char k_touch_bar;
+static id r_touch_bar(id self, SEL c) {
+    (void)c;
+    id b = objc_getAssociatedObject(self, &k_touch_bar);
+    if (!b && cx_responds(self->isa, sel_registerName("makeTouchBar"))) {
+        b = MSG0(id, self, "makeTouchBar");
+        if (b) objc_setAssociatedObject(self, &k_touch_bar, b, 1);
+    }
+    return b;
+}
+static void r_set_touch_bar(id self, SEL c, id b) { (void)c; objc_setAssociatedObject(self, &k_touch_bar, b, 1); }
+
+static id ud_std(void) { return MSG0(id, (id)cx_class_named("NSUserDefaults"), "standardUserDefaults"); }
+static id frame_key(id name) {
+    char k[320];
+    snprintf(k, sizeof k, "NSWindow Frame %s", cx_cstr(name));
+    return cx_str(k);
+}
+static NSRect screen_visible(void) {
+    id sc = MSG0(id, (id)cx_class_named("NSScreen"), "mainScreen");
+    return sc ? ((NSRect (*)(id, SEL))objc_msgSend)(sc, sel_registerName("visibleFrame")) : r_make(0, 0, 1440, 876);
+}
+static id w_saved_frame_string(id self, SEL c) {
+    (void)c;
+    NSRect f = ((NSRect (*)(id, SEL))objc_msgSend)(self, sel_registerName("frame")), v = screen_visible();
+    char b[200];
+    snprintf(b, sizeof b, "%d %d %d %d %d %d %d %d ", (int)f.o.x, (int)f.o.y, (int)f.s.w, (int)f.s.h, (int)v.o.x, (int)v.o.y,
+             (int)v.s.w, (int)v.s.h);
+    return cx_str(b);
+}
+static BOOL frame_from_string(id self, id str, BOOL force) {
+    if (!str || !cx_is_str(str)) return NO;
+    const char *p = cx_cstr(str);
+    double a[8];
+    int n = 0;
+    while (n < 8 && *p) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        char *e;
+        long x = strtol(p, &e, 10);
+        if (e == p) return NO;
+        a[n++] = (double)x;
+        p = e;
+    }
+    if (n < 4 || a[2] <= 0 || a[3] <= 0) return NO;
+    NSRect cur = ((NSRect (*)(id, SEL))objc_msgSend)(self, sel_registerName("frame"));
+    NSRect f = r_make(a[0], a[1], a[2], a[3]), v = screen_visible();
+    if (!force && !(ws(self)->style & 8)) f.s = cur.s;   /* sem redimensionar: só a posição */
+    /* a tela pode ter mudado: o topo fica abaixo da barra de menus e pelo menos 40 pontos à vista */
+    if (f.o.y + f.s.h > v.o.y + v.s.h) f.o.y = v.o.y + v.s.h - f.s.h;
+    if (f.o.y + f.s.h < v.o.y + 40) f.o.y = v.o.y + 40 - f.s.h;
+    if (f.o.x > v.o.x + v.s.w - 40) f.o.x = v.o.x + v.s.w - 40;
+    if (f.o.x + f.s.w < v.o.x + 40) f.o.x = v.o.x + 40 - f.s.w;
+    ((void (*)(id, SEL, NSRect, BOOL))objc_msgSend)(self, sel_registerName("setFrame:display:"), f, YES);
+    return YES;
+}
+static void w_set_frame_from_string(id self, SEL c, id str) { (void)c; frame_from_string(self, str, YES); }
+static void w_save_frame_named(id self, SEL c, id name) {
+    (void)c;
+    if (!name || !cx_is_str(name) || !MSG0(u64, name, "length")) return;
+    MSG(void, ud_std(), "setObject:forKey:", w_saved_frame_string(self, 0), frame_key(name));
+}
+static BOOL w_frame_named_force(id self, SEL c, id name, BOOL force) {
+    (void)c;
+    if (!name || !cx_is_str(name)) return NO;
+    return frame_from_string(self, MSG(id, ud_std(), "stringForKey:", frame_key(name)), force);
+}
+static BOOL w_frame_named(id self, SEL c, id name) { return w_frame_named_force(self, c, name, NO); }
+static void w_remove_frame_named(id cls, SEL c, id name) {
+    (void)cls; (void)c;
+    if (name && cx_is_str(name)) MSG(void, ud_std(), "removeObjectForKey:", frame_key(name));
+}
+static BOOL w_set_autosave(id self, SEL c, id name) {
+    (void)c;
+    wstate_t *s = ws(self);
+    BOOL empty = !name || !cx_is_str(name) || !MSG0(u64, name, "length");
+    if (!empty) {   /* o nome é único entre as janelas abertas do app */
+        nsarr_t *a = (nsarr_t *)app_windows;
+        for (u64 i = 0; a && i < a->n; i++) {
+            wstate_t *o = ws(a->items[i]);
+            if (a->items[i] != self && !o->closed && o->autosave && MSG(BOOL, o->autosave, "isEqualToString:", name)) return NO;
+        }
+    }
+    id nn = empty ? 0 : MSG0(id, name, "copy");
+    objc_release(s->autosave);
+    s->autosave = nn;
+    if (nn && !w_frame_named_force(self, 0, nn, NO)) w_save_frame_named(self, 0, nn);   /* sem frame salvo: grava o atual */
+    return YES;
+}
+static id w_autosave_name(id self, SEL c) { (void)c; id n = ws(self)->autosave; return n ? n : cx_str(""); }
+static void w_autosave(id self) {
+    wstate_t *s = ws(self);
+    if (s->autosave && !s->closed) w_save_frame_named(self, 0, s->autosave);
+}
+
 void cx_appkit_init(void) {
     NSFontAttributeName = cx_str("NSFont");
     NSForegroundColorAttributeName = cx_str("NSColor");
@@ -6109,12 +6811,11 @@ void cx_appkit_init(void) {
     M(NSApplication, "sendEvent:", ap_send_event); M(NSApplication, "windowWithWindowNumber:", ap_window_with_number);
     M(NSApplication, "stop:", ap_stop); M(NSApplication, "finishLaunching", ap_finish_launching); M(NSApplication, "windows", ap_windows);
     M(NSApplication, "orderedWindows", ap_ordered_windows);
-    M(NSApplication, "keyWindow", ap_key_window); M(NSApplication, "mainWindow", ap_key_window); M(NSApplication, "sendAction:to:from:", ap_send_action);
+    M(NSApplication, "keyWindow", ap_key_window); M(NSApplication, "mainWindow", ap_main_window); M(NSApplication, "sendAction:to:from:", ap_send_action);
     M(NSApplication, "runModalForWindow:", ap_run_modal); M(NSApplication, "stopModalWithCode:", ap_stop_modal_code); M(NSApplication, "stopModal", ap_stop_modal);
-    M(NSApplication, "setWindowsMenu:", noop1_m); M(NSApplication, "setServicesMenu:", noop1_m);
+    M(NSApplication, "setServicesMenu:", noop1_m);   /* appkit_services.c; menu Janela, ocultar, ícone e atenção: appkit_app_more.c */
     M(NSApplication, "setHelpMenu:", ap_set_help); M(NSApplication, "helpMenu", ap_help);
-    M(NSApplication, "setApplicationIconImage:", noop1_m); M(NSApplication, "hide:", noop1_m); M(NSApplication, "orderFrontStandardAboutPanel:", ap_about_panel);
-    M(NSApplication, "requestUserAttention:", noop1_m);
+    M(NSApplication, "orderFrontStandardAboutPanel:", ap_about_panel);
 
     DEF(NSWindow, NSResponder);
     DEF(NSPanel, NSWindow);
@@ -6127,8 +6828,8 @@ void cx_appkit_init(void) {
     M(NSWindow, "setRepresentedURL:", w_set_url); M(NSWindow, "representedURL", w_url);
     M(NSWindow, "setRestorable:", w_set_restorable); M(NSWindow, "isRestorable", w_restorable);
     M(NSWindow, "tab", w_tab); M(NSWindow, "setTab:", w_set_tab);
-    M(NSWindow, "isDocumentEdited", no_m); M(NSWindow, "representedFilename", noop_ret_nil);
-    M(NSWindow, "setTouchBar:", noop1_m); M(NSWindow, "touchBar", noop_ret_nil);
+    M(NSWindow, "isDocumentEdited", no_m); M(NSWindow, "representedFilename", w_repr_filename); M(NSWindow, "setRepresentedFilename:", w_set_repr_filename);
+    M(NSResponder, "setTouchBar:", r_set_touch_bar); M(NSResponder, "touchBar", r_touch_bar);
     M(NSWindow, "setDelegate:", w_set_delegate); M(NSWindow, "delegate", w_delegate); M(NSWindow, "alphaValue", w_alpha); M(NSWindow, "setAlphaValue:", w_set_alpha);
     M(NSWindow, "parentWindow", w_parent); M(NSWindow, "setParentWindow:", w_set_parent); M(NSWindow, "addChildWindow:ordered:", w_add_child); M(NSWindow, "removeChildWindow:", w_remove_child); M(NSWindow, "frame", w_frame);
     M(NSWindow, "contentRectForFrameRect:", w_content_rect_for); M(NSWindow, "frameRectForContentRect:", w_frame_rect_for);
@@ -6139,25 +6840,39 @@ void cx_appkit_init(void) {
     M(NSWindow, "setReleasedWhenClosed:", w_set_released); M(NSWindow, "firstResponder", w_first); M(NSWindow, "makeFirstResponder:", w_make_first);
      
     M(NSWindow, "setFrame:display:", w_set_frame); M(NSWindow, "setContentSize:", w_set_content_size); M(NSWindow, "display", w_display);
-    M(NSWindow, "setFrameAutosaveName:", noop1_m); M(NSWindow, "setTitlebarAppearsTransparent:", noop1_m); M(NSWindow, "setTitleVisibility:", noop1_m);
-    M(NSWindow, "setLevel:", w_set_level); M(NSWindow, "level", w_level); M(NSWindow, "setOpaque:", noop1_m); M(NSWindow, "setHasShadow:", noop1_m); M(NSWindow, "setMovableByWindowBackground:", noop1_m);
-    M(NSWindow, "setAcceptsMouseMovedEvents:", noop1_m); M(NSWindow, "setInitialFirstResponder:", noop1_m);
+    M(NSWindow, "setFrameAutosaveName:", w_set_autosave); M(NSWindow, "frameAutosaveName", w_autosave_name);
+    M(NSWindow, "saveFrameUsingName:", w_save_frame_named); M(NSWindow, "setFrameUsingName:", w_frame_named);
+    M(NSWindow, "setFrameUsingName:force:", w_frame_named_force); CM(NSWindow, "removeFrameUsingName:", w_remove_frame_named);
+    M(NSWindow, "stringWithSavedFrame", w_saved_frame_string); M(NSWindow, "setFrameFromString:", w_set_frame_from_string);
+    M(NSWindow, "setTitlebarAppearsTransparent:", w_set_titlebar_transparent); M(NSWindow, "titlebarAppearsTransparent", w_titlebar_transparent);
+    M(NSWindow, "setTitleVisibility:", w_set_title_vis); M(NSWindow, "titleVisibility", w_title_vis);
+    M(NSWindow, "setLevel:", w_set_level); M(NSWindow, "level", w_level); M(NSWindow, "setOpaque:", w_set_opaque); M(NSWindow, "isOpaque", w_is_opaque);
+    M(NSWindow, "setHasShadow:", w_set_has_shadow); M(NSWindow, "hasShadow", w_has_shadow);
+    M(NSWindow, "setMovableByWindowBackground:", w_set_movable_bg); M(NSWindow, "isMovableByWindowBackground", w_movable_bg);
+    M(NSWindow, "setAcceptsMouseMovedEvents:", w_set_accepts_moved); M(NSWindow, "acceptsMouseMovedEvents", w_accepts_moved);
+    M(NSWindow, "setInitialFirstResponder:", w_set_initial_fr); M(NSWindow, "initialFirstResponder", w_initial_fr);
     M(NSWindow, "setStyleMask:", w_set_style_mask); M(NSWindow, "styleMask", w_style_mask);
     M(NSWindow, "contentLayoutRect", w_content_layout_rect); M(NSWindow, "performWindowDragWithEvent:", w_perform_drag);
-    M(NSWindow, "setCollectionBehavior:", noop1_m); M(NSWindow, "setAppearance:", noop1_m); M(NSWindow, "setFrameOrigin:", w_set_frame_origin);
+    M(NSWindow, "setCollectionBehavior:", w_set_collection); M(NSWindow, "collectionBehavior", w_collection); M(NSWindow, "setAppearance:", noop1_m); M(NSWindow, "setFrameOrigin:", w_set_frame_origin);
     M(NSWindow, "setFrameTopLeftPoint:", w_set_frame_top_left); M(NSWindow, "cascadeTopLeftFromPoint:", w_cascade); M(NSWindow, "windowNumber", w_number);
     M(NSWindow, "nextEventMatchingMask:", w_next_event); M(NSWindow, "nextEventMatchingMask:untilDate:inMode:dequeue:", w_next_event_full);
     M(NSWindow, "postEvent:atStart:", ap_post_event); M(NSWindow, "discardEventsMatchingMask:beforeEvent:", ap_discard_events);
     M(NSWindow, "sendEvent:", w_send_event); M(NSWindow, "currentEvent", ap_current_event); M(NSWindow, "setTabbingMode:", noop1_m);
     M(NSWindow, "occlusionState", w_occlusion); M(NSWindow, "convertRectToScreen:", w_convert_to_screen);
-    M(NSWindow, "isKeyWindow", yes_m); M(NSWindow, "isMainWindow", yes_m);
+    M(NSWindow, "isKeyWindow", w_is_key); M(NSWindow, "isMainWindow", w_is_main); M(NSWindow, "canBecomeMainWindow", w_can_main);
     M(NSWindow, "setNextResponder:", w_set_next); M(NSWindow, "nextResponder", w_next);
 
     DEF(NSView, NSResponder);
     M(NSView, "initWithFrame:", v_init_frame); M(NSView, "init", v_init); M(NSView, "frame", v_frame); M(NSView, "bounds", v_bounds);
     M(NSView, "setFrame:", v_set_frame); M(NSView, "setFrameSize:", v_set_size); M(NSView, "setFrameOrigin:", v_set_origin);
     M(NSView, "addSubview:", v_add_sub); M(NSView, "addSubview:positioned:relativeTo:", v_add_positioned);
-    M(NSView, "sortSubviewsUsingFunction:context:", v_sort_sub); M(NSView, "setNextKeyView:", noop1_m);
+    M(NSView, "sortSubviewsUsingFunction:context:", v_sort_sub); M(NSView, "setNextKeyView:", v_set_next_kv); M(NSView, "nextKeyView", v_next_kv);
+    M(NSView, "previousKeyView", v_prev_kv); M(NSView, "nextValidKeyView", v_next_valid_kv); M(NSView, "previousValidKeyView", v_prev_valid_kv);
+    M(NSView, "canBecomeKeyView", v_can_become_key_view);
+    M(NSWindow, "selectNextKeyView:", w_select_next_kv); M(NSWindow, "selectPreviousKeyView:", w_select_prev_kv);
+    M(NSWindow, "selectKeyViewFollowingView:", w_select_following); M(NSWindow, "selectKeyViewPrecedingView:", w_select_preceding);
+    M(NSWindow, "recalculateKeyViewLoop", w_recalc_kv); M(NSWindow, "setAutorecalculatesKeyViewLoop:", w_set_auto_kv);
+    M(NSWindow, "autorecalculatesKeyViewLoop", w_auto_kv);
     M(NSView, "removeFromSuperview", v_remove); M(NSView, "subviews", v_subviews); M(NSView, "dealloc", v_dealloc);
     M(NSView, "superview", v_superview); M(NSView, "window", v_window); M(NSView, "setNeedsDisplay:", v_set_needs); M(NSView, "hitTest:", v_hit_test);
     M(NSView, "setNeedsDisplayInRect:", v_set_needs_rect); M(NSView, "display", v_display); M(NSView, "needsDisplay", v_needs);
@@ -6169,8 +6884,8 @@ void cx_appkit_init(void) {
     M(NSView, "setWantsLayer:", v_set_wants_layer); M(NSView, "layer", v_layer); M(NSView, "acceptsFirstResponder", v_accepts_first);
     M(NSView, "intrinsicContentSize", v_intrinsic); M(NSView, "sizeToFit", v_size_to_fit); M(NSView, "fittingSize", v_fitting);
     M(NSView, "setTranslatesAutoresizingMaskIntoConstraints:", v_set_tamic); M(NSView, "translatesAutoresizingMaskIntoConstraints", v_tamic); M(NSView, "viewDidMoveToWindow", noop_m);
-    M(NSView, "setAlphaValue:", noop1_m); M(NSView, "updateTrackingAreas", noop_m); M(NSView, "addTrackingArea:", noop1_m);
-    M(NSView, "acceptsFirstMouse:", yes_m);
+    M(NSView, "setAlphaValue:", v_set_alpha); M(NSView, "alphaValue", v_alpha); M(NSView, "updateTrackingAreas", noop_m); M(NSView, "addTrackingArea:", noop1_m);
+    M(NSView, "acceptsFirstMouse:", yes_m); M(NSView, "mouseDownCanMoveWindow", v_can_move_window);
     M(NSView, "setIdentifier:", v_set_ident); M(NSView, "identifier", v_ident);
     M(NSView, "setNextResponder:", v_set_next); M(NSView, "nextResponder", v_next);
 
@@ -6182,7 +6897,7 @@ void cx_appkit_init(void) {
     M(NSControl, "setFloatValue:", ctl_set_double); M(NSControl, "intValue", ctl_int); M(NSControl, "integerValue", ctl_int);
     M(NSControl, "doubleValue", ctl_double); M(NSControl, "floatValue", ctl_double); M(NSControl, "sendAction:to:", ctl_send);
     M(NSControl, "mouseDown:", ctl_mouse_down); M(NSControl, "mouseUp:", ctl_mouse_up); M(NSControl, "mouseDragged:", ctl_mouse_dragged);
-    M(NSControl, "setDelegate:", ctl_set_delegate); M(NSControl, "delegate", ctl_delegate); M(NSControl, "setContinuous:", noop1_m);
+    M(NSControl, "mouseDownCanMoveWindow", ctl_can_move_window); M(NSControl, "setDelegate:", ctl_set_delegate); M(NSControl, "delegate", ctl_delegate); M(NSControl, "setContinuous:", ctl_set_continuous); M(NSControl, "isContinuous", ctl_is_continuous);
     M(NSControl, "setControlSize:", noop1_m); M(NSControl, "setTextColor:", ctl_set_tcolor); M(NSControl, "textColor", ctl_tcolor);
 
     DEF(NSButton, NSControl);
@@ -6191,15 +6906,17 @@ void cx_appkit_init(void) {
     M(NSButton, "initWithFrame:", bt_init_frame); M(NSButton, "setTitle:", bt_set_title); M(NSButton, "title", bt_title);
     M(NSButton, "setButtonType:", bt_set_type); M(NSButton, "_cxButtonType", bt_type_code); M(NSButton, "setState:", bt_set_state); M(NSButton, "state", bt_state);
     M(NSButton, "setKeyEquivalent:", bt_set_key); M(NSButton, "setBezelStyle:", bt_set_bezel); M(NSButton, "setBordered:", bt_set_bordered);
-    M(NSButton, "setImage:", noop1_m); M(NSButton, "setContentTintColor:", noop1_m);
+    M(NSButton, "setContentTintColor:", v_set_tint); M(NSButton, "contentTintColor", v_tint);
 
     DEF(NSTextField, NSControl);
     CM(NSTextField, "labelWithString:", tf_label); CM(NSTextField, "wrappingLabelWithString:", tf_wrapping_label); CM(NSTextField, "textFieldWithString:", tf_field);
     M(NSTextField, "initWithFrame:", tf_init_frame); M(NSTextField, "setEditable:", tf_set_editable); M(NSTextField, "isEditable", tf_editable);
     M(NSTextField, "setBezeled:", tf_set_bezeled); M(NSTextField, "setBordered:", tf_set_bezeled); M(NSTextField, "setDrawsBackground:", tf_set_draws_bg);
     M(NSTextField, "setBackgroundColor:", tf_set_bg); M(NSTextField, "setPlaceholderString:", tf_set_placeholder); M(NSTextField, "setSelectable:", tf_set_selectable);
-    M(NSTextField, "setLineBreakMode:", noop1_m); M(NSTextField, "setMaximumNumberOfLines:", noop1_m); M(NSTextField, "setUsesSingleLineMode:", noop1_m);
-    M(NSTextField, "setPreferredMaxLayoutWidth:", noop1_m);
+    M(NSTextField, "setLineBreakMode:", tf_set_lbm); M(NSTextField, "lineBreakMode", tf_lbm);
+    M(NSTextField, "setMaximumNumberOfLines:", tf_set_max_lines); M(NSTextField, "maximumNumberOfLines", tf_max_lines);
+    M(NSTextField, "setUsesSingleLineMode:", tf_set_single); M(NSTextField, "usesSingleLineMode", tf_single);
+    M(NSTextField, "setPreferredMaxLayoutWidth:", tf_set_pref_w); M(NSTextField, "preferredMaxLayoutWidth", tf_pref_w);
 
     DEF(NSSlider, NSControl);
     CM(NSSlider, "sliderWithValue:minValue:maxValue:target:action:", sl_with);
@@ -6208,25 +6925,36 @@ void cx_appkit_init(void) {
     DEF(NSProgressIndicator, NSView);
     M(NSProgressIndicator, "initWithFrame:", pg_init_frame); M(NSProgressIndicator, "setDoubleValue:", ctl_set_double); M(NSProgressIndicator, "doubleValue", ctl_double);
     M(NSProgressIndicator, "setMinValue:", sl_set_min); M(NSProgressIndicator, "setMaxValue:", sl_set_max); M(NSProgressIndicator, "incrementBy:", pg_inc);
-    M(NSProgressIndicator, "setIndeterminate:", noop1_m); M(NSProgressIndicator, "startAnimation:", noop1_m); M(NSProgressIndicator, "stopAnimation:", noop1_m);
-    M(NSProgressIndicator, "setStyle:", noop1_m);
+    M(NSProgressIndicator, "setIndeterminate:", pg_set_indet); M(NSProgressIndicator, "isIndeterminate", pg_indet);
+    M(NSProgressIndicator, "startAnimation:", pg_start); M(NSProgressIndicator, "stopAnimation:", pg_stop);
+    M(NSProgressIndicator, "_cxProgressTick:", pg_tick); M(NSProgressIndicator, "sizeToFit", pg_size_to_fit);
+    M(NSProgressIndicator, "setStyle:", pg_set_style); M(NSProgressIndicator, "style", pg_style);
+    M(NSProgressIndicator, "setUsesThreadedAnimation:", pg_set_threaded); M(NSProgressIndicator, "usesThreadedAnimation", pg_threaded);
     M(NSProgressIndicator, "setDisplayedWhenStopped:", pg_set_idle); M(NSProgressIndicator, "isDisplayedWhenStopped", pg_idle);
     DEF(NSBox, NSView);
     M(NSBox, "initWithFrame:", bx_init_frame); M(NSBox, "setTitle:", bt_set_title); M(NSBox, "setContentView:", v_add_sub); M(NSBox, "setBoxType:", bx_set_type); M(NSBox, "setFillColor:", tf_set_bg); M(NSBox, "setCornerRadius:", bx_set_radius);
     DEF(NSStackView, NSView);
     CM(NSStackView, "stackViewWithViews:", st_with_views);
     M(NSStackView, "initWithFrame:", st_init_frame); M(NSStackView, "addArrangedSubview:", st_add); M(NSStackView, "setOrientation:", st_set_orient);
-    M(NSStackView, "setSpacing:", st_set_spacing); M(NSStackView, "setAlignment:", noop1_m); M(NSStackView, "setDistribution:", noop1_m); M(NSStackView, "setEdgeInsets:", noop1_m);
+    M(NSStackView, "setSpacing:", st_set_spacing); M(NSStackView, "setAlignment:", st_set_align); M(NSStackView, "alignment", st_align);
+    M(NSStackView, "setDistribution:", st_set_dist); M(NSStackView, "distribution", st_dist);
+    M(NSStackView, "setEdgeInsets:", st_set_insets); M(NSStackView, "edgeInsets", st_insets);
+    M(NSStackView, "spacing", st_spacing); M(NSStackView, "orientation", st_orient);
+    M(NSStackView, "arrangedSubviews", st_arranged); M(NSStackView, "insertArrangedSubview:atIndex:", st_insert);
+    M(NSStackView, "removeArrangedSubview:", st_remove);
     DEF(NSImageView, NSView);
     M(NSImageView, "initWithFrame:", iv_init_frame); M(NSImageView, "setImage:", iv_set_image); M(NSImageView, "image", iv_image);
-    CM(NSImageView, "imageViewWithImage:", iv_with_image); M(NSImageView, "setImageScaling:", noop1_m);
+    CM(NSImageView, "imageViewWithImage:", iv_with_image); M(NSImageView, "setImageScaling:", iv_set_scaling); M(NSImageView, "imageScaling", iv_scaling); M(NSImageView, "setContentTintColor:", v_set_tint); M(NSImageView, "contentTintColor", v_tint);
     M(NSButton, "setImage:", iv_set_image); M(NSButton, "image", iv_image);
     DEF(NSScrollView, NSView);
     DEF(NSClipView, NSView);
     M(NSScrollView, "initWithFrame:", sv_init_frame); M(NSScrollView, "setDocumentView:", sv_set_doc); M(NSScrollView, "documentView", sv_doc);
-    M(NSScrollView, "contentView", sv_content); M(NSScrollView, "scrollWheel:", sv_scroll); M(NSScrollView, "setHasVerticalScroller:", noop1_m);
-    M(NSScrollView, "setHasHorizontalScroller:", noop1_m); M(NSScrollView, "setAutohidesScrollers:", noop1_m); M(NSScrollView, "setBorderType:", noop1_m);
-    M(NSScrollView, "setDrawsBackground:", noop1_m);
+    M(NSScrollView, "contentView", sv_content); M(NSScrollView, "scrollWheel:", sv_scroll); M(NSScrollView, "setHasVerticalScroller:", sv_set_has_v);
+    M(NSScrollView, "hasVerticalScroller", sv_has_v); M(NSScrollView, "setHasHorizontalScroller:", sv_set_has_h); M(NSScrollView, "hasHorizontalScroller", sv_has_h);
+    M(NSScrollView, "setAutohidesScrollers:", sv_set_autohide); M(NSScrollView, "autohidesScrollers", sv_autohide);
+    M(NSScrollView, "setBorderType:", sv_set_border); M(NSScrollView, "borderType", sv_border);
+    M(NSScrollView, "setDrawsBackground:", sv_set_draws_bg); M(NSScrollView, "drawsBackground", sv_draws_bg);
+    M(NSScrollView, "setBackgroundColor:", sv_set_bg); M(NSScrollView, "backgroundColor", sv_bg);
     DEF(NSTableView, NSControl);
     M(NSTableView, "initWithFrame:", tv_init_frame); M(NSTableView, "addTableColumn:", tv_add_col); M(NSTableView, "tableColumns", tv_cols);
     M(NSTableView, "setDataSource:", tv_set_ds); M(NSTableView, "dataSource", tv_ds); M(NSTableView, "reloadData", tv_reload);
@@ -6237,8 +6965,8 @@ void cx_appkit_init(void) {
     M(NSTableView, "setUsesAlternatingRowBackgroundColors:", tv_set_alt); M(NSTableView, "setDoubleAction:", tv_set_double);
     M(NSTableView, "makeViewWithIdentifier:owner:", tv_make_view); M(NSTableView, "scrollRowToVisible:", tv_scroll_row);
     M(NSTableView, "selectRowIndexes:byExtendingSelection:", tv_select); M(NSTableView, "deselectAll:", tv_deselect_all);
-    M(NSTableView, "mouseDown:", tv_mouse_down); M(NSTableView, "setStyle:", noop1_m); M(NSTableView, "setGridStyleMask:", noop1_m);
-    M(NSTableView, "setAllowsMultipleSelection:", noop1_m); M(NSTableView, "sizeLastColumnToFit", noop_m);
+    M(NSTableView, "mouseDown:", tv_mouse_down); M(NSTableView, "setStyle:", tv_set_style); M(NSTableView, "style", tv_style); M(NSTableView, "effectiveStyle", tv_effective_style); M(NSTableView, "setGridStyleMask:", noop1_m);
+    M(NSTableView, "setAllowsMultipleSelection:", noop1_m); M(NSTableView, "sizeLastColumnToFit", tv_size_last);
     M(NSTableView, "rowForView:", tv_row_for_view); M(NSTableView, "columnForView:", tv_col_for_view);
     M(NSTableView, "viewAtColumn:row:makeIfNecessary:", tv_view_at); M(NSTableView, "numberOfColumns", tv_num_cols);
     M(NSTableView, "columnWithIdentifier:", tv_col_with_ident); M(NSTableView, "tableColumnWithIdentifier:", tv_col_named);
@@ -6378,7 +7106,7 @@ void cx_appkit_init(void) {
     M(NSEvent, "type", ev_type); M(NSEvent, "locationInWindow", ev_loc); M(NSEvent, "modifierFlags", ev_mods); M(NSEvent, "keyCode", ev_keycode);
     M(NSEvent, "characters", ev_chars); M(NSEvent, "charactersIgnoringModifiers", ev_chars); M(NSEvent, "clickCount", ev_clicks);
     M(NSEvent, "window", ev_window); M(NSEvent, "scrollingDeltaY", ev_dy); M(NSEvent, "deltaY", ev_dy); M(NSEvent, "deltaX", ev_dx);
-    M(NSEvent, "scrollingDeltaX", ev_dx); M(NSEvent, "isARepeat", no_m);
+    M(NSEvent, "scrollingDeltaX", ev_dx); M(NSEvent, "isARepeat", ev_is_repeat);
     CM(NSEvent, "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:", ev_other);
     CM(NSEvent, "mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:", ev_mouse_make);
     CM(NSEvent, "keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:", ev_key_make);
@@ -6389,7 +7117,7 @@ void cx_appkit_init(void) {
     M(NSEvent, "pressure", ev_pressure); M(NSEvent, "deltaZ", ev_zero); M(NSEvent, "magnification", ev_zero);
     M(NSEvent, "rotation", ev_fzero); M(NSEvent, "tangentialPressure", ev_fzero); M(NSEvent, "stageTransition", ev_zero);
     M(NSEvent, "eventNumber", ev_izero); M(NSEvent, "phase", ev_izero); M(NSEvent, "momentumPhase", ev_izero);
-    M(NSEvent, "hasPreciseScrollingDeltas", no_m); M(NSEvent, "isDirectionInvertedFromDevice", no_m);
+    M(NSEvent, "hasPreciseScrollingDeltas", no_m); M(NSEvent, "isDirectionInvertedFromDevice", ev_direction_inverted);
     M(NSEvent, "stage", ev_izero); M(NSEvent, "CGEvent", ev_izero);
 
     DEF(NSMenu, NSObject);
@@ -6438,8 +7166,7 @@ void cx_appkit_init(void) {
     CM(NSScreen, "mainScreen", sc_main); CM(NSScreen, "screens", sc_screens);
     M(NSScreen, "frame", sc_frame); M(NSScreen, "visibleFrame", sc_visible); M(NSScreen, "backingScaleFactor", sc_scale);
     DEF(NSCursor, NSObject);
-    CM(NSCursor, "arrowCursor", generic_singleton); CM(NSCursor, "pointingHandCursor", generic_singleton); CM(NSCursor, "IBeamCursor", generic_singleton);
-    M(NSCursor, "set", noop_m); M(NSCursor, "push", noop_m); M(NSCursor, "pop", noop_m);
+    /* cursores, set/push/pop e cursor rects: appkit_cursor.c */
     DEF(NSWorkspace, NSObject);
     CM(NSWorkspace, "sharedWorkspace", generic_singleton); M(NSWorkspace, "openURL:", ws_open_url);
     DEF(NSImage, NSObject);
@@ -6448,7 +7175,7 @@ void cx_appkit_init(void) {
     M(NSImage, "initWithContentsOfFile:", im_init_file); M(NSImage, "initWithData:", im_init_data); M(NSImage, "initWithSize:", im_init_size);
     M(NSImage, "size", im_size); M(NSImage, "setSize:", im_set_size); M(NSImage, "isValid", im_valid); M(NSImage, "drawInRect:", im_draw_in);
     M(NSImage, "drawInRect:fromRect:operation:fraction:", im_draw_in_frac); M(NSImage, "drawAtPoint:fromRect:operation:fraction:", im_draw_at);
-    M(NSImage, "setTemplate:", noop1_m); M(NSImage, "lockFocus", noop_m); M(NSImage, "unlockFocus", noop_m);
+    M(NSImage, "setTemplate:", im_set_template); M(NSImage, "isTemplate", im_is_template); M(NSImage, "lockFocus", noop_m); M(NSImage, "unlockFocus", noop_m);
     DEF(NSRunningApplication, NSObject);
     CM(NSRunningApplication, "currentApplication", generic_singleton); M(NSRunningApplication, "activateWithOptions:", yes_m);
     DEF(NSSound, NSObject);
@@ -6480,15 +7207,16 @@ void cx_appkit_init(void) {
     M(NSView, "centerXAnchor", v_cx_a); M(NSView, "centerYAnchor", v_cy_a); M(NSView, "lastBaselineAnchor", v_lastbase_a); M(NSView, "firstBaselineAnchor", v_firstbase_a);
     M(NSView, "addConstraint:", v_add_constraint); M(NSView, "addConstraints:", v_add_constraints); M(NSView, "removeConstraint:", v_remove_constraint);
     M(NSView, "removeConstraints:", v_remove_constraints); M(NSView, "constraints", v_constraints); M(NSView, "layoutSubtreeIfNeeded", v_layout_now);
-    M(NSView, "layout", v_layout_now); M(NSView, "setNeedsLayout:", v_set_needs); M(NSView, "setNeedsUpdateConstraints:", v_set_needs);
-    M(NSView, "updateConstraints", noop_m); M(NSView, "updateConstraintsForSubtreeIfNeeded", noop_m);
+    M(NSView, "layout", v_layout_now); M(NSView, "setNeedsLayout:", v_set_needs); 
+    M(NSView, "updateConstraints", v_update_constraints); M(NSView, "updateConstraintsForSubtreeIfNeeded", v_update_constraints_subtree);
+    M(NSView, "setNeedsUpdateConstraints:", v_set_needs_uc); M(NSView, "needsUpdateConstraints", v_needs_uc);
     DEF(NSLayoutGuide, NSView);
     M(NSLayoutGuide, "owningView", lg_owning); M(NSLayoutGuide, "layoutFrame", lg_frame); M(NSLayoutGuide, "frame", lg_frame);
     M(NSView, "addLayoutGuide:", v_add_guide); M(NSView, "removeLayoutGuide:", v_remove_guide);
     M(NSView, "safeAreaLayoutGuide", v_safe_area); M(NSView, "layoutMarginsGuide", v_margins);
     M(NSView, "setContentHuggingPriority:forOrientation:", v_set_hug); M(NSView, "contentHuggingPriorityForOrientation:", v_hug);
     M(NSView, "setContentCompressionResistancePriority:forOrientation:", v_set_cr); M(NSView, "contentCompressionResistancePriorityForOrientation:", v_cr);
-    M(NSWindow, "layoutIfNeeded", noop_m);
+    M(NSWindow, "layoutIfNeeded", w_layout_if_needed);
     nib_register();
     bindings_register();
     cx_appkit_input_init();     /* appkit_input.c: interpretKeyEvents:, NSTextInputContext, arrastar e soltar */
