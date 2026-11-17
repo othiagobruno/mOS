@@ -23,8 +23,12 @@ mkdir -p "$STG" "$OUT/apps-dl"
 ln -s "$OUT/apps-dl" "$STG/apps-dl"                  # downloads com hash conferido ficam em build/apps-dl
 [ -f "$OUT/BOOTX64.EFI" ] && ln -s "$OUT/BOOTX64.EFI" "$STG/BOOTX64.EFI"
 [ -x "$OUT/dmgtest" ] && ln -s "$OUT/dmgtest" "$STG/dmgtest"
-# o stage-image.sh monta cada app em <out>/esp/mOS/Aplicativos e semeia o resto da árvore; só /Aplicativos é usado
-mkdir -p "$STG/esp/mOS"
+# o stage-image.sh monta cada app em <out>/esp/mOS/Aplicativos e alguns (Cursor) precisam de programas do sistema
+# (/usr/bin/security, git): a árvore de preparo começa como CÓPIA da do build (cópia real, não hardlink, porque o
+# stage-image reescreve arquivos do sistema e isso não pode vazar para build/esp). Só /Aplicativos sai daqui.
+[ -d "$OUT/esp/mOS/usr/bin" ] || { echo "build-apps-img: falta $OUT/esp do tools/build.sh" >&2; exit 1; }
+cp -a "$OUT/esp" "$STG/esp"
+rm -rf "$STG/esp/mOS/Aplicativos"
 bash "$ROOT/tools/stage-apps-oficiais.sh" "$STG"
 DADOS=$STG/disco
 mkdir -p "$DADOS"
@@ -36,4 +40,5 @@ MIB=$(( (MIB + 15) / 16 * 16 ))
 echo "==> apps.img ${MIB} MiB"
 "$OUT/mkimg" "$OUT/apps.img" "$DADOS" "$MIB" --dados MOS-APPS
 rm -rf "$STG"
+[ -s "$OUT/apps.img" ] || { echo "build-apps-img: o mkimg não gerou $OUT/apps.img" >&2; exit 1; }
 echo "OK: $OUT/apps.img (segundo disco; /Volumes/MOS-APPS/Aplicativos no mOS)"
