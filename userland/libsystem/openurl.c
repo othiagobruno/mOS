@@ -160,6 +160,8 @@ int cx_ls_tag_for_type(const char *uti, const char *cls_, char *out, size_t cap)
     snprintf(out, cap, "%s", all);
     return out[0] != 0;
 }
+/* todas as tags da classe, uma por linha (UTTypeCopyAllTagsWithClass) */
+int cx_ls_tags_all(const char *uti, const char *cls_, char *out, size_t cap) { return ls_text(MOS_LS_TAG_FOR_TYPE, uti, cls_, 0, out, cap) > 0; }
 int cx_ls_type_info(const char *uti, char *desc, size_t dcap, char *parents, size_t pcap) {
     char out[2048];
     if (ls_text(MOS_LS_TYPE_INFO, uti, 0, 0, out, sizeof out) < 0) return 0;
