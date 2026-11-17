@@ -78,7 +78,7 @@ void CGPDFContextClose(id c);
 extern cx_class_t QLPreviewPanel_c __asm__("OBJC_CLASS_$_QLPreviewPanel");
 CLS(QLPreviewView) CLS(QLPreviewProvider) CLS(QLPreviewReply) CLS(QLPreviewReplyAttachment) CLS(QLFilePreviewRequest)
 CLS(QLThumbnailProvider) CLS(QLThumbnailReply) CLS(QLThumbnailRepresentation) CLS(QLFileThumbnailRequest)
-CLS(QLThumbnailGenerator) CLS(QLThumbnailGenerationRequest) CLS(_MOSQLRequest)
+CLS(QLThumbnailGenerator) CLS(QLThumbnailGenerationRequest) CLS(_MOSQLRequest) CLS(QLPreviewController) CLS(_MOSQLControllerSource)
 
 /* constantes CFString do QuickLook (QLGenerator.h) */
 extern char cx_cfconst_isa[] __asm__("__CFConstantStringClassReference");
@@ -776,6 +776,8 @@ static void ql_end_control(id self) {
     if (old && responds(old, "endPreviewPanelControl:")) MSG(void, old, "endPreviewPanelControl:", self);
     objc_setAssociatedObject(self, &k_ctrl, 0, 0);
     MSG0(void, pv_of(self), "close");
+    id ds = aget(self, &k_ds);
+    if (ds && object_getClass(ds) == &_MOSQLControllerSource_c) MSG0(void, ds, "_mosPanelClosed");
 }
 static void ql_out(id self, SEL c, id sender) { (void)c; super_call(self, "orderOut:", sender); ql_end_control(self); }
 static void ql_close(id self, SEL c) {
@@ -1062,6 +1064,101 @@ static void gen_save(id self, SEL c, id req, id url, id type, void *blk) {
     if (blk) ((void (*)(void *, id))BLK_FN(blk))(blk, err);
 }
 
+
+/* ================================================================ QLPreviewController
+ * No AppKit herda de NSViewController e a view é um QLPreviewView. Nos apps Catalyst (UIKit) passa a herdar de
+ * UIViewController no primeiro +alloc (o UIKit do mOS é um framework carregado depois do libSystem) e a prévia abre
+ * no painel do Quick Look, ligado à fonte de dados do controlador; fechar o painel encerra o controlador. */
+static char k_pc_ds, k_pc_dl, k_pc_idx, k_pc_src;
+static void pc_adopt_superclass(void) {
+    cx_class_t *ui = kls("UIViewController");
+    if (!ui || QLPreviewController_c.super == ui) return;
+    extern cx_class_t *class_setSuperclass(cx_class_t *c, cx_class_t *s);
+    extern u32 cx_instance_size(cx_class_t *c);
+    extern BOOL class_addIvar(cx_class_t *c, const char *name, u64 size, u8 align, const char *types);
+    class_setSuperclass(&QLPreviewController_c, ui);
+    u32 need = cx_instance_size(ui), have = cx_instance_size(&QLPreviewController_c);
+    if (need > have) class_addIvar(&QLPreviewController_c, "_mosUIKitPad", need - have, 3, "?");
+}
+static id pc_alloc(id cls, SEL c) {
+    (void)c;
+    pc_adopt_superclass();
+    return cx_alloc_instance((cx_class_t *)cls);
+}
+static id pc_alloc_zone(id cls, SEL c, void *zone) { (void)zone; return pc_alloc(cls, c); }
+static int pc_is_uikit(void) { cx_class_t *ui = kls("UIViewController"); return ui && QLPreviewController_c.super == ui; }
+static id pc_ds(id self, SEL c) { (void)c; return aget(self, &k_pc_ds); }
+static void pc_set_ds(id self, SEL c, id d) { (void)c; objc_setAssociatedObject(self, &k_pc_ds, d, 0); }
+static id pc_dl(id self, SEL c) { (void)c; return aget(self, &k_pc_dl); }
+static void pc_set_dl(id self, SEL c, id d) { (void)c; objc_setAssociatedObject(self, &k_pc_dl, d, 0); }
+static i64 pc_count(id self) {
+    id ds = aget(self, &k_pc_ds);
+    return ds && responds(ds, "numberOfPreviewItemsInPreviewController:") ? MSG(i64, ds, "numberOfPreviewItemsInPreviewController:", self) : 0;
+}
+static i64 pc_index(id self, SEL c) { (void)c; id v = aget(self, &k_pc_idx); return v ? MSG0(i64, v, "longLongValue") : 0; }
+static id pc_item_at(id self, i64 i) {
+    id ds = aget(self, &k_pc_ds);
+    if (!ds || i < 0 || i >= pc_count(self) || !responds(ds, "previewController:previewItemAtIndex:")) return 0;
+    return MSG(id, ds, "previewController:previewItemAtIndex:", self, i);
+}
+static id pc_current(id self, SEL c) { (void)c; return pc_item_at(self, pc_index(self, 0)); }
+/* adaptador: a fonte de dados do painel lê a do controlador */
+static id src_ctrl(id self) { return aget(self, &k_pc_src); }
+static i64 src_count(id self, SEL c, id panel) { (void)c; (void)panel; id pc = src_ctrl(self); return pc ? pc_count(pc) : 0; }
+static id src_item(id self, SEL c, id panel, i64 i) { (void)c; (void)panel; id pc = src_ctrl(self); return pc ? pc_item_at(pc, i) : 0; }
+static void src_closed(id self, SEL c) {
+    (void)c;
+    id pc = src_ctrl(self);
+    if (!pc) return;
+    id dl = aget(pc, &k_pc_dl);
+    if (responds(dl, "previewControllerWillDismiss:")) MSG(void, dl, "previewControllerWillDismiss:", pc);
+    if (responds(pc, "dismissViewControllerAnimated:completion:")) MSG(void, pc, "dismissViewControllerAnimated:completion:", (BOOL)NO, (void *)0);
+    if (responds(dl, "previewControllerDidDismiss:")) MSG(void, dl, "previewControllerDidDismiss:", pc);
+}
+static void pc_show(id self) {
+    if (pc_is_uikit()) {
+        id src = aget(self, &k_pc_src);
+        if (!src) { src = MSG0(id, MSG0(id, (id)&_MOSQLControllerSource_c, "alloc"), "init"); objc_setAssociatedObject(src, &k_pc_src, self, 0); aset(self, &k_pc_src, src); objc_release(src); }
+        id panel = ql_shared((id)&QLPreviewPanel_c, 0);
+        ql_set_ds(panel, 0, src);
+        aset(panel, &k_index, num_ll(pc_index(self, 0)));
+        if (MSG0(BOOL, panel, "isVisible")) p_show(panel); else ql_front(panel, 0, 0);
+        return;
+    }
+    id v = MSG0(id, self, "view");
+    if (v && object_getClass(v) == &QLPreviewView_c) MSG(void, v, "setPreviewItem:", pc_current(self, 0));
+}
+static void pc_set_index(id self, SEL c, i64 i) { (void)c; aset(self, &k_pc_idx, num_ll(i < 0 ? 0 : i)); pc_show(self); }
+static void pc_reload(id self, SEL c) { (void)c; i64 n = pc_count(self); if (pc_index(self, 0) >= n) aset(self, &k_pc_idx, num_ll(n ? n - 1 : 0)); pc_show(self); }
+static void pc_refresh(id self, SEL c) { (void)c; pc_show(self); }
+static BOOL pc_can_preview(id cls, SEL c, id item) {
+    (void)cls; (void)c;
+    id url = responds(item, "previewItemURL") ? MSG0(id, item, "previewItemURL") : 0;
+    return url && responds(url, "isFileURL") && MSG0(BOOL, url, "isFileURL");
+}
+static void pc_load_view(id self, SEL c) {
+    (void)c;
+    if (pc_is_uikit()) {
+        IMP sup = cx_lookup(QLPreviewController_c.super, sl("loadView"));
+        if (sup) ((void (*)(id, SEL))sup)(self, sl("loadView"));
+        return;
+    }
+    id v = ((id (*)(id, SEL, R, i64))objc_msgSend)(MSG0(id, (id)&QLPreviewView_c, "alloc"), sl("initWithFrame:style:"), (R){0, 0, 640, 480}, (i64)0);
+    MSG(void, self, "setView:", v);
+    objc_release(v);
+    MSG(void, v, "setPreviewItem:", pc_current(self, 0));
+}
+/* no UIKit a prévia sai no painel quando o controlador aparece */
+static void pc_did_appear(id self, SEL c, BOOL animated) {
+    (void)c;
+    IMP sup = cx_lookup(QLPreviewController_c.super, sl("viewDidAppear:"));
+    if (sup) ((void (*)(id, SEL, BOOL))sup)(self, sl("viewDidAppear:"), animated);
+    if (pc_is_uikit()) pc_show(self);
+}
+/* NSURL é um QLPreviewItem (como na Apple) */
+static id url_preview_url(id self, SEL c) { (void)c; return self; }
+static id url_preview_title(id self, SEL c) { (void)c; return MSG0(id, self, "lastPathComponent"); }
+
 /* ================================================================ registro */
 static void K(cx_class_t *k, cx_class_t *m, const char *n, const char *sup) { if (!cx_class_named(n)) cx_define_class(k, m, n, kls(sup), 0); }
 #define A(k, s, f) cx_add_method(&k##_c, s, (void *)(f))
@@ -1079,6 +1176,20 @@ void cx_quicklook_init(void) {
     K(&QLThumbnailGenerator_c, &QLThumbnailGenerator_m, "QLThumbnailGenerator", "NSObject");
     K(&QLThumbnailGenerationRequest_c, &QLThumbnailGenerationRequest_m, "QLThumbnailGenerationRequest", "NSObject");
     K(&_MOSQLRequest_c, &_MOSQLRequest_m, "_MOSQLRequest", "NSObject");
+    K(&QLPreviewController_c, &QLPreviewController_m, "QLPreviewController", "NSViewController");
+    K(&_MOSQLControllerSource_c, &_MOSQLControllerSource_m, "_MOSQLControllerSource", "NSObject");
+    CA(QLPreviewController, "alloc", pc_alloc); CA(QLPreviewController, "allocWithZone:", pc_alloc_zone);
+    CA(QLPreviewController, "canPreviewItem:", pc_can_preview);
+    A(QLPreviewController, "dataSource", pc_ds); A(QLPreviewController, "setDataSource:", pc_set_ds);
+    A(QLPreviewController, "delegate", pc_dl); A(QLPreviewController, "setDelegate:", pc_set_dl);
+    A(QLPreviewController, "currentPreviewItemIndex", pc_index); A(QLPreviewController, "setCurrentPreviewItemIndex:", pc_set_index);
+    A(QLPreviewController, "currentPreviewItem", pc_current); A(QLPreviewController, "reloadData", pc_reload);
+    A(QLPreviewController, "refreshCurrentPreviewItem", pc_refresh); A(QLPreviewController, "loadView", pc_load_view);
+    A(QLPreviewController, "viewDidAppear:", pc_did_appear);
+    A(_MOSQLControllerSource, "numberOfPreviewItemsInPreviewPanel:", src_count);
+    A(_MOSQLControllerSource, "previewPanel:previewItemAtIndex:", src_item);
+    A(_MOSQLControllerSource, "_mosPanelClosed", src_closed);
+    { cx_class_t *u = kls("NSURL"); if (u) { cx_add_method(u, "previewItemURL", (void *)url_preview_url); cx_add_method(u, "previewItemTitle", (void *)url_preview_title); } }
 
     CA(QLPreviewPanel, "sharedPreviewPanel", ql_shared); CA(QLPreviewPanel, "sharedPreviewPanelExists", ql_exists);
     A(QLPreviewPanel, "makeKeyAndOrderFront:", ql_front); A(QLPreviewPanel, "orderFront:", ql_order_front);
