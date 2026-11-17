@@ -309,8 +309,6 @@ id ProcessInformationCopyDictionary(psn_t *psn, u32 mask) {
 }
 
 /* ================================================================ eventos, TSM, modo da interface */
-static int g_dispatcher;
-void *GetEventDispatcherTarget(void) { return &g_dispatcher; }
 u32 GetCurrentEventKeyModifiers(void) {
     u64 m = MSG0(u64, (id)kls("NSEvent"), "modifierFlags");
     u32 c = 0;
@@ -323,8 +321,7 @@ u32 GetCurrentEventKeyModifiers(void) {
 }
 u32 GetCurrentEventButtonState(void) { return (u32)MSG0(u64, (id)kls("NSEvent"), "pressedMouseButtons"); }
 u32 GetCurrentButtonState(void) { return GetCurrentEventButtonState(); }
-/* os EventRef do mOS não saem do AppKit: o app só vê a classe dos que ele mesmo cria */
-u32 GetEventClass(void *ev) { (void)ev; return 0; }
+u32 GetCurrentKeyModifiers(void) { return GetCurrentEventKeyModifiers(); }
 void *TSMGetActiveDocument(void) { return 0; }
 static u32 g_ui_mode, g_ui_opts;
 OSStatus SetSystemUIMode(u32 mode, u32 opts) { g_ui_mode = mode; g_ui_opts = opts; return 0; }   /* a barra e o Dock são do window server */

@@ -3314,6 +3314,7 @@ static BOOL menu_shortcut(gui_event_t *g);
 id cx_hover_view(id w);              /* appkit_input.c */
 void cx_set_hover_view(id w, id v);
 int cx_gr_mouse(id view, id ev, int phase);   /* appkit_more.c: NSGestureRecognizer */
+int cx_carbon_key(int phase, u16 code, u64 nsmods);   /* carbon_events.c */
 static void dispatch(gui_event_t *g) {
     if (g->type == GEV_QUIT) { MSG(void, NSApp, "terminate:", (id)0); return; }
     if (g->type == GEV_MENU) { perform_menu(g->key); return; }
@@ -3445,6 +3446,7 @@ static void dispatch(gui_event_t *g) {
         break;
     case GEV_FLAGS: {
         g_last_flags = mac_mods(g->mods);
+        cx_carbon_key(2, 0, g_last_flags);   /* carbon_events.c: kEventRawKeyModifiersChanged */
         {
             id target = s->first ? s->first : s->content;
             if (target) MSG(void, target, "flagsChanged:", make_event(12, w, 0, 0, g));
@@ -3460,6 +3462,7 @@ static void dispatch(gui_event_t *g) {
         }
         id e = make_event(11, w, 0, 0, g);
         cx_gc_keyboard_event(mac_keycode(g->key), mac_mods(g->mods), 0);
+        if (cx_carbon_key(1, mac_keycode(g->key), mac_mods(g->mods))) break;   /* atalho do Carbon solto */
         id target = s->first ? s->first : s->content;
         if (target) MSG(void, target, "keyUp:", e);
         break;
@@ -3472,6 +3475,7 @@ static void dispatch(gui_event_t *g) {
         }
         id e = make_event(10, w, 0, 0, g);
         { extern void cx_gc_keyboard_event(u16 mac_keycode, u64 mods, int down); cx_gc_keyboard_event(mac_keycode(g->key), mac_mods(g->mods), 1); }
+        if (cx_carbon_key(0, mac_keycode(g->key), mac_mods(g->mods))) break;   /* RegisterEventHotKey do app (carbon_events.c) */
         if (menu_shortcut(g)) break;
         if ((g->mods & 8) && (g->key == 'q' || g->key == 'Q')) { MSG(void, NSApp, "terminate:", (id)0); break; }
         if ((g->mods & 8) && (g->key == 'w' || g->key == 'W')) { MSG(void, w, "performClose:", w); break; }   /* pela mensagem: o NSDocument e as subclasses interceptam */

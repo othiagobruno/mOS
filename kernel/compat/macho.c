@@ -1806,8 +1806,17 @@ static int link_add(link_t *K, const char *path, const u8 *file, usize flen, boo
             /* Foundation.framework é do libSystem, mas a parte Swift dele (overlay + FoundationEssentials com o ABI da
              * Apple, docs/swift-objc-runtime.md, fase 5) é uma dylib Mach-O: no macOS 14+ ela mora dentro do framework,
              * no SDK antigo em /usr/lib/swift/libswiftFoundation.dylib. Se existir no disco, entra junto. */
-            if (!strncmp(dn, "/System/Library/Frameworks/Foundation.framework/", 48)) {
-                char sw[64] = "/usr/lib/swift/libswiftFoundation.dylib";
+            /* o mesmo para o AppKit: no SDK do macOS 14+ o overlay Swift (NSEvent.SpecialKey, diffables...) é importado
+             * do AppKit.framework; no mOS ele é /usr/lib/swift/libswiftAppKit.dylib (userland/frameworks/AppKit). O que
+             * não estiver nele cai no libSystem (resolve). */
+            int fnd = !strncmp(dn, "/System/Library/Frameworks/Foundation.framework/", 48);
+            int akt = !strncmp(dn, "/System/Library/Frameworks/AppKit.framework/", 44);
+            if (fnd || akt) {
+                char sw[64];
+                const char *src = fnd ? "/usr/lib/swift/libswiftFoundation.dylib" : "/usr/lib/swift/libswiftAppKit.dylib";
+                u32 k = 0;
+                while (src[k] && k + 1 < sizeof sw) { sw[k] = src[k]; k++; }
+                sw[k] = 0;
                 const u8 *data; usize len;
                 int d = locate(K, sw, sizeof sw, &data, &len);
                 if (d < 0 && data) d = link_add(K, sw, data, len, true);

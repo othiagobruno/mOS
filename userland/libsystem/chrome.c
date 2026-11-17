@@ -270,8 +270,6 @@ nsrect_t NSIntegralRect(nsrect_t r) {          /* menor retângulo de coordenada
 id_ CGEventCreateData(void *alloc, id_ ev) { (void)alloc; (void)ev; return 0; }
 Boolean CGEventSourceKeyState(int state, unsigned short key) { (void)state; (void)key; return 0; }
 id_ CTFontCopyVariationAxesInternal(id_ font) { (void)font; return 0; }
-OSStatus CallNextEventHandler(void *next, void *ev) { (void)next; (void)ev; return -9874; }   /* eventNotHandledErr */
-unsigned GetEventKind(void *ev) { (void)ev; return 0; }
 
 /* ---- AppKit: "kill ring" do Emacs (Ctrl+K / Ctrl+Y nos campos de texto) — sem efeito */
 void _NSInitializeKillRing(void) {}
