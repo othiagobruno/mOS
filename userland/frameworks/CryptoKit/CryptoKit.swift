@@ -3,7 +3,7 @@
 // As primitivas são as do libSystem (userland/libsystem/cryptokit.c sobre kernel/net/crypto.c e pk.c):
 // SHA-1/2, MD5, HMAC, HKDF, AES-GCM, AES-KW, ChaCha20-Poly1305, X25519, Ed25519, ECDSA/ECDH P-256/P-384/P-521.
 // Não há Secure Enclave no mOS: SecureEnclave.isAvailable é false e criar uma chave lá lança, como num Mac sem o chip.
-// HPKE: próximo passo (docs/servicos-seguranca-plano.md).
+// HPKE (RFC 9180): modos base e auth com DHKEM X25519 e P-256/384/521.
 import Foundation
 
 // MARK: - núcleo C (libSystem)
@@ -1108,4 +1108,254 @@ public enum SecureEnclave { public static var isAvailable: Bool { false } }   /*
 
 extension DataProtocol {
     public static func == <D: Digest>(lhs: Self, rhs: D) -> Bool { rhs == lhs }
+}
+
+// MARK: - HPKE (RFC 9180): modos base e auth, DHKEM(X25519, P-256, P-384, P-521), HKDF-SHA2, AES-GCM e ChaCha20-Poly1305
+
+public protocol HPKEDiffieHellmanPublicKey: Sendable {
+    init<D: ContiguousBytes>(_ serialization: D, kem: HPKE.KEM) throws
+    func export(as kem: HPKE.KEM) throws -> Data
+}
+public protocol HPKEDiffieHellmanPrivateKey: Sendable {
+    associatedtype PublicKey: HPKEDiffieHellmanPublicKey
+    var publicKey: PublicKey { get }
+    func sharedSecretFromKeyAgreement(with publicKeyShare: PublicKey) throws -> SharedSecret
+}
+public protocol HPKEDiffieHellmanPrivateKeyGeneration: HPKEDiffieHellmanPrivateKey {
+    init()
+}
+
+public enum HPKE: Sendable {
+    public enum Errors: Error, Sendable {
+        case inconsistentParameters, inconsistentCiphersuiteAndKey, exportOnlyMode, inconsistentPSKInputs, expectedPSK, unexpectedPSK,
+             outOfRangeSequenceNumber, ciphertextTooShort
+    }
+    public enum KEM: CaseIterable, Hashable, Sendable {
+        case P256_HKDF_SHA256, P384_HKDF_SHA384, P521_HKDF_SHA512, Curve25519_HKDF_SHA256
+        var id: UInt16 { switch self { case .P256_HKDF_SHA256: 0x10; case .P384_HKDF_SHA384: 0x11; case .P521_HKDF_SHA512: 0x12; case .Curve25519_HKDF_SHA256: 0x20 } }
+        var kdf: KDF { switch self { case .P256_HKDF_SHA256, .Curve25519_HKDF_SHA256: .HKDF_SHA256; case .P384_HKDF_SHA384: .HKDF_SHA384; case .P521_HKDF_SHA512: .HKDF_SHA512 } }
+        var nSecret: Int { switch self { case .P256_HKDF_SHA256, .Curve25519_HKDF_SHA256: 32; case .P384_HKDF_SHA384: 48; case .P521_HKDF_SHA512: 64 } }
+        var nEnc: Int { switch self { case .Curve25519_HKDF_SHA256: 32; case .P256_HKDF_SHA256: 65; case .P384_HKDF_SHA384: 97; case .P521_HKDF_SHA512: 133 } }
+        var bits: Int32 { switch self { case .P256_HKDF_SHA256: 256; case .P384_HKDF_SHA384: 384; case .P521_HKDF_SHA512: 521; case .Curve25519_HKDF_SHA256: 0 } }
+    }
+    public enum KDF: CaseIterable, Hashable, Sendable {
+        case HKDF_SHA256, HKDF_SHA384, HKDF_SHA512
+        var id: UInt16 { switch self { case .HKDF_SHA256: 1; case .HKDF_SHA384: 2; case .HKDF_SHA512: 3 } }
+        var nH: Int { switch self { case .HKDF_SHA256: 32; case .HKDF_SHA384: 48; case .HKDF_SHA512: 64 } }
+        func extract(_ salt: [UInt8], _ ikm: [UInt8]) -> [UInt8] {
+            let k = SymmetricKey(data: ikm)
+            switch self {
+            case .HKDF_SHA256: return bytes(contiguous: HKDF<SHA256>.extract(inputKeyMaterial: k, salt: salt))
+            case .HKDF_SHA384: return bytes(contiguous: HKDF<SHA384>.extract(inputKeyMaterial: k, salt: salt))
+            case .HKDF_SHA512: return bytes(contiguous: HKDF<SHA512>.extract(inputKeyMaterial: k, salt: salt))
+            }
+        }
+        func expand(_ prk: [UInt8], _ info: [UInt8], _ n: Int) -> [UInt8] {
+            switch self {
+            case .HKDF_SHA256: return bytes(contiguous: HKDF<SHA256>.expand(pseudoRandomKey: prk, info: info, outputByteCount: n))
+            case .HKDF_SHA384: return bytes(contiguous: HKDF<SHA384>.expand(pseudoRandomKey: prk, info: info, outputByteCount: n))
+            case .HKDF_SHA512: return bytes(contiguous: HKDF<SHA512>.expand(pseudoRandomKey: prk, info: info, outputByteCount: n))
+            }
+        }
+    }
+    public enum AEAD: CaseIterable, Hashable, Sendable {
+        case AES_GCM_128, AES_GCM_256, chaChaPoly, exportOnly
+        var id: UInt16 { switch self { case .AES_GCM_128: 1; case .AES_GCM_256: 2; case .chaChaPoly: 3; case .exportOnly: 0xffff } }
+        var nK: Int { switch self { case .AES_GCM_128: 16; case .AES_GCM_256, .chaChaPoly: 32; case .exportOnly: 0 } }
+    }
+    public struct Ciphersuite: Sendable {
+        public let kem: KEM
+        public let kdf: KDF
+        public let aead: AEAD
+        public init(kem: KEM, kdf: KDF, aead: AEAD) { self.kem = kem; self.kdf = kdf; self.aead = aead }
+        public static let P256_SHA256_AES_GCM_256 = Ciphersuite(kem: .P256_HKDF_SHA256, kdf: .HKDF_SHA256, aead: .AES_GCM_256)
+        public static let P384_SHA384_AES_GCM_256 = Ciphersuite(kem: .P384_HKDF_SHA384, kdf: .HKDF_SHA384, aead: .AES_GCM_256)
+        public static let P521_SHA512_AES_GCM_256 = Ciphersuite(kem: .P521_HKDF_SHA512, kdf: .HKDF_SHA512, aead: .AES_GCM_256)
+        public static let Curve25519_SHA256_ChachaPoly = Ciphersuite(kem: .Curve25519_HKDF_SHA256, kdf: .HKDF_SHA256, aead: .chaChaPoly)
+    }
+
+    // ---- primitivas da RFC 9180 sobre bytes
+    static func i2osp(_ v: Int, _ n: Int) -> [UInt8] { (0..<n).map { UInt8((v >> (8 * (n - 1 - $0))) & 255) } }
+    static let v1 = Array("HPKE-v1".utf8)
+    static func labeledExtract(_ kdf: KDF, _ suite: [UInt8], _ salt: [UInt8], _ label: String, _ ikm: [UInt8]) -> [UInt8] {
+        kdf.extract(salt, v1 + suite + Array(label.utf8) + ikm)
+    }
+    static func labeledExpand(_ kdf: KDF, _ suite: [UInt8], _ prk: [UInt8], _ label: String, _ info: [UInt8], _ n: Int) -> [UInt8] {
+        kdf.expand(prk, i2osp(n, 2) + v1 + suite + Array(label.utf8) + info, n)
+    }
+    /* DH e serialização por KEM; as chaves andam como bytes (X25519 cru, NIST em x963) */
+    static func generate(_ kem: KEM) -> (priv: [UInt8], pub: [UInt8]) {
+        if kem == .Curve25519_HKDF_SHA256 { let k = Curve25519.KeyAgreement.PrivateKey(); return (k.b, k.publicKey.b) }
+        let (d, q) = ECCore.generate(kem.bits, compact: false)
+        return (d, q)
+    }
+    static func publicOf(_ kem: KEM, _ priv: [UInt8]) throws -> [UInt8] {
+        if kem == .Curve25519_HKDF_SHA256 { return try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: priv).publicKey.b }
+        return try ECCore.publicFrom(priv, kem.bits)
+    }
+    static func dh(_ kem: KEM, _ priv: [UInt8], _ pub: [UInt8]) throws -> [UInt8] {
+        if kem == .Curve25519_HKDF_SHA256 {
+            let s = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: priv).sharedSecretFromKeyAgreement(with: try Curve25519.KeyAgreement.PublicKey(rawRepresentation: pub))
+            return s.b
+        }
+        return try ECCore.shared(priv, try ECCore.point(pub, ECCore.size(kem.bits)), kem.bits)
+    }
+    static func kemSecret(_ kem: KEM, _ dh: [UInt8], _ ctx: [UInt8]) -> [UInt8] {
+        let suite = Array("KEM".utf8) + i2osp(Int(kem.id), 2)
+        let prk = labeledExtract(kem.kdf, suite, [], "eae_prk", dh)
+        return labeledExpand(kem.kdf, suite, prk, "shared_secret", ctx, kem.nSecret)
+    }
+    struct Context: Sendable {
+        let suite: Ciphersuite
+        let key: [UInt8], baseNonce: [UInt8], exporter: [UInt8]
+        var seq: UInt64 = 0
+        init(_ cs: Ciphersuite, mode: UInt8, shared: [UInt8], info: [UInt8]) {
+            suite = cs
+            let sid = Array("HPKE".utf8) + i2osp(Int(cs.kem.id), 2) + i2osp(Int(cs.kdf.id), 2) + i2osp(Int(cs.aead.id), 2)
+            let pskIdHash = labeledExtract(cs.kdf, sid, [], "psk_id_hash", [])
+            let infoHash = labeledExtract(cs.kdf, sid, [], "info_hash", info)
+            let ctx = [mode] + pskIdHash + infoHash
+            let secret = labeledExtract(cs.kdf, sid, shared, "secret", [])
+            key = cs.aead == .exportOnly ? [] : labeledExpand(cs.kdf, sid, secret, "key", ctx, cs.aead.nK)
+            baseNonce = cs.aead == .exportOnly ? [] : labeledExpand(cs.kdf, sid, secret, "base_nonce", ctx, 12)
+            exporter = labeledExpand(cs.kdf, sid, secret, "exp", ctx, cs.kdf.nH)
+        }
+        func nonce() -> [UInt8] {
+            let s = i2osp(0, 4) + (0..<8).map { UInt8((seq >> (8 * (7 - UInt64($0)))) & 255) }
+            return zip(baseNonce, s).map { $0 ^ $1 }
+        }
+        mutating func seal(_ pt: [UInt8], _ aad: [UInt8]) throws -> Data {
+            guard suite.aead != .exportOnly else { throw Errors.exportOnlyMode }
+            guard seq < UInt64.max else { throw Errors.outOfRangeSequenceNumber }
+            let k = SymmetricKey(data: key), n = nonce()
+            let out: Data
+            if suite.aead == .chaChaPoly {
+                let b = try ChaChaPoly.seal(pt, using: k, nonce: try ChaChaPoly.Nonce(data: n), authenticating: aad)
+                out = b.ciphertext + b.tag
+            } else {
+                let b = try AES.GCM.seal(pt, using: k, nonce: try AES.GCM.Nonce(data: n), authenticating: aad)
+                out = b.ciphertext + b.tag
+            }
+            seq += 1
+            return out
+        }
+        mutating func open(_ ct: [UInt8], _ aad: [UInt8]) throws -> Data {
+            guard suite.aead != .exportOnly else { throw Errors.exportOnlyMode }
+            guard ct.count >= 16 else { throw Errors.ciphertextTooShort }
+            let k = SymmetricKey(data: key), n = nonce(), body = Array(ct.prefix(ct.count - 16)), tag = Array(ct.suffix(16))
+            let out: Data
+            if suite.aead == .chaChaPoly {
+                out = try ChaChaPoly.open(try ChaChaPoly.SealedBox(nonce: try ChaChaPoly.Nonce(data: n), ciphertext: body, tag: tag), using: k, authenticating: aad)
+            } else {
+                out = try AES.GCM.open(try AES.GCM.SealedBox(nonce: try AES.GCM.Nonce(data: n), ciphertext: body, tag: tag), using: k, authenticating: aad)
+            }
+            seq += 1
+            return out
+        }
+        func export(_ context: [UInt8], _ n: Int) -> SymmetricKey {
+            let sid = Array("HPKE".utf8) + i2osp(Int(suite.kem.id), 2) + i2osp(Int(suite.kdf.id), 2) + i2osp(Int(suite.aead.id), 2)
+            return SymmetricKey(data: labeledExpand(suite.kdf, sid, exporter, "sec", context, n))
+        }
+    }
+
+    public struct Sender: Sendable {
+        var ctx: Context
+        public let encapsulatedKey: Data
+        /* modo base: Encap(pkR) */
+        public init<PK: HPKEDiffieHellmanPublicKey>(recipientKey: PK, ciphersuite: Ciphersuite, info: Data) throws {
+            let kem = ciphersuite.kem, pkR = [UInt8](try recipientKey.export(as: kem))
+            let e = HPKE.generate(kem)
+            let shared = HPKE.kemSecret(kem, try HPKE.dh(kem, e.priv, pkR), e.pub + pkR)
+            ctx = Context(ciphersuite, mode: 0, shared: shared, info: [UInt8](info))
+            encapsulatedKey = Data(e.pub)
+        }
+        /* modo auth: AuthEncap(pkR, skS) */
+        public init<SK: HPKEDiffieHellmanPrivateKey>(recipientKey: SK.PublicKey, ciphersuite: Ciphersuite, info: Data, authenticatedBy authenticationKey: SK) throws {
+            let kem = ciphersuite.kem, pkR = [UInt8](try recipientKey.export(as: kem)), pkS = [UInt8](try authenticationKey.publicKey.export(as: kem))
+            let e = HPKE.generate(kem)
+            let dhS = bytes(contiguous: try authenticationKey.sharedSecretFromKeyAgreement(with: recipientKey))
+            let shared = HPKE.kemSecret(kem, try HPKE.dh(kem, e.priv, pkR) + dhS, e.pub + pkR + pkS)
+            ctx = Context(ciphersuite, mode: 2, shared: shared, info: [UInt8](info))
+            encapsulatedKey = Data(e.pub)
+        }
+        public mutating func seal<M: DataProtocol, AD: DataProtocol>(_ msg: M, authenticating aad: AD) throws -> Data { try ctx.seal(bytes(msg), bytes(aad)) }
+        public mutating func seal<M: DataProtocol>(_ msg: M) throws -> Data { try ctx.seal(bytes(msg), []) }
+        public func exportSecret<C: DataProtocol>(context: C, outputByteCount: Int) throws -> SymmetricKey { ctx.export(bytes(context), outputByteCount) }
+    }
+    public struct Recipient: Sendable {
+        var ctx: Context
+        public init<SK: HPKEDiffieHellmanPrivateKey>(privateKey: SK, ciphersuite: Ciphersuite, info: Data, encapsulatedKey: Data) throws {
+            let kem = ciphersuite.kem, enc = [UInt8](encapsulatedKey), pkR = [UInt8](try privateKey.publicKey.export(as: kem))
+            guard enc.count == kem.nEnc else { throw Errors.inconsistentParameters }
+            let pkE = try SK.PublicKey(enc, kem: kem)
+            let dh = bytes(contiguous: try privateKey.sharedSecretFromKeyAgreement(with: pkE))
+            ctx = Context(ciphersuite, mode: 0, shared: HPKE.kemSecret(kem, dh, enc + pkR), info: [UInt8](info))
+        }
+        public init<SK: HPKEDiffieHellmanPrivateKey>(privateKey: SK, ciphersuite: Ciphersuite, info: Data, encapsulatedKey: Data, authenticatedBy authenticationKey: SK.PublicKey) throws {
+            let kem = ciphersuite.kem, enc = [UInt8](encapsulatedKey), pkR = [UInt8](try privateKey.publicKey.export(as: kem))
+            let pkS = [UInt8](try authenticationKey.export(as: kem))
+            guard enc.count == kem.nEnc else { throw Errors.inconsistentParameters }
+            let pkE = try SK.PublicKey(enc, kem: kem)
+            let dh = bytes(contiguous: try privateKey.sharedSecretFromKeyAgreement(with: pkE)) + bytes(contiguous: try privateKey.sharedSecretFromKeyAgreement(with: authenticationKey))
+            ctx = Context(ciphersuite, mode: 2, shared: HPKE.kemSecret(kem, dh, enc + pkR + pkS), info: [UInt8](info))
+        }
+        public mutating func open<C: DataProtocol, AD: DataProtocol>(_ ciphertext: C, authenticating aad: AD) throws -> Data { try ctx.open(bytes(ciphertext), bytes(aad)) }
+        public mutating func open<C: DataProtocol>(_ ciphertext: C) throws -> Data { try ctx.open(bytes(ciphertext), []) }
+        public func exportSecret<C: DataProtocol>(context: C, outputByteCount: Int) throws -> SymmetricKey { ctx.export(bytes(context), outputByteCount) }
+    }
+}
+
+/* chaves que servem ao HPKE: a serialização é a da RFC 9180 (X25519 crua; NIST não comprimida) e o KEM tem de bater */
+extension Curve25519.KeyAgreement.PublicKey: HPKEDiffieHellmanPublicKey {
+    public init<D: ContiguousBytes>(_ serialization: D, kem: HPKE.KEM) throws {
+        guard kem == .Curve25519_HKDF_SHA256 else { throw HPKE.Errors.inconsistentCiphersuiteAndKey }
+        try self.init(rawRepresentation: serialization)
+    }
+    public func export(as kem: HPKE.KEM) throws -> Data {
+        guard kem == .Curve25519_HKDF_SHA256 else { throw HPKE.Errors.inconsistentCiphersuiteAndKey }
+        return rawRepresentation
+    }
+}
+extension Curve25519.KeyAgreement.PrivateKey: HPKEDiffieHellmanPrivateKeyGeneration {}
+
+extension P256.KeyAgreement.PublicKey: HPKEDiffieHellmanPublicKey {
+    public init<D: ContiguousBytes>(_ serialization: D, kem: HPKE.KEM) throws {
+        guard kem == .P256_HKDF_SHA256 else { throw HPKE.Errors.inconsistentCiphersuiteAndKey }
+        try self.init(x963Representation: serialization)
+    }
+    public func export(as kem: HPKE.KEM) throws -> Data {
+        guard kem == .P256_HKDF_SHA256 else { throw HPKE.Errors.inconsistentCiphersuiteAndKey }
+        return x963Representation
+    }
+}
+extension P256.KeyAgreement.PrivateKey: HPKEDiffieHellmanPrivateKeyGeneration {
+    public init() { self.init(compactRepresentable: false) }
+}
+
+extension P384.KeyAgreement.PublicKey: HPKEDiffieHellmanPublicKey {
+    public init<D: ContiguousBytes>(_ serialization: D, kem: HPKE.KEM) throws {
+        guard kem == .P384_HKDF_SHA384 else { throw HPKE.Errors.inconsistentCiphersuiteAndKey }
+        try self.init(x963Representation: serialization)
+    }
+    public func export(as kem: HPKE.KEM) throws -> Data {
+        guard kem == .P384_HKDF_SHA384 else { throw HPKE.Errors.inconsistentCiphersuiteAndKey }
+        return x963Representation
+    }
+}
+extension P384.KeyAgreement.PrivateKey: HPKEDiffieHellmanPrivateKeyGeneration {
+    public init() { self.init(compactRepresentable: false) }
+}
+
+extension P521.KeyAgreement.PublicKey: HPKEDiffieHellmanPublicKey {
+    public init<D: ContiguousBytes>(_ serialization: D, kem: HPKE.KEM) throws {
+        guard kem == .P521_HKDF_SHA512 else { throw HPKE.Errors.inconsistentCiphersuiteAndKey }
+        try self.init(x963Representation: serialization)
+    }
+    public func export(as kem: HPKE.KEM) throws -> Data {
+        guard kem == .P521_HKDF_SHA512 else { throw HPKE.Errors.inconsistentCiphersuiteAndKey }
+        return x963Representation
+    }
+}
+extension P521.KeyAgreement.PrivateKey: HPKEDiffieHellmanPrivateKeyGeneration {
+    public init() { self.init(compactRepresentable: false) }
 }

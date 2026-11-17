@@ -73,5 +73,55 @@ do {
     check((try? P256.Signing.PrivateKey(pemRepresentation: rd("p384.pem"))) == nil, "PEM de outra curva recusado")
 } catch { check(false, "erro: \(error)") }
 check(SecureEnclave.isAvailable == false, "sem Secure Enclave")
+// HPKE (RFC 9180): o Recipient abre a 1ª cifra e exporta igual aos vetores do CFRG; Sender -> Recipient ida e volta
+func hpkeRun<SK: HPKEDiffieHellmanPrivateKey>(_ sk: SK, _ pkS: SK.PublicKey?, _ cs: HPKE.Ciphersuite, _ f: [String]) throws -> Bool {
+    let info = Data(unhex(f[4])), enc = Data(unhex(f[7])), aad = unhex(f[8]), ct = unhex(f[9]), pt = unhex(f[10])
+    var r = try pkS.map { try HPKE.Recipient(privateKey: sk, ciphersuite: cs, info: info, encapsulatedKey: enc, authenticatedBy: $0) }
+        ?? HPKE.Recipient(privateKey: sk, ciphersuite: cs, info: info, encapsulatedKey: enc)
+    let o1 = try r.open(ct, authenticating: aad)
+    let ok1 = o1 == Data(pt)
+    let ex = try r.exportSecret(context: f[11] == "-" ? [] : unhex(f[11]), outputByteCount: Int(f[12])!)
+    let ok2 = hex(ex) == f[13]
+    var s = try HPKE.Sender(recipientKey: sk.publicKey, ciphersuite: cs, info: info)
+    let c = try s.seal(pt, authenticating: aad)
+    var r2 = try HPKE.Recipient(privateKey: sk, ciphersuite: cs, info: info, encapsulatedKey: s.encapsulatedKey)
+    let o2 = try r2.open(c, authenticating: aad)
+    return ok1 && ok2 && o2 == Data(pt)
+}
+if CommandLine.arguments.count > 2, let vt = try? String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8) {
+    let kems: [Int: HPKE.KEM] = [0x10: .P256_HKDF_SHA256, 0x11: .P384_HKDF_SHA384, 0x12: .P521_HKDF_SHA512, 0x20: .Curve25519_HKDF_SHA256]
+    let kdfs: [Int: HPKE.KDF] = [1: .HKDF_SHA256, 2: .HKDF_SHA384, 3: .HKDF_SHA512]
+    let aeads: [Int: HPKE.AEAD] = [1: .AES_GCM_128, 2: .AES_GCM_256, 3: .chaChaPoly]
+    var n = 0, good = 0
+    for line in vt.split(separator: "\n") where !line.hasPrefix("#") {
+        let f = line.split(separator: " ").map(String.init)
+        guard f.count == 14, let kem = kems[Int(f[1])!], let kdf = kdfs[Int(f[2])!], let aead = aeads[Int(f[3])!] else { continue }
+        let cs = HPKE.Ciphersuite(kem: kem, kdf: kdf, aead: aead), auth = f[0] == "2"
+        n += 1
+        do {
+            let ok: Bool
+            switch kem {
+            case .Curve25519_HKDF_SHA256:
+                ok = try hpkeRun(try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: unhex(f[5])), auth ? try Curve25519.KeyAgreement.PublicKey(unhex(f[6]), kem: kem) : nil, cs, f)
+            case .P256_HKDF_SHA256:
+                ok = try hpkeRun(try P256.KeyAgreement.PrivateKey(rawRepresentation: unhex(f[5])), auth ? try P256.KeyAgreement.PublicKey(unhex(f[6]), kem: kem) : nil, cs, f)
+            case .P384_HKDF_SHA384:
+                ok = try hpkeRun(try P384.KeyAgreement.PrivateKey(rawRepresentation: unhex(f[5])), auth ? try P384.KeyAgreement.PublicKey(unhex(f[6]), kem: kem) : nil, cs, f)
+            case .P521_HKDF_SHA512:
+                ok = try hpkeRun(try P521.KeyAgreement.PrivateKey(rawRepresentation: unhex(f[5])), auth ? try P521.KeyAgreement.PublicKey(unhex(f[6]), kem: kem) : nil, cs, f)
+            }
+            if ok { good += 1 } else { print("HPKE falhou:", f[0...3].joined(separator: " ")) }
+        } catch { print("HPKE erro:", f[0...3].joined(separator: " "), error) }
+    }
+    check(n > 30 && good == n, "HPKE: \(good)/\(n) vetores RFC 9180 (abrir, exportar e ida e volta)")
+    let sA = Curve25519.KeyAgreement.PrivateKey(), rB = Curve25519.KeyAgreement.PrivateKey()
+    var sn = try! HPKE.Sender(recipientKey: rB.publicKey, ciphersuite: .Curve25519_SHA256_ChachaPoly, info: Data(), authenticatedBy: sA)
+    let c1 = try! sn.seal(abc, authenticating: [UInt8]())
+    var rc = try! HPKE.Recipient(privateKey: rB, ciphersuite: .Curve25519_SHA256_ChachaPoly, info: Data(), encapsulatedKey: sn.encapsulatedKey, authenticatedBy: sA.publicKey)
+    check((try? rc.open(c1, authenticating: [UInt8]())) == Data(abc), "HPKE modo auth: Sender -> Recipient")
+    var rw = try! HPKE.Recipient(privateKey: rB, ciphersuite: .Curve25519_SHA256_ChachaPoly, info: Data(), encapsulatedKey: sn.encapsulatedKey,
+                                 authenticatedBy: Curve25519.KeyAgreement.PrivateKey().publicKey)
+    check((try? rw.open(c1, authenticating: [UInt8]())) == nil, "HPKE auth com remetente errado falha")
+}
 print("cryptokit: \(ok)/\(total)")
 exit(ok == total ? 0 : 1)

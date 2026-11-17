@@ -41,7 +41,7 @@ pickle.dump((spki, k3.public_key().public_bytes(serialization.Encoding.DER, seri
 PY
 "$SWIFTC" -O -module-name CryptoKit "$ROOT/tools/cryptokit-host/main.swift" "$ROOT/userland/frameworks/CryptoKit/CryptoKit.swift" \
     "$T"/cryptokit.o "$T"/crypto.o "$T"/pk.o "$T"/ed25519.o "$T"/commoncrypto.o "$T"/commoncrypto2.o "$T"/stubs.o -o "$T/t"
-"$T/t" "$T/io"
+"$T/t" "$T/io" "$ROOT/tools/cryptokit-host/hpke-vectors.txt"
 python3 -I - "$T/io" <<'PY'
 import sys, pickle
 from cryptography.hazmat.primitives.asymmetric import ec, utils
