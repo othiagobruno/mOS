@@ -26,6 +26,7 @@ typedef struct gapp {
     int nwin;
     gui_event_t q[QLEN];
     int qh, qt;
+    surface_t *custom_icon; /* ícone do Dock trocado pelo app (DK_ICON) ou NULL */
     struct gapp *next;
 } gapp_t;
 
@@ -41,6 +42,9 @@ typedef struct {
     char *ime;              /* candidatos do método de entrada (formato de IME_SHOW) ou NULL */
     u32 ime_len;
     int ime_x, ime_y;
+    int cursor;             /* forma do cursor sobre o conteúdo (CURSOR_*, CURSOR_CUSTOM ou CURSOR_NONE) */
+    u32 *cur_px;            /* imagem do cursor do app (GUI_FOCUS_CURSOR_IMAGE) ou NULL */
+    int cur_w, cur_h, cur_hx, cur_hy;
 } gwin_t;
 
 static gwin_t wins[MAX_GWIN];
@@ -58,6 +62,9 @@ static void drag_track(void);
 static bool drag_is_source(gapp_t *ga);
 static void ime_draw(gwin_t *g, surface_t *s);
 static void drag_forget_app(gapp_t *ga);
+
+_Static_assert(GUI_CURSOR_FORMS == CURSOR_KINDS && GUI_CURSOR_COPY == CURSOR_COPY && GUI_CURSOR_RESIZE_ROW == CURSOR_RESIZE_ROW,
+               "as formas de cursor do protocolo seguem as do window server");
 
 static gwin_t *gwin_of(window_t *w) {
     for (int i = 0; i < MAX_GWIN; i++) if (wins[i].used && wins[i].w == w) return &wins[i];
@@ -86,6 +93,9 @@ static void proxy_paint(window_t *w, ui_t *u) {
         push(g->ga, &e);
     }
     if (g->shown) gfx_blit(u->s, g->shown, 0, 0);
+    /* cursor que o app pediu (NSCursor): o wm aplica depois da pintura se o mouse está no conteúdo */
+    if (g->cursor == CURSOR_CUSTOM && g->cur_px) wm_set_cursor_image(g->cur_px, g->cur_w, g->cur_h, g->cur_hx, g->cur_hy);
+    u->cursor = g->cursor == CURSOR_CUSTOM && !g->cur_px ? CURSOR_ARROW : g->cursor;
     if (g->ime) ime_draw(g, u->s);                 /* candidatos do IME por cima do conteúdo */
     /* arrasto em andamento: o window server segue o cursor; os cliques e movimentos dele não vão aos apps */
     bool dragging = drag_is_source(NULL);
@@ -392,6 +402,7 @@ static void destroy(gwin_t *g) {
     surface_free(g->back);
     surface_free(g->shown);
     kfree(g->ime);
+    kfree(g->cur_px);
     g->ga->nwin--;
     memset(g, 0, sizeof *g);
 }
@@ -446,6 +457,13 @@ const char *compat_app_bundle(app_t *a) {
     return NULL;
 }
 
+/* ícone do Dock trocado pelo app (o do processo ou o atalho fixado no Dock dele); icons.c pergunta antes do bundle */
+surface_t *compat_app_custom_icon(app_t *a) {
+    for (gapp_t *ga = gapps; ga; ga = ga->next)
+        if (ga->custom_icon && (&ga->app == a || apps_shortcut_for(&ga->app) == a)) return ga->custom_icon;
+    return NULL;
+}
+
 /* chamado quando o processo termina (gancho de proc/process.c) */
 void compat_gui_proc_exit(process_t *p) {
     gapp_t *ga = gapp_find(p);
@@ -460,7 +478,14 @@ void compat_gui_proc_exit(process_t *p) {
     for (gapp_t **pp = &gapps; *pp; pp = &(*pp)->next)
         if (*pp == ga) { *pp = ga->next; break; }
     ga->app.running = false;
+    ga->app.attention = ga->app.attention_once = false;
+    if (sc) sc->attention = sc->attention_once = false;
     free_menus(&ga->app);
+    if (ga->custom_icon) {
+        icon_forget(&ga->app);
+        if (sc && sc != &ga->app) icon_forget(sc);
+        surface_free(ga->custom_icon);
+    }
     kfree(ga);
 }
 
@@ -744,6 +769,40 @@ static i64 gui_status_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d) {
             wm_damage_all();
             return 0;
         }
+        if (b == DK_ATTENTION) {
+            app_t *sc = apps_shortcut_for(&ga->app);
+            app_t *list[2] = {&ga->app, sc && sc != &ga->app ? sc : NULL};
+            for (int i = 0; i < 2; i++) {
+                app_t *a = list[i];
+                if (!a) continue;
+                if (c == 0) { a->attention = a->attention_once = false; continue; }
+                if (c == 2) dock_request_attention(a);
+                else { a->attention_once = true; if (a->bounce <= 0) a->bounce = 1; }
+            }
+            wm_damage_all();
+            return c <= 2 ? 0 : -MOS_EINVAL;
+        }
+        if (b == DK_ICON) {
+            surface_t *ns = NULL;
+            if (c) {
+                gui_dock_icon_t *di = kmalloc(sizeof *di);
+                if (!di) return -MOS_ENOMEM;
+                if (!uvm_copy_in(p, di, c, sizeof *di)) { kfree(di); return -MOS_EFAULT; }
+                if (!di->w || !di->h || di->w > GUI_DOCK_ICON_MAX || di->h > GUI_DOCK_ICON_MAX) { kfree(di); return -MOS_EINVAL; }
+                ns = surface_new((int)di->w, (int)di->h);
+                if (!ns) { kfree(di); return -MOS_ENOMEM; }
+                for (u32 y = 0; y < di->h; y++)
+                    for (u32 x = 0; x < di->w; x++) ns->px[(usize)y * ns->stride + x] = di->px[y * di->w + x];
+                kfree(di);
+            }
+            if (ga->custom_icon) surface_free(ga->custom_icon);
+            ga->custom_icon = ns;
+            app_t *sc = apps_shortcut_for(&ga->app);
+            icon_forget(&ga->app);
+            if (sc && sc != &ga->app) icon_forget(sc);
+            wm_damage_all();
+            return 0;
+        }
         return -MOS_EINVAL;
     }
     return -MOS_EINVAL;
@@ -1020,6 +1079,28 @@ i64 compat_gui_syscall(process_t *p, u64 n, u64 a, u64 b, u64 c, u64 d, u64 e) {
             return 0;
         }
         if (b == GUI_FOCUS_LEVEL) { if (g->w) wm_set_level(g->w, (int)(i64)c); return 0; }
+        if (b == GUI_FOCUS_CURSOR) {
+            int k = (int)(i64)c;
+            if (k != GUI_CURSOR_HIDDEN && (k < 0 || k >= GUI_CURSOR_FORMS)) return -MOS_EINVAL;
+            g->cursor = k == GUI_CURSOR_HIDDEN ? CURSOR_NONE : k;
+            if (g->w && g->w->ui.inside) wm_set_cursor(g->cursor);
+            return 0;
+        }
+        if (b == GUI_FOCUS_CURSOR_IMAGE) {
+            gui_cursor_image_t *ci = kmalloc(sizeof *ci);
+            if (!ci) return -MOS_ENOMEM;
+            if (!uvm_copy_in(p, ci, c, sizeof *ci)) { kfree(ci); return -MOS_EFAULT; }
+            if (!ci->w || !ci->h || ci->w > GUI_CURSOR_MAX || ci->h > GUI_CURSOR_MAX) { kfree(ci); return -MOS_EINVAL; }
+            u32 *px = kmalloc(ci->w * ci->h * 4);
+            if (!px) { kfree(ci); return -MOS_ENOMEM; }
+            for (u32 i = 0; i < ci->w * ci->h; i++) px[i] = ci->px[i];
+            kfree(g->cur_px);
+            g->cur_px = px; g->cur_w = (int)ci->w; g->cur_h = (int)ci->h; g->cur_hx = (int)ci->hx; g->cur_hy = (int)ci->hy;
+            kfree(ci);
+            g->cursor = CURSOR_CUSTOM;
+            if (g->w && g->w->ui.inside) { wm_set_cursor_image(g->cur_px, g->cur_w, g->cur_h, g->cur_hx, g->cur_hy); wm_set_cursor(CURSOR_CUSTOM); }
+            return 0;
+        }
         if (g->w) wm_focus(g->w);
         return 0;
     }

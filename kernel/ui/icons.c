@@ -407,6 +407,14 @@ static void icon_make_dark(surface_t *s) {
     kfree(sat);
 }
 
+void icon_forget(app_t *a) {
+    for (int i = 0; i < nicache;) {
+        if (icache[i].a != a) { i++; continue; }
+        surface_free(icache[i].s);
+        memmove(icache + i, icache + i + 1, sizeof(icache_t) * (nicache - i - 1));
+        nicache--;
+    }
+}
 surface_t *icon_for(app_t *a, int size) {
     size = CLAMP(size, 8, 256);
     bool dark = T.dark;
@@ -426,6 +434,17 @@ surface_t *icon_for(app_t *a, int size) {
     }
     surface_t *s = surface_new(size, size);
     memset(s->px, 0, (usize)size * size * 4);
+    /* ícone que o app pôs em tempo de execução (NSApplication setApplicationIconImage:): vai como veio */
+    {
+        extern surface_t *compat_app_custom_icon(app_t *a);
+        surface_t *cust = compat_app_custom_icon(a);
+        if (cust) {
+            gfx_blit_scaled(s, cust, 0, 0, size, size, 255);
+            if (nicache == ARRAY_LEN(icache)) { surface_free(icache[0].s); memmove(icache, icache + 1, sizeof(icache_t) * (nicache - 1)); nicache--; }
+            icache[nicache++] = (icache_t){a, size, dark, s, time_key};
+            return s;
+        }
+    }
     /* apps do macOS: o ícone do próprio bundle (.icns), se o mOS conseguir ler */
     const char *bundle = compat_app_bundle(a), *ex = a->exec;
     extern bool horizonte_motor_bundle(const char *bundle);
