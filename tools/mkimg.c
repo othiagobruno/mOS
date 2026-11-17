@@ -27,7 +27,8 @@
 typedef struct node {
     char name[256];
     int is_dir;
-    unsigned char *data;
+    unsigned char *data;   /* conteúdo já na RAM (gerado aqui ou canonizado); senão é lido de src na hora */
+    char *src;             /* caminho no staging */
     uint32_t size;
     struct node *child, *next, *parent;
     uint32_t cluster, nclusters;
@@ -41,9 +42,12 @@ static const char *img_path;
 static int img_committed;
 static uint64_t img_size;
 
+static char img_tmp[4096];   /* <saida>.parcial: só vira <saida> no fim. Morte por sinal (OOM, timeout) não deixa
+                              * uma <saida> com GPT e sem FAT para alguém dar boot ("partição não é FAT com \\mOS\\"). */
+
 static void img_abort(void) {
     if (imgf) { fclose(imgf); imgf = NULL; }
-    if (img_path && !img_committed) remove(img_path);
+    if (img_path && !img_committed) { remove(img_tmp); remove(img_path); }
 }
 
 static void img_at(uint64_t off, const void *buf, size_t n) {
@@ -115,6 +119,21 @@ static FILE *path_open(const char *p) { return fopen(p, "rb"); }
 
 /* Symlink de .framework que veio como arquivo de texto vira #mOS-link: antes do manifesto,
  * para o hash do payload bater com os bytes da imagem e o VFS seguir o componente do meio. */
+/* Bytes do arquivo: os da RAM ou lidos do staging agora (*owned = 1: o chamador libera). O payload tem vários GB; ler
+ * tudo no load_tree estourava o limite de memória do build (mos-pesado) e o OOM matava o mkimg no meio da imagem. */
+static unsigned char *node_bytes(node *n, int *owned) {
+    static unsigned char vazio[1];
+    *owned = 0;
+    if (n->data) return n->data;
+    if (!n->size) return vazio;
+    FILE *f = path_open(n->src);
+    unsigned char *b = f ? malloc(n->size) : NULL;
+    if (!f || !b || fread(b, 1, n->size, f) != n->size) { perror(n->src); exit(1); }
+    fclose(f);
+    *owned = 1;
+    return b;
+}
+
 static void canon_fw_links(node *n, const char *prefix) {
     char path[1024];
     if (!n) return;
@@ -123,10 +142,13 @@ static void canon_fw_links(node *n, const char *prefix) {
         for (node *c = n->child; c; c = c->next) canon_fw_links(c, path);
         return;
     }
-    if (!strstr(path, ".framework/")) return;
+    if (!strstr(path, ".framework/") || n->size > 400) return;   /* link de texto tem até 400 bytes (fwlink_target) */
     char out[560];
-    unsigned long long nw = fwlink_canonicalize(n->data, n->size, out, sizeof out);
+    int owned;
+    unsigned char *cur = node_bytes(n, &owned);
+    unsigned long long nw = fwlink_canonicalize(cur, n->size, out, sizeof out);
     unsigned char *nd;
+    if (owned) free(cur);
     if (!nw) return;
     nd = malloc((size_t)nw + 1);
     if (!nd) return;
@@ -178,12 +200,11 @@ static node *load_tree(const char *path, const char *name, node *parent) {
 #endif
     } else {
         struct { uint64_t st_size; } st = { fsize };
-        FILE *f = path_open(path);
+        FILE *f = path_open(path);   /* só confere que dá para ler: o conteúdo vem na hora (node_bytes) */
         if (!f) { perror(path); exit(1); }
-        n->size = (uint32_t)st.st_size;
-        n->data = malloc(n->size + 1);
-        if (n->size && fread(n->data, 1, n->size, f) != n->size) { perror(path); exit(1); }
         fclose(f);
+        n->size = (uint32_t)st.st_size;
+        n->src = strdup(path);
     }
     return n;
 }
@@ -302,7 +323,12 @@ static void put_entry(uint8_t *e, const char *sfn, uint8_t attr, uint32_t cl, ui
 
 static void write_node(node *n) {
     if (!n->is_dir) {
-        if (n->size) img_at(cluster_off(n->cluster), n->data, n->size);
+        if (n->size) {
+            int owned;
+            unsigned char *b = node_bytes(n, &owned);
+            img_at(cluster_off(n->cluster), b, n->size);
+            if (owned) free(b);
+        }
         return;
     }
     size_t bytes = (size_t)n->nclusters * CLUSTER;
@@ -574,7 +600,10 @@ static void make_manifest(node *root) {
                             payload_version ? " " : "", payload_version ? payload_version : "");
     for (size_t i = 0; i < nmitems; i++) {
         char hx[65];
-        sha_hex(mitems[i].n->data, mitems[i].n->size, hx);
+        int owned;
+        unsigned char *b = node_bytes(mitems[i].n, &owned);
+        sha_hex(b, mitems[i].n->size, hx);
+        if (owned) free(b);
         len += (size_t)snprintf(m + len, cap - len, "%s %u %s\n", hx, (unsigned)mitems[i].n->size, mitems[i].path);
     }
     char sg[65];
@@ -633,9 +662,11 @@ int main(int argc, char **argv) {
     }
     remove(argv[1]);   /* fail-closed: se o build falhar, nunca sobra uma imagem antiga para ser gravada por engano */
     img_path = argv[1];
+    snprintf(img_tmp, sizeof img_tmp, "%s.parcial", argv[1]);
+    remove(img_tmp);
     atexit(img_abort);
-    imgf = fopen(argv[1], "w+b");
-    if (!imgf) { perror(argv[1]); return 1; }
+    imgf = fopen(img_tmp, "w+b");
+    if (!imgf) { perror(img_tmp); return 1; }
     srand((unsigned)time(NULL));
     img_size = (uint64_t)atoi(argv[3]) << 20;
     if (img_truncate(img_size)) { perror(argv[1]); return 1; }
@@ -734,10 +765,10 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 2; i++)
         img_at(part_off + (uint64_t)(reserved + i * fat_sectors) * SECTOR, fat, (size_t)fat_sectors * SECTOR);
 
-    if (fflush(imgf) != 0) { perror(argv[1]); return 1; }
-    img_committed = 1;
-    fclose(imgf);
+    if (fflush(imgf) != 0 || fclose(imgf) != 0) { imgf = NULL; perror(img_tmp); return 1; }
     imgf = NULL;
+    if (rename(img_tmp, argv[1]) != 0) { perror(argv[1]); return 1; }
+    img_committed = 1;
     printf("mkimg: %s — %u MiB, %u clusters usados de %u\n", argv[1], (unsigned)(img_size >> 20), next_cluster - 2, total_clusters);
     return 0;
 }
