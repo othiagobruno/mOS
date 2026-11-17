@@ -408,7 +408,7 @@ long ABTypeOfProperty(id book, id recordType, id prop) {
 id ABCopyArrayOfPropertiesForRecordType(id book, id recordType) {
     (void)book;
     const char *t = recordType && cx_is_str(recordType) ? cx_cstr(recordType) : "";
-    if (!strcmp(t, "ABGroup")) return objc_retain(MSG(id, cls("NSArray"), "arrayWithObjects:count:", (id[]){kABGroupNameProperty, kABUIDProperty}, (u64)2));
+    if (!strcmp(t, "ABGroup")) return objc_retain(MSG(id, cls("NSArray"), "arrayWithObjects:count:", ((id[]){kABGroupNameProperty, kABUIDProperty}), (u64)2));
     id p[] = {kABFirstNameProperty, kABLastNameProperty, kABMiddleNameProperty, kABFirstNamePhoneticProperty, kABLastNamePhoneticProperty,
               kABMiddleNamePhoneticProperty, kABTitleProperty, kABSuffixProperty, kABNicknameProperty, kABOrganizationProperty,
               kABDepartmentProperty, kABJobTitleProperty, kABEmailProperty, kABPhoneProperty, kABAddressProperty, kABURLsProperty,
