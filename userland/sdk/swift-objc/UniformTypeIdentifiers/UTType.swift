@@ -66,6 +66,11 @@ public struct UTType: Hashable, Sendable, CustomStringConvertible, CustomDebugSt
         guard let a = _objc, let b = type._objc else { return false }
         return a.conforms(to: b)
     }
+    /// todos os supertipos (transitivo), pela árvore do Launch Services
+    public var supertypes: Set<UTType> {
+        guard let o = _objc else { return [] }
+        return Set(o.supertypes.map { UTType(_unchecked: _sw(($0 as! _UTTypeObjC).identifier)) })
+    }
     public func isSubtype(of type: UTType) -> Bool { type != self && conforms(to: type) }
     public func isSupertype(of type: UTType) -> Bool { type != self && type.conforms(to: self) }
 
@@ -138,6 +143,28 @@ extension UTType {
     public static var shellScript: UTType { UTType(_unchecked: "public.shell-script") }
     public static var propertyList: UTType { UTType(_unchecked: "com.apple.property-list") }
     public static var image: UTType { UTType(_unchecked: "public.image") }
+    public static var rawImage: UTType { UTType(_unchecked: "public.camera-raw-image") }
+    public static var livePhoto: UTType { UTType(_unchecked: "com.apple.live-photo") }
+    public static var resolvable: UTType { UTType(_unchecked: "com.apple.resolvable") }
+    public static var applicationExtension: UTType { UTType(_unchecked: "com.apple.application-and-system-extension") }
+    public static var exe: UTType { UTType(_unchecked: "com.microsoft.windows-executable") }
+    public static var rtfd: UTType { UTType(_unchecked: "com.apple.rtfd") }
+    public static var pkcs12: UTType { UTType(_unchecked: "com.rsa.pkcs-12") }
+    public static var spreadsheet: UTType { UTType(_unchecked: "public.spreadsheet") }
+    public static var presentation: UTType { UTType(_unchecked: "public.presentation") }
+    public static var aiff: UTType { UTType(_unchecked: "public.aiff-audio") }
+    public static var mpeg: UTType { UTType(_unchecked: "public.mpeg") }
+    public static var mpeg2TransportStream: UTType { UTType(_unchecked: "public.mpeg-2-transport-stream") }
+    public static var appleProtectedMPEG4Video: UTType { UTType(_unchecked: "com.apple.protected-mpeg-4-video") }
+    public static var javaScript: UTType { UTType(_unchecked: "com.netscape.javascript-source") }
+    public static var swiftSource: UTType { UTType(_unchecked: "public.swift-source") }
+    public static var pythonScript: UTType { UTType(_unchecked: "public.python-script") }
+    public static var rubyScript: UTType { UTType(_unchecked: "public.ruby-script") }
+    public static var perlScript: UTType { UTType(_unchecked: "public.perl-script") }
+    public static var phpScript: UTType { UTType(_unchecked: "public.php-script") }
+    public static var appleScript: UTType { UTType(_unchecked: "com.apple.applescript.text") }
+    public static var osaScript: UTType { UTType(_unchecked: "com.apple.applescript.script") }
+    public static var osaScriptBundle: UTType { UTType(_unchecked: "com.apple.applescript.script-bundle") }
     public static var png: UTType { UTType(_unchecked: "public.png") }
     public static var jpeg: UTType { UTType(_unchecked: "public.jpeg") }
     public static var gif: UTType { UTType(_unchecked: "com.compuserve.gif") }
@@ -179,5 +206,20 @@ extension URLResourceValues {
             return UTType(filenameExtension: String(n[n.index(after: dot)...]))
         }
         return nil
+    }
+}
+
+extension URL {
+    /// acrescenta o nome e, se ele ainda não tiver uma extensão do tipo, a extensão preferida do tipo; tipos de pasta
+    /// viram componente de diretório (como na Apple)
+    public func appendingPathComponent(_ partialName: String, conformingTo contentType: UTType) -> URL {
+        if contentType.conforms(to: .directory) { return appendingPathComponent(partialName, isDirectory: true) }
+        var name = partialName
+        let base = partialName.split(separator: "/").last.map(String.init) ?? partialName
+        let dot = base.lastIndex(of: ".")
+        let ext = dot.map { String(base[base.index(after: $0)...]) } ?? ""
+        let has = !ext.isEmpty && (UTType(filenameExtension: ext)?.conforms(to: contentType) ?? false)
+        if !has, let pref = contentType.preferredFilenameExtension { name += "." + pref }
+        return appendingPathComponent(name, isDirectory: false)
     }
 }
