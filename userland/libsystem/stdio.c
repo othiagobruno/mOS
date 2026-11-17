@@ -74,10 +74,37 @@ static int raw_write(int fd, const void *b, size_t n) {
     return 0;
 }
 
+/* funopen/fropen/fwopen: quando _write/_read estão definidos, o fluxo passa pelos callbacks (cookie),
+ * como no __sFILE do macOS; senão vai direto no descritor f->fd. */
+typedef int (*cx_readfn)(void *, char *, int);
+typedef int (*cx_writefn)(void *, const char *, int);
+typedef long long (*cx_seekfn)(void *, long long, int);
+typedef int (*cx_closefn)(void *);
+static int stream_write(FILE *f, const void *b, size_t n) {
+    if (f->_write) {
+        const u8 *p = b;
+        while (n) {
+            int chunk = n > 0x7fffffff ? 0x7fffffff : (int)n;
+            int r = ((cx_writefn)f->_write)(f->_cookie, (const char *)p, chunk);
+            if (r <= 0) return -1;
+            p += r; n -= (size_t)r;
+        }
+        return 0;
+    }
+    return raw_write(f->fd, b, n);
+}
+static ssize_t stream_read(FILE *f, void *b, size_t n) {
+    if (f->_read) {
+        int chunk = n > 0x7fffffff ? 0x7fffffff : (int)n;
+        return ((cx_readfn)f->_read)(f->_cookie, (char *)b, chunk);
+    }
+    return read(f->fd, b, n);
+}
+
 int fflush(FILE *f) {
     if (!f) { cx_stdio_flush_all(); return 0; }
     if (f->wlen) {
-        int r = raw_write(f->fd, f->wbuf, f->wlen);
+        int r = stream_write(f, f->wbuf, f->wlen);
         f->wlen = 0;
         if (r < 0) { f->err = 1; f->_flags |= 0x40; return -1; }
     }
@@ -92,11 +119,11 @@ void cx_stdio_flush_all(void) {
 
 static int put_bytes(FILE *f, const void *data, size_t n) {
     if (!f->writable) { f->err = 1; f->_flags |= 0x40; cx_errno = CX_EBADF; return -1; }
-    if (f->bufmode == 0) return raw_write(f->fd, data, n) < 0 ? (f->err = 1, f->_flags |= 0x40, -1) : 0;
+    if (f->bufmode == 0) return stream_write(f, data, n) < 0 ? (f->err = 1, f->_flags |= 0x40, -1) : 0;
     if (f->wlen + n > f->wcap) {
         if (fflush(f) < 0) return -1;
-        if (n >= 4096) return raw_write(f->fd, data, n) < 0 ? (f->err = 1, f->_flags |= 0x40, -1) : 0;
-        if (!f->wbuf) { f->wbuf = malloc(4096); f->wcap = f->wbuf ? 4096 : 0; if (!f->wbuf) return raw_write(f->fd, data, n); }
+        if (n >= 4096) return stream_write(f, data, n) < 0 ? (f->err = 1, f->_flags |= 0x40, -1) : 0;
+        if (!f->wbuf) { f->wbuf = malloc(4096); f->wcap = f->wbuf ? 4096 : 0; if (!f->wbuf) return stream_write(f, data, n); }
     }
     memcpy(f->wbuf + f->wlen, data, n);
     f->wlen += n;
@@ -108,7 +135,7 @@ static int fill(FILE *f) {
     if (!f->readable) { f->err = 1; f->_flags |= 0x40; return -1; }
     if (f == &f_stdin) fflush(&f_stdout);
     if (!f->rbuf) { f->rbuf = malloc(4096); if (!f->rbuf) return -1; }
-    ssize_t r = read(f->fd, f->rbuf, 4096);
+    ssize_t r = stream_read(f, f->rbuf, 4096);
     if (r < 0) { f->err = 1; f->_flags |= 0x40; return -1; }
     if (r == 0) { f->eof = 1; f->_flags |= 0x20; return -1; }
     f->rpos = 0;
@@ -229,7 +256,8 @@ int fclose(FILE *f) {
     if (!f) return -1;
     int r = fflush(f);
     if (f->is_static) return r;
-    close(f->fd);
+    if (f->_close) { if (((cx_closefn)f->_close)(f->_cookie) < 0) r = -1; }   /* stream de funopen */
+    else if (f->fd >= 0) close(f->fd);
     for (FILE **pp = &open_files; *pp; pp = &(*pp)->next)
         if (*pp == f) { *pp = f->next; break; }
     free(f->wbuf);
@@ -248,9 +276,30 @@ int fseeko(FILE *f, off_t off, int wh) {
     if (wh == 1) off -= (off_t)(f->rlen - f->rpos) + (f->unget >= 0);
     f->rpos = f->rlen = 0;
     f->unget = -1;
-    if (lseek(f->fd, off, wh) < 0) return -1;
+    if (f->_seek) { if (((cx_seekfn)f->_seek)(f->_cookie, off, wh) < 0) return -1; }   /* stream de funopen */
+    else if (lseek(f->fd, off, wh) < 0) return -1;
     f->eof = 0; f->_flags &= ~0x20;
     return 0;
+}
+/* funopen(cookie, readfn, writefn, seekfn, closefn): fluxo com callbacks (BSD). readfn/writefn 0 = sem
+ * aquele sentido; precisa de ao menos um. fseek/ftell usam seekfn se dado. */
+FILE *funopen(const void *cookie,
+              int (*readfn)(void *, char *, int),
+              int (*writefn)(void *, const char *, int),
+              long long (*seekfn)(void *, long long, int),
+              int (*closefn)(void *)) {
+    if (!readfn && !writefn) { cx_errno = CX_EINVAL; return 0; }
+    FILE *f = malloc(sizeof *f);
+    if (!f) return 0;
+    file_init(f, -1, readfn != 0, writefn != 0, 2);
+    f->_cookie = (void *)cookie;
+    f->_read = (void *)readfn;
+    f->_write = (void *)writefn;
+    f->_seek = (void *)seekfn;
+    f->_close = (void *)closefn;
+    f->next = open_files;
+    open_files = f;
+    return f;
 }
 int fseek(FILE *f, long off, int wh) { return fseeko(f, off, wh); }
 off_t ftello(FILE *f) {
