@@ -33,6 +33,13 @@ typedef struct vnode {
     vxattr_t *xattr;
     u64 xattr_bytes;
     bool xattr_loaded;  /* xattrs de um volume de /Volumes já lidos do driver (vfs_bridge.c) */
+    /* arquivo do volume do sistema ainda no disco (fs/persist.c): 1º cluster no FAT; 0 = o conteúdo é só o da RAM.
+     * Com data == NULL e size > 0 o arquivo está "paginado"; carregado e sem mudança, entra na LRU (blru_*), que devolve
+     * a memória. Qualquer mudança zera dclus (o conteúdo passa a ser da RAM até o persist gravar). */
+    u32 dclus;
+    bool in_blru;
+    struct vnode *blru_prev, *blru_next;
+    usize blru_bytes;   /* quanto este vnode conta na LRU (o buffer pode mudar antes de sair) */
 } vnode_t;
 
 /* ---- metadados (kernel/lib/vfsmeta.c) */
@@ -157,7 +164,20 @@ void persist_tick(void);                  /* chamado no loop principal */
 bool persist_available(void);
 
 /* ganchos para sistemas de arquivos externos (implementados em kernel/fs/vfs_bridge.c; padrão = no-op) */
-bool vfs_ensure(vnode_t *n);   /* materializa filhos/conteúdo de um nó com ext */
+bool vfs_ensure(vnode_t *n);   /* materializa filhos/conteúdo INTEIRO de um nó com ext (quem precisa de v->data) */
+/* Sob demanda: o vfs_lookup só espelha pastas e carrega arquivos de volume até VFS_PAGED_MIN; acima disso o vnode
+ * fica com data == NULL e size > 0 ("paginado"), e o conteúdo vem do driver aos pedaços (pelo page cache, que
+ * devolve a memória). Quem quer o arquivo todo em v->data chama vfs_ensure. */
+#define VFS_PAGED_MIN (16ull << 20)   /* papel de parede, fontes, ícones: abaixo disso, inteiros como sempre */
+bool vfs_ensure_lookup(vnode_t *n);
+static inline bool vfs_paged(const vnode_t *v) { return v && !v->dir && (v->ext || v->dclus) && !v->data && v->size; }
+/* fs/persist.c: conteúdo dos arquivos do sistema que ficam no disco */
+bool persist_ensure(vnode_t *n);          /* inteiro na RAM */
+bool persist_ensure_lookup(vnode_t *n);   /* inteiro se for pequeno; grande fica paginado */
+i64  persist_read_at(vnode_t *n, u64 off, void *buf, u64 len);
+void persist_forget(vnode_t *n);          /* o vnode vai ser liberado: sai da LRU */
+void persist_detach(vnode_t *n);          /* o conteúdo passa a ser só da RAM (carrega antes; mudança ou saída do disco) */
+i64  vfs_read_at(vnode_t *v, u64 off, void *buf, u64 len);   /* bytes lidos (0 no fim), -1 erro */
 void dfs_mount_all(void);      /* monta imagens .dmg/.img encontradas em /Volumes */
 bool vfs_is_volume(vnode_t *n); /* n é a raiz de um volume montado em /Volumes */
 bool vfs_eject(vnode_t *vol);   /* desmonta e libera o volume (n deixa de ser válido) */

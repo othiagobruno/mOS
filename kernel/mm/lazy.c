@@ -9,7 +9,8 @@
  * mmap de arquivo (SYS_MMAP b = 4, MAP_PRIVATE ou só leitura): a faixa guarda o caminho do arquivo e o
  * deslocamento; cada página é lida do arquivo na primeira falta (o resto depois do fim do arquivo fica zerado).
  * O Chromium/Electron mapeia icudtl.dat, os .pak e o snapshot do V8 (dezenas de MB) e lê só partes; antes o
- * libSystem copiava o arquivo inteiro na hora. A página lida é privada do processo (escrever nela não muda o
+ * libSystem copiava o arquivo inteiro na hora. Arquivo grande de volume (vnode paginado, vfs.h) nem fica na RAM:
+ * cada falta lê só a sua página do disco (vfs_read_at). A página lida é privada do processo (escrever nela não muda o
  * arquivo, como MAP_PRIVATE). Como no macOS, uma página ainda não tocada mostra o conteúdo atual do arquivo.
  *
  * MAP_SHARED (b = 5 arquivo, b = 6 anônimo): a página física é a mesma em todo mundo que mapeou o objeto.
@@ -262,10 +263,7 @@ static u64 file_page(const char *path, u64 off) {
     if (!phys) return 0;
     memset((void *)phys, 0, 4096);
     vnode_t *v = vfs_lookup(path);
-    if (v && !v->dir && v->data && off < v->size) {
-        u64 n = v->size - off;
-        memcpy((void *)phys, v->data + off, n < 4096 ? n : 4096);
-    }
+    if (v && !v->dir && off < v->size) vfs_read_at(v, off, (void *)phys, 4096);   /* da RAM ou, paginado, do disco */
     char *pc = dup_path(path);
     if (!pc) { pmm_free(phys, 1); return 0; }
     fl = spin_lock_irqsave(&lazy_lock);
@@ -342,10 +340,7 @@ bool lazy_fault(process_t *p, u64 va) {
             u64 pg = pmm_alloc(1);
             if (!pg) return false;
             memset((void *)pg, 0, 4096);
-            if (v && !v->dir && v->data && h.off < v->size) {
-                u64 n = v->size - h.off;
-                memcpy((void *)pg, v->data + h.off, n < 4096 ? n : 4096);
-            }
+            if (v && !v->dir && h.off < v->size) vfs_read_at(v, h.off, (void *)pg, 4096);   /* paginado: só esta página vem do disco */
             if (uvm_install(p, va, pg)) ok = true;
             else { pmm_free(pg, 1); ok = uvm_pte(p, va) != NULL; }
         }

@@ -85,7 +85,8 @@ static void css_find(tab_t *t, node_t *r) {
                 char path[512];
                 url_decode_path(url + 7, path, sizeof path);
                 vnode_t *v = vfs_lookup(path);
-                if (v && !v->dir) css_set_text(t->doc, c, v->data, v->size);
+                if (vfs_paged(v)) vfs_ensure(v);
+                if (v && !v->dir && v->data) css_set_text(t->doc, c, v->data, v->size);
             } else if (!strncmp(url, "http", 4)) {
                 http_req_t *rq = http_get(url);
                 if (rq) { t->css[t->ncss].req = rq; t->css[t->ncss].n = c; t->ncss++; }
@@ -600,6 +601,8 @@ static bool load_local(tab_t *t, const char *url, bool record, int scroll) {
             commit(t, d, u2, record, scroll);
             return true;
         }
+        if (vfs_paged(n)) vfs_ensure(n);                   /* grande, ainda no disco (VFS sob demanda) */
+        if (!n->data && n->size) { show_error(t, url, "O arquivo é grande demais para abrir.", path, record); return true; }
         const char *e = vfs_ext(n->name);
         if (!strcasecmp(e, "html") || !strcasecmp(e, "htm") || !strcasecmp(e, "xhtml")) d = doc_from_html(n->data, n->size, url, NULL);
         else if (is_image_name(n->name)) d = doc_from_image(n->data, n->size, url, n->name);

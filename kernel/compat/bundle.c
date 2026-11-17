@@ -297,6 +297,7 @@ bool macho_report(const char *path, char *out, usize cap) {
         target = exe;
     }
     vnode_t *v = vfs_lookup(target);
+    if (vfs_paged(v)) vfs_ensure(v);
     if (!v || v->dir || !v->data || !v->size) { snprintf(out + o, cap - o, "%s: arquivo não encontrado\n", target); return false; }
     return macho_report_image(v->data, v->size, target, out + o, cap - o);
 }
@@ -316,6 +317,7 @@ int macho_spawn(const char *path, const char *args, const char *cwd, char *err, 
         target = exe;
     }
     vnode_t *v = vfs_lookup(target);
+    if (vfs_paged(v)) vfs_ensure(v);
     if (!v || v->dir || !v->data) { snprintf(err, errlen, "%s: arquivo não encontrado", target); return -1; }
     if (!macho_is_macho(v->data, v->size)) { snprintf(err, errlen, "%s não é um executável do macOS", target); return -1; }
     /* checa antes para dar um motivo legível (o proc_spawn só registra no log) */

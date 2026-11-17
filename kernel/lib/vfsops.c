@@ -111,9 +111,18 @@ static int clone_rec(vnode_t *s, const char *dst, bool own, int euid, int egid, 
         kfree(p);
         if (r) return r;
     } else {
-        extern bool vfs_ensure(vnode_t *n);
-        if (s->ext) vfs_ensure(s);
-        d = vfs_write_file(dst, s->data ? s->data : (const void *)"", s->data ? s->size : 0);
+        if (s->ext && !vfs_paged(s)) vfs_ensure(s);
+        if (vfs_paged(s)) {                                  /* grande, ainda no volume: copia aos pedaços */
+            d = vfs_create(dst);
+            if (!d) return -MOS_ENOENT;
+            u8 *bb = kmalloc(1u << 20);
+            if (!bb) return -MOS_ENOMEM;
+            u64 off = 0;
+            i64 k = 0;
+            while (off < s->size && (k = vfs_read_at(s, off, bb, 1u << 20)) > 0 && vfs_append(d, bb, (usize)k)) off += (u64)k;
+            kfree(bb);
+            if (off < s->size) return -MOS_EIO;
+        } else d = vfs_write_file(dst, s->data ? s->data : (const void *)"", s->data ? s->size : 0);
         if (!d) return -MOS_ENOENT;
     }
     copy_meta(d, s, own, euid, egid);
@@ -133,6 +142,7 @@ int vfs_exchange(vnode_t *a, vnode_t *b) {
     if (!a || !b || a->dir || b->dir || a == b) return -MOS_EINVAL;   /* o xnu recusa o mesmo arquivo */
     if (vfs_is_read_only(a) || vfs_is_read_only(b)) return -MOS_EROFS;
     if (vfs_immutable(a) || vfs_immutable(b)) return -MOS_EPERM;
+    u32 dc = a->dclus; a->dclus = b->dclus; b->dclus = dc;   /* o conteúdo ainda no disco do sistema vai junto */
     u8 *d = a->data; usize sz = a->size, cap = a->cap;
     a->data = b->data; a->size = b->size; a->cap = b->cap;
     b->data = d; b->size = sz; b->cap = cap;

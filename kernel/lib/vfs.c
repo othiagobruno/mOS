@@ -22,6 +22,24 @@ static void dir_changed(vnode_t *d) { if (d && vfs_meta_live) vfs_touch(d, VT_MO
 
 /* implementações padrão; a ponte de FS externos as substitui com definições fortes */
 __attribute__((weak)) bool vfs_ensure(vnode_t *n) { (void)n; return true; }
+__attribute__((weak)) bool vfs_ensure_lookup(vnode_t *n) { return vfs_ensure(n); }
+__attribute__((weak)) i64 vfs_ext_read(vnode_t *n, u64 off, void *buf, u64 len) { (void)n; (void)off; (void)buf; (void)len; return -1; }
+__attribute__((weak)) bool persist_ensure(vnode_t *n) { (void)n; return false; }
+__attribute__((weak)) bool persist_ensure_lookup(vnode_t *n) { (void)n; return false; }
+__attribute__((weak)) i64 persist_read_at(vnode_t *n, u64 off, void *buf, u64 len) { (void)n; (void)off; (void)buf; (void)len; return -1; }
+__attribute__((weak)) void persist_forget(vnode_t *n) { (void)n; }
+__attribute__((weak)) void persist_detach(vnode_t *n) { (void)n; }
+
+/* conteúdo de um arquivo a partir de off: da RAM, ou do volume quando o vnode está paginado */
+i64 vfs_read_at(vnode_t *v, u64 off, void *buf, u64 len) {
+    if (!v || v->dir) return -1;
+    if (off >= v->size || !len) return 0;
+    len = MIN(len, (u64)v->size - off);
+    if (v->data) { memcpy(buf, v->data + off, len); return (i64)len; }
+    if (v->ext) return vfs_ext_read(v, off, buf, len);
+    if (v->dclus) return persist_read_at(v, off, buf, len);
+    return -1;
+}
 __attribute__((weak)) void dfs_mount_all(void) {}
 __attribute__((weak)) bool vfs_is_volume(vnode_t *n) { (void)n; return false; }
 __attribute__((weak)) bool vfs_eject(vnode_t *vol) { (void)vol; return false; }
@@ -31,7 +49,8 @@ __attribute__((weak)) bool vfs_ext_writable(vnode_t *n) { (void)n; return false;
 
 static int ensuring;
 static void ensure(vnode_t *n) {
-    if (n && n->ext && !ensuring) { ensuring++; vfs_ev_mute++; vfs_ensure(n); vfs_ev_mute--; ensuring--; }
+    if (n && n->ext && !ensuring) { ensuring++; vfs_ev_mute++; vfs_ensure_lookup(n); vfs_ev_mute--; ensuring--; }
+    else if (n && n->dclus && !n->data && !n->dir) persist_ensure_lookup(n);   /* arquivo do sistema ainda no disco */
 }
 
 /* volumes externos (.dmg, APFS...) são somente leitura: o ancestral mais próximo com ext decide;
@@ -157,6 +176,7 @@ vnode_t *vfs_create(const char *path) {
 
 bool vfs_append(vnode_t *f, const void *data, usize len) {
     if (!f || f->dir || read_only(f)) return false;
+    if (vfs_paged(f) && !vfs_ensure(f)) return false;     /* arquivo grande ainda no volume: o conteúdo antes */
     /* buffer de kmalloc_pages (arquivo grande lido do disco): o macho.c pode ter mapeado páginas dele nos processos (o
      * __TEXT dos frameworks), então nada se escreve nele no lugar; o conteúdo vai para um buffer novo, e o kfree do velho
      * só devolve as páginas que nenhum processo usa mais */
@@ -186,6 +206,7 @@ vnode_t *vfs_write_file(const char *path, const void *data, usize n) {
 
 static void free_tree(vnode_t *n) {
     for (vnode_t *c = n->child, *nx; c; c = nx) { nx = c->next; free_tree(c); }
+    if (n->in_blru) persist_forget(n);
     if (n->cap) kfree(n->data);
     vfs_xattr_free(n);
     kfree(n);
@@ -334,6 +355,16 @@ static bool copy_rec(vnode_t *s, char *dst, usize len) {
         return true;
     }
     ensure(s);
+    if (vfs_paged(s)) {                                   /* grande, ainda no volume: copia aos pedaços */
+        vnode_t *d = vfs_create(dst);
+        u8 *bb = d ? kmalloc(1u << 20) : NULL;
+        if (!bb) return false;
+        u64 off = 0;
+        i64 k;
+        while (off < s->size && (k = vfs_read_at(s, off, bb, 1u << 20)) > 0 && vfs_append(d, bb, (usize)k)) off += (u64)k;
+        kfree(bb);
+        return off == s->size;
+    }
     return vfs_write_file(dst, s->data ? s->data : (const void *)"", s->data ? s->size : 0) != NULL;
 }
 bool vfs_copy_tree(const char *src, const char *dst) {

@@ -40,6 +40,10 @@ struct fatfs {
     struct { u32 first, count; } trim[64];   /* clusters soltos, descartados (TRIM) depois do flush da FAT */
     int ntrim;
     struct { u32 blk; bool valid, dirty; u8 *data; } cache[FCACHE];
+    /* posição na cadeia por arquivo (1º cluster -> nº do cluster e cluster): leitura em pedaços de um arquivo grande
+     * (sob demanda, vfs_read_at) não refaz a cadeia desde o início a cada chamada. Toda mudança na FAT zera. */
+    struct { u32 first, idx, clus; } seek[8];
+    u32 seek_rr;
 };
 
 typedef struct { u32 clus; u8 *buf; u32 len; } dirbuf_t;
@@ -108,6 +112,7 @@ static u32 fat_get(fatfs_t *fs, u32 c) {
 
 static bool fat_set(fatfs_t *fs, u32 c, u32 v) {
     if (c < 2 || c > fs->nclus + 1) return false;
+    memset(fs->seek, 0, sizeof fs->seek);
     if (fs->type == 32) {
         u32 blk = c * 4 / FBLK;
         u8 *b = fat_block(fs, blk);
@@ -210,10 +215,18 @@ static u64 clus_off(fatfs_t *fs, u32 c) { return fs->data_off + (u64)(c - 2) * f
 /* ================================================================ dados */
 /* lê len bytes a partir do deslocamento off de uma cadeia */
 static bool chain_read(fatfs_t *fs, u32 c, u64 off, u8 *out, u64 len) {
-    u32 guard = 0;
+    u32 guard = 0, first = c, idx = 0, want = (u32)(off / fs->clus);
+    int best = -1;
+    for (int i = 0; i < (int)ARRAY_LEN(fs->seek); i++)
+        if (fs->seek[i].first == first && first && fs->seek[i].idx <= want && (best < 0 || fs->seek[i].idx > fs->seek[best].idx)) best = i;
+    if (best >= 0) { c = fs->seek[best].clus; idx = fs->seek[best].idx; off -= (u64)idx * fs->clus; }
     while (off >= fs->clus) {
         if (is_eoc(c) || ++guard > fs->nclus) return false;
-        c = fat_get(fs, c); off -= fs->clus;
+        c = fat_get(fs, c); off -= fs->clus; idx++;
+    }
+    if (idx && first) {
+        int s = best >= 0 ? best : (int)(fs->seek_rr++ % ARRAY_LEN(fs->seek));
+        fs->seek[s].first = first; fs->seek[s].idx = idx; fs->seek[s].clus = c;
     }
     while (len) {
         if (is_eoc(c) || ++guard > fs->nclus + 1) return false;
@@ -759,7 +772,19 @@ bool fat_stat(fatfs_t *fs, const char *path, bool *is_dir, u64 *size) {
     return true;
 }
 
-int fat_list(fatfs_t *fs, const char *path, fat_list_cb cb, void *ctx) {
+static int list_any(fatfs_t *fs, const char *path, fat_list_cb cb, fat_list2_cb cb2, void *ctx);
+int fat_list(fatfs_t *fs, const char *path, fat_list_cb cb, void *ctx) { return list_any(fs, path, cb, NULL, ctx); }
+/* com o 1º cluster de cada entrada: o persist guarda só ele e lê o arquivo sob demanda (fat_read_chain) */
+int fat_list2(fatfs_t *fs, const char *path, fat_list2_cb cb, void *ctx) { return list_any(fs, path, NULL, cb, ctx); }
+
+/* trecho de um arquivo pelo 1º cluster (não depende do caminho: rename no disco não muda a cadeia) */
+bool fat_read_chain(fatfs_t *fs, u32 first, u64 off, void *buf, u64 len) {
+    if (!len) return true;
+    if (first < 2 || first > fs->nclus + 1) return false;
+    return chain_read(fs, first, off, buf, len);
+}
+
+static int list_any(fatfs_t *fs, const char *path, fat_list_cb cb, fat_list2_cb cb2, void *ctx) {
     fent_t f;
     if (!resolve(fs, path, &f) || !(f.attr & ATTR_DIR)) return -1;
     dirbuf_t d;
@@ -769,7 +794,8 @@ int fat_list(fatfs_t *fs, const char *path, fat_list_cb cb, void *ctx) {
     fent_t *c = kmalloc(sizeof *c);
     while (c && dir_next(&d, &pos, c)) {
         if (!strcmp(c->name, ".") || !strcmp(c->name, "..")) continue;
-        cb(ctx, c->name, (c->attr & ATTR_DIR) != 0, c->size);
+        if (cb2) cb2(ctx, c->name, (c->attr & ATTR_DIR) != 0, c->size, c->clus);
+        else cb(ctx, c->name, (c->attr & ATTR_DIR) != 0, c->size);
         n++;
     }
     kfree(c);

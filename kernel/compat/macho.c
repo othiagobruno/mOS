@@ -855,6 +855,7 @@ static bool dyld_tolerant(void) { return getenv("MACHOTEST_TOLERANT") != NULL; }
 #include "vfs.h"
 static const u8 *dep_read_raw(const char *path, usize *len) {
     vnode_t *v = vfs_lookup(path);
+    if (vfs_paged(v)) vfs_ensure(v);                   /* a dependência é carregada inteira */
     if (!v || v->dir || !v->data || !v->size) return NULL;
     *len = v->size;
     return v->data;

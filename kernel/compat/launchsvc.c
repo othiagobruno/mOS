@@ -339,14 +339,16 @@ const char *ls_type_of_path(const char *path) {
         return "public.folder";
     }
     const char *e = path_ext(path);
+    u8 head[8] = {0};                                         /* o começo do arquivo, também do paginado (vfs.h) */
+    usize hn = n && !n->dir && vfs_read_at(n, 0, head, sizeof head) == (i64)sizeof head ? sizeof head : 0;
     if (e[0]) {
         const char *t = ls_type_for_tag("public.filename-extension", e, NULL);
         if (t && !is_dyn(t)) return t;
-        if (n && n->data && macho_is_macho(n->data, n->size)) return "com.apple.mach-o-binary";
+        if (macho_is_macho(head, hn)) return "com.apple.mach-o-binary";
         return t;
     }
-    if (n && n->data && macho_is_macho(n->data, n->size)) return "com.apple.mach-o-binary";
-    if (n && n->data && n->size > 2 && n->data[0] == '#' && n->data[1] == '!') return "public.shell-script";
+    if (macho_is_macho(head, hn)) return "com.apple.mach-o-binary";
+    if (n && n->size > 2 && (n->data ? n->data[0] == '#' && n->data[1] == '!' : head[0] == '#' && head[1] == '!')) return "public.shell-script";
     return "public.data";
 }
 
@@ -670,6 +672,12 @@ static u64 fnv_str(u64 h, const char *s) {
 }
 /* Arquivo inteiro até 64 KiB; acima disso, começo e fim. mtime entra para uma cópia por cima do mesmo tamanho. */
 static u64 file_sample(u64 h, vnode_t *f) {
+    if (vfs_paged(f)) {                                       /* grande, no volume: só as duas pontas vêm do disco */
+        u8 a[4096], z[4096];
+        if (vfs_read_at(f, 0, a, 4096) != 4096 || vfs_read_at(f, f->size - 4096, z, 4096) != 4096) return fnv_mix(h, 0);
+        h = fnv_mix(fnv_mix(h, f->size), f->mtime);
+        return fnv_bytes(fnv_bytes(h, a, 4096), z, 4096);
+    }
     if (!f || f->dir || !f->data) return fnv_mix(h, 0);
     h = fnv_mix(h, f->size);
     h = fnv_mix(h, f->mtime);

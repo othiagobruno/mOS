@@ -38,7 +38,8 @@ static surface_t *load_any(const char *path) {
     if (s) return s;
     /* PPM P6 */
     vnode_t *v = vfs_lookup(path);
-    if (!v || v->size < 8 || v->data[0] != 'P' || v->data[1] != '6') return NULL;
+    if (vfs_paged(v)) vfs_ensure(v);
+    if (!v || !v->data || v->size < 8 || v->data[0] != 'P' || v->data[1] != '6') return NULL;
     const char *p = (const char *)v->data + 2, *end = (const char *)v->data + v->size;
     int vals[3], k = 0;
     while (k < 3 && p < end) {
