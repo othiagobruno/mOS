@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Larissa (plataforma: IOKit, USB, áudio HW) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**185** símbolos distintos.
+**262** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -108,9 +108,30 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | IOKit.framework | `_IOPSGetBatteryWarningLevel` | 2 | bartender, hammerspoon |
 | IOKit.framework | `_IORegistryCreateIterator` | 2 | hammerspoon, macs-fan-control |
 | IOKit.framework | `_IOServiceRequestProbe` | 2 | amethyst, hammerspoon |
+| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostDevice` | 2 | orbstack, sfm |
+| MultitouchSupport.framework | `_MTDeviceCreateList` | 2 | bettertouchtool, middleclick |
+| MultitouchSupport.framework | `_MTDeviceStart` | 2 | bettertouchtool, middleclick |
+| MultitouchSupport.framework | `_MTDeviceStop` | 2 | bettertouchtool, middleclick |
+| MultitouchSupport.framework | `_MTRegisterContactFrameCallback` | 2 | bettertouchtool, middleclick |
+| MultitouchSupport.framework | `_MTUnregisterContactFrameCallback` | 2 | bettertouchtool, middleclick |
+| PCSC.framework | `_SCardBeginTransaction` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardConnect` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardDisconnect` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardEndTransaction` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardEstablishContext` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardIsValidContext` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardListReaders` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardReconnect` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardReleaseContext` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardStatus` | 2 | keepassxc, windows-app |
+| PCSC.framework | `_SCardTransmit` | 2 | keepassxc, windows-app |
+| Virtualization.framework | `_OBJC_CLASS_$_VZSingleDirectoryShare` | 2 | docker-desktop, orbstack |
+| Virtualization.framework | `_OBJC_CLASS_$_VZVirtioConsoleDeviceSerialPortConfiguration` | 2 | docker-desktop, orbstack |
 | libswiftIOKit.dylib | `_$s5IOKit14kIOReturnErrors5Int32Vvg` | 2 | finetune, stats |
 | libswiftIOKit.dylib | `_$s5IOKit17kIOReturnNotFounds5Int32Vvg` | 2 | finetune, stats |
 | libswiftIOKit.dylib | `_$s5IOKit20kIOReturnBadArguments5Int32Vvg` | 2 | linearmouse, stats |
+| CoreMotion.framework | `_OBJC_CLASS_$_CMAltimeter` | 1 | whatsapp |
+| CoreMotion.framework | `_OBJC_CLASS_$_CMMotionManager` | 1 | whatsapp |
 | Hypervisor.framework | `_hv_tsc_clock` | 1 | orbstack |
 | Hypervisor.framework | `_hv_vcpu_apic_read` | 1 | orbstack |
 | Hypervisor.framework | `_hv_vcpu_apic_write` | 1 | orbstack |
@@ -187,6 +208,62 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | IOKit.framework | `_NXClickTime` | 1 | bettertouchtool |
 | IOKit.framework | `_NXCloseEventStatus` | 1 | bettertouchtool |
 | IOKit.framework | `_OBJC_CLASS_$_HIDEvent` | 1 | mac-mouse-fix |
+| IOUSBHost.framework | `_IOUSBHostDefaultControlCompletionTimeout` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostDevicePropertyKeyCurrentConfiguration` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostDevicePropertyKeySerialNumberString` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyDeviceClass` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyDeviceProtocol` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyDeviceReleaseNumber` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyDeviceSubClass` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyProductID` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeySpeed` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostMatchingPropertyKeyVendorID` | 1 | sfm |
+| IOUSBHost.framework | `_IOUSBHostPropertyKeyLocationID` | 1 | sfm |
+| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostCIDeviceStateMachine` | 1 | sfm |
+| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostCIEndpointStateMachine` | 1 | sfm |
+| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostControllerInterface` | 1 | sfm |
+| IOUSBHost.framework | `_OBJC_CLASS_$_IOUSBHostInterface` | 1 | sfm |
+| MachineSettings.framework | `_getEVSHandle` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuationActuate` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuationCreateFromDictionary` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuatorClose` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuatorGetSystemActuationsEnabled` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuatorOpen` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTActuatorSetSystemActuationsEnabled` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceGetFamilyID` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceGetMTActuator` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceGetSensorSurfaceDimensions` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceGetService` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceGetSystemForceResponseEnabled` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceIsBuiltIn` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceRelease` | 1 | middleclick |
+| MultitouchSupport.framework | `_MTDeviceSetSurfaceOrientation` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceSetSystemForceResponseEnabled` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTDeviceSupportsForce` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTRegisterButtonStateCallback` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_MTUnregisterButtonStateCallback` | 1 | bettertouchtool |
+| MultitouchSupport.framework | `_mt_CreateSavedNameForDevice` | 1 | bettertouchtool |
+| PCSC.framework | `_SCardCancel` | 1 | windows-app |
+| PCSC.framework | `_SCardControl132` | 1 | windows-app |
+| PCSC.framework | `_SCardGetAttrib` | 1 | windows-app |
+| PCSC.framework | `_SCardGetStatusChange` | 1 | windows-app |
+| PCSC.framework | `_g_rgSCardT0Pci` | 1 | keepassxc |
+| PCSC.framework | `_g_rgSCardT1Pci` | 1 | keepassxc |
+| Virtualization.framework | `_$sSo16VZVirtualMachineC14VirtualizationE5pause17completionHandleryys6ResultOyyts5Error_pGc_tF` | 1 | orbstack |
+| Virtualization.framework | `_$sSo16VZVirtualMachineC14VirtualizationE5start17completionHandleryys6ResultOyyts5Error_pGc_tF` | 1 | orbstack |
+| Virtualization.framework | `_$sSo16VZVirtualMachineC14VirtualizationE6resume17completionHandleryys6ResultOyyts5Error_pGc_tF` | 1 | orbstack |
+| Virtualization.framework | `_$sSo20VZVirtioSocketDeviceC14VirtualizationE7connect6toPort17completionHandlerys6UInt32V_ys6ResultOySo0aB10ConnectionCs5Error_pGctF` | 1 | orbstack |
+| Virtualization.framework | `_OBJC_CLASS_$_VZAudioDeviceConfiguration` | 1 | orbstack |
+| Virtualization.framework | `_OBJC_CLASS_$_VZBridgedNetworkDeviceAttachment` | 1 | docker-desktop |
+| Virtualization.framework | `_OBJC_CLASS_$_VZFileSerialPortAttachment` | 1 | docker-desktop |
+| Virtualization.framework | `_OBJC_CLASS_$_VZHostAudioOutputStreamSink` | 1 | orbstack |
+| Virtualization.framework | `_OBJC_CLASS_$_VZSerialPortConfiguration` | 1 | orbstack |
+| Virtualization.framework | `_OBJC_CLASS_$_VZVirtioSocketConnection` | 1 | orbstack |
+| Virtualization.framework | `_OBJC_CLASS_$_VZVirtioSoundDeviceConfiguration` | 1 | orbstack |
+| Virtualization.framework | `_OBJC_CLASS_$_VZVirtioSoundDeviceOutputStreamConfiguration` | 1 | orbstack |
+| Virtualization.framework | `_OBJC_CLASS_$_VZVirtioSoundDeviceStreamConfiguration` | 1 | orbstack |
+| Virtualization.framework | `_OBJC_CLASS_$__VZGDBDebugStubConfiguration` | 1 | docker-desktop |
+| Virtualization.framework | `_OBJC_METACLASS_$_VZVirtualMachine` | 1 | docker-desktop |
 | libswiftIOKit.dylib | `_$s5IOKit16kIOReturnNotOpens5Int32Vvg` | 1 | linearmouse |
 | libswiftIOKit.dylib | `_$s5IOKit17kIOReturnNotReadys5Int32Vvg` | 1 | finetune |
 | libswiftIOKit.dylib | `_$s5IOKit21kIOReturnNotPermitteds5Int32Vvg` | 1 | raycast |

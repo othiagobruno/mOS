@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Ricardo (SwiftUI, Combine, UIKit) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**5594** símbolos distintos.
+**5636** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -1811,6 +1811,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport15PreviewRegistryP6fileIDSSvgZTq` | 3 | fluidvoice, supacode, windows-app |
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport15PreviewRegistryP7previewAA0D0VvgZTq` | 3 | fluidvoice, supacode, windows-app |
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport15PreviewRegistryPAAE7previewAA0D0VvgZ` | 3 | fluidvoice, supacode, windows-app |
+| Photos.framework | `_OBJC_CLASS_$_PHImageRequestOptions` | 3 | gemini, localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHLivePhoto` | 3 | applite, supacode, whatsapp |
 | SwiftUI.framework | `_$s12CoreGraphics7CGFloatV7SwiftUI10AnimatableADMc` | 3 | macwhisper, superwhisper, vorssaint |
 | SwiftUI.framework | `_$s21DeveloperToolsSupport7PreviewV7SwiftUIE_6traits4bodyACSSSg_AA0D5TraitVyAC10ViewTraitsOGdAD0J0_pyScMYcctcfC` | 3 | fluidvoice, supacode, windows-app |
 | SwiftUI.framework | `_$s4Body7SwiftUI13GroupBoxStylePTl` | 3 | bettertouchtool, pearcleaner, xcodes-app |
@@ -2214,6 +2216,27 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreTransferable.framework | `_$s16CoreTransferable27TupleTransferRepresentationVyxq_GAA0dE0AAMc` | 2 | coteditor, macwhisper |
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport13ImageResourceV2eeoiySbAC_ACtFZ` | 2 | jordanbaird-ice, thaw |
 | DeveloperToolsSupport.framework | `_$s21DeveloperToolsSupport13ImageResourceVSHAAMc` | 2 | jordanbaird-ice, thaw |
+| MapKit.framework | `_OBJC_CLASS_$_MKPolylineRenderer` | 2 | raycast, tableplus |
+| Photos.framework | `_OBJC_CLASS_$_PHAssetChangeRequest` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHAssetCollection` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHAssetCollectionChangeRequest` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHAssetCreationRequest` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHAssetResource` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHAssetResourceCreationOptions` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHAssetResourceManager` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHAssetResourceRequestOptions` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHCachingImageManager` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHCollectionList` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHContentEditingInputRequestOptions` | 2 | localsend, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHImageManager` | 2 | gemini, whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHVideoRequestOptions` | 2 | localsend, whatsapp |
+| Photos.framework | `_PHImageCancelledKey` | 2 | localsend, whatsapp |
+| Photos.framework | `_PHImageErrorKey` | 2 | localsend, whatsapp |
+| Photos.framework | `_PHImageManagerMaximumSize` | 2 | localsend, whatsapp |
+| Photos.framework | `_PHImageResultIsDegradedKey` | 2 | localsend, whatsapp |
+| Photos.framework | `_PHLivePhotoInfoCancelledKey` | 2 | applite, supacode |
+| Photos.framework | `_PHLivePhotoInfoErrorKey` | 2 | applite, supacode |
+| Photos.framework | `_PHLivePhotoInfoIsDegradedKey` | 2 | applite, supacode |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV015ForegroundColorB0OAA19AttributedStringKeyADMc` | 2 | opensuperwhisper, vorssaint |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV015ForegroundColorB0ON` | 2 | opensuperwhisper, vorssaint |
 | SwiftUI.framework | `_$s10NSViewType7SwiftUI0A13RepresentablePTl` | 2 | opensuperwhisper, vorssaint |
@@ -3364,6 +3387,25 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreTransferable.framework | `_$sSo14NSItemProviderC16CoreTransferableE04loadD04type17completionHandlerSo10NSProgressCxm_ys6ResultOyxs5Error_pGYbctAC0D0RzlF` | 1 | ghostty |
 | CoreTransferable.framework | `_$sSo14NSItemProviderC16CoreTransferableE8registeryyxyYbXAAC0D0RzlF` | 1 | ghostty |
 | CoreTransferable.framework | `_$ss5NeverO16CoreTransferable0C0ACWP` | 1 | fluidvoice |
+| MapKit.framework | `_OBJC_CLASS_$_MKGeodesicPolyline` | 1 | raycast |
+| MapKit.framework | `_OBJC_CLASS_$_MKMapCameraZoomRange` | 1 | bartender |
+| MapKit.framework | `_OBJC_CLASS_$_MKPolygon` | 1 | tableplus |
+| MapKit.framework | `_OBJC_CLASS_$_MKPolygonRenderer` | 1 | tableplus |
+| MapKit.framework | `_OBJC_CLASS_$_MKPolyline` | 1 | tableplus |
+| MapKit.framework | `_OBJC_CLASS_$_MKStandardMapConfiguration` | 1 | raycast |
+| Photos.framework | `_OBJC_CLASS_$_PHAdjustmentData` | 1 | whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHCollection` | 1 | localsend |
+| Photos.framework | `_OBJC_CLASS_$_PHCollectionListChangeRequest` | 1 | localsend |
+| Photos.framework | `_OBJC_CLASS_$_PHContentEditingOutput` | 1 | whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHFetchResultChangeDetails` | 1 | whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHLivePhotoEditingContext` | 1 | localsend |
+| Photos.framework | `_OBJC_CLASS_$_PHLivePhotoRequestOptions` | 1 | whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHObjectChangeDetails` | 1 | whatsapp |
+| Photos.framework | `_OBJC_CLASS_$_PHObjectPlaceholder` | 1 | localsend |
+| Photos.framework | `_OBJC_METACLASS_$_PHFetchResultChangeDetails` | 1 | whatsapp |
+| Photos.framework | `_PHImageResultIsInCloudKey` | 1 | whatsapp |
+| Photos.framework | `_PHImageResultRequestIDKey` | 1 | localsend |
+| Photos.framework | `_PHPhotosErrorDomain` | 1 | whatsapp |
 | PhotosUI.framework | `_OBJC_CLASS_$_PHLivePhotoView` | 1 | whatsapp |
 | PhotosUI.framework | `_OBJC_CLASS_$_PHPickerViewController` | 1 | whatsapp |
 | SwiftUI.framework | `_$s10Foundation15AttributeScopesO7SwiftUIE0D12UIAttributesV015BackgroundColorB0OMn` | 1 | opensuperwhisper |

@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Natalia (serviços e segurança) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**2305** símbolos distintos.
+**2400** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -223,6 +223,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO4seal_5using5nonceAE9SealedBoxVx_AA12SymmetricKeyVAE5NonceVSgtK10Foundation12DataProtocolRzlFZ` | 10 | dotnet-sdk, duckduckgo, github, jellyfin |
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO5NonceVMa` | 10 | cmux, duckduckgo, github, iterm2 |
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxVMa` | 10 | cmux, duckduckgo, github, iterm2 |
+| MetricKit.framework | `_OBJC_CLASS_$_MXMetricManager` | 10 | cleanshot, cloudflare-warp, duckduckgo, hammerspoon |
 | Security.framework | `_AuthorizationMakeExternalForm` | 10 | android-studio, anydesk, bitwarden, github |
 | Security.framework | `_kSecCodeInfoStatus` | 10 | docker-desktop, firefox, floorp, librewolf |
 | Security.framework | `_sec_protocol_options_set_max_tls_protocol_version` | 10 | dotnet-sdk, easydict, git-credential-manager, github |
@@ -318,6 +319,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit6SHA384VAA12HashFunctionAAMc` | 8 | bartender, bettertouchtool, dotnet-sdk, easydict |
 | CryptoKit.framework | `_$s9CryptoKit6SHA512VMa` | 8 | bartender, bettertouchtool, dotnet-sdk, easydict |
 | EventKit.framework | `_EKEventStoreChangedNotification` | 8 | bartender, bettertouchtool, itsycal, raycast |
+| MetricKit.framework | `_OBJC_CLASS_$_MXCrashDiagnostic` | 8 | cleanshot, cloudflare-warp, duckduckgo, hammerspoon |
+| MetricKit.framework | `_OBJC_CLASS_$_MXDiagnosticPayload` | 8 | cleanshot, cloudflare-warp, duckduckgo, hammerspoon |
+| OSLog.framework | `_OBJC_CLASS_$_OSLogEntryLog` | 8 | bartender, duckduckgo, linearmouse, macpacker |
 | Security.framework | `_SecKeychainItemCopyAttributesAndData` | 8 | adobe-acrobat-reader, bettertouchtool, kicad, prusaslicer |
 | Security.framework | `_SecKeychainItemFreeAttributesAndData` | 8 | adobe-acrobat-reader, bettertouchtool, kicad, prusaslicer |
 | Security.framework | `_SecKeychainItemModifyContent` | 8 | android-studio, cryptomator, cyberduck, daisydisk |
@@ -353,6 +357,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit6SHA384VMn` | 7 | bettertouchtool, dotnet-sdk, duckduckgo, easydict |
 | CryptoKit.framework | `_$s9CryptoKit6SHA512VAA12HashFunctionAAMc` | 7 | bartender, bettertouchtool, dotnet-sdk, easydict |
 | CryptoKit.framework | `_$s9CryptoKit6SHA512VMn` | 7 | bettertouchtool, dotnet-sdk, duckduckgo, easydict |
+| MetricKit.framework | `_OBJC_CLASS_$_MXHangDiagnostic` | 7 | cleanshot, cloudflare-warp, hammerspoon, macwhisper |
 | Security.framework | `_AuthorizationCreateFromExternalForm` | 7 | anydesk, bitwarden, hex-fiend, localsend |
 | Security.framework | `_CSSMOID_APPLE_X509_BASIC` | 7 | android-studio, cryptomator, cyberduck, dbeaver-community |
 | Security.framework | `_SecCodeGetTypeID` | 7 | aldente, betterdisplay, brave-browser, fork |
@@ -399,6 +404,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit3AESO3GCMO9SealedBoxV8combinedAG10Foundation4DataV_tcfC` | 6 | cmux, duckduckgo, iterm2, shottr |
 | CryptoKit.framework | `_$s9CryptoKit4P256O7SigningO9PublicKeyVMa` | 6 | bettertouchtool, cloudflare-warp, duckduckgo, easydict |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1V8finalizeAC0D6DigestVyF` | 6 | bettertouchtool, caskhub, easydict, orbstack |
+| MetricKit.framework | `_OBJC_CLASS_$_MXCPUExceptionDiagnostic` | 6 | cleanshot, cloudflare-warp, hammerspoon, proxyman |
+| MetricKit.framework | `_OBJC_CLASS_$_MXDiskWriteExceptionDiagnostic` | 6 | cleanshot, cloudflare-warp, hammerspoon, proxyman |
 | Security.framework | `_CMSDecoderCreate` | 6 | bettertouchtool, bitwarden, daisydisk, gemini |
 | Security.framework | `_CMSDecoderFinalizeMessage` | 6 | bettertouchtool, bitwarden, daisydisk, gemini |
 | Security.framework | `_CMSDecoderUpdateMessage` | 6 | bettertouchtool, bitwarden, daisydisk, gemini |
@@ -514,6 +521,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit4HKDFV9deriveKey05inputE8Material4salt4info15outputByteCountAA09SymmetricE0VAJ_qd__qd_0_Sit10Foundation12DataProtocolRd__AkLRd_0_r0_lFZ` | 5 | bettertouchtool, dotnet-sdk, duckduckgo, superwhisper |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO10SHA1DigestVAA0E0AAMc` | 5 | bartender, bettertouchtool, easydict, orbstack |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO10SHA1DigestVMn` | 5 | bettertouchtool, easydict, orbstack, superwhisper |
+| FinderSync.framework | `_OBJC_CLASS_$_FIFinderSync` | 5 | bettertouchtool, keka, macpacker, nextcloud |
+| FinderSync.framework | `_OBJC_CLASS_$_FIFinderSyncController` | 5 | bettertouchtool, keka, macpacker, nextcloud |
+| FinderSync.framework | `_OBJC_METACLASS_$_FIFinderSync` | 5 | bettertouchtool, keka, macpacker, nextcloud |
 | Security.framework | `_CMSDecoderCopyContent` | 5 | bettertouchtool, bitwarden, daisydisk, gemini |
 | Security.framework | `_CMSDecoderCopySignerStatus` | 5 | bettertouchtool, bitwarden, gemini, localsend |
 | Security.framework | `_CMSDecoderGetNumSigners` | 5 | bettertouchtool, bitwarden, gemini, localsend |
@@ -938,6 +948,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3tag0E5Class12conformingToACSgSS_AA05UTTagF0VAGtcfC` | 3 | betterdisplay, raycast, utm |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV3xmlACvgZ` | 3 | clipy, coteditor, vorssaint |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV6bundleACvgZ` | 3 | bettertouchtool, iterm2, raycast |
+| AdServices.framework | `_OBJC_CLASS_$_AAAttribution` | 2 | bartender, whatsapp |
 | AddressBook.framework | `_kABBirthdayProperty` | 2 | alfred, thunderbird |
 | AddressBook.framework | `_kABGroupNameProperty` | 2 | libreoffice, thunderbird |
 | AddressBook.framework | `_kABInstantMessageProperty` | 2 | alfred, thunderbird |
@@ -1001,6 +1012,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AuthenticationServices.framework | `_OBJC_CLASS_$_ASPasswordCredential` | 2 | 1password, whatsapp |
 | AuthenticationServices.framework | `_OBJC_CLASS_$_ASPasswordCredentialIdentity` | 2 | 1password, duckduckgo |
 | AuthenticationServices.framework | `_OBJC_METACLASS_$_ASCredentialProviderViewController` | 2 | 1password, bitwarden |
+| Automator.framework | `_OBJC_CLASS_$_AMWorkflow` | 2 | bbedit, bettertouchtool |
 | CloudKit.framework | `_$sSC11CKErrorCodeLeV8CloudKitE12serverRecordSo8CKRecordCSgvg` | 2 | clipy, codexbar |
 | CloudKit.framework | `_$sSo10CKDatabaseC8CloudKitE13modifyRecords6saving8deleting10savePolicy10atomicallySDySo10CKRecordIDCs6ResultOySo0K0Cs5Error_pGG0H7Results_SDyAjLyytsAO_pGG06deleteO0tSayANG_SayAJGSo0k4SaveI0VSbtYaKF` | 2 | clipy, codexbar |
 | CloudKit.framework | `_$sSo10CKDatabaseC8CloudKitE13modifyRecords6saving8deleting10savePolicy10atomicallySDySo10CKRecordIDCs6ResultOySo0K0Cs5Error_pGG0H7Results_SDyAjLyytsAO_pGG06deleteO0tSayANG_SayAJGSo0k4SaveI0VSbtYaKFTu` | 2 | clipy, codexbar |
@@ -1021,6 +1033,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CloudKit.framework | `_OBJC_CLASS_$_CKFetchRecordZoneChangesConfiguration` | 2 | bettertouchtool, whatsapp |
 | CloudKit.framework | `_OBJC_CLASS_$_CKFetchRecordZoneChangesOperation` | 2 | bettertouchtool, whatsapp |
 | CloudKit.framework | `_OBJC_CLASS_$_CKModifyRecordsOperation` | 2 | bettertouchtool, whatsapp |
+| Collaboration.framework | `_OBJC_CLASS_$_CBIdentity` | 2 | anydesk, sourcetree |
+| Collaboration.framework | `_OBJC_CLASS_$_CBIdentityAuthority` | 2 | anydesk, sourcetree |
 | CoreLocation.framework | `_OBJC_CLASS_$_CLCircularRegion` | 2 | bartender, hammerspoon |
 | CoreLocation.framework | `_OBJC_CLASS_$_CLFloor` | 2 | clipy, protonvpn |
 | CoreLocation.framework | `_kCLLocationAccuracyReduced` | 2 | bartender, raycast |
@@ -1135,6 +1149,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Intents.framework | `_OBJC_CLASS_$_INObjectResolutionResult` | 2 | swiftbar, tailscale-app |
 | Intents.framework | `_OBJC_METACLASS_$_INObject` | 2 | swiftbar, tailscale-app |
 | Intents.framework | `_OBJC_METACLASS_$_INObjectResolutionResult` | 2 | swiftbar, tailscale-app |
+| LinkPresentation.framework | `_OBJC_CLASS_$_LPLinkMetadata` | 2 | vorssaint, whatsapp |
+| LinkPresentation.framework | `_OBJC_CLASS_$_LPMetadataProvider` | 2 | duckduckgo, raycast |
 | OSAKit.framework | `_OBJC_CLASS_$_OSALanguage` | 2 | bettertouchtool, hammerspoon |
 | OpenDirectory.framework | `_kODAttributeTypeUserShell` | 2 | iterm2, sublime-text |
 | ScriptingBridge.framework | `_OBJC_CLASS_$_SBElementArray` | 2 | bettertouchtool, raycast |
@@ -1620,6 +1636,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | AuthenticationServices.framework | `_OBJC_CLASS_$_ASCredentialIdentityStoreState` | 1 | 1password |
 | AuthenticationServices.framework | `_OBJC_CLASS_$_ASPasswordCredentialRequest` | 1 | 1password |
 | AuthenticationServices.framework | `_OBJC_CLASS_$_ASSettingsHelper` | 1 | 1password |
+| Automator.framework | `_OBJC_CLASS_$_AMWorkflowController` | 1 | bettertouchtool |
 | CloudKit.framework | `_$s10Foundation4DataV8CloudKit21CKRecordValueProtocolADWP` | 1 | clipy |
 | CloudKit.framework | `_$s10Foundation4DateV8CloudKit21CKRecordValueProtocolADWP` | 1 | clipy |
 | CloudKit.framework | `_$s8CloudKit12CKSyncEngineC11sendChangesyyAC04SendF7OptionsVYaKF` | 1 | codexbar |
@@ -1744,7 +1761,11 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CloudKit.framework | `_OBJC_CLASS_$_CKShare` | 1 | clipy |
 | CloudKit.framework | `_OBJC_CLASS_$_CKShareMetadata` | 1 | clipy |
 | CloudKit.framework | `_OBJC_CLASS_$_CKSubscription` | 1 | whatsapp |
+| CommerceKit.framework | `_CKDownloadDirectory` | 1 | pearcleaner |
+| CommerceKit.framework | `_OBJC_CLASS_$_CKDownloadQueue` | 1 | pearcleaner |
+| CommerceKit.framework | `_OBJC_CLASS_$_CKPurchaseController` | 1 | pearcleaner |
 | Contacts.framework | `_OBJC_CLASS_$_CNContactVCardSerialization` | 1 | telegram |
+| CoreAnalytics.framework | `_AnalyticsSendEventLazy` | 1 | utm |
 | CoreLocation.framework | `_OBJC_CLASS_$_CLLocationSourceInformation` | 1 | clipy |
 | CoreLocation.framework | `_OBJC_CLASS_$_CLRegion` | 1 | bartender |
 | CoreServices.framework | `_AEBuildDesc` | 1 | bbedit |
@@ -2049,7 +2070,49 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO4SHA1V9byteCountSivgZ` | 1 | dotnet-sdk |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO9MD5DigestV9byteCountSivgZ` | 1 | tableplus |
 | CryptoKit.framework | `_$s9CryptoKit8InsecureO9MD5DigestVAA0E0AAMc` | 1 | bartender |
+| DirectoryService.framework | `_dsBuildFromPath` | 1 | virtualbox |
+| DirectoryService.framework | `_dsBuildListFromStrings` | 1 | virtualbox |
+| DirectoryService.framework | `_dsCloseAttributeList` | 1 | virtualbox |
+| DirectoryService.framework | `_dsCloseAttributeValueList` | 1 | virtualbox |
+| DirectoryService.framework | `_dsCloseDirNode` | 1 | virtualbox |
+| DirectoryService.framework | `_dsCloseDirService` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDataBufferAllocate` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDataBufferDeAllocate` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDataListDeallocate` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDataNodeAllocateString` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDataNodeDeAllocate` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDeallocAttributeEntry` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDeallocAttributeValueEntry` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDeallocRecordEntry` | 1 | virtualbox |
+| DirectoryService.framework | `_dsDoDirNodeAuth` | 1 | virtualbox |
+| DirectoryService.framework | `_dsFindDirNodes` | 1 | virtualbox |
+| DirectoryService.framework | `_dsGetAttributeEntry` | 1 | virtualbox |
+| DirectoryService.framework | `_dsGetAttributeValue` | 1 | virtualbox |
+| DirectoryService.framework | `_dsGetDirNodeName` | 1 | virtualbox |
+| DirectoryService.framework | `_dsGetRecordEntry` | 1 | virtualbox |
+| DirectoryService.framework | `_dsGetRecordList` | 1 | virtualbox |
+| DirectoryService.framework | `_dsOpenDirNode` | 1 | virtualbox |
+| DirectoryService.framework | `_dsOpenDirService` | 1 | virtualbox |
+| DirectoryService.framework | `_dsReleaseContinueData` | 1 | virtualbox |
 | EventKit.framework | `_OBJC_CLASS_$_EKSource` | 1 | raycast |
+| EventKitUI.framework | `_OBJC_CLASS_$_EKEventEditViewController` | 1 | whatsapp |
+| ExtensionKit.framework | `_$s12ExtensionKit012PrimitiveAppA5SceneV2id7content12onConnectionACSS_xycSbSo15NSXPCConnectionCctc7SwiftUI4ViewRzlufC` | 1 | cmux |
+| ExtensionKit.framework | `_$s12ExtensionKit012PrimitiveAppA5SceneVAA0daE0AAWP` | 1 | cmux |
+| ExtensionKit.framework | `_$s12ExtensionKit012PrimitiveAppA5SceneVMn` | 1 | cmux |
+| ExtensionKit.framework | `_$s12ExtensionKit03AppA18SceneConfigurationVMn` | 1 | cmux |
+| ExtensionKit.framework | `_$s12ExtensionKit03AppA18SceneConfigurationVyACxyXAcAA0caD0RzlufC` | 1 | cmux |
+| ExtensionKit.framework | `_$s12ExtensionKit03AppA5SceneMp` | 1 | cmux |
+| ExtensionKit.framework | `_$s12ExtensionKit03AppA5SceneP05_makeD04withAA09PrimitivecaD0VSgSS_tFTq` | 1 | cmux |
+| ExtensionKit.framework | `_$s12ExtensionKit03AppA5SceneP4BodyAC_AaBTn` | 1 | cmux |
+| ExtensionKit.framework | `_$s12ExtensionKit03AppA5SceneP4body4BodyQzvgTq` | 1 | cmux |
+| ExtensionKit.framework | `_$s12ExtensionKit03AppA5ScenePAAE05_makeD04withAA09PrimitivecaD0VSgSS_tF` | 1 | cmux |
+| ExtensionKit.framework | `_$s4Body12ExtensionKit03AppB5ScenePTl` | 1 | cmux |
+| ExtensionKit.framework | `_$sSo20EXHostViewControllerC12ExtensionKitE13ConfigurationV03appD07sceneIDAE0D10Foundation03AppD8IdentityV_SStcfC` | 1 | cmux |
+| ExtensionKit.framework | `_$sSo20EXHostViewControllerC12ExtensionKitE13ConfigurationVMa` | 1 | cmux |
+| ExtensionKit.framework | `_$sSo20EXHostViewControllerC12ExtensionKitE13ConfigurationVMn` | 1 | cmux |
+| ExtensionKit.framework | `_$sSo20EXHostViewControllerC12ExtensionKitE13configurationAbCE13ConfigurationVSgvs` | 1 | cmux |
+| ExtensionKit.framework | `_OBJC_CLASS_$_EXAppExtensionBrowserViewController` | 1 | cmux |
+| ExtensionKit.framework | `_OBJC_CLASS_$_EXHostViewController` | 1 | cmux |
 | Intents.framework | `_OBJC_CLASS_$_INCallRecord` | 1 | whatsapp |
 | Intents.framework | `_OBJC_CLASS_$_INDateComponentsRangeResolutionResult` | 1 | whatsapp |
 | Intents.framework | `_OBJC_CLASS_$_INDateRelevanceProvider` | 1 | whatsapp |
@@ -2087,9 +2150,33 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | LocalAuthentication.framework | `_OBJC_CLASS_$_LAAuthenticationRequirement` | 1 | docker-desktop |
 | LocalAuthentication.framework | `_OBJC_CLASS_$_LABiometryFallbackRequirement` | 1 | docker-desktop |
 | LocalAuthentication.framework | `_OBJC_CLASS_$_LARight` | 1 | docker-desktop |
+| MessageUI.framework | `_OBJC_CLASS_$_MFMailComposeViewController` | 1 | whatsapp |
+| MessageUI.framework | `_OBJC_CLASS_$_MFMessageComposeViewController` | 1 | whatsapp |
+| MessageUI.framework | `_OBJC_METACLASS_$_MFMessageComposeViewController` | 1 | whatsapp |
+| MetricKit.framework | `_OBJC_CLASS_$_MXHistogramBucket` | 1 | microsoft-teams |
+| MetricKit.framework | `_OBJC_CLASS_$_MXMetricPayload` | 1 | duckduckgo |
 | OSAKit.framework | `_OBJC_CLASS_$_OSAScriptController` | 1 | bettertouchtool |
 | OSAKit.framework | `_OBJC_CLASS_$_OSAScriptView` | 1 | bettertouchtool |
+| OSLog.framework | `_OBJC_CLASS_$_OSLogEntry` | 1 | teamviewer |
 | OpenDirectory.framework | `_kODAttributeTypeFullName` | 1 | superwhisper |
+| PackageKit.framework | `_OBJC_CLASS_$_PKBOM` | 1 | pearcleaner |
+| PackageKit.framework | `_OBJC_CLASS_$_PKReceipt` | 1 | pearcleaner |
+| PassKit.framework | `_OBJC_CLASS_$_PKAddPassesViewController` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKPass` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKPassLibrary` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKPaymentAuthorizationController` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKPaymentAuthorizationResult` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKPaymentMerchantSession` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKPaymentRequest` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKPaymentRequestMerchantSessionUpdate` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKPaymentRequestShippingContactUpdate` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKPaymentRequestShippingMethodUpdate` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKPaymentSummaryItem` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKRecurringPaymentSummaryItem` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_CLASS_$_PKShippingMethod` | 1 | whatsapp |
+| PassKit.framework | `_OBJC_METACLASS_$_PKAddPassesViewController` | 1 | whatsapp |
+| PushKit.framework | `_OBJC_CLASS_$_PKPushRegistry` | 1 | whatsapp |
+| ScreenTime.framework | `_OBJC_CLASS_$_STWebHistory` | 1 | duckduckgo |
 | Security.framework | `_AuthorizationCopyInfo` | 1 | orbstack |
 | Security.framework | `_CMSDecoderCopySignerCert` | 1 | zoom |
 | Security.framework | `_CSSMOID_APPLE_TP_SSL` | 1 | zoom |
@@ -2148,9 +2235,15 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Security.framework | `_kSecTrustRevocationChecked` | 1 | zoom |
 | Security.framework | `_kSecUseItemList` | 1 | adobe-acrobat-reader |
 | Security.framework | `_sec_protocol_metadata_access_ocsp_response` | 1 | zoom |
+| SidecarCore.framework | `_OBJC_CLASS_$_SidecarDevice` | 1 | betterdisplay |
+| SidecarCore.framework | `_OBJC_CLASS_$_SidecarDisplayConfig` | 1 | betterdisplay |
+| SidecarCore.framework | `_OBJC_CLASS_$_SidecarDisplayManager` | 1 | betterdisplay |
 | Sparkle.framework | `_OBJC_CLASS_$_SPUUpdater` | 1 | tailscale-app |
 | Sparkle.framework | `_OBJC_CLASS_$_SUAppcastItem` | 1 | tailscale-app |
 | Sparkle.framework | `_OBJC_CLASS_$_SUUpdatePermissionResponse` | 1 | tailscale-app |
+| StoreFoundation.framework | `_OBJC_CLASS_$_SSDownload` | 1 | pearcleaner |
+| StoreFoundation.framework | `_OBJC_CLASS_$_SSDownloadMetadata` | 1 | pearcleaner |
+| StoreFoundation.framework | `_OBJC_CLASS_$_SSPurchase` | 1 | pearcleaner |
 | StoreKit.framework | `_$s8StoreKit0aB5ErrorO11notEntitledyA2CmFWC` | 1 | macwhisper |
 | StoreKit.framework | `_$s8StoreKit10StorefrontV11StorefrontsV13AsyncIteratorV4nextACSgyYaF` | 1 | duckduckgo |
 | StoreKit.framework | `_$s8StoreKit10StorefrontV11StorefrontsV13AsyncIteratorV4nextACSgyYaFTu` | 1 | duckduckgo |
@@ -2243,6 +2336,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | UniformTypeIdentifiers.framework | `_UTTypeFramework` | 1 | appcleaner |
 | UniformTypeIdentifiers.framework | `_UTTypeResolvable` | 1 | appcleaner |
 | UniformTypeIdentifiers.framework | `_UTTypeTabSeparatedText` | 1 | grandperspective |
+| WatchConnectivity.framework | `_OBJC_CLASS_$_WCSession` | 1 | whatsapp |
 | libswiftCloudKit.dylib | `_$s10Foundation4DateV8CloudKit21CKRecordValueProtocolADWP` | 1 | whatsapp |
 | libswiftCloudKit.dylib | `_$sSC11CKErrorCodeLeV8CloudKitE12clientRecordSo8CKRecordCSgvg` | 1 | whatsapp |
 | libswiftCloudKit.dylib | `_$sSC11CKErrorCodeLeV8CloudKitE12serverRecordSo8CKRecordCSgvg` | 1 | whatsapp |
@@ -2312,3 +2406,4 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV9osaScriptACvgZ` | 1 | coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeV9phpScriptACvgZ` | 1 | coteditor |
 | libswiftUniformTypeIdentifiers.dylib | `_$s22UniformTypeIdentifiers6UTTypeVSHAAMc` | 1 | duckduckgo |
+| login.framework | `_SACLockScreenImmediate` | 1 | anydesk |

@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Patricia (rede para apps) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**686** símbolos distintos.
+**738** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -138,6 +138,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network13NWProtocolTLSC8MetadataCMa` | 4 | bettertouchtool, easydict, tableplus, utm |
 | libswiftNetwork.dylib | `_$s7Network13NWProtocolTLSCMa` | 4 | bettertouchtool, easydict, tableplus, utm |
 | libswiftNetwork.dylib | `_$s7Network6NWPathV17usesInterfaceTypeySbAA11NWInterfaceV0dE0OF` | 4 | duckduckgo, sfm, tableplus, tailscale-app |
+| vmnet.framework | `_vmnet_interface_set_event_callback` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_max_packet_size_key` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_operation_mode_key` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_read` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_start_interface` | 4 | docker-desktop, orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_write` | 4 | docker-desktop, orbstack, utm, virtualbox |
 | CFNetwork.framework | `_CFHTTPMessageCopyBody` | 3 | bbedit, bettertouchtool, hammerspoon |
 | CFNetwork.framework | `_CFHTTPMessageCopyRequestURL` | 3 | adobe-acrobat-reader, bettertouchtool, hammerspoon |
 | CFNetwork.framework | `_CFHTTPMessageCopyVersion` | 3 | adobe-acrobat-reader, bettertouchtool, hammerspoon |
@@ -182,6 +188,10 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network13NWProtocolTCPC7OptionsC7noDelaySbvsTj` | 3 | bettertouchtool, easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network17NWProtocolOptionsCMa` | 3 | iina, raycast, utm |
 | libswiftNetwork.dylib | `_$s7Network18NWProtocolMetadataCMn` | 3 | easydict, iina, tableplus |
+| vmnet.framework | `_vmnet_allocate_mac_address_key` | 3 | orbstack, utm, virtualbox |
+| vmnet.framework | `_vmnet_interface_id_key` | 3 | docker-desktop, orbstack, virtualbox |
+| vmnet.framework | `_vmnet_mtu_key` | 3 | docker-desktop, orbstack, utm |
+| vmnet.framework | `_vmnet_stop_interface` | 3 | orbstack, utm, virtualbox |
 | CFNetwork.framework | `_CFHTTPMessageCopyResponseStatusLine` | 2 | adobe-acrobat-reader, hammerspoon |
 | CFNetwork.framework | `_CFHostCreateWithAddress` | 2 | hammerspoon, lulu |
 | CFNetwork.framework | `_NSURLSessionTaskPriorityDefault` | 2 | cleanshot, protonvpn |
@@ -195,6 +205,9 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CFNetwork.framework | `_kCFStreamPropertySSLContext` | 2 | raycast, superwhisper |
 | IOKit.framework | `_SCPreferencesApplyChanges` | 2 | hammerspoon, proxyman |
 | IOKit.framework | `_SCPreferencesCommitChanges` | 2 | hammerspoon, proxyman |
+| LDAP.framework | `_ldap_count_entries` | 2 | adobe-acrobat-reader, tableplus |
+| LDAP.framework | `_ldap_result` | 2 | adobe-acrobat-reader, tableplus |
+| LDAP.framework | `_ldap_unbind` | 2 | adobe-acrobat-reader, tableplus |
 | Network.framework | `_$s7Network10NWEndpointO4HostOSHAAMc` | 2 | cmux, protonvpn |
 | Network.framework | `_$s7Network10NWEndpointO4PortVSHAAMc` | 2 | cmux, protonvpn |
 | Network.framework | `_$s7Network10NWEndpointO4PortVSQAAMc` | 2 | cmux, protonvpn |
@@ -370,6 +383,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network9IPAddressMp` | 2 | duckduckgo, tailscale-app |
 | libswiftNetwork.dylib | `_$s7Network9IPAddressP8rawValue10Foundation4DataVvgTj` | 2 | duckduckgo, tailscale-app |
 | libswiftNetwork.dylib | `_$s7Network9NWBrowserCMn` | 2 | bettertouchtool, utm |
+| vmnet.framework | `_vmnet_enable_isolation_key` | 2 | orbstack, utm |
+| vmnet.framework | `_vmnet_end_address_key` | 2 | utm, virtualbox |
+| vmnet.framework | `_vmnet_network_identifier_key` | 2 | orbstack, utm |
+| vmnet.framework | `_vmnet_shared_interface_name_key` | 2 | utm, virtualbox |
+| vmnet.framework | `_vmnet_start_address_key` | 2 | utm, virtualbox |
+| vmnet.framework | `_vmnet_subnet_mask_key` | 2 | utm, virtualbox |
 | CFNetwork.framework | `_CFHTTPAuthenticationCreateFromResponse` | 1 | adobe-acrobat-reader |
 | CFNetwork.framework | `_CFHTTPAuthenticationRequiresUserNameAndPassword` | 1 | adobe-acrobat-reader |
 | CFNetwork.framework | `_CFHTTPMessageAddAuthentication` | 1 | adobe-acrobat-reader |
@@ -442,6 +461,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Kerberos.framework | `_gss_wrap_size_limit` | 1 | libreoffice |
 | Kerberos.framework | `_krb5_c_decrypt` | 1 | wireshark-app |
 | Kerberos.framework | `_krb5_kt_resolve` | 1 | wireshark-app |
+| LDAP.framework | `_ldap_bind_s` | 1 | adobe-acrobat-reader |
+| LDAP.framework | `_ldap_count_values_len` | 1 | adobe-acrobat-reader |
+| LDAP.framework | `_ldap_initialize` | 1 | adobe-acrobat-reader |
+| LDAP.framework | `_ldap_search_ext` | 1 | adobe-acrobat-reader |
+| LDAP.framework | `_ldap_search_st` | 1 | tableplus |
+| LDAP.framework | `_ldap_simple_bind` | 1 | tableplus |
 | Network.framework | `_$s7Network10NWEndpointO16debugDescriptionSSvg` | 1 | protonvpn |
 | Network.framework | `_$s7Network10NWEndpointO3urlyAC10Foundation3URLVcACmFWC` | 1 | windows-app |
 | Network.framework | `_$s7Network10NWEndpointO4PortV16debugDescriptionSSvg` | 1 | proxyman |
@@ -537,6 +562,24 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEOnDemandRuleIgnore` | 1 | sfm |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEProxyServer` | 1 | sfm |
 | NetworkExtension.framework | `_OBJC_METACLASS_$_NEFilterDataProvider` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerAddAllTCP` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerAddAllUDP` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerCreate` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerDestroy` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerQueryAllSources` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerQueryAllSourcesDescriptions` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatManagerSetFlags` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatSourceSetDescriptionBlock` | 1 | lulu |
+| NetworkStatistics.framework | `_NStatSourceSetRemovedBlock` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyInterface` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyLocal` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyPID` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyProvider` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyRemote` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyRxBytes` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyTCPState` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyTxBytes` | 1 | lulu |
+| NetworkStatistics.framework | `_kNStatSrcKeyUUID` | 1 | lulu |
 | SystemConfiguration.framework | `_SCDynamicStoreCopyLocation` | 1 | hammerspoon |
 | SystemConfiguration.framework | `_SCNetworkConnectionCreateWithServiceID` | 1 | microsoft-teams |
 | SystemConfiguration.framework | `_SCNetworkConnectionGetStatus` | 1 | microsoft-teams |
@@ -693,3 +736,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network9IPAddressPyxSg10Foundation4DataV_AA11NWInterfaceVSgtcfCTj` | 1 | duckduckgo |
 | libswiftNetwork.dylib | `_$s7Network9NWBrowserC10DescriptorO20bonjourWithTXTRecordyAESS_SSSgtcAEmFWC` | 1 | utm |
 | libswiftNetwork.dylib | `_$s7Network9NWBrowserC13browseResultsShyAC6ResultVGvg` | 1 | utm |
+| vmnet.framework | `_vmnet_copy_shared_interface_list` | 1 | utm |
+| vmnet.framework | `_vmnet_enable_checksum_offload_key` | 1 | orbstack |
+| vmnet.framework | `_vmnet_enable_tso_key` | 1 | orbstack |
+| vmnet.framework | `_vmnet_estimated_packets_available_key` | 1 | virtualbox |
+| vmnet.framework | `_vmnet_host_ip_address_key` | 1 | orbstack |
+| vmnet.framework | `_vmnet_host_ipv6_address_key` | 1 | orbstack |
+| vmnet.framework | `_vmnet_host_subnet_mask_key` | 1 | orbstack |
+| vmnet.framework | `_vmnet_mac_address_key` | 1 | docker-desktop |
+| vmnet.framework | `_vmnet_nat66_prefix_key` | 1 | utm |

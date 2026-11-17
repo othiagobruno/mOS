@@ -3,7 +3,7 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Isabela (mídia) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**927** símbolos distintos.
+**938** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
@@ -23,6 +23,14 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreMIDI.framework | `_MIDIPortDisconnectSource` | 13 | android-studio, bettertouchtool, cryptomator, cyberduck |
 | CoreImage.framework | `_kCIInputBackgroundImageKey` | 12 | applite, betterdisplay, cleanshot, cmux |
 | CoreMIDI.framework | `_MIDIEndpointDispose` | 12 | bettertouchtool, deluge, firefox, floorp |
+| ImageCaptureCore.framework | `_ICDownloadsDirectoryURL` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_ICOverwrite` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_ICSaveAsFilename` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_ICSavedFilename` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_ICTransportTypeMassStorage` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraDevice` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICCameraFile` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
+| ImageCaptureCore.framework | `_OBJC_CLASS_$_ICDeviceBrowser` | 12 | adobe-acrobat-reader, another-redis-desktop-manager, antigravity-ide, battery |
 | CoreImage.framework | `_kCIOutputImageKey` | 11 | anydesk, calibre, cmux, iina |
 | CoreMIDI.framework | `_kMIDIPropertyName` | 11 | android-studio, bettertouchtool, cryptomator, cyberduck |
 | AVFoundation.framework | `_OBJC_CLASS_$_AVCaptureStillImageOutput` | 10 | adobe-acrobat-reader, another-redis-desktop-manager, calibre, cleanshot |
@@ -816,11 +824,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | OpenAL.framework | `_alcSuspendContext` | 1 | blender |
 | PIP.framework | `_OBJC_CLASS_$_PIPViewController` | 1 | iina |
 | PIP.framework | `_OBJC_METACLASS_$_PIPViewController` | 1 | iina |
+| QTKit.framework | `_OBJC_CLASS_$_QTMovieModernizer` | 1 | adobe-acrobat-reader |
 | QuartzCore.framework | `_OBJC_CLASS_$_CIContext` | 1 | vlc |
 | QuartzCore.framework | `_kCIContextOutputColorSpace` | 1 | vlc |
 | QuartzCore.framework | `_kCIContextWorkingColorSpace` | 1 | vlc |
 | QuartzCore.framework | `_kCIInputImageKey` | 1 | vlc |
 | QuartzCore.framework | `_kCIOutputImageKey` | 1 | vlc |
+| ReplayKit.framework | `_OBJC_CLASS_$_RPSystemBroadcastPickerView` | 1 | whatsapp |
 | Speech.framework | `_OBJC_CLASS_$_SFSpeechURLRecognitionRequest` | 1 | whatsapp |
 | VideoToolbox.framework | `_VTCompressionSessionBeginPass` | 1 | handbrake-app |
 | VideoToolbox.framework | `_VTCompressionSessionEndPass` | 1 | handbrake-app |
@@ -878,6 +888,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | VisionKit.framework | `_$s9VisionKit24ImageAnalysisOverlayViewCMa` | 1 | coteditor |
 | VisionKit.framework | `_$s9VisionKit24ImageAnalysisOverlayViewCMn` | 1 | coteditor |
 | VisionKit.framework | `_OBJC_CLASS_$_VNDocumentCameraViewController` | 1 | whatsapp |
+| iTunesLibrary.framework | `_OBJC_CLASS_$_ITLibrary` | 1 | alfred |
 | libswiftAVFoundation.dylib | `_$s12AVFoundation22AVPartialAsyncPropertyCAASo12AVAssetTrackCRbzlE20mediaCharacteristicsAA07AVAsyncD0CyxSaySo21AVMediaCharacteristicaGGvgZ` | 1 | vorssaint |
 | libswiftAVFoundation.dylib | `_$s12AVFoundation22AVPartialAsyncPropertyCAASo12AVAssetTrackCRbzlE8metadataAA07AVAsyncD0CyxSaySo14AVMetadataItemCGGvgZ` | 1 | vorssaint |
 | libswiftAVFoundation.dylib | `_$s12AVFoundation22AVPartialAsyncPropertyCAASo14AVMetadataItemCRbzlE9dataValueAA07AVAsyncD0Cyx10Foundation4DataVSgGvgZ` | 1 | macwhisper |
