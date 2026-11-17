@@ -58,6 +58,29 @@ u32 CFBitVectorGetBitAtIndex(id bv, long i) {
     const u8 *b = (const u8 *)bv_count(bv) + 8;
     return (b[i / 8] >> (7 - i % 8)) & 1;   /* bit 0 é o mais significativo, como no CF */
 }
+id CFBitVectorCreateCopy(void *alloc, id bv) { (void)alloc; return bv ? MSG0(id, bv, "mutableCopy") : 0; }
+id CFBitVectorCreate(void *alloc, const u8 *bytes, long n) {
+    id bv = CFBitVectorCreateMutable(alloc, n);
+    if (!bv) return 0;
+    u64 *cnt = bv_count(bv);
+    *cnt = (u64)(n > 0 ? n : 0);
+    if (bytes && n > 0) memcpy((u8 *)cnt + 8, bytes, (size_t)(n + 7) / 8);
+    return bv;
+}
+typedef struct { long loc, len; } bv_range_t;
+long CFBitVectorGetFirstIndexOfBit(id bv, bv_range_t r, u32 bit) {
+    for (long i = r.loc; i < r.loc + r.len; i++) if (CFBitVectorGetBitAtIndex(bv, i) == (bit & 1)) return i;
+    return -1;   /* kCFNotFound */
+}
+long CFBitVectorGetLastIndexOfBit(id bv, bv_range_t r, u32 bit) {
+    for (long i = r.loc + r.len - 1; i >= r.loc; i--) if (CFBitVectorGetBitAtIndex(bv, i) == (bit & 1)) return i;
+    return -1;
+}
+long CFBitVectorGetCountOfBit(id bv, bv_range_t r, u32 bit) {
+    long k = 0;
+    for (long i = r.loc; i < r.loc + r.len; i++) if (CFBitVectorGetBitAtIndex(bv, i) == (bit & 1)) k++;
+    return k;
+}
 void CFBitVectorSetBitAtIndex(id bv, long i, u32 bit) {
     if (!bv || i < 0) return;
     if (i >= CFBitVectorGetCount(bv)) CFBitVectorSetCount(bv, i + 1);

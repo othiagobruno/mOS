@@ -45,6 +45,8 @@ enum { UDAT_FULL = 0, UDAT_LONG = 1, UDAT_MEDIUM = 2, UDAT_SHORT = 3, UDAT_RELAT
     X(uloc_getName, int32_t, (const char *, char *, int32_t, UErrorCode *)) \
     X(uloc_getBaseName, int32_t, (const char *, char *, int32_t, UErrorCode *)) \
     X(uloc_canonicalize, int32_t, (const char *, char *, int32_t, UErrorCode *)) \
+    X(uloc_getLCID, uint32_t, (const char *)) \
+    X(uloc_getLocaleForLCID, int32_t, (uint32_t, char *, int32_t, UErrorCode *)) \
     X(uloc_getLanguage, int32_t, (const char *, char *, int32_t, UErrorCode *)) \
     X(uloc_getScript, int32_t, (const char *, char *, int32_t, UErrorCode *)) \
     X(uloc_getCountry, int32_t, (const char *, char *, int32_t, UErrorCode *)) \

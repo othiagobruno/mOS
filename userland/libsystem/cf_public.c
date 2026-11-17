@@ -12,6 +12,7 @@ extern const char kCFTypeDictionaryValueCallBacks[];   /* cfcollections.c: callb
 void *calloc(unsigned long n, unsigned long s);
 id objc_retain(id o);
 void objc_release(id o);
+id objc_autorelease(id o);
 id CFStringCreateWithCString(void *alloc, const char *s, unsigned enc);
 long CFStringGetLength(id s);
 id CFArrayCreateMutable(void *alloc, long cap, const void *cb);
@@ -80,6 +81,11 @@ static bag_o *as_bag(id o) { bag_o *b = is_box(o) ? ((box_t *)o)->p : 0; return 
 long CFBagGetCount(id o) { bag_o *b = as_bag(o); return b ? cf_bag_count(&b->bag, 0) : 0; }
 long CFBagGetCountOfValue(id o, const void *v) { bag_o *b = as_bag(o); return b ? cf_bag_count(&b->bag, v) : 0; }
 unsigned char CFBagContainsValue(id o, const void *v) { return CFBagGetCountOfValue(o, v) > 0; }
+id CFBagCreateMutable(void *alloc, long cap, const void *cb) { (void)cap; return CFBagCreate(alloc, 0, 0, cb); }
+void CFBagAddValue(id o, const void *v) { bag_o *b = as_bag(o); if (b) cf_bag_add(&b->bag, v); }
+void CFBagRemoveValue(id o, const void *v) { bag_o *b = as_bag(o); if (b) cf_bag_remove(&b->bag, v); }
+void CFBagRemoveAllValues(id o) { bag_o *b = as_bag(o); if (b) b->bag.n = 0; }
+const void *CFBagGetValue(id o, const void *v) { return CFBagGetCountOfValue(o, v) ? v : 0; }
 
 static void box_free_payload(void *p) {
     any_t *a = p;
@@ -139,6 +145,25 @@ void CFMessagePortInvalidate(id o) {
     for (i = 0; i < MP_N; i++) if (mp_tab[i] == m) mp_tab[i] = 0;
 }
 unsigned char CFMessagePortIsValid(id o) { mp_o *m = as_mp(o); return m && m->valid; }
+unsigned char CFMessagePortIsRemote(id o) { mp_o *m = as_mp(o); return m && m->remote; }
+id CFMessagePortGetName(id o) { mp_o *m = as_mp(o); return m && m->name[0] ? objc_autorelease(cx_str(m->name)) : 0; }
+/* só a porta local muda de nome, e não para um nome já usado por outra porta local válida */
+unsigned char CFMessagePortSetName(id o, id name) {
+    mp_o *m = as_mp(o);
+    const char *n = C(name);
+    if (!m || m->remote || !m->valid || !n[0]) return 0;
+    for (int i = 0; i < MP_N; i++) if (mp_tab[i] && mp_tab[i] != m && mp_tab[i]->valid && !mp_tab[i]->remote && !strcmp(mp_tab[i]->name, n)) return 0;
+    memset(m->name, 0, sizeof m->name);
+    memcpy(m->name, n, strlen(n) < 127 ? strlen(n) : 127);
+    return 1;
+}
+typedef struct { long version; void *info; void *retain, *release, *desc; } mp_ctx_t;
+void CFMessagePortGetContext(id o, mp_ctx_t *ctx) {
+    mp_o *m = as_mp(o);
+    if (!ctx) return;
+    memset(ctx, 0, sizeof *ctx);
+    if (m) ctx->info = m->info;
+}
 void CFMessagePortSetDispatchQueue(id o, void *q) { mp_o *m = as_mp(o); if (m) m->queue = q; }
 void CFMessagePortSetInvalidationCallBack(id o, void *cb) { mp_o *m = as_mp(o); if (m) m->inv = (mp_inv_f)cb; }
 long CFMessagePortSendRequest(id remote, long msgid, id data, double send_to, double recv_to, id mode, id *reply) {

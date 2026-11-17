@@ -188,7 +188,8 @@ typedef BOOL (*map_eq_f)(void *, const void *, const void *);
 typedef struct { map_hash_f hash; map_eq_f eq; void *retain_k; void *release_k; void *describe; const void *notAKey; } map_cbs_t;
 static u64 map_hash_ptr(void *t, const void *k) { (void)t; return (u64)k >> 4; }
 static BOOL map_eq_ptr(void *t, const void *a, const void *b) { (void)t; return a == b; }
-const map_cbs_t NSAllMapTableKeys = { map_hash_ptr, map_eq_ptr, 0, 0, 0, (const void *)-1 };
+/* a API C pública (NSCreateMapTable, NSMapGet…) está em fdn_cfextra.c; estas são as internas de NSMapTable/NSHashTable */
+static const map_cbs_t cmap_ptr_cbs __attribute__((unused)) = { map_hash_ptr, map_eq_ptr, 0, 0, 0, (const void *)-1 };
 static cxmap_t *map_new(void) { cxmap_t *m = calloc(1, sizeof *m); m->magic = MAP_MAGIC; return m; }
 static void map_put(cxmap_t *m, const void *k, const void *v, int absent) {
     if (!m || m->magic != MAP_MAGIC) return;
@@ -196,15 +197,13 @@ static void map_put(cxmap_t *m, const void *k, const void *v, int absent) {
     if (m->n == m->cap) { m->cap = m->cap ? m->cap * 2 : 8; m->k = realloc(m->k, m->cap * sizeof(void *)); m->v = realloc(m->v, m->cap * sizeof(void *)); }
     m->k[m->n] = k; m->v[m->n++] = v;
 }
-void *NSMapGet(void *table, const void *key) {
+static void *cmap_get(void *table, const void *key) {
     cxmap_t *m = table;
     if (!m || m->magic != MAP_MAGIC) return 0;
     for (u32 i = 0; i < m->n; i++) if (m->k[i] == key) return (void *)m->v[i];
     return 0;
 }
-void NSMapInsert(void *table, const void *key, const void *value) { map_put(table, key, value, 0); }
-void NSMapInsertKnownAbsent(void *table, const void *key, const void *value) { map_put(table, key, value, 1); }
-void NSMapRemove(void *table, const void *key) {
+static void cmap_remove(void *table, const void *key) {
     cxmap_t *m = table;
     if (!m || m->magic != MAP_MAGIC) return;
     for (u32 i = 0; i < m->n; i++) if (m->k[i] == key) { m->k[i] = m->k[m->n - 1]; m->v[i] = m->v[--m->n]; return; }
@@ -221,7 +220,7 @@ void NSHashRemove(void *table, const void *pointer) {
     cxmap_t *m = table;
     if (!m || m->magic != HASH_MAGIC) return;
     u32 mag = m->magic;
-    NSMapRemove(m, pointer);
+    cmap_remove(m, pointer);
     m->magic = mag;
 }
 
@@ -1800,7 +1799,7 @@ static id ip_add(id s, SEL c, u64 i) {
 static id ht_alloc(id cls, SEL c) { (void)c; box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls); cxmap_t *m = map_new(); m->magic = HASH_MAGIC; o->p = m; return (id)o; }
 static void ht_add(id s, SEL c, id o) { (void)c; NSHashInsertKnownAbsent(BOX(s)->p, o); retain(o); }
 static void ht_remove(id s, SEL c, id o) { (void)c; NSHashRemove(BOX(s)->p, o); rel(o); }
-static id ht_member(id s, SEL c, id o) { (void)c; return NSMapGet(BOX(s)->p, o) ? o : 0; }
+static id ht_member(id s, SEL c, id o) { (void)c; return cmap_get(BOX(s)->p, o) ? o : 0; }
 static u64 ht_count(id s, SEL c) { (void)c; cxmap_t *m = BOX(s)->p; return m ? m->n : 0; }
 static id ht_all(id s, SEL c) {
     (void)c;
@@ -1811,8 +1810,8 @@ static id ht_all(id s, SEL c) {
 }
 static id mt_alloc(id cls, SEL c) { (void)c; box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls); o->p = map_new(); return (id)o; }
 static void mt_set(id s, SEL c, id v, id k) { (void)c; map_put(BOX(s)->p, k, v, 0); retain(k); retain(v); }
-static id mt_get(id s, SEL c, id k) { (void)c; return NSMapGet(BOX(s)->p, k); }
-static void mt_del(id s, SEL c, id k) { (void)c; NSMapRemove(BOX(s)->p, k); }
+static id mt_get(id s, SEL c, id k) { (void)c; return cmap_get(BOX(s)->p, k); }
+static void mt_del(id s, SEL c, id k) { (void)c; cmap_remove(BOX(s)->p, k); }
 static id pa_alloc(id cls, SEL c) { (void)c; box_t *o = (box_t *)cx_alloc_instance((cx_class_t *)cls); o->p = map_new(); ((cxmap_t *)o->p)->magic = HASH_MAGIC; return (id)o; }
 static void pa_add(id s, SEL c, void *p) { (void)c; NSHashInsertKnownAbsent(BOX(s)->p, p); }
 static u64 pa_count(id s, SEL c) { return ht_count(s, c); }
