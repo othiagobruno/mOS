@@ -1609,7 +1609,9 @@ static void test_modeset(void) {
           "fonte em modo de vídeo depois do treino");
     CHECK((regs[D_DP_DP_VID_M(2) / 4] & DMASK(F_DP_DP_VID_M__DP_VID_M)) == amd_dp_mvid(241500, 0x0A) && amd_dp_mvid(241500, 0x0A) == 29309 &&
           (regs[D_DP_DP_VID_STREAM_CNTL(2) / 4] & DMASK(F_DP_DP_VID_STREAM_CNTL__DP_VID_STREAM_ENABLE)), "vídeo DP: M/N e stream ligado (M %u)", amd_dp_mvid(241500, 0x0A));
-    CHECK((regs[D_DP_DP_MSA_TIMING_PARAM1(2) / 4] & 0xFFFF) == 2720 && (regs[D_DP_DP_MSA_TIMING_PARAM4(2) / 4] & 0xFFFF) == 2560, "MSA");
+    CHECK(regs[D_DP_DP_MSA_TIMING_PARAM1(2) / 4] == (DFV(F_DP_DP_MSA_TIMING_PARAM1__DP_MSA_HTOTAL, 2720) | DFV(F_DP_DP_MSA_TIMING_PARAM1__DP_MSA_VTOTAL, 1481)) &&
+          regs[D_DP_DP_MSA_TIMING_PARAM4(2) / 4] == (DFV(F_DP_DP_MSA_TIMING_PARAM4__DP_MSA_HWIDTH, 2560) | DFV(F_DP_DP_MSA_TIMING_PARAM4__DP_MSA_VHEIGHT, 1440)),
+          "MSA: htotal/vtotal e largura/altura nos seus campos");
     /* 4) DP que não equaliza: cai de taxa e desiste; nada fica ligado */
     dp_eq_fail = true;
     e = amdgpu_modeset(a, &dpq, 1);

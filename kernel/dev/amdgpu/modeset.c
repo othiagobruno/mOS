@@ -352,7 +352,7 @@ static int dp_lane_set(amdgpu_t *a, amd_disp_t *d, u32 aux) {
         int r = transmitter(a, d, 11, set[l]);               /* SETUP_VSEMPH */
         if (r) return r;
     }
-    return amdgpu_dpcd_write(a, aux, 0x103, set, d->link.lanes);
+    return amdgpu_dpcd_write(a, aux, 0x103, set, d->link.lanes) < 0 ? -MOS_EIO : 0;
 }
 
 static bool lanes_ok(const u8 st[6], u32 lanes, u8 mask) {
@@ -372,7 +372,7 @@ static void adjust(amd_disp_t *d, const u8 st[6]) {
 static int dp_train(amdgpu_t *a, amd_disp_t *d, u32 aux) {
     u32 i = d->phy;
     u8 v[2] = { d->link.rate, (u8)(d->link.lanes | (d->link.enhanced_framing ? 0x80 : 0)) };
-    if (amdgpu_dpcd_write(a, aux, 0x100, v, 2)) return -MOS_EIO;
+    if (amdgpu_dpcd_write(a, aux, 0x100, v, 2) < 0) return -MOS_EIO;
     memset(d->link.vs, 0, 4);
     memset(d->link.pe, 0, 4);
     u8 rd_int = 0;
@@ -381,13 +381,13 @@ static int dp_train(amdgpu_t *a, amd_disp_t *d, u32 aux) {
     /* clock recovery */
     dp_training_pattern(a, i, 0);
     u8 tp = 0x21;                                            /* TPS1, embaralhamento desligado */
-    if (amdgpu_dpcd_write(a, aux, 0x102, &tp, 1) || dp_lane_set(a, d, aux)) return -MOS_EIO;
+    if (amdgpu_dpcd_write(a, aux, 0x102, &tp, 1) < 0 || dp_lane_set(a, d, aux)) return -MOS_EIO;
     u8 st[6];
     u32 same = 0, tries = 0;
     u8 last_vs = 0xFF;
     for (;;) {
         DELAY_US(100);
-        if (amdgpu_dpcd_read(a, aux, 0x202, st, 6)) return -MOS_EIO;
+        if (amdgpu_dpcd_read(a, aux, 0x202, st, 6) < 0) return -MOS_EIO;
         if (lanes_ok(st, d->link.lanes, 0x1)) break;
         if (++tries > 10 || d->link.vs[0] == 3) return -MOS_EIO;
         adjust(d, st);
@@ -398,10 +398,10 @@ static int dp_train(amdgpu_t *a, amd_disp_t *d, u32 aux) {
     u32 tps = d->link.tps3 ? 2 : 1;
     dp_training_pattern(a, i, tps);
     tp = (u8)(0x20 | (tps + 1));
-    if (amdgpu_dpcd_write(a, aux, 0x102, &tp, 1)) return -MOS_EIO;
+    if (amdgpu_dpcd_write(a, aux, 0x102, &tp, 1) < 0) return -MOS_EIO;
     for (u32 n = 0; n < 5; n++) {
         DELAY_US(eq_wait);
-        if (amdgpu_dpcd_read(a, aux, 0x202, st, 6)) return -MOS_EIO;
+        if (amdgpu_dpcd_read(a, aux, 0x202, st, 6) < 0) return -MOS_EIO;
         if (!lanes_ok(st, d->link.lanes, 0x1)) return -MOS_EIO;          /* perdeu o clock recovery */
         if (lanes_ok(st, d->link.lanes, 0x7) && (st[2] & 1)) {           /* CR, EQ, símbolo e alinhamento */
             tp = 0;
@@ -464,7 +464,7 @@ static int dp_link_up(amdgpu_t *a, amd_disp_t *d) {
     const amd_conn_t *c = &a->vbios.conn[d->req.conn];
     u32 aux = (u32)(c->ddc >= 0 ? c->ddc : 0);
     u8 cap[16];
-    if (amdgpu_dpcd_read(a, aux, 0x000, cap, 16)) return -MOS_EIO;
+    if (amdgpu_dpcd_read(a, aux, 0x000, cap, 16) < 0) return -MOS_EIO;   /* devolvem bytes; < 0 é erro */
     u8 max_rate = cap[1] > 0x14 ? 0x14 : cap[1], max_lanes = cap[2] & 0x1F;
     d->link.enhanced_framing = (cap[2] & 0x80) != 0;
     d->link.tps3 = (cap[2] & 0x40) != 0;
