@@ -415,6 +415,8 @@ echo "==> funopen (fluxo stdio por callbacks de cookie; teste de host)"
 ZIG="$ZIG" bash "$ROOT/tools/funopen_hosttest.sh" "$OUT/funopen-hosttest"
 echo "==> libc do corpus 3 (getpass/readpassphrase + wide stdio swprintf/fwprintf/fputws; teste de host)"
 ZIG="$ZIG" bash "$ROOT/tools/libc_corpus3_hosttest.sh" "$OUT/libc-corpus3-hosttest"
+echo "==> expat (parse de XML real; teste de host)"
+bash "$ROOT/tools/expat_hosttest.sh" "$OUT/expat-hosttest"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
@@ -540,6 +542,14 @@ if MOS_ZIG="$ZIG" bash "$ROOT/tools/build-libxml2.sh" "$ROOT/build/libxml2/libxm
     cp -f "$ROOT/.tools/libxml2-2.13.8/Copyright" "$ESP/mOS/usr/share/libxml2/Copyright"
 else
     echo "aviso: libxml2 não compilou; /usr/lib/libxml2.2.dylib fica de fora" >&2
+fi
+# expat 2.6.4 (MIT): apps do corpus ligam XML_ParserCreate/XML_Parse/XML_Set*Handler em /usr/lib/libexpat.1.dylib.
+if MOS_ZIG="$ZIG" bash "$ROOT/tools/build-expat.sh" "$ROOT/build/expat/libexpat.1.dylib"; then
+    mkdir -p "$ESP/mOS/usr/share/expat"
+    cp -f "$ROOT/build/expat/libexpat.1.dylib" "$ESP/mOS/usr/lib/libexpat.1.dylib"
+    cp -f "$ROOT/.tools/expat-2.6.4/COPYING" "$ESP/mOS/usr/share/expat/COPYING"
+else
+    echo "aviso: expat não compilou; /usr/lib/libexpat.1.dylib fica de fora" >&2
 fi
 cp -f "$ROOT/build/curl-x86_64/libcurl.4.dylib" "$ESP/mOS/usr/lib/libcurl.4.dylib"
 cp -f "$ROOT/build/zlib-x86_64/LICENSE" "$ESP/mOS/usr/share/zlib/LICENSE"
