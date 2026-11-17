@@ -114,6 +114,9 @@ void _NSAppendToKillRing(id s) {
 }
 id _NSYankFromKillRing(void) { return g_kill_ring ? MSG0(id, g_kill_ring, "copy") : cx_str(""); }
 void _NSNewKillRingSequence(void) { if (g_kill_ring) MSG(void, g_kill_ring, "setString:", cx_str("")); }
+void _NSInitializeKillRing(void) { if (!g_kill_ring) g_kill_ring = objc_retain(MSG0(id, (id)kls("NSMutableString"), "string")); }
+/* depois de colar, o próximo recorte começa uma sequência nova (como o yank do Emacs) */
+void _NSSetKillRingToYankedState(void) { _NSNewKillRingSequence(); }
 static void bezel(R f, BOOL enabled, double radius) {
     id p = ((id (*)(id, SEL, R, double, double))objc_msgSend)((id)kls("NSBezierPath"), sl("bezierPathWithRoundedRect:xRadius:yRadius:"), mkr(f.x + 0.5, f.y + 0.5, f.w - 1, f.h - 1), radius, radius);
     MSG0(void, cx_color(1, 1, 1, enabled ? 1 : 0.6), "setFill"); MSG0(void, p, "fill");

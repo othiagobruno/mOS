@@ -271,9 +271,7 @@ id_ CGEventCreateData(void *alloc, id_ ev) { (void)alloc; (void)ev; return 0; }
 Boolean CGEventSourceKeyState(int state, unsigned short key) { (void)state; (void)key; return 0; }
 id_ CTFontCopyVariationAxesInternal(id_ font) { (void)font; return 0; }
 
-/* ---- AppKit: "kill ring" do Emacs (Ctrl+K / Ctrl+Y): append/new/yank reais em appkit_more2.c */
-void _NSInitializeKillRing(void) {}
-void _NSSetKillRingToYankedState(void) {}
+/* ---- AppKit: o "kill ring" do Emacs (Ctrl+K / Ctrl+Y) está inteiro em appkit_more2.c */
 
 /* (CoreVideo fica em corevideo.c, da sessão CoreAnimation/IOSurface) */
 
