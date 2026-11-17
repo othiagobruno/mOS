@@ -6,7 +6,9 @@
 #include <stdint.h>
 typedef struct { void *isa; uint64_t flags; const char *s; uint64_t n; } k_t;
 extern const void *NSLocaleIdentifier, *NSLocaleCurrencyCode, *NSStringTransformToLatin, *kCFStringTransformToLatin,
-    *NSURLTotalFileSizeKey, *kCFURLFileSizeKey, *kCFErrorLocalizedFailureReasonKey, *NSMallocException;
+    *NSURLTotalFileSizeKey, *kCFURLFileSizeKey, *kCFErrorLocalizedFailureReasonKey, *NSMallocException,
+    *NSURLFileScheme, *NSGlobalDomain, *NSHTTPCookieMaximumAge, *NSValidationValueErrorKey, *kCFURLIsUserImmutableKey,
+    *kCFUserNotificationAlertHeaderKey, *NSURLProtectionSpaceSOCKSProxy;
 extern char cx_cfconst_isa[];
 const void *__CFStringMakeConstantString(const char *);
 static int ok, bad;
@@ -24,6 +26,13 @@ int main(void) {
     val(kCFURLFileSizeKey, "NSURLFileSizeKey", "kCFURLFileSizeKey");
     val(kCFErrorLocalizedFailureReasonKey, "NSLocalizedFailureReason", "kCFErrorLocalizedFailureReasonKey");
     val(NSMallocException, "NSMallocException", "NSMallocException");
+    val(NSURLFileScheme, "file", "NSURLFileScheme");
+    val(NSGlobalDomain, "NSGlobalDomain", "NSGlobalDomain");
+    val(NSHTTPCookieMaximumAge, "Max-Age", "NSHTTPCookieMaximumAge");
+    val(NSValidationValueErrorKey, "NSValidationErrorValue", "NSValidationValueErrorKey");
+    val(kCFURLIsUserImmutableKey, "NSURLIsUserImmutableKey", "kCFURLIsUserImmutableKey");
+    val(kCFUserNotificationAlertHeaderKey, "AlertHeader", "kCFUserNotificationAlertHeaderKey");
+    val(NSURLProtectionSpaceSOCKSProxy, "SOCKS", "NSURLProtectionSpaceSOCKSProxy");
     const void *a = __CFStringMakeConstantString("CFBundleIdentifier");
     char buf[32]; strcpy(buf, "CFBundleIdentifier");
     const void *b = __CFStringMakeConstantString(buf);
