@@ -600,6 +600,7 @@ void cx_appkit_input_init(void) {
     cx_uttype_init();           /* vscode_media.c: classe UTType */
     { extern void cx_fw_small_init(void); cx_fw_small_init(); }                     /* fw_small.c: MetricKit, SystemExtensions, OSAKit... */
     { extern void cx_intents_auth_init(void); cx_intents_auth_init(); }             /* fw_intents_auth.c: Intents e AuthenticationServices */
+    { extern void cx_addressbook_init(void); cx_addressbook_init(); }               /* addressbook_fw.c: AddressBook sobre a agenda do Contacts */
     cx_const_objs_init();       /* constobjs.c: NSConstantArray/NSConstantDictionary dos literais do clang */
     cx_vscode_cf_classes();     /* vscode_cf.c: classes internas de CF (locale, UUID, CharacterSet, BinaryHeap) e kCFNull */
     { extern void cx_appkit_more_classes(void); cx_appkit_more_classes(); }   /* appkit_more.c: NSGestureRecognizer, NSObjectController, NSTextBlock antes das subclasses */
