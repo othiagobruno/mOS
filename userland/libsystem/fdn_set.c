@@ -30,7 +30,7 @@ typedef struct cfset_cb {
 
 extern cx_class_t NSSet_c __asm__("OBJC_CLASS_$_NSSet");
 extern cx_class_t NSMutableSet_c __asm__("OBJC_CLASS_$_NSMutableSet");
-static cx_class_t NSCountedSet_c __asm__("OBJC_CLASS_$_NSCountedSet"), NSCountedSet_m __asm__("OBJC_METACLASS_$_NSCountedSet");
+cx_class_t NSCountedSet_c __asm__("OBJC_CLASS_$_NSCountedSet"), NSCountedSet_m __asm__("OBJC_METACLASS_$_NSCountedSet");
 
 static id cls(const char *n) { return (id)cx_class_named(n); }
 static void *blk_inv(void *b) { return *(void **)((u8 *)b + 16); }

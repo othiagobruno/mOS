@@ -18,8 +18,8 @@ typedef struct { u64 loc, len; } rng_t;
 typedef struct { cx_class_t *isa; rng_t *r; u64 nr, cap, count; } ixs_t;
 #define X(o) ((ixs_t *)(o))
 
-static cx_class_t ixs_c __asm__("OBJC_CLASS_$_NSIndexSet"), ixs_m __asm__("OBJC_METACLASS_$_NSIndexSet");
-static cx_class_t mixs_c __asm__("OBJC_CLASS_$_NSMutableIndexSet"), mixs_m __asm__("OBJC_METACLASS_$_NSMutableIndexSet");
+cx_class_t ixs_c __asm__("OBJC_CLASS_$_NSIndexSet"), ixs_m __asm__("OBJC_METACLASS_$_NSIndexSet");
+cx_class_t mixs_c __asm__("OBJC_CLASS_$_NSMutableIndexSet"), mixs_m __asm__("OBJC_METACLASS_$_NSMutableIndexSet");
 static id cls(const char *n) { return (id)cx_class_named(n); }
 static void *blk_inv(void *b) { return *(void **)((u8 *)b + 16); }
 

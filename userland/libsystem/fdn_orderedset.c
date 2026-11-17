@@ -17,8 +17,8 @@ id cx_enumerator_new(id array);
 typedef struct { u64 loc, len; } rng_t;
 typedef struct { cx_class_t *isa; id arr, set; } os_t;
 #define O(o) ((os_t *)(o))
-static cx_class_t os_c __asm__("OBJC_CLASS_$_NSOrderedSet"), os_m __asm__("OBJC_METACLASS_$_NSOrderedSet");
-static cx_class_t mos_c __asm__("OBJC_CLASS_$_NSMutableOrderedSet"), mos_m __asm__("OBJC_METACLASS_$_NSMutableOrderedSet");
+cx_class_t os_c __asm__("OBJC_CLASS_$_NSOrderedSet"), os_m __asm__("OBJC_METACLASS_$_NSOrderedSet");
+cx_class_t mos_c __asm__("OBJC_CLASS_$_NSMutableOrderedSet"), mos_m __asm__("OBJC_METACLASS_$_NSMutableOrderedSet");
 static id cls(const char *n) { return (id)cx_class_named(n); }
 static void *inv_of(void *b) { return *(void **)((u8 *)b + 16); }
 static id ar(id o) { return objc_autorelease(o); }
