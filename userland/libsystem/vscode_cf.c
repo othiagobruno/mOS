@@ -304,28 +304,6 @@ long CFStringGetHyphenationLocationBeforeIndex(id s, long i, cf_range_t r, u64 o
     (void)s; (void)i; (void)r; (void)opts; (void)loc; (void)ch;
     return -1;   /* kCFNotFound */
 }
-static int hexval(int c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
-id CFURLCreateStringByReplacingPercentEscapes(void *alloc, id s, id leave) {
-    (void)alloc;
-    const char *a = utf8(s), *keep = leave ? utf8(leave) : 0;
-    size_t n = strlen(a);
-    char *o = malloc(n + 1);
-    size_t w = 0;
-    if (!o) return 0;
-    for (size_t i = 0; i < n; i++) {
-        int h, l;
-        if (a[i] == '%' && i + 2 < n + 0 + 1 && (h = hexval(a[i + 1])) >= 0 && (l = hexval(a[i + 2])) >= 0) {
-            char c = (char)(h << 4 | l);
-            int stay = !keep;      /* NULL: não decodifica nada, como no macOS */
-            for (const char *k = keep; k && *k; k++) if (*k == c) stay = 1;
-            if (!stay) { o[w++] = c; i += 2; continue; }
-        }
-        o[w++] = a[i];
-    }
-    id r = objc_retain(cx_str_n(o, w));
-    free(o);
-    return r;
-}
 
 /* CFCharacterSet: fdn_charset.c (o mesmo objeto do NSCharacterSet) */
 
@@ -549,11 +527,6 @@ void *CFBundleGetFunctionPointerForName(id bundle, id name) {
 }
 
 /* ================================================================ CFMachPort e alertas */
-id CFMachPortCreateRunLoopSource(void *alloc, id port, long order) {
-    (void)alloc; (void)port; (void)order;
-    return objc_retain(MSG0(id, cls("NSObject"), "new"));
-}
-void CFMachPortInvalidate(id port) { (void)port; }
 /* sem servidor de alertas do sistema: responde "padrão" (kCFUserNotificationDefaultResponse) */
 int CFUserNotificationDisplayAlert(double timeout, u64 flags, id icon, id sound, id loc, id header, id msg,
                                    id def, id alt, id other, u64 *response) {

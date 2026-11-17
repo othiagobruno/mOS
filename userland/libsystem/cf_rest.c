@@ -138,6 +138,23 @@ unsigned char CFStringTokenizerGoToTokenAtIndex(id tok, long idx) {
     t->i = idx < 0 ? 0 : (int)idx;
     return CFStringTokenizerAdvanceToNextToken(tok);
 }
+/* kCFStringTokenizerAttributeLatinTranscription 0x10000, kCFStringTokenizerAttributeLanguage 0x20000 */
+id CFStringTokenizerCopyCurrentTokenAttribute(id tok, unsigned long attr) {
+    extern unsigned char CFStringTransform(id m, rng_t *range, id transform, unsigned char reverse);
+    id CFStringTokenizerCopyBestStringLanguage(id s, rng_t r);
+    tok_o *t = as_tok(tok);
+    if (!t || t->loc < 0 || !t->s) return 0;
+    id w = cx_str_n(t->s + t->loc, (unsigned long)t->len);
+    if (attr == 0x20000) { rng_t r = {0, 0}; id l = CFStringTokenizerCopyBestStringLanguage(w, r); objc_release(w); return l; }
+    if (attr == 0x10000) {
+        id m = MSG0(id, w, "mutableCopy");
+        objc_release(w);
+        CFStringTransform(m, 0, S("Any-Latin"), 0);
+        return m;
+    }
+    objc_release(w);
+    return 0;
+}
 id CFStringTokenizerCopyBestStringLanguage(id s, rng_t r) {
     const char *p = C(s);
     (void)r;
