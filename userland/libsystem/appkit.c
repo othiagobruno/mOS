@@ -6245,11 +6245,12 @@ void cx_appkit_init(void) {
     M(NSTableView, "selectedRowIndexes", tv_sel_indexes); M(NSTableView, "removeTableColumn:", tv_remove_col);
     M(NSTableView, "noteNumberOfRowsChanged", tv_note_rows); M(NSTableView, "reloadDataForRowIndexes:columnIndexes:", tv_reload_rows);
     M(NSTableView, "editColumn:row:withEvent:select:", tv_edit);
-    cx_table2_register();   /* appkit_table2.inc: seleção múltipla, teclado, ordenação, colunas, arrastar, geometria */
     DEF(NSTableColumn, NSObject);
     M(NSTableColumn, "initWithIdentifier:", col_init); M(NSTableColumn, "identifier", col_ident); M(NSTableColumn, "setTitle:", col_set_title);
     M(NSTableColumn, "title", col_title); M(NSTableColumn, "setWidth:", col_set_width); M(NSTableColumn, "width", col_width);
-    M(NSTableColumn, "setMinWidth:", noop1_m); M(NSTableColumn, "setEditable:", noop1_m);
+    /* depois da NSTableColumn existir: o registro põe nela minWidth/maxWidth, editable, dataCell, headerCell... (antes
+     * os métodos de coluna caíam numa classe ainda indefinida e a tabela ficava sem eles) */
+    cx_table2_register();   /* appkit_table2.inc: seleção múltipla, teclado, ordenação, colunas, arrastar, geometria */
     DEF(NSTableCellView, NSView);
     M(NSTableCellView, "setTextField:", tcv_set_tf); M(NSTableCellView, "textField", tcv_tf);
     { extern cx_class_t NSData_x __asm__("OBJC_CLASS_$_NSData");
