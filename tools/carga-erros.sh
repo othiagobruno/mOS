@@ -4,6 +4,7 @@
 #   2. dependência fraca ausente   -> o processo abre e o símbolo weak_import vale NULL
 #   3. função que ninguém exporta  -> stub cx_unresolved: "símbolo não implementado no libSystem do mOS: <nome>", saída 127
 #   4. constante que ninguém exporta -> GOT ligado à área zerada: lê 0/nil
+#   5. ponteiro com o byte alto marcado (Swift -O, RTTI) -> rebase nos 56 bits baixos, marca preservada
 #   tools/carga-erros.sh [x86_64|arm64|ambos]    (padrão: ambos; o arm64 usa o runtime de tools/a64rt-testes.sh)
 # Trabalho pesado neste PC: rode dentro de `flock /tmp/mos-pesado.lock nice -n 10` (/home/thiago/OpenBot/Shared/mos-regras-de-ram.md).
 set -u
@@ -40,6 +41,7 @@ progs() {  # progs <triplo> <dir>: compila os programas do teste
     "$ZIG" cc -target "$t" -O1 "$SRC/dylib.c" -L"$d/libs" -Wl,-weak-lausente1 -o "$d/bin/dylib-fraca" || return 1
     "$ZIG" cc -target "$t" -O1 "$SRC/funcao.c" -o "$d/bin/funcao" -Wl,-undefined,dynamic_lookup || return 1
     "$ZIG" cc -target "$t" -O1 "$SRC/constante.c" -o "$d/bin/constante" -Wl,-undefined,dynamic_lookup || return 1
+    "$ZIG" cc -target "$t" -O1 "$SRC/marcado.c" -o "$d/bin/marcado" || return 1
 }
 
 roda() {  # roda <vfs> <programa> <log> [VAR=valor]...: devolve o código de saída
@@ -69,6 +71,10 @@ suite() {  # suite <rótulo> <vfs> [VAR=valor]...
     confere "$r constante ausente lê 0/nil (rc $rc)" \
         "$([ $rc = 0 ] && grep -aqE 'constante-teste: k=(0x0|\(nil\)|0) notif=(0x0|\(nil\)|0)' "$W/$r-constante.log" && echo 1)" \
         "$(head -3 "$W/$r-constante.log" | tr '\n' ' ')"
+    roda "$v" marcado "$W/$r-marcado.log" "$@"; rc=$?
+    confere "$r rebase de ponteiro com byte alto marcado (rc $rc)" \
+        "$([ $rc = 0 ] && grep -aq 'marcado-teste: ok' "$W/$r-marcado.log" && echo 1)" \
+        "$(grep -a 'marcado-teste' "$W/$r-marcado.log" | head -1)"
 }
 
 if [ "$QUAIS" != arm64 ]; then
