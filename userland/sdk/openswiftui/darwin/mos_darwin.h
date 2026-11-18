@@ -258,3 +258,9 @@ static inline int _mos_fcntl(int fd, int cmd, long value) { return fcntl(fd, cmd
 static inline int _mos_fcntl_ptr(int fd, int cmd, void *ptr) { return fcntl(fd, cmd, ptr); }
 static inline int _mos_ioctl(int fd, unsigned long request, long value) { return ioctl(fd, request, value); }
 static inline int _mos_ioctl_ptr(int fd, unsigned long request, void *ptr) { return ioctl(fd, request, ptr); }
+#if __has_include(<semaphore.h>)
+/* sem_open é variádica: o Swift não a importa (Darwin.sem_open no overlay) */
+static inline sem_t *_mos_sem_open(const char *name, int oflag, mode_t mode, unsigned value) {
+    return (oflag & O_CREAT) ? sem_open(name, oflag, mode, value) : sem_open(name, oflag);
+}
+#endif

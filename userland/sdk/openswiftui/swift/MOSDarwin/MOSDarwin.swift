@@ -196,7 +196,27 @@ public var SIG_ERR: sig_t { unsafeBitCast(-1, to: sig_t.self) }
 
 extension POSIXErrorCode {
     public static var EWOULDBLOCK: POSIXErrorCode { .EAGAIN }
+    /// O maior errno (ELAST de sys/errno.h).
+    public static var ELAST: POSIXErrorCode { .ENOTCAPABLE }
 }
+
+// MARK: - semaphore.h e environ (as declarações do Platform.swift do Swift, Apache 2.0, com os valores do Darwin)
+
+public typealias Semaphore = UnsafeMutablePointer<sem_t>
+
+/// O valor que `sem_open()` devolve na falha: `(sem_t *)-1` no Darwin.
+public var SEM_FAILED: Semaphore? { Semaphore(bitPattern: -1) }
+
+public func sem_open(_ name: UnsafePointer<CChar>, _ oflag: Int32) -> Semaphore? {
+    _mos_sem_open(name, oflag, 0, 0)
+}
+
+public func sem_open(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t, _ value: CUnsignedInt) -> Semaphore? {
+    _mos_sem_open(name, oflag, mode, value)
+}
+
+/// `extern char **environ` não vem do C no Darwin; o mesmo ponteiro de `_NSGetEnviron()`.
+public var environ: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?> { _NSGetEnviron().pointee! }
 
 // MARK: - relógios (no C, CLOCK_* são macros para constantes de um enum anônimo: o Swift as vê como Int32)
 

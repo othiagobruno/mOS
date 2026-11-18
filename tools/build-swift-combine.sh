@@ -147,7 +147,7 @@ if [ -f "$dest/libswiftDispatch.dylib" ]; then
     # quando o app não pedia o Combine (o Foundation Swift real liga o Dispatch em todo processo)
     "$zig" c++ -target "$zt" -shared -o "$tmp/dispatch/libswiftDispatch.dylib" \
         -Wl,-install_name,/usr/lib/swift/libswiftDispatch.dylib -Wl,-undefined,dynamic_lookup "$tmp/dispatch/Dispatch.o" \
-        "$tmp/dispatch/Combine.dylib" "$dest/libswiftCore.dylib"
+        "$tmp/dispatch/Combine.dylib" "$dest/libswift_Concurrency.dylib" "$dest/libswiftCore.dylib"
     grep -a -q '_$sSo17OS_dispatch_queueC8DispatchE17SchedulerTimeTypeVMn' "$tmp/dispatch/libswiftDispatch.dylib" || {
         echo "Dispatch+Combine: libswiftDispatch sem DispatchQueue.SchedulerTimeType" >&2
         exit 1

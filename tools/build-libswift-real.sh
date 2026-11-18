@@ -276,7 +276,6 @@ ov ObjectiveC -import-underlying-module "$sdk"/ObjectiveC/*.swift
 ov CoreFoundation -import-underlying-module "$sdk"/CoreFoundation/*.swift
 ov CoreGraphics -import-underlying-module "$objc/overlays-src/CGFloat.swift" "$sdk"/CoreGraphics/*.swift
 ov os -import-underlying-module "$sdk"/os/*.swift
-ov Dispatch -import-underlying-module "$sdk"/Dispatch/*.swift
 "$zig" cc -target "$zt" -O2 -c "$sdk/Metal/mos_mtl_modify.c" -o "$out/mos_mtl_modify.o"
 ov Metal -import-underlying-module "$sdk/Metal/MTLBuffer.swift"
 for m in _Builtin_float simd XPC QuartzCore IOKit OSLog Spatial CoreAudio CoreImage CoreMIDI QuickLookUI; do
@@ -350,13 +349,14 @@ done
     -Xcc "-isystem$inc" -Xcc -DMOS_SWIFT_OBJC=1 -Xcc -Wno-nullability-completeness \
     -module-link-name swift_Concurrency -autolink-force-load "${cfargs[@]}" "${CAVAIL[@]}" \
     -emit-module-path "$out/_Concurrency.swiftmodule" -o "$out/_Concurrency.o" "${CFILES[@]}"
+# o Dispatch importa o _Concurrency (DispatchSerialQueue como SerialExecutor): vem depois dele
+ov Dispatch -import-underlying-module "$sdk"/Dispatch/*.swift
 
 echo "==> dylibs"
 link_one libswiftDarwin "$out/Darwin.o" "$out/_Builtin_float.o"
 link_one libswiftObjectiveC "$out/ObjectiveC.o"
 link_one libswiftCoreFoundation "$out/CoreFoundation.o"
 link_one libswiftCoreGraphics "$out/CoreGraphics.o"
-link_one libswiftDispatch "$out/Dispatch.o"
 # o overlay os (os_log, OSLogType.fault...) era compilado e nunca ligado: os apps caíam no stub do libSystem
 link_one libswiftos "$out/os.o"
 link_one libswiftMetal "$out/Metal.o" "$out/mos_mtl_modify.o"
@@ -367,6 +367,7 @@ fi
 # shellcheck disable=SC2046
 mapfile -t CCOBJS < <(find "$out" -name '_Concurrency_*.o' | sort)
 link_one libswift_Concurrency "$out/_Concurrency.o" "${CCOBJS[@]}"
+link_one libswiftDispatch "$out/Dispatch.o" "$dest/libswift_Concurrency.dylib"
 for m in XPC QuartzCore IOKit OSLog Spatial CoreAudio CoreImage CoreMIDI QuickLookUI simd; do
     link_one "libswift$m" "$out/$m.o"
 done
