@@ -532,9 +532,50 @@ static BOOL b_load_nib_old(id cls, SEL c, id name, id owner) { (void)cls; (void)
 static BOOL b_load_nib_opts(id self, SEL c, id name, id owner, id opts) { (void)self; (void)c; (void)opts; return load_nib_named(name, owner, 0); }
 
 /* ---- NSNib */
-typedef struct { id path; } nibst_t;
+/* um NSNib aponta para um arquivo (initWithNibNamed:bundle:) ou guarda os bytes de um NIBArchive: initWithNibData:bundle: e
+ * os NSNib embutidos noutro nib (NSNibFileData; ex.: as células-protótipo de NSTableView/NSOutlineView em
+ * NSTableViewArchivedReusableViewsKey). dir: a pasta dos recursos do nib de origem. */
+typedef struct { id path; u8 *data; u64 len; char dir[600]; } nibst_t;
 static id nb_init_named(id self, SEL c, id name, id bundle) { (void)c; (void)bundle; nibst_t *s = calloc(1, sizeof *s); s->path = objc_retain(nib_path_named(name, 0)); ST(self) = s; if (!s->path) { objc_release(self); return 0; } return self; }
-static BOOL nb_instantiate(id self, SEL c, id owner, id *top) { (void)c; nibst_t *s = ST(self); return s && load_nib_path(cx_cstr(s->path), owner, 0, top); }
+static id nb_with_bytes(id self, const void *b, u64 n, const char *dir) {
+    nibst_t *s = calloc(1, sizeof *s);
+    if (!s || !b || n < 10 || memcmp(b, "NIBArchive", 10)) { free(s); objc_release(self); return 0; }
+    s->data = malloc(n);
+    if (!s->data) { free(s); objc_release(self); return 0; }
+    memcpy(s->data, b, n);
+    s->len = n;
+    snprintf(s->dir, sizeof s->dir, "%s", dir ? dir : "");
+    ST(self) = s;
+    return self;
+}
+static id nb_init_data(id self, SEL c, id data, id bundle) {
+    (void)c;
+    const char *dir = "";
+    id rp = bundle && cx_responds(bundle->isa, sel_registerName("resourcePath")) ? MSG0(id, bundle, "resourcePath") : 0;
+    if (rp) dir = cx_cstr(rp);
+    if (!data) { objc_release(self); return 0; }
+    return nb_with_bytes(self, MSG0(const void *, data, "bytes"), MSG0(u64, data, "length"), dir);
+}
+static id nb_init_coder(id self, SEL c, id coder) {
+    (void)c;
+    nibctx_t *x = cst(coder)->ctx;
+    unsigned idx = cst(coder)->idx;
+    int d = nib_ref(x, idx, "NSNibFileData");
+    const nib_val_t *b = d >= 0 ? nv(x, (unsigned)d, "NS.bytes") : 0;
+    if (!b || b->type != NV_DATA) return self;   /* sem bytes: instantiate falha, como um NSNib vazio */
+    return nb_with_bytes(self, b->data, b->len, x->dir);
+}
+static BOOL nb_instantiate(id self, SEL c, id owner, id *top) {
+    (void)c;
+    nibst_t *s = ST(self);
+    if (!s) return NO;
+    if (s->path) return load_nib_path(cx_cstr(s->path), owner, 0, top);
+    if (!s->data) return NO;
+    u8 *b = malloc(s->len);   /* o carregador fica com o buffer (as strings do nib apontam para ele) */
+    if (!b) return NO;
+    memcpy(b, s->data, s->len);
+    return nib_load_buf(b, s->len, owner, 0, s->dir, top) != 0;
+}
 
 /* ---- NSViewController */
 typedef struct { id view, nib, title, rep, storyboard, ident; char dir[600]; BOOL loading; } vcst_t;
@@ -751,6 +792,8 @@ static void nib_register(void) {
       cx_add_cmethod(&NSBundle_x, "loadNibNamed:owner:", (void *)b_load_nib_old); }
     DEF(NSNib, NSObject);
     M(NSNib, "initWithNibNamed:bundle:", nb_init_named); M(NSNib, "instantiateWithOwner:topLevelObjects:", nb_instantiate);
+    M(NSNib, "initWithNibData:bundle:", nb_init_data); M(NSNib, "initWithCoder:", nb_init_coder);
+    M(NSNib, "instantiateNibWithOwner:topLevelObjects:", nb_instantiate);
     DEF(NSViewController, NSResponder);
     M(NSViewController, "initWithNibName:bundle:", vc_init_nib); M(NSViewController, "init", vc_init); M(NSViewController, "initWithCoder:", vc_init_coder);
     M(NSViewController, "view", vc_view); M(NSViewController, "setView:", vc_set_view); M(NSViewController, "loadView", vc_load_view);

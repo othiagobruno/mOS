@@ -1400,7 +1400,12 @@ static void pg_stop(id self, SEL c, id sender) {
 }
 static void pg_set_threaded(id self, SEL c, BOOL v) { (void)self; (void)c; (void)v; }   /* a animação é sempre no laço principal */
 static BOOL pg_threaded(id self, SEL c) { (void)self; (void)c; return NO; }
-static NSSize pg_size_to_fit_size(id self) { return vs(self)->pg_style == 1 ? (NSSize){32, 32} : (NSSize){vs(self)->frame.s.w, 20}; }
+static NSSize pg_size_to_fit_size(id self) {
+    /* NSControlSize: 0 regular, 1 small, 2 mini, 3 large (appkit_app_more.c guarda o valor) */
+    u64 cs = cx_responds(self->isa, sel_registerName("controlSize")) ? MSG0(u64, self, "controlSize") : 0;
+    double spin = cs == 1 ? 16 : cs == 2 ? 10 : cs == 3 ? 40 : 32, bar = cs == 1 ? 12 : cs == 2 ? 10 : 20;
+    return vs(self)->pg_style == 1 ? (NSSize){spin, spin} : (NSSize){vs(self)->frame.s.w, bar};
+}
 static void pg_size_to_fit(id self, SEL c) {
     (void)c;
     NSSize z = pg_size_to_fit_size(self);
