@@ -417,6 +417,8 @@ echo "==> libc do corpus 3 (getpass/readpassphrase + wide stdio swprintf/fwprint
 ZIG="$ZIG" bash "$ROOT/tools/libc_corpus3_hosttest.sh" "$OUT/libc-corpus3-hosttest"
 echo "==> expat (parse de XML real; teste de host)"
 bash "$ROOT/tools/expat_hosttest.sh" "$OUT/expat-hosttest"
+echo "==> gethostbyname/gethostbyname2 sobre getaddrinfo (teste de host)"
+ZIG="$ZIG" bash "$ROOT/tools/gethostby_hosttest.sh" "$OUT/gethostby-hosttest"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
