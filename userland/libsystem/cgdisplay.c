@@ -85,29 +85,122 @@ static id sc_device(id self, SEL c) {
 static double sc_one(id self, SEL c) { (void)self; (void)c; return 1.0; }
 static double sc_refresh(id self, SEL c) { (void)self; (void)c; return 1.0 / 60.0; }
 static id sc_name(id self, SEL c) { (void)self; (void)c; return cx_str("Tela do mOS"); }
-/* ---- NSColorSpace (o mOS só tem sRGB): todos os espaços são o mesmo objeto; -CGColorSpace devolve um CGColorSpace sRGB
- * de verdade. Antes devolvia o próprio NSColorSpace, e as funções do motor ICC (cg_color.inc) leem os campos do cgspace_t:
- * o Electron faz [[x colorSpace] CGColorSpace] e CGColorSpaceCopyICCData, que lia lixo como ponteiro do perfil e caía */
+static id cs_named(int i);
+static id sc_space(id self, SEL c) { (void)self; (void)c; return cs_named(0); }   /* a tela do mOS é sRGB */
+/* ---- NSColorSpace: cada um embrulha o seu CGColorSpace (coregraphics.c cria os espaços pelo nome, com o perfil ICC
+ * deles). -CGColorSpace devolve esse espaço CG, nunca o próprio NSColorSpace: as funções do motor ICC (cg_color.inc) leem
+ * os campos do cgspace_t, e o Electron faz [[x colorSpace] CGColorSpace] + CGColorSpaceCopyICCData. Os espaços do sistema
+ * são únicos por nome; initWithCGColorSpace: e initWithICCProfileData: criam espaços novos. */
 cx_class_t NSColorSpace_c __asm__("OBJC_CLASS_$_NSColorSpace");
 cx_class_t NSColorSpace_m __asm__("OBJC_METACLASS_$_NSColorSpace");
-static id cs_shared(id cls, SEL c) { (void)c; static id s; if (!s) s = cx_alloc_instance((cx_class_t *)cls); return s; }
-extern const void *kCGColorSpaceSRGB;
+typedef struct { cx_class_t *isa; void *cg; id name; } nscs_t;
+int strcmp(const char *a, const char *b);
+int strncmp(const char *a, const char *b, unsigned long n);
+void objc_release(id o);
+id objc_autorelease(id o);
 void *CGColorSpaceCreateWithName(const void *name);
-static id cs_self(id self, SEL c) {
-    (void)self; (void)c;
-    static void *cg;   /* criado uma vez, vive para sempre (como o espaço sRGB do sistema no macOS) */
-    if (!cg) cg = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-    return (id)cg;
+void *CGColorSpaceCreateWithICCData(id data);
+void *CGColorSpaceRetain(void *s);
+void CGColorSpaceRelease(void *s);
+size_t CGColorSpaceGetNumberOfComponents(const void *s);
+i32 CGColorSpaceGetModel(const void *s);
+id CGColorSpaceCopyICCData(void *space);
+const void *CGColorSpaceGetName(const void *s);
+extern const void *kCGColorSpaceSRGB, *kCGColorSpaceExtendedSRGB, *kCGColorSpaceGenericRGB, *kCGColorSpaceDisplayP3,
+    *kCGColorSpaceAdobeRGB1998, *kCGColorSpaceGenericGrayGamma2_2, *kCGColorSpaceExtendedGray, *kCGColorSpaceGenericGray,
+    *kCGColorSpaceGenericCMYK;
+/* seletor de classe → espaço CG e nome mostrado (os device* são os mesmos espaços do CGColorSpaceCreateDevice*) */
+static const struct { const char *sel; const void *const *cgname; const char *label; } cs_tab[] = {
+    {"sRGBColorSpace", &kCGColorSpaceSRGB, "sRGB IEC61966-2.1"},
+    {"extendedSRGBColorSpace", &kCGColorSpaceExtendedSRGB, "sRGB IEC61966-2.1 (estendido)"},
+    {"genericRGBColorSpace", &kCGColorSpaceGenericRGB, "RGB genérico"},
+    {"deviceRGBColorSpace", &kCGColorSpaceSRGB, "RGB do dispositivo"},
+    {"displayP3ColorSpace", &kCGColorSpaceDisplayP3, "Display P3"},
+    {"adobeRGB1998ColorSpace", &kCGColorSpaceAdobeRGB1998, "Adobe RGB (1998)"},
+    {"genericGamma22GrayColorSpace", &kCGColorSpaceGenericGrayGamma2_2, "Cinza genérico gama 2.2"},
+    {"extendedGenericGamma22GrayColorSpace", &kCGColorSpaceExtendedGray, "Cinza genérico gama 2.2 (estendido)"},
+    {"genericGrayColorSpace", &kCGColorSpaceGenericGray, "Cinza genérico"},
+    {"deviceGrayColorSpace", &kCGColorSpaceGenericGrayGamma2_2, "Cinza do dispositivo"},
+    {"genericCMYKColorSpace", &kCGColorSpaceGenericCMYK, "CMYK genérico"},
+    {"deviceCMYKColorSpace", &kCGColorSpaceGenericCMYK, "CMYK do dispositivo"},
+};
+#define NCS (sizeof cs_tab / sizeof cs_tab[0])
+static id cs_shared_obj[NCS];
+static nscs_t *cs_st(id o) { return (nscs_t *)o; }
+static id cs_make(void *cg, const char *label) {
+    id o = cx_alloc_instance(&NSColorSpace_c);
+    if (!o) { CGColorSpaceRelease(cg); return 0; }
+    cs_st(o)->cg = cg;
+    cs_st(o)->name = label ? objc_retain(cx_str(label)) : 0;
+    return o;
 }
-static long cs_components(id self, SEL c) { (void)self; (void)c; return 3; }
-static long cs_model(id self, SEL c) { (void)self; (void)c; return 1; }          /* NSColorSpaceModelRGB */
-static id cs_name(id self, SEL c) { (void)self; (void)c; return cx_str("sRGB IEC61966-2.1"); }
+static int cs_index(const char *sel) {
+    for (u32 i = 0; i < NCS; i++) if (!strcmp(sel, cs_tab[i].sel)) return (int)i;
+    return -1;
+}
+static id cs_named(int i) {
+    if (i < 0 || i >= (int)NCS) i = 0;
+    if (!cs_shared_obj[i]) cs_shared_obj[i] = cs_make(CGColorSpaceCreateWithName(*cs_tab[i].cgname), cs_tab[i].label);
+    return cs_shared_obj[i];
+}
+static id cs_shared(id cls, SEL c) { (void)cls; return cs_named(cs_index((const char *)c)); }   /* SEL é o nome no runtime do mOS */
+static id cs_init_cg(id self, SEL c, void *cg) {
+    (void)c;
+    if (!cg) { objc_release(self); return 0; }
+    cs_st(self)->cg = CGColorSpaceRetain(cg);
+    return self;
+}
+static id cs_init_icc(id self, SEL c, id data) {
+    (void)c;
+    void *cg = data ? CGColorSpaceCreateWithICCData(data) : 0;
+    if (!cg) { objc_release(self); return 0; }
+    cs_st(self)->cg = cg;
+    return self;
+}
+static void *cs_cg(id self, SEL c) { (void)c; return cs_st(self)->cg; }
+static id cs_icc(id self, SEL c) { (void)c; id d = cs_st(self)->cg ? CGColorSpaceCopyICCData(cs_st(self)->cg) : 0; return d ? objc_autorelease(d) : 0; }
+static long cs_components(id self, SEL c) { (void)c; return cs_st(self)->cg ? (long)CGColorSpaceGetNumberOfComponents(cs_st(self)->cg) : 0; }
+/* NSColorSpaceModel: Unknown -1, Gray 0, RGB 1, CMYK 2, LAB 3, DeviceN 4, Indexed 5, Patterned 6 — os mesmos números do CG */
+static long cs_model(id self, SEL c) { (void)c; return cs_st(self)->cg ? (long)CGColorSpaceGetModel(cs_st(self)->cg) : -1; }
+static id cs_name(id self, SEL c) {
+    (void)c;
+    if (cs_st(self)->name) return cs_st(self)->name;
+    const void *n = cs_st(self)->cg ? CGColorSpaceGetName(cs_st(self)->cg) : 0;
+    return n ? (id)n : cx_str("Perfil ICC");
+}
+static BOOL cs_equal(id self, SEL c, id other) {
+    (void)c;
+    if (other == self) return YES;
+    if (!other || object_getClass(other) != object_getClass(self)) return NO;
+    void *a = cs_st(self)->cg, *b = cs_st(other)->cg;
+    if (a == b) return YES;
+    const void *na = a ? CGColorSpaceGetName(a) : 0, *nb = b ? CGColorSpaceGetName(b) : 0;
+    return na && nb && MSG(BOOL, (id)na, "isEqual:", (id)nb);
+}
+static u64 cs_hash(id self, SEL c) { (void)c; return (u64)cs_model(self, 0) * 31 + (u64)cs_components(self, 0); }
+static void cs_dealloc(id self, SEL c) {
+    (void)c;
+    for (u32 i = 0; i < NCS; i++) if (cs_shared_obj[i] == self) return;   /* os do sistema vivem para sempre */
+    if (cs_st(self)->cg) CGColorSpaceRelease(cs_st(self)->cg);
+    if (cs_st(self)->name) objc_release(cs_st(self)->name);
+    IMP sup = cx_lookup(cx_class_named("NSObject"), sel_registerName("dealloc"));   /* o dealloc do NSObject libera */
+    if (sup) ((void (*)(id, SEL))sup)(self, sel_registerName("dealloc"));
+}
+static id cs_available(id cls, SEL c, long model) {
+    (void)cls; (void)c;
+    id a = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+    for (u32 i = 0; i < NCS; i++) {
+        if (!strncmp(cs_tab[i].sel, "device", 6)) continue;   /* os device* repetem os genéricos */
+        id s = cs_named((int)i);
+        if (model < 0 || cs_model(s, 0) == model) MSG(void, a, "addObject:", s);
+    }
+    return a;
+}
 
 /* ---- cores do sistema que o appkit.c não tem: uma IMP só, escolhida pelo nome do seletor (no runtime
  * do mOS um SEL é o próprio nome). Valores do tema claro do macOS. O Chromium converte cada cor do
  * sistema para CGColor e faz CHECK do resultado: nil encerrava o VS Code. */
 id cx_color(double r, double g, double b, double a);
-int strcmp(const char *a, const char *b);
 static const struct { const char *sel; double r, g, b, a; } sys_colors[] = {
     {"alternateSelectedControlTextColor", 1, 1, 1, 1}, {"disabledControlTextColor", 0, 0, 0, 0.25},
     {"findHighlightColor", 1, 1, 0, 1}, {"headerTextColor", 0, 0, 0, 0.85}, {"highlightColor", 1, 1, 1, 1},
@@ -149,17 +242,36 @@ static void cl_get_rgba(id self, SEL c, double *r, double *g, double *b, double 
 static void cl_get_components(id self, SEL c, double *out) { (void)c; cl_rgba_t *k = (cl_rgba_t *)self; if (out) { out[0] = k->r; out[1] = k->g; out[2] = k->b; out[3] = k->a; } }
 static long cl_ncomp(id self, SEL c) { (void)self; (void)c; return 4; }
 static id cl_from_cg(id cls, SEL c, id cg) { (void)cls; (void)c; return cg; }   /* NSColor e CGColor são o mesmo objeto */
-static id cl_space(id self, SEL c) { (void)self; (void)c; return cs_shared((id)&NSColorSpace_c, 0); }
+/* o espaço da cor: o do CGColor (as do appkit.c são sRGB; as de CGColorCreate guardam o seu); o do sistema quando o
+ * nome bate, senão um NSColorSpace novo em volta dele */
+void *CGColorGetColorSpace(const void *c);
+static id cl_space(id self, SEL c) {
+    (void)c;
+    void *cg = CGColorGetColorSpace(self);
+    const void *n = cg ? CGColorSpaceGetName(cg) : 0;
+    for (u32 i = 0; n && i < NCS; i++) {
+        if (!strncmp(cs_tab[i].sel, "device", 6)) continue;
+        if (MSG(BOOL, (id)n, "isEqual:", (id)*cs_tab[i].cgname)) return cs_named((int)i);
+    }
+    if (!cg) return cs_named(0);
+    id o = cx_alloc_instance(&NSColorSpace_c);
+    return o ? objc_autorelease(cs_init_cg(o, 0, cg)) : cs_named(0);
+}
 static void colors_init(void) {
     cx_class_t *cl = cx_class_named("NSColor");
-    cx_define_class(&NSColorSpace_c, &NSColorSpace_m, "NSColorSpace", cx_class_named("NSObject"), 0);
-    static const char *spaces[] = {"deviceRGBColorSpace", "sRGBColorSpace", "genericRGBColorSpace", "extendedSRGBColorSpace",
-                                   "displayP3ColorSpace", "genericGamma22GrayColorSpace", "deviceGrayColorSpace", "genericGrayColorSpace"};
-    for (u32 i = 0; i < sizeof spaces / sizeof spaces[0]; i++) cx_add_cmethod(&NSColorSpace_c, spaces[i], (void *)cs_shared);
-    cx_add_method(&NSColorSpace_c, "CGColorSpace", (void *)cs_self);
+    cx_define_class(&NSColorSpace_c, &NSColorSpace_m, "NSColorSpace", cx_class_named("NSObject"), sizeof(nscs_t) - 8);
+    for (u32 i = 0; i < NCS; i++) cx_add_cmethod(&NSColorSpace_c, cs_tab[i].sel, (void *)cs_shared);
+    cx_add_cmethod(&NSColorSpace_c, "availableColorSpacesWithModel:", (void *)cs_available);
+    cx_add_method(&NSColorSpace_c, "initWithCGColorSpace:", (void *)cs_init_cg);
+    cx_add_method(&NSColorSpace_c, "initWithICCProfileData:", (void *)cs_init_icc);
+    cx_add_method(&NSColorSpace_c, "CGColorSpace", (void *)cs_cg);
+    cx_add_method(&NSColorSpace_c, "ICCProfileData", (void *)cs_icc);
     cx_add_method(&NSColorSpace_c, "numberOfColorComponents", (void *)cs_components);
     cx_add_method(&NSColorSpace_c, "colorSpaceModel", (void *)cs_model);
     cx_add_method(&NSColorSpace_c, "localizedName", (void *)cs_name);
+    cx_add_method(&NSColorSpace_c, "isEqual:", (void *)cs_equal);
+    cx_add_method(&NSColorSpace_c, "hash", (void *)cs_hash);
+    cx_add_method(&NSColorSpace_c, "dealloc", (void *)cs_dealloc);
     if (!cl) return;
     cx_class_t *meta = *(cx_class_t **)cl;
     for (u32 i = 0; i < sizeof sys_colors / sizeof sys_colors[0]; i++)
@@ -227,5 +339,5 @@ void cx_cgdisplay_init(void) {
     cx_add_method(s, "maximumRefreshInterval", (void *)sc_refresh);
     cx_add_method(s, "displayUpdateGranularity", (void *)sc_refresh);
     cx_add_method(s, "localizedName", (void *)sc_name);
-    cx_add_method(s, "colorSpace", (void *)cl_space);
+    cx_add_method(s, "colorSpace", (void *)sc_space);
 }
