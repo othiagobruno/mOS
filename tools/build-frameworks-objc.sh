@@ -33,6 +33,10 @@ for fw in "$ROOT"/userland/frameworks/*/; do
     # o JavaScriptCore compila com o motor kernel/web/js_*.c (tools/build.sh, "==> JavaScriptCore.framework")
     [ "$name" = JavaScriptCore ] && continue
     if [ -n "$ONLY" ] && ! printf ',%s,' "$ONLY" | grep -q ",$name,"; then continue; fi
+    # so-por-nome: o framework só sai quando é pedido pelo nome (2º argumento), depois do Foundation Swift do mesmo
+    # build. Na passada geral ele seria compilado contra o SDK e o Foundation.swiftmodule de um build anterior
+    # (DeveloperToolsSupport: Bundle ainda não existia lá)
+    if [ -z "$ONLY" ] && [ -f "$fw/so-por-nome" ]; then continue; fi
     objs=()
     swobjs=()
     bad=0
