@@ -308,6 +308,27 @@ int sec_protocol_metadata_get_negotiated_tls_protocol_version(void *m) { return 
 int sec_protocol_metadata_get_negotiated_protocol_version(void *m) { int v = sec_protocol_metadata_get_negotiated_tls_protocol_version(m); return v == 0x0304 ? 10 : v == 0x0303 ? 8 : 0; }
 int sec_protocol_metadata_get_negotiated_tls_ciphersuite(void *m) { return m && object_getClass((id)m) == &OS_sec_protocol_metadata_c ? SM(m)->suite : 0; }
 const char *sec_protocol_metadata_get_server_name(void *m) { return m && object_getClass((id)m) == &OS_sec_protocol_metadata_c ? SM(m)->sni : 0; }
+/* cadeia do servidor (o SecTrust do mOS é a lista de certificados): um sec_certificate_t por certificado, do folha à raiz */
+void *sec_certificate_create(id cert);
+long SecTrustGetCertificateCount(id trust);
+id SecTrustGetCertificateAtIndex(id trust, long i);
+static int is_meta(void *m) { return m && object_getClass((id)m) == &OS_sec_protocol_metadata_c; }
+u8 sec_protocol_metadata_access_peer_certificate_chain(void *m, void *blk) {
+    if (!is_meta(m) || !blk || !SM(m)->trust) return 0;
+    long n = SecTrustGetCertificateCount(SM(m)->trust);
+    for (long i = 0; i < n; i++) {
+        void *sc = sec_certificate_create(SecTrustGetCertificateAtIndex(SM(m)->trust, i));
+        if (!sc) continue;
+        ((void (*)(void *, void *))((blk_t *)blk)->invoke)(blk, sc);
+        rel((id)sc);
+    }
+    return 1;
+}
+/* o TLS do kernel não guarda a lista de CAs do CertificateRequest nem a resposta OCSP grampeada: "não disponível" */
+u8 sec_protocol_metadata_access_distinguished_names(void *m, void *blk) { (void)m; (void)blk; return 0; }
+u8 sec_protocol_metadata_access_ocsp_response(void *m, void *blk) { (void)m; (void)blk; return 0; }
+u8 sec_protocol_metadata_access_supported_signature_algorithms(void *m, void *blk) { (void)m; (void)blk; return 0; }
+static void sm_dealloc(id s, SEL c) { rel(SM(s)->trust); IMP sup = cx_lookup(&OS_nw_object_c, c); if (sup) ((void (*)(id, SEL))sup)(s, c); }
 void *sec_trust_copy_ref(void *t) { return t ? (void *)retain((id)t) : 0; }
 void *sec_trust_create(void *t) { return t ? (void *)retain((id)t) : 0; }
 
@@ -847,9 +868,10 @@ static void *conn_thread(void *arg) {
                 snprintf(SM(m)->sni, sizeof SM(m)->sni, "%s", so->sni[0] ? so->sni : host);
                 SM(m)->version = 0x0304;
                 n->tls_meta = m;
+                SM(m)->trust = io->copy_trust ? (id)io->copy_trust(0, n->tconn) : 0;   /* +1, solto no dealloc */
                 /* bloco de verificação do app (pinning): o kernel já validou a cadeia; o app ainda pode recusar */
                 if (so->verify_block) {
-                    void *tr = io->copy_trust ? io->copy_trust(0, n->tconn) : 0;
+                    void *tr = SM(m)->trust ? (void *)retain(SM(m)->trust) : 0;
                     vb_t *vb = calloc(1, sizeof *vb);
                     vb->b.isa = _NSConcreteGlobalBlock; vb->b.flags = 1 << 28; vb->b.invoke = (void *)vb_complete; vb->b.desc = &blk_desc;
                     vb->sem = dispatch_semaphore_create(0);
@@ -1070,6 +1092,7 @@ static void nw_init_classes(void) {
         cx_add_method(&OS_nw_endpoint_c, "dealloc", (void *)ep_dealloc); cx_add_method(&OS_nw_endpoint_c, "description", (void *)ep_desc);
         cx_add_method(&OS_nw_protocol_options_c, "dealloc", (void *)po_dealloc);
         cx_add_method(&OS_sec_protocol_options_c, "dealloc", (void *)so_dealloc);
+        cx_add_method(&OS_sec_protocol_metadata_c, "dealloc", (void *)sm_dealloc);
         cx_add_method(&OS_nw_protocol_stack_c, "dealloc", (void *)st_dealloc);
         cx_add_method(&OS_nw_parameters_c, "dealloc", (void *)pa_dealloc);
         cx_add_method(&OS_nw_path_c, "dealloc", (void *)pt_dealloc);
