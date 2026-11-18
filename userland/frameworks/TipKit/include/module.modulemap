@@ -1,0 +1,5 @@
+// mOS — módulo clang subjacente do TipKit (só Swift; ver TipKit.swift)
+module TipKit [system] {
+    header "TipKit_mos.h"
+    export *
+}

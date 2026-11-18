@@ -33,16 +33,49 @@ for fw in "$@"; do
     [ -f "$src/raiz.sh" ] && bash "$src/raiz.sh" "$t/raiz"
     inc=()
     for d in "$root"/userland/frameworks/*/include; do inc+=(-I "$d"); done
+    # framework sobre o SwiftUI (swiftui-needs): compila com as opções do OpenSwiftUI.rsp (como tools/test-swiftui.sh)
+    suilib=()
+    fwdir="$root/userland/frameworks/${FWBIN:-$fw}"
+    if [ -f "$fwdir/swiftui-needs" ]; then
+        python3 - "$objc/swiftui/OpenSwiftUI/OpenSwiftUI.rsp" "$t/swiftui.rsp" <<'PY'
+import sys
+src, dst = sys.argv[1:3]
+drop_arg = {'-emit-module-path', '-o', '-module-name', '-module-abi-name', '-package-name', '-module-cache-path'}
+drop = {'-c', '-parse-as-library', '-enable-library-evolution', '-experimental-spi-only-imports', '-typecheck'}
+out, skip = [], False
+for line in open(src).read().split('\n'):
+    x = line.strip()
+    if skip:
+        skip = False
+        continue
+    if not x or x in drop or x.strip('"').endswith('.swift'):
+        continue
+    if x in drop_arg:
+        skip = True
+        continue
+    out.append(x)
+open(dst, 'w').write('\n'.join(out) + '\n')
+PY
+        ln -sf "$dy/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI" "$t/SwiftUI.dylib"
+        suilib=("$t/SwiftUI.dylib")
+        cmb="$dy/System/Library/Frameworks/Combine.framework/Versions/A/Combine"
+        [ -f "$cmb" ] && { ln -sf "$cmb" "$t/Combine.dylib"; suilib+=("$t/Combine.dylib"); }
+        "$fe" -frontend @"$t/swiftui.rsp" -c -module-name Teste -I "$fwdir/include" -I "$objc/swiftui/OpenSwiftUI" \
+            -I "$objc/overlays" -module-alias SwiftUI=OpenSwiftUI -module-cache-path "$t/mc" "$src/main.swift" \
+            -o "$t/Teste.o" > "$t/compilacao.txt" 2>&1 ||
+            { grep -m20 ' error: ' "$t/compilacao.txt" >&2; echo "$fw: compilação FALHOU" >&2; falhas=$((falhas + 1)); continue; }
+    else
     "$fe" -frontend -c -target x86_64-apple-macos26 -resource-dir "$res" -module-name Teste -swift-version 5 -O \
         -I "$objc" -I "$objc/overlays" "${inc[@]}" -I "$root/.tools/swift-src/stdlib/public/SwiftShims/swift/shims" \
         -module-cache-path "$t/mc" -Xcc "-isystem$objc/sdk/include" -Xcc -nostdlibinc -Xcc -DMOS_SWIFT_OBJC=1 \
         -Xcc -Wno-nullability-completeness "$src/main.swift" -o "$t/Teste.o" > "$t/compilacao.txt" 2>&1 ||
         { grep -m20 ' error: ' "$t/compilacao.txt" >&2; echo "$fw: compilação FALHOU" >&2; falhas=$((falhas + 1)); continue; }
+    fi
     # o zig não aceita o binário do framework sem extensão: liga por um link .dylib
     ln -sf "$bin" "$t/$fw.dylib"
-    libs=("$t/$fw.dylib")
+    libs=("$t/$fw.dylib" "${suilib[@]}")
     for b in libswiftCore libswift_Concurrency libswiftDarwin libswiftObjectiveC libswiftCoreFoundation \
-             libswiftDispatch libswiftFoundation libswiftObservation libswift_StringProcessing; do
+             libswiftDispatch libswiftFoundation libswiftObservation libswift_StringProcessing libswiftCoreGraphics; do
         [ -f "$sw/$b.dylib" ] && libs+=("$sw/$b.dylib")
     done
     "$zig" cc -target x86_64-macos -o "$t/Teste" "$t/Teste.o" "${libs[@]}" -Wl,-undefined,dynamic_lookup \
