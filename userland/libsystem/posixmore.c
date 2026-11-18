@@ -939,7 +939,7 @@ int truncate(const char *path, long long len) {
     return 0;
 }
 char *crypt(const char *k, const char *salt) { (void)k; (void)salt; cx_errno = 45; return 0; }
-void *gethostbyname(const char *n) { (void)n; return 0; }     /* o ruby usa getaddrinfo; estes são legados */
+/* gethostbyname/gethostbyname2 (reais, sobre getaddrinfo) ficam em libc_resolv_compat.c */
 void *gethostbyaddr(const void *a, unsigned l, int t) { (void)a; (void)l; (void)t; return 0; }
 int getlogin_r(char *buf, size_t n) { const char *s = getlogin(); if (!s) s = "visitante"; if (strlen(s) + 1 > n) return 34; strlcpy(buf, s, n); return 0; }
 int setreuid(unsigned r, unsigned e) { (void)r; (void)e; return 0; }
