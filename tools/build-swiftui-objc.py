@@ -56,6 +56,8 @@ NAT = os.path.join(SWB, 'openswiftui' + SFX)  # objetos C/C++ da variante nativa
 NSDK = os.path.join(ROOT, 'userland', 'sdk', 'openswiftui')
 MINE = os.path.join(ROOT, 'userland', 'sdk', 'swift-objc', 'SwiftUI')
 SHIM = os.path.join(NSDK, 'include')
+# módulo clang por baixo do overlay DeveloperToolsSupport (userland/frameworks/DeveloperToolsSupport, da Beatriz)
+DTS_INC = os.path.join(ROOT, 'userland', 'frameworks', 'DeveloperToolsSupport', 'include')
 CTINC = os.path.join(ROOT, 'userland', 'sdk', 'swift-objc', 'SwiftUI', 'CoreText', 'include')
 SDKSWIFT = os.path.join(NSDK, 'swift')
 IMPORTER = os.path.join(NSDK, 'importer')
@@ -280,7 +282,7 @@ def build_swift(name, files, extra, lang='5', evolution=True):
     out = os.path.join(SUI, name)
     os.makedirs(out, exist_ok=True)
     a = ['-target', TRIPLE, '-resource-dir', RES, '-module-name', name, '-parse-as-library', '-swift-version', lang, '-O',
-         '-I', OBJC, '-I', OV, '-module-cache-path', MCACHE, '-I', os.path.join(SWSRC, 'stdlib/public/SwiftShims/swift/shims'),
+         '-I', OBJC, '-I', OV, '-Xcc', '-I' + DTS_INC, '-module-cache-path', MCACHE, '-I', os.path.join(SWSRC, 'stdlib/public/SwiftShims/swift/shims'),
          '-disable-implicit-concurrency-module-import', '-enable-experimental-feature', 'Extern',
          '-Xcc', '-isystem' + SINC, '-Xcc', '-nostdlibinc', '-Xcc', '-DMOS_SWIFT_OBJC=1', '-Xcc', '-Wno-nullability-completeness']
     if TYPECHECK:
@@ -326,7 +328,7 @@ def build_c(name, src, flags=()):
 
 
 NOIMPORT = ('Darwin|ObjectiveC|Combine|AppKit|UIKit|QuartzCore|CoreGraphics|os|OSLog|Observation|UniformTypeIdentifiers|Metal|simd|XPC|'
-            'IOKit|CoreImage|CoreAudio|CoreMIDI|Spatial|QuickLookUI|CryptoKit|SwiftUI')
+            'IOKit|CoreImage|CoreAudio|CoreMIDI|Spatial|QuickLookUI|CryptoKit|Accessibility|DeveloperToolsSupport|SwiftUI')
 EXTRAS = False
 
 
@@ -413,6 +415,15 @@ def apply_patches(d, lst):
 
 
 CORE_PATCHES = [
+    # o NSLocalizedString do MOSFoundationExtras (-module-abi-name Foundation) não é achado pelo núcleo: o Bundle da
+    # assinatura casa com o `package struct Bundle` do swift-foundation e a declaração cai. É o mesmo que ele faz:
+    ('View/Text/Text/Text.swift', """        NSLocalizedString(
+            key,
+            tableName: tableName,
+            bundle: .kit,
+            value: "",
+            comment: comment
+        )""", """        Bundle.kit.localizedString(forKey: key, value: "", table: tableName)"""),
     ('Shim/CoreFoundationNonDarwinShims.swift', 'equal: { lhs, rhs in (lhs as? NSObject)?.isEqual(rhs) ?? false },',
      'equal: { lhs, rhs in DarwinBoolean((lhs as? NSObject)?.isEqual(rhs) ?? false) },'),
     ('View/Text/Typesetting/TypesettingLanguage.swift', ').map(String.init) {', ').map({ $0 as String }) {'),
@@ -667,6 +678,10 @@ def stage_link():
         os.remove(cmb)
     os.symlink(dy + '/System/Library/Frameworks/Combine.framework/Versions/A/Combine', cmb)
     libs = [cmb]
+    # DeveloperToolsSupport (ImageResource/ColorResource; userland/frameworks/DeveloperToolsSupport): o SwiftUI da Apple liga nele
+    dts = dy + '/System/Library/Frameworks/DeveloperToolsSupport.framework/Versions/A/DeveloperToolsSupport'
+    if os.path.exists(dts):
+        libs.append(dts)
     for m in ['Core', 'Foundation', 'Dispatch', 'ObjectiveC', 'Darwin', 'CoreFoundation', 'CoreGraphics', 'os', 'Observation',
               '_Concurrency', '_StringProcessing']:
         p = os.path.join(dy, 'usr/lib/swift/libswift%s.dylib' % m)

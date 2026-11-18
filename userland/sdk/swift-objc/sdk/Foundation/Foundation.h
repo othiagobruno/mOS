@@ -289,6 +289,8 @@ __attribute__((swift_name("Bundle")))
 @property (nullable, readonly, copy) NSURL *resourceURL;
 @property (nullable, readonly, copy) NSString *bundleIdentifier;
 @property (nullable, readonly, copy) NSDictionary<NSString *, id> *infoDictionary;
+@property (readonly, copy) NSArray<NSString *> *localizations;
++ (NSArray<NSString *> *)preferredLocalizationsFromArray:(NSArray<NSString *> *)localizationsArray forPreferences:(nullable NSArray<NSString *> *)preferencesArray;
 - (nullable id)objectForInfoDictionaryKey:(NSString *)key;
 - (nullable NSString *)pathForResource:(nullable NSString *)name ofType:(nullable NSString *)ext;
 - (nullable NSURL *)URLForResource:(nullable NSString *)name withExtension:(nullable NSString *)ext;
