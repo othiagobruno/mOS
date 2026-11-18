@@ -80,6 +80,7 @@ int main(int argc, char **argv) {
     CHECK(m->ops->mkdir(m, "/Aplicativos"));
     CHECK(m->ops->write_file(m, "/Aplicativos/app.asar", big, BIG));
     CHECK(m->ops->write_file(m, "/Aplicativos/Info.plist", "<plist/>", 8));
+    CHECK(m->ops->write_file(m, "/Aplicativos/dep.dylib", big + 5, 12u << 20));   /* 2º arquivo grande: passa do orçamento */
     CHECK(m->ops->sync(m));
     /* remonta (caches frios) e publica em /Volumes */
     dfs_unmount(m);
@@ -151,6 +152,30 @@ int main(int argc, char **argv) {
 
     /* vfs_ensure: quem precisa de tudo na RAM continua tendo */
     CHECK(vfs_ensure(v) && v->data && v->size == BIG && !memcmp(v->data, big, BIG));
+    {   /* carregador Mach-O (relato do Fabio): o executável fica em v->data enquanto as dependências são lidas. Com a
+         * evicção suspensa (vfs_evict_hold), o ponteiro continua válido mesmo passando do orçamento de 32 MiB */
+        char dp[300], fp2[300];
+        snprintf(dp, sizeof dp, "/Volumes/%s/Aplicativos/dep.dylib", m->root->name);
+        vfs_evict_hold(+1);
+        const u8 *exe = v->data;
+        for (int i = 1; i < 24; i += 2) {                    /* outros arquivos lidos no caminho (Info.plist, Squirrel...) */
+            snprintf(fp2, sizeof fp2, "/Volumes/%s/f%02d", m->root->name, i);
+            CHECK(vfs_lookup(fp2) && vfs_lookup(fp2)->data);
+        }
+        vnode_t *dv = vfs_lookup(dp);
+        CHECK(dv && vfs_ensure(dv) && dv->data && !memcmp(dv->data, big + 5, 12u << 20));
+        CHECK(v->data == exe && !memcmp(exe, big, BIG));    /* não foi liberado no meio da ligação */
+        vfs_evict_hold(-1);                                  /* volta ao orçamento: os mais antigos saem */
+        CHECK(!v->data);                                     /* o executável era o mais antigo */
+        /* aberto por um fd (refs > 0): a evicção pula */
+        CHECK(vfs_ensure(v) && v->data);
+        vfs_ref(v);
+        for (int i = 1; i < 24; i += 2) { snprintf(fp2, sizeof fp2, "/Volumes/%s/f%02d", m->root->name, i); vfs_lookup(fp2); }
+        dv = vfs_lookup(dp);
+        CHECK(vfs_ensure(dv));
+        CHECK(v->data && !memcmp(v->data, big, BIG));
+        vfs_unref(v);
+    }
     CHECK(vfs_read_at(v, 100, buf, 100) == 100 && !memcmp(buf, big + 100, 100));
 
     /* append num arquivo paginado do volume gravável: o conteúdo antigo fica e vai para o disco */

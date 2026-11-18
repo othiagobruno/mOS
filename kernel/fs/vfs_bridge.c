@@ -52,7 +52,8 @@ static void evict(dnode_t *d) {
     vnode_t *v = d->vn;
     lru_unlink(d);
     if (!v || v->ext != d) return;
-    if (v->data && v->cap == d->size + 1 && v->size == d->size) {
+    /* páginas próprias (kmalloc_pages) podem estar mapeadas em processos (macho.c __TEXT, lazy.c): nunca liberar */
+    if (v->data && v->cap == d->size + 1 && v->size == d->size && !kmalloc_is_pages(v->data)) {
         kfree(v->data);
         v->data = NULL;
         v->cap = 0;
@@ -60,10 +61,15 @@ static void evict(dnode_t *d) {
 }
 
 static void enforce_budget(void) {
-    if (lru_bytes <= CACHE_BUDGET) return;
-    while (lru_head && lru_bytes > CACHE_BUDGET && lru_count > KEEP_RECENT) evict(lru_head);
+    if (lru_bytes <= CACHE_BUDGET || vfs_evict_held()) return;   /* o carregador Mach-O segura ponteiros: depois */
+    for (dnode_t *d = lru_head, *nx; d && lru_bytes > CACHE_BUDGET && lru_count > KEEP_RECENT; d = nx) {
+        nx = d->lru_next;
+        if (d->vn && ((vnode_t *)d->vn)->refs > 0) continue;          /* aberto por um fd: fica (volta ao fim quando fechar e for usado) */
+        evict(d);
+    }
     dfs_trim(); /* sob pressão, solta também os caches internos dos drivers */
 }
+void vfs_bridge_trim(void) { enforce_budget(); }
 
 /* nomes do VFS têm tamanho fixo: corta sem quebrar um caractere UTF-8 */
 static void fit_name(const char *src, char *dst) {

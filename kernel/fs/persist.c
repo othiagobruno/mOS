@@ -156,8 +156,10 @@ static bool evictable(vnode_t *v) {
     return v->dclus && v->data && !v->dirty && v->cap == v->size + 1 && !kmalloc_is_pages(v->data);
 }
 static void blru_enforce(void) {
+    if (vfs_evict_held()) return;                        /* o carregador Mach-O segura ponteiros: depois */
     for (vnode_t *v = blru_head, *nx; v && blru_bytes > SYS_CACHE_BUDGET && blru_count > SYS_KEEP_RECENT; v = nx) {
         nx = v->blru_next;
+        if (v->refs > 0) continue;                       /* aberto por um fd */
         if (!evictable(v)) { blru_unlink(v); continue; }
         blru_unlink(v);
         kfree(v->data);
@@ -168,6 +170,7 @@ static void blru_enforce(void) {
 }
 
 void persist_forget(vnode_t *n) { if (n) blru_unlink(n); }
+void persist_trim(void) { blru_enforce(); }
 
 i64 persist_read_at(vnode_t *n, u64 off, void *buf, u64 len) {
     if (!sys || !n || !n->dclus || n->dir) return -1;

@@ -183,6 +183,11 @@ void persist_forget(vnode_t *n);          /* o vnode vai ser liberado: sai da LR
 void persist_detach(vnode_t *n);          /* o conteúdo passa a ser só da RAM (carrega antes; mudança ou saída do disco) */
 i64  vfs_read_at(vnode_t *v, u64 off, void *buf, u64 len);   /* bytes lidos (0 no fim), -1 erro */
 void vfs_ref(vnode_t *v);
+/* Suspende a devolução de memória das LRUs de conteúdo (vfs_bridge.c e persist.c) enquanto alguém segura ponteiros para
+ * v->data de vários arquivos ao mesmo tempo (o carregador Mach-O liga o executável e as dependências). Com +1/-1
+ * aninhados; ao voltar a 0, as LRUs voltam ao orçamento. Fora disso, a evicção pula nós com refs > 0 (fds abertos). */
+void vfs_evict_hold(int delta);
+bool vfs_evict_held(void);
 void vfs_unref(vnode_t *v);          /* o último de um nó já apagado o libera */
 void vfs_keep_content(vnode_t *v);   /* vfs_bridge.c: o conteúdo de um arquivo de volume vai para a RAM (antes de sumir do volume) */
 vnode_t *vfs_lookup_meta(const char *path);   /* como vfs_lookup, sem carregar o conteúdo do arquivo (use vfs_read_at) */
