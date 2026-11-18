@@ -262,7 +262,7 @@ static u64 file_page(const char *path, u64 off) {
     phys = pmm_alloc(1);
     if (!phys) return 0;
     memset((void *)phys, 0, 4096);
-    vnode_t *v = vfs_lookup(path);
+    vnode_t *v = vfs_lookup_meta(path);                 /* só a página: não traz o arquivo inteiro na falta */
     /* erro de disco: a falta falha (o processo recebe o sinal). Antes a página ficava zerada, e no MAP_SHARED zerada
      * para todo mundo, porque ia para o cache abaixo */
     if (v && !v->dir && off < v->size && vfs_read_at(v, off, (void *)phys, 4096) < 0) { pmm_free(phys, 1); return 0; }
@@ -334,7 +334,7 @@ bool lazy_fault(process_t *p, u64 va) {
     bool ok = false;
     if (h.kind == 1) ok = uvm_map(p, page, 4096);
     else if (h.kind == 2) {
-        vnode_t *v = vfs_lookup(h.path);
+        vnode_t *v = vfs_lookup_meta(h.path);
         if (v && !v->dir && v->cap && !(h.off & 0xFFF) && h.off + 4096 <= v->size && kmalloc_is_pages(v->data) &&
             uvm_map_cow(p, page, (u64)v->data + h.off))
             ok = true;

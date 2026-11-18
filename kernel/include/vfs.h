@@ -40,6 +40,10 @@ typedef struct vnode {
     bool in_blru;
     struct vnode *blru_prev, *blru_next;
     usize blru_bytes;   /* quanto este vnode conta na LRU (o buffer pode mudar antes de sair) */
+    /* fds abertos (process.c) e outras referências: com refs > 0, apagar só tira o nó da árvore (unlinked) e o conteúdo
+     * continua legível e gravável por quem o tem aberto, como no Unix; o último vfs_unref libera. */
+    int refs;
+    bool unlinked;
 } vnode_t;
 
 /* ---- metadados (kernel/lib/vfsmeta.c) */
@@ -178,6 +182,10 @@ i64  persist_read_at(vnode_t *n, u64 off, void *buf, u64 len);
 void persist_forget(vnode_t *n);          /* o vnode vai ser liberado: sai da LRU */
 void persist_detach(vnode_t *n);          /* o conteúdo passa a ser só da RAM (carrega antes; mudança ou saída do disco) */
 i64  vfs_read_at(vnode_t *v, u64 off, void *buf, u64 len);   /* bytes lidos (0 no fim), -1 erro */
+void vfs_ref(vnode_t *v);
+void vfs_unref(vnode_t *v);          /* o último de um nó já apagado o libera */
+void vfs_keep_content(vnode_t *v);   /* vfs_bridge.c: o conteúdo de um arquivo de volume vai para a RAM (antes de sumir do volume) */
+vnode_t *vfs_lookup_meta(const char *path);   /* como vfs_lookup, sem carregar o conteúdo do arquivo (use vfs_read_at) */
 void dfs_mount_all(void);      /* monta imagens .dmg/.img encontradas em /Volumes */
 bool vfs_is_volume(vnode_t *n); /* n é a raiz de um volume montado em /Volumes */
 bool vfs_eject(vnode_t *vol);   /* desmonta e libera o volume (n deixa de ser válido) */

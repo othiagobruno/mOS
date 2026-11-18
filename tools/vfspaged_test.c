@@ -97,6 +97,11 @@ int main(int argc, char **argv) {
     CHECK(v && !v->dir && v->size == BIG);
     CHECK(v && !v->data && vfs_paged(v));               /* o lookup não carregou */
     CHECK(dev_bytes - r0 < (1u << 20));                  /* nem leu o arquivo do disco */
+    {   /* falta de página de mmap: o nó sem o conteúdo, e a página lida do disco */
+        vnode_t *sm = vfs_lookup_meta(sp);
+        char t[8];
+        CHECK(sm && !sm->data && sm->size == 8 && vfs_read_at(sm, 0, t, 8) == 8 && !memcmp(t, "<plist/>", 8));
+    }
     vnode_t *s = vfs_lookup(sp);
     CHECK(s && s->data && s->size == 8 && !memcmp(s->data, "<plist/>", 8) && !vfs_paged(s));
     if (!v) return 1;
@@ -152,11 +157,18 @@ int main(int argc, char **argv) {
     vfs_mkdir("/tmp/x");
     snprintf(p, sizeof p, "/Volumes/%s/Aplicativos/log.bin", m->root->name);
     CHECK(m->ops->write_file(m, "/Aplicativos/log.bin", big, LOGN));
+    /* volume ejetado com arquivos abertos: o conteúdo fica na RAM para quem tem o fd (o pequeno inteiro) */
+    char op[300];
+    snprintf(op, sizeof op, "/Volumes/%s/Aplicativos/Info.plist", m->root->name);
+    vnode_t *open1 = vfs_lookup(op);
+    vfs_ref(open1);
     {   /* ejeta pelo caminho normal e monta de novo, para o VFS ver o arquivo novo */
         char vp0[300];
         snprintf(vp0, sizeof vp0, "/Volumes/%s", m->root->name);
         CHECK(vfs_eject(vfs_lookup(vp0)));
     }
+    CHECK(open1 && open1->unlinked && !open1->ext && open1->size == 8 && open1->data && !memcmp(open1->data, "<plist/>", 8));
+    vfs_unref(open1);
     blkdev_t *d3 = calloc(1, sizeof *d3);
     d3->size = img_size; d3->read = rd; d3->write = wr;
     dfs_mount_disk(d3, "apps");

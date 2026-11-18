@@ -1340,6 +1340,8 @@ static void spawn_apply_fds(process_t *child, process_t *parent, mos_spawn_fa_t 
             child->fds[a].flags = acts[i].flags;
             child->fds[a].mode = acts[i].mode ? acts[i].mode : 0644;
             strncpy(child->fds[a].path, acts[i].path, sizeof child->fds[a].path - 1);
+            child->fds[a].vn = vfs_lookup_meta(acts[i].path);
+            vfs_ref(child->fds[a].vn);
         } else if (k == MOS_SPAWN_FA_CHDIR && acts[i].path[0]) {
             strncpy(child->cwd, acts[i].path, sizeof child->cwd - 1);
         } else if (k == MOS_SPAWN_FA_FILEPORT && parent && a >= 0 && a < PROC_MAX_FDS) {
@@ -2386,6 +2388,13 @@ static i64 unix_now(void) {
 }
 
 static int fd_get(process_t *p, u64 fd) { return fd < PROC_MAX_FDS && p->fds[fd].used ? (int)fd : -1; }
+/* o arquivo de um fd: o vnode guardado na abertura (vale depois de rename/unlink); sem ele (fd antigo, /dev), pelo caminho */
+static vnode_t *fd_vnode(process_t *p, int fd) {
+    vnode_t *v = p->fds[fd].vn;
+    if (!v) return vfs_lookup(p->fds[fd].path);
+    if (!v->dir && !v->data && v->size && !vfs_paged(v)) vfs_ensure(v);   /* não deixa size > 0 sem conteúdo */
+    return v;
+}
 
 /* ------------------------------------------------------------ pipes */
 #define EAGAIN_ 11
@@ -2463,7 +2472,10 @@ static void fd_close(process_t *p, int fd) {
     p->fds[fd].pipe = NULL;
     p->fds[fd].pipe2 = NULL;
     p->fds[fd].pty = NULL;
+    vnode_t *vn = p->fds[fd].vn;
+    p->fds[fd].vn = NULL;
     if (ty) pty_fd_ref(ty, tm, -1);                   /* depois de soltar o fd: o par pode ser liberado aqui */
+    vfs_unref(vn);                                    /* o último de um arquivo já apagado o libera */
     if (orphan) orphan_gc();                          /* era o último a ler um arquivo já apagado? */
 }
 
@@ -2474,6 +2486,7 @@ static void fd_copy(process_t *dst, int dfd, process_t *src, int sfd) {
     if (e.kind == FD_UNIX) unix_hold((int)e.off);
     pipe_refs(e.pipe, e.pipe2, e.kind, +1);
     if (e.pty) pty_fd_ref(e.pty, e.kind == FD_PTY_M, +1);
+    vfs_ref(e.vn);
     if (dst->fds[dfd].used) fd_close(dst, dfd);
     dst->fds[dfd] = e;
 }
@@ -2492,6 +2505,7 @@ void *proc_fd_snapshot(process_t *p, int fd) {
     if (s->kind == FD_UNIX) unix_hold((int)s->off);
     pipe_refs(s->pipe, s->pipe2, s->kind, +1);
     if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, +1);
+    vfs_ref(s->vn);                                   /* o fileport segura o arquivo, como o fd */
     return s;
 }
 int proc_fd_from_snapshot(process_t *p, const void *snap) {
@@ -2503,6 +2517,7 @@ int proc_fd_from_snapshot(process_t *p, const void *snap) {
         if (s->kind == FD_UNIX) unix_hold((int)s->off);
         pipe_refs(s->pipe, s->pipe2, s->kind, +1);
         if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, +1);
+        vfs_ref(s->vn);
         return fd;
     }
     return -MOS_EMFILE;
@@ -2513,6 +2528,7 @@ void proc_fd_snapshot_free(void *snap) {
     if (s->kind == FD_UNIX) unix_put((int)s->off);
     if (s->pipe || s->pipe2) pipe_refs_drop(s->pipe, s->pipe2, s->kind);
     if (s->pty) pty_fd_ref(s->pty, s->kind == FD_PTY_M, -1);
+    vfs_unref(s->vn);
     kfree(s);
 }
 
@@ -2656,8 +2672,8 @@ static void orphan_gc(void) {
 }
 
 /* ftruncate: o SQLite (journal TRUNCATE, encolher o banco) precisa; sem isso o commit do perfil do Chrome falhava */
-static i64 file_truncate(const char *path, u64 nsz) {
-    vnode_t *v = vfs_lookup(path);
+static i64 file_truncate(vnode_t *hint, const char *path, u64 nsz) {
+    vnode_t *v = hint ? hint : vfs_lookup(path);
     if (!v) return -MOS_ENOENT;
     if (v->dir) return -MOS_EISDIR;
     if (nsz == v->size) return 0;
@@ -2675,8 +2691,8 @@ static i64 file_truncate(const char *path, u64 nsz) {
 }
 
 /* grava len bytes do processo (ubuf) na posição off, direto no buffer do arquivo (sem cópia intermediária) */
-static i64 file_write_at(process_t *p, const char *path, u64 off, u64 ubuf, u64 len) {
-    vnode_t *v = vfs_lookup(path);
+static i64 file_write_at(process_t *p, vnode_t *hint, const char *path, u64 off, u64 ubuf, u64 len) {
+    vnode_t *v = hint ? hint : vfs_lookup(path);
     if (v && v->dir) return -MOS_EISDIR;
     if (!v && !(v = vfs_create(path))) return -MOS_ENOENT;     /* arquivo novo: cria as pastas que faltam, como antes */
     if (vfs_is_read_only(v)) return -MOS_ENOENT;
@@ -2753,7 +2769,7 @@ static i64 fsmeta_syscall(process_t *p, int op, u64 ureq) {
     if (rq.fd >= 0) {
         if (fd_get(p, (u64)rq.fd) < 0) return -MOS_EBADF;
         if (p->fds[rq.fd].kind != FD_FILE || !p->fds[rq.fd].path[0] || p->fds[rq.fd].pty) return -MOS_EBADF;
-        v = vfs_lookup(p->fds[rq.fd].path);
+        v = fd_vnode(p, rq.fd);
     } else {
         if (!copy_path(p, path, rq.path)) return -MOS_EFAULT;
         v = vfs_lookup(path);
@@ -2932,8 +2948,8 @@ static i64 sys_write(process_t *p, int fd, u64 buf, u64 len) {
     if (fd_get(p, fd) >= 0) {
         if (!(p->fds[fd].flags & (MOS_O_WRONLY | MOS_O_RDWR))) return -MOS_EBADF;
         if (is_devnull(p->fds[fd].path)) return (i64)len;
-        if (p->fds[fd].flags & MOS_O_APPEND) { vnode_t *v = vfs_lookup(p->fds[fd].path); p->fds[fd].off = v ? v->size : 0; }
-        i64 r = file_write_at(p, p->fds[fd].path, p->fds[fd].off, buf, len);
+        if (p->fds[fd].flags & MOS_O_APPEND) { vnode_t *v = fd_vnode(p, fd); p->fds[fd].off = v ? v->size : 0; }
+        i64 r = file_write_at(p, p->fds[fd].vn, p->fds[fd].path, p->fds[fd].off, buf, len);
         if (r > 0) p->fds[fd].off += (u64)r;
         return r;
     }
@@ -3696,6 +3712,8 @@ static u64 proc_syscall_(int_frame_t *f) {
         p->fds[fd].mode = v ? mode_stat(v->mode, v->dir) : 0;
         p->fds[fd].off = 0;
         strncpy(p->fds[fd].path, path, sizeof p->fds[fd].path - 1);
+        p->fds[fd].vn = v;                                 /* o arquivo, não o nome: rename/unlink não o perdem */
+        vfs_ref(v);
         r = fd;
         break;
     }
@@ -3846,7 +3864,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         }
         if (fd_get(p, a) < 0 || (p->fds[a].flags & MOS_O_WRONLY)) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = 0; break; }   /* /dev/null: sempre fim de arquivo */
-        vnode_t *v = vfs_lookup(p->fds[a].path);
+        vnode_t *v = fd_vnode(p, (int)a);
         if (!v) { r = -MOS_ENOENT; break; }
         if (v->dir) { r = -MOS_EISDIR; break; }
         u64 off = p->fds[a].off, n = off < v->size ? MIN(c, v->size - off) : 0;
@@ -3860,7 +3878,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
         if (p->fds[a].flags & MOS_O_WRONLY) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = 0; break; }
-        vnode_t *v = vfs_lookup(p->fds[a].path);
+        vnode_t *v = fd_vnode(p, (int)a);
         if (!v) { r = -MOS_ENOENT; break; }
         if (v->dir) { r = -MOS_EISDIR; break; }
         u64 off = f->r10, n = off < v->size ? MIN(c, v->size - off) : 0;
@@ -3871,14 +3889,14 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_ESPIPE; break; }
         if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = (i64)c; break; }
-        r = file_write_at(p, p->fds[a].path, f->r10, b, c);
+        r = file_write_at(p, p->fds[a].vn, p->fds[a].path, f->r10, b, c);
         break;
     }
     case SYS_FTRUNCATE: {
         if (fd_get(p, a) < 0 || p->fds[a].pipe || p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = fd_get(p, a) < 0 ? -MOS_EBADF : -MOS_EINVAL; break; }
         if (!(p->fds[a].flags & (MOS_O_WRONLY | MOS_O_RDWR))) { r = -MOS_EBADF; break; }
         if (is_devnull(p->fds[a].path)) { r = 0; break; }
-        r = file_truncate(p->fds[a].path, b);
+        r = file_truncate(p->fds[a].vn, p->fds[a].path, b);
         if (r < 0) {
             char dir[256]; strncpy(dir, p->fds[a].path, sizeof dir - 1); dir[sizeof dir - 1] = 0;
             char *sl = strrchr(dir, '/'); if (sl) *sl = 0;
@@ -3890,7 +3908,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_LSEEK: {
         if (fd_get(p, a) < 0) { r = -MOS_EBADF; break; }
         if (p->fds[a].pty || p->fds[a].kind == FD_UNIX) { r = -MOS_ESPIPE; break; }
-        vnode_t *v = vfs_lookup(p->fds[a].path);
+        vnode_t *v = fd_vnode(p, (int)a);
         i64 base = c == MOS_SEEK_SET ? 0 : c == MOS_SEEK_CUR ? (i64)p->fds[a].off : c == MOS_SEEK_END ? (i64)(v ? v->size : 0) : -1;
         i64 pos = base + (i64)b;
         if (base < 0 || pos < 0) { r = -MOS_EINVAL; break; }
@@ -3933,7 +3951,7 @@ static u64 proc_syscall_(int_frame_t *f) {
             r = uvm_copy_out(p, b, &st, sizeof st) ? 0 : -MOS_EFAULT;
             break;
         }
-        v = vfs_lookup(sp);
+        v = f->rax == SYS_FSTAT && p->fds[a].vn ? p->fds[a].vn : vfs_lookup(sp);   /* fstat: o arquivo aberto, mesmo apagado */
         if (!v) { r = -MOS_ENOENT; break; }
         mos_stat_t st;
         fill_stat(v, &st);
@@ -3957,7 +3975,7 @@ static u64 proc_syscall_(int_frame_t *f) {
     case SYS_FCHMOD: {
         if (a < 0 || a >= PROC_MAX_FDS || !p->fds || !p->fds[a].used) { r = -MOS_EBADF; break; }
         if (!p->fds[a].path[0]) { r = -MOS_EINVAL; break; }
-        vnode_t *fv = vfs_lookup(p->fds[a].path);
+        vnode_t *fv = fd_vnode(p, (int)a);
         if (!fv) { r = -MOS_ENOENT; break; }
         if (vfs_immutable(fv)) { r = -MOS_EPERM; break; }
         if (vfs_authorize(fv, VFS_KR_WRITE_SECURITY, p->euid, p->egid)) { r = -MOS_EPERM; break; }
@@ -4629,7 +4647,7 @@ static u64 proc_syscall_(int_frame_t *f) {
         if (op != 1 && op != 2) { r = -MOS_EINVAL; break; }
         if (!uvm_copy_in(p, &cb, b, sizeof cb)) { r = -MOS_EFAULT; break; }
         if (fd_get(p, (u64)cb.aio_fildes) < 0 || p->fds[cb.aio_fildes].kind != FD_FILE) { r = -MOS_EBADF; break; }
-        vnode_t *v = vfs_lookup(p->fds[cb.aio_fildes].path);
+        vnode_t *v = fd_vnode(p, cb.aio_fildes);
         if (vfs_paged(v)) vfs_ensure(v);
         if (!v || v->dir || !v->data) { r = -MOS_EBADF; break; }
         u8 *bounce = kmalloc(cb.aio_nbytes ? cb.aio_nbytes : 1);

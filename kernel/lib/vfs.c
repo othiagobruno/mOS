@@ -48,7 +48,9 @@ __attribute__((weak)) int vfs_mount_file_ex(vnode_t *f, bool ro) { (void)f; (voi
 __attribute__((weak)) bool vfs_ext_writable(vnode_t *n) { (void)n; return false; }
 
 static int ensuring;
+static int meta_only;   /* vfs_lookup_meta: pastas espelhadas, mas nenhum conteúdo de arquivo carregado */
 static void ensure(vnode_t *n) {
+    if (meta_only && n && !n->dir) return;
     if (n && n->ext && !ensuring) { ensuring++; vfs_ev_mute++; vfs_ensure_lookup(n); vfs_ev_mute--; ensuring--; }
     else if (n && n->dclus && !n->data && !n->dir) persist_ensure_lookup(n);   /* arquivo do sistema ainda no disco */
 }
@@ -157,6 +159,8 @@ static vnode_t *walk_at(vnode_t *start, const char *path, bool create_dirs, bool
 }
 
 vnode_t *vfs_lookup(const char *path) { vnode_t *n = walk(path, false, false); ensure(n); return n; }
+/* o nó sem trazer o conteúdo (falta de página de mmap: só a página vem do disco, por vfs_read_at) */
+vnode_t *vfs_lookup_meta(const char *path) { meta_only++; vnode_t *n = vfs_lookup(path); meta_only--; return n; }
 /* pasta pelo caminho, seguindo também um link no último componente ("opt/tree" -> Cellar): rename e afins */
 vnode_t *vfs_lookup_dir(const char *path) {
     vnode_t *n = walk(path, false, false);
@@ -204,8 +208,17 @@ vnode_t *vfs_write_file(const char *path, const void *data, usize n) {
     return f;
 }
 
+__attribute__((weak)) void vfs_keep_content(vnode_t *v) { (void)v; }
+
 static void free_tree(vnode_t *n) {
     for (vnode_t *c = n->child, *nx; c; c = nx) { nx = c->next; free_tree(c); }
+    n->child = NULL;
+    if (n->refs > 0) {                                   /* aberto: sai da árvore, fica vivo até o último vfs_unref */
+        n->unlinked = true;
+        n->parent = NULL;
+        n->next = NULL;
+        return;
+    }
     if (n->in_blru) persist_forget(n);
     if (n->cap) kfree(n->data);
     vfs_xattr_free(n);
@@ -243,8 +256,25 @@ static void ev_removed_tree(vnode_t *n) {
     kfree(st);
 }
 
+/* arquivos abertos dentro da subárvore: o conteúdo vem para a RAM antes de o disco (ou o volume) perdê-lo */
+static void keep_open(vnode_t *n, int depth) {
+    if (depth > 128) return;
+    for (vnode_t *c = n->child; c; c = c->next) keep_open(c, depth + 1);
+    if (n->refs > 0 && !n->dir) {
+        if (n->ext) vfs_keep_content(n);
+        if (n->dclus) persist_detach(n);
+    }
+}
+
+void vfs_ref(vnode_t *v) { if (v) v->refs++; }
+void vfs_unref(vnode_t *v) {
+    if (!v || v->refs <= 0) return;
+    if (--v->refs == 0 && v->unlinked) free_tree(v);
+}
+
 bool vfs_delete(vnode_t *n) {
     if (!n || n == &root || !n->parent || read_only(n) || vfs_is_volume(n)) return false; /* volume: vfs_eject */
+    keep_open(n, 0);
     ev_removed_tree(n);
     persist_delete(n);
     vnode_t *par = n->parent;

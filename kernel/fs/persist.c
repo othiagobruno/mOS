@@ -402,7 +402,7 @@ static bool tracked_path(const char *p) {
 }
 
 static bool tracked(vnode_t *n, char *vpath, usize cap) {
-    if (!enabled || quiet || !n) return false;
+    if (!enabled || quiet || !n || n->unlinked) return false;   /* apagado mas aberto: fica só na RAM */
     for (vnode_t *p = n; p; p = p->parent) if (p->ext) return false;
     vfs_path(n, vpath, cap);
     return tracked_path(vpath);
