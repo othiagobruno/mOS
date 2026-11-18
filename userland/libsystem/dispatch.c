@@ -885,40 +885,56 @@ void dispatch_once_f(long *pred, void *ctx, dispatch_function_t fn) {
 void dispatch_once(long *pred, void *block) { dispatch_once_f(pred, block, blk_tramp); }
 
 /* ------------------------------------------------------------------ tempo */
-/* dispatch_time no macOS x86_64: ns na base do mach_absolute_time; DISPATCH_TIME_NOW 0, FOREVER ~0, WALLTIME_NOW ~1;
- * relógio de parede como valor negativo (bit 63, -ns desde 1970); bit 62 (relógio contínuo) não muda a base aqui */
+/* dispatch_time_t como no libdispatch da Apple (shims/time.h): NOW 0, FOREVER ~0, WALLTIME_NOW ~1;
+ *  bit 63 = 0            -> uptime (a base do mach_absolute_time, ns no x86_64)
+ *  bits 63 e 62 = 1      -> relógio de parede, codificado como -(ns desde 1970)
+ *  bit 63 = 1, bit 62 = 0 -> relógio contínuo (monotônico com o tempo dormindo): valor | 1<<63.
+ * O _Concurrency real manda os prazos do Task.sleep no relógio contínuo; antes este caso era lido como parede e o
+ * prazo virava décadas. O mOS não suspende a máquina, então contínuo e uptime têm a mesma base. */
 #define DT_FOREVER (~0ull)
+#define DT_MONO (1ull << 63)
+#define DT_WALL (1ull << 62)
+#define DT_MAX (DT_WALL - 1)
+enum { DC_UP, DC_MONO, DC_WALL };
+static int dt_decode(u64 t, u64 *v) {
+    if (!(t & DT_MONO)) { *v = t; return DC_UP; }
+    if (t & DT_WALL) { *v = t == ~1ull ? dp_wall_ns() : (u64)(-(i64)t); return DC_WALL; }
+    *v = t & ~DT_MONO;
+    return DC_MONO;
+}
+static u64 dt_encode(int clk, u64 v) {
+    if (v >= DT_MAX) return DT_FOREVER;
+    if (clk == DC_WALL) return v <= 1 ? (u64)(-2ll) : (u64)(-(i64)v);
+    if (clk == DC_MONO) return v | DT_MONO;
+    return v;
+}
 u64 cx_dispatch_deadline_ns(u64 t) {
     if (t == 0) return dp_now_ns();
     if (t == DT_FOREVER) return DT_FOREVER;
-    if (t == ~1ull) return dp_now_ns();
-    if ((i64)t < 0) {                                     /* parede */
-        u64 wall = (u64)(-(i64)t), nw = dp_wall_ns(), now = dp_now_ns();
-        return wall > nw ? now + (wall - nw) : now;
+    u64 v;
+    if (dt_decode(t, &v) == DC_WALL) {
+        u64 nw = dp_wall_ns(), now = dp_now_ns();
+        return v > nw ? now + (v - nw) : now;
     }
-    return t & ~(1ull << 62);
+    return v;
 }
 u64 dispatch_time(u64 when, i64 delta) {
     if (when == DT_FOREVER) return DT_FOREVER;
-    if (when == ~1ull) when = (u64)(-(i64)dp_wall_ns());
-    if ((i64)when < 0) {                                  /* soma no relógio de parede */
-        i64 w = -(i64)when + delta;
-        if (w <= 0) return (u64)-1ll - 1;
-        if ((u64)w >= (1ull << 62)) return DT_FOREVER;
-        return (u64)(-w);
-    }
-    u64 base = when == 0 ? dp_now_ns() : (when & ~(1ull << 62));
-    if (delta < 0) return (u64)(-delta) >= base ? 1 : base - (u64)(-delta);
-    if (base + (u64)delta >= (1ull << 62)) return DT_FOREVER;
-    return base + (u64)delta;
+    u64 v;
+    int clk = DC_UP;
+    if (when == 0) v = dp_now_ns();
+    else clk = dt_decode(when, &v);
+    if (delta < 0) v = (u64)(-delta) >= v ? 1 : v - (u64)(-delta);
+    else if (v + (u64)delta < v) return DT_FOREVER;
+    else v += (u64)delta;
+    return dt_encode(clk, v);
 }
 typedef struct { long tv_sec, tv_nsec; } dt_timespec_t;
 u64 dispatch_walltime(const dt_timespec_t *when, i64 delta) {
     u64 ns = when ? (u64)when->tv_sec * 1000000000ull + (u64)when->tv_nsec : dp_wall_ns();
     ns += (u64)delta;
     if ((i64)ns <= 1) ns = 2;
-    if (ns >= (1ull << 62)) return DT_FOREVER;
-    return (u64)(-(i64)ns);
+    return dt_encode(DC_WALL, ns);
 }
 
 /* ------------------------------------------------------------------ timer */

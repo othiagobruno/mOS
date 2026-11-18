@@ -5,7 +5,6 @@
  * Convenção assumida e não conferida com um compilador Swift: método com self em r13;
  * DispatchTimeInterval como (payload em um registrador, tag no seguinte), tags na ordem
  * do enum (seconds 0, milliseconds 1, microseconds 2, nanoseconds 3, never 4).
- * Tarefa e continuation não escalonam: alloc/dealloc são malloc/free, await não suspende.
  */
 #include "foundation.h"
 
@@ -134,24 +133,5 @@ __asm__(
 );
 #endif
 
-void *swift_task_alloc(size_t n) { return malloc(n ? n : 1); }
-void swift_task_dealloc(void *p) { free(p); }
-void *swift_task_create(size_t flags, void *group, void *parent, void *executor, size_t stack, void *fn, void *ctx) {
-    (void)flags; (void)group; (void)parent; (void)executor; (void)stack; (void)fn; (void)ctx;
-    return calloc(1, 64);
-}
-void swift_task_switch(void *executor, void *ctx) { (void)executor; (void)ctx; }
-
-typedef struct { void *a, *b; int resumed; void *error; } cx_cont_t;
-void *swift_continuation_init(void *a, void *b) {
-    cx_cont_t *c = calloc(1, sizeof *c);
-    if (c) { c->a = a; c->b = b; }
-    return c;
-}
-void swift_continuation_await(void *c) { (void)c; }
-void swift_continuation_throwingResume(void *c) { if (c) ((cx_cont_t *)c)->resumed = 1; }
-void swift_continuation_throwingResumeWithError(void *c, void *err) {
-    if (!c) return;
-    ((cx_cont_t *)c)->resumed = 1;
-    ((cx_cont_t *)c)->error = err;
-}
+/* swift_task_* e swift_continuation_* não ficam aqui: os de verdade estão no libswift_Concurrency real. Os falsos
+ * (malloc, await que não suspende) venciam a busca plana das dylibs Swift e o primeiro await saltava para lixo. */

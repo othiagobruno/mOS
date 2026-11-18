@@ -206,6 +206,21 @@ int main(void) {
     u64 el = (now_ns() - t0) / 1000000ull;
     CHECK(cnt == 1 && el >= 49 && el < 300, "dispatch_after em ~50 ms (%llu ms)", el);
 
+    /* relógio contínuo (bit 63), como o _Concurrency manda os prazos do Task.sleep */
+    cnt = 0;
+    t0 = now_ns();
+    u64 mono = (t0 + 50 * 1000000ull) | (1ull << 63);
+    dispatch_after_f(mono, s, 0, inc);
+    wait_until(&cnt, 1, 1000);
+    el = (now_ns() - t0) / 1000000ull;
+    CHECK(cnt == 1 && el >= 49 && el < 300, "dispatch_after no relógio contínuo em ~50 ms (%llu ms)", el);
+    u64 m2 = dispatch_time(mono, 10 * 1000000LL);
+    CHECK((m2 >> 63) && !((m2 >> 62) & 1) && (m2 & ~(1ull << 63)) == (mono & ~(1ull << 63)) + 10000000ull,
+          "dispatch_time soma no relógio contínuo e mantém o bit 63");
+    u64 dispatch_walltime(const void *, long long);
+    u64 w = dispatch_walltime(0, 0), w2 = dispatch_time(w, 1000000000LL);
+    CHECK(((w >> 62) & 3) == 3 && -(long long)w2 == -(long long)w + 1000000000LL, "parede: bits 63 e 62, dispatch_time soma 1 s");
+
     /* grupo: notify e enter/leave e prazo */
     cnt = 0;
     dispatch_group_enter(g);
