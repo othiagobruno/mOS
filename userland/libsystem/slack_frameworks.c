@@ -70,24 +70,39 @@ u8 _c_locale[512];                     /* no Mach-O: __c_locale */
 /* ================================================================ CFFileSecurity e NSURLFileSecurityKey */
 id NSURLFileSecurityKey;
 typedef struct { u16 mode; u32 owner, group; u8 has_mode, has_owner, has_group, has_uuid; u8 uuid[16]; } cffsec_t;
-void *CFFileSecurityCreate(void *alloc) { (void)alloc; return calloc(1, sizeof(cffsec_t)); }
-u8 CFFileSecurityGetMode(void *s, u16 *mode) { cffsec_t *x = s; if (!x || !x->has_mode) return 0; if (mode) *mode = x->mode; return 1; }
-u8 CFFileSecuritySetMode(void *s, u16 mode) { cffsec_t *x = s; if (!x) return 0; x->mode = mode; x->has_mode = 1; return 1; }
-u8 CFFileSecuritySetOwner(void *s, u32 uid) { cffsec_t *x = s; if (!x) return 0; x->owner = uid; x->has_owner = 1; return 1; }
-u8 CFFileSecuritySetGroup(void *s, u32 gid) { cffsec_t *x = s; if (!x) return 0; x->group = gid; x->has_group = 1; return 1; }
+/* CFFileSecurity é o NSFileSecurity (fdn_classes2.c): objeto com o estado logo depois do isa */
+void *cx_filesecurity_new(void);
+#define FSEC(s) ((cffsec_t *)((u8 *)(s) + 8))
+void *CFFileSecurityCreate(void *alloc) { (void)alloc; return cx_filesecurity_new(); }
+void *CFFileSecurityCreateCopy(void *alloc, void *s) { (void)alloc; return s ? MSG0(void *, (id)s, "copy") : 0; }
+u8 CFFileSecurityGetMode(void *s, u16 *mode) { if (!s || !FSEC(s)->has_mode) return 0; if (mode) *mode = FSEC(s)->mode; return 1; }
+u8 CFFileSecuritySetMode(void *s, u16 mode) { if (!s) return 0; FSEC(s)->mode = mode; FSEC(s)->has_mode = 1; return 1; }
+u8 CFFileSecurityGetOwner(void *s, u32 *uid) { if (!s || !FSEC(s)->has_owner) return 0; if (uid) *uid = FSEC(s)->owner; return 1; }
+u8 CFFileSecuritySetOwner(void *s, u32 uid) { if (!s) return 0; FSEC(s)->owner = uid; FSEC(s)->has_owner = 1; return 1; }
+u8 CFFileSecurityGetGroup(void *s, u32 *gid) { if (!s || !FSEC(s)->has_group) return 0; if (gid) *gid = FSEC(s)->group; return 1; }
+u8 CFFileSecuritySetGroup(void *s, u32 gid) { if (!s) return 0; FSEC(s)->group = gid; FSEC(s)->has_group = 1; return 1; }
+/* kCFFileSecurityClearOwner 1, Group 2, Mode 4, OwnerUUID 8 */
+u8 CFFileSecurityClearProperties(void *s, unsigned long mask) {
+    if (!s) return 0;
+    if (mask & 1) FSEC(s)->has_owner = 0;
+    if (mask & 2) FSEC(s)->has_group = 0;
+    if (mask & 4) FSEC(s)->has_mode = 0;
+    if (mask & 8) FSEC(s)->has_uuid = 0;
+    return 1;
+}
 u64 CFFileSecurityGetTypeID(void) { return 44; }
 typedef struct { u8 b[16]; } gap_uuid_bytes;
 id CFUUIDCreateFromUUIDBytes(void *alloc, gap_uuid_bytes b);
 gap_uuid_bytes CFUUIDGetUUIDBytes(id u);
 id CFFileSecurityCopyOwnerUUID(void *s) {
-    cffsec_t *x = s;
+    cffsec_t *x = s ? FSEC(s) : 0;
     gap_uuid_bytes b;
     if (!x || !x->has_uuid) return 0;
     memcpy(b.b, x->uuid, 16);
     return CFUUIDCreateFromUUIDBytes(0, b);
 }
 u8 CFFileSecuritySetOwnerUUID(void *s, id uuid) {
-    cffsec_t *x = s;
+    cffsec_t *x = s ? FSEC(s) : 0;
     gap_uuid_bytes b;
     if (!x || !uuid) return 0;
     b = CFUUIDGetUUIDBytes(uuid);
