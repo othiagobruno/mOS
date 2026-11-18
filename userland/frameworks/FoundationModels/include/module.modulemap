@@ -1,0 +1,5 @@
+// mOS — módulo clang subjacente do FoundationModels (só Swift; ver FoundationModels.swift)
+module FoundationModels [system] {
+    header "FoundationModels_mos.h"
+    export *
+}

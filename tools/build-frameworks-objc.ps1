@@ -62,8 +62,17 @@ foreach ($fw in Get-ChildItem "$root\userland\frameworks" -Directory) {
     New-Item -ItemType Directory -Force $dir | Out-Null
     # com overlay Swift, o libswiftCore real entra no link (ligação por ordinal): em busca plana os swift_* iam para os do
     # libSystem, o runtime sem ObjC (docs/swift-runtime-real.md)
-    $core = "$objc\dylib\usr\lib\swift\libswiftCore.dylib"
-    $deps = @(if ($sw -and (Test-Path $core)) { $core })
+    # O mesmo para libswift_Concurrency e para o libswift<X> de cada módulo que o overlay importa (Foundation, Dispatch...):
+    # em busca plana o primeiro await ia para lixo (tools/build-frameworks-objc.sh, swift_rt)
+    $deps = @()
+    if ($sw) {
+        $mods = @('Core', '_Concurrency') + @($sw | ForEach-Object { Get-Content $_ } |
+            ForEach-Object { if ($_ -match '^(@_exported )?import ([A-Za-z_]+)') { $Matches[2] } } | Sort-Object -Unique)
+        foreach ($m in $mods) {
+            $lib = "$objc\dylib\usr\lib\swift\libswift$m.dylib"
+            if ((Test-Path $lib) -and -not (Select-String -Path $lib -Pattern 'STUB mOS libswift' -SimpleMatch -Quiet)) { $deps += $lib }
+        }
+    }
     $log = & $zig cc -target $ZigTarget -shared -o "$dir\$file" "-Wl,-install_name,$install" '-Wl,-undefined,dynamic_lookup' @objs @deps 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { $log | Select-Object -First 8 | ForEach-Object { "  $_" }; Write-Host "${name}: link FALHOU" -ForegroundColor Red; $fails++; continue }
     foreach ($a in $alias) {
