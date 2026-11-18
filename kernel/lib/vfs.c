@@ -267,6 +267,16 @@ static void keep_open(vnode_t *n, int depth) {
 }
 
 void vfs_ref(vnode_t *v) { if (v) v->refs++; }
+
+__attribute__((weak)) void vfs_bridge_trim(void) {}
+__attribute__((weak)) void persist_trim(void) {}
+static int evict_hold;
+bool vfs_evict_held(void) { return evict_hold > 0; }
+void vfs_evict_hold(int delta) {
+    evict_hold += delta;
+    if (evict_hold < 0) evict_hold = 0;
+    if (!evict_hold && delta < 0) { vfs_bridge_trim(); persist_trim(); }
+}
 void vfs_unref(vnode_t *v) {
     if (!v || v->refs <= 0) return;
     if (--v->refs == 0 && v->unlinked) free_tree(v);

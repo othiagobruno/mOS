@@ -851,6 +851,7 @@ static const u8 *dep_follow(const char *path, usize *len, int depth);
 const u8 *host_read_file(const char *path, usize *len);   /* tools/machotest.c */
 static const u8 *dep_read_raw(const char *path, usize *len) { return host_read_file(path, len); }
 static bool dyld_tolerant(void) { return getenv("MACHOTEST_TOLERANT") != NULL; }
+static void vfs_evict_hold(int d) { (void)d; }   /* no host não há LRU de conteúdo */
 #else
 #include "vfs.h"
 static const u8 *dep_read_raw(const char *path, usize *len) {
@@ -2332,7 +2333,16 @@ static bool ustr(process_t *p, u64 va, char *out, usize cap) {
 }
 
 /* SYS_DYLD (op, a, b, c): ver MOS_DYLD_* em kernel/include/syscall.h */
+/* o carregador segura ponteiros para o conteúdo de vários arquivos (executável e dependências): as LRUs do VFS não
+ * devolvem memória enquanto ele roda (vfs_evict_hold) */
+static i64 macho_dyld_syscall_locked(process_t *p, u64 op, u64 a, u64 b, u64 c);
 i64 macho_dyld_syscall(process_t *p, u64 op, u64 a, u64 b, u64 c) {
+    vfs_evict_hold(+1);
+    i64 r = macho_dyld_syscall_locked(p, op, a, b, c);
+    vfs_evict_hold(-1);
+    return r;
+}
+static i64 macho_dyld_syscall_locked(process_t *p, u64 op, u64 a, u64 b, u64 c) {
     link_t *K = p->dyld;
     if (!K) return -MOS_EINVAL;                           /* processo que não é Mach-O */
     ls_cur = K->arch;                                     /* libSystem e slices da arquitetura do processo */
@@ -2764,7 +2774,18 @@ static bool map_a64rt(process_t *p, u64 gentry, u64 gsp, u64 gx0, u64 hdr, bool 
     return true;
 }
 
+/* o carregador segura ponteiros para o conteúdo de vários arquivos (executável e dependências): as LRUs do VFS não
+ * devolvem memória enquanto ele roda (vfs_evict_hold) */
+static bool macho_load_locked(process_t *p, const u8 *img, usize len, const char *arg, u64 *entry,
+                u64 *user_rsp, u64 *rdi, char *err, usize errlen);
 bool macho_load(process_t *p, const u8 *img, usize len, const char *arg, u64 *entry,
+                u64 *user_rsp, u64 *rdi, char *err, usize errlen) {
+    vfs_evict_hold(+1);
+    bool r = macho_load_locked(p, img, len, arg, entry, user_rsp, rdi, err, errlen);
+    vfs_evict_hold(-1);
+    return r;
+}
+static bool macho_load_locked(process_t *p, const u8 *img, usize len, const char *arg, u64 *entry,
                 u64 *user_rsp, u64 *rdi, char *err, usize errlen) {
     bool force_arm64 = arm64_forced(p);
     ls_cur = choose_arch(img, len, force_arm64);           /* arm64 só com o tradutor (a64rt.mos + libSystem arm64) */
@@ -3071,7 +3092,16 @@ const char *macho_host_symbolize(u64 addr, u64 *off) {
 #endif
 
 /* ================================================================ relatório */
+/* o carregador segura ponteiros para o conteúdo de vários arquivos (executável e dependências): as LRUs do VFS não
+ * devolvem memória enquanto ele roda (vfs_evict_hold) */
+static bool macho_report_image_locked(const u8 *img, usize len, const char *name, char *out, usize cap);
 bool macho_report_image(const u8 *img, usize len, const char *name, char *out, usize cap) {
+    vfs_evict_hold(+1);
+    bool r = macho_report_image_locked(img, len, name, out, cap);
+    vfs_evict_hold(-1);
+    return r;
+}
+static bool macho_report_image_locked(const u8 *img, usize len, const char *name, char *out, usize cap) {
     char err[200] = "", verdict[320];
     static char body[4096];
     usize o = 0;
