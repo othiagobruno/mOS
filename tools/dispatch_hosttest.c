@@ -107,7 +107,19 @@ static volatile int tfires; static void *tsrc; static volatile unsigned long tda
 static void tick(void *c) { (void)c; tdata_sum += dispatch_source_get_data(tsrc); tfires++; }
 static volatile int cancel_called; static void on_cancel(void *c) { (void)c; cancel_called = 1; }
 static void *dsrc; static volatile unsigned long dsum; static volatile int dcalls;
-static void dhandler(void *c) { (void)c; msleep(20); dsum += dispatch_source_get_data(dsrc); dcalls++; }
+size_t dispatch_source_get_extended_data(void *, void *, size_t);
+static volatile int dext_ok = 1;
+static void dhandler(void *c) {
+    (void)c;
+    msleep(20);
+    unsigned long d = dispatch_source_get_data(dsrc), ext[3] = {7, 7, 7};
+    /* {data, status}: copia no máximo 16 bytes e devolve quantos; com size 8 só o data */
+    if (dispatch_source_get_extended_data(dsrc, ext, sizeof ext) != 16 || ext[0] != d || ext[1] != 0 || ext[2] != 7) dext_ok = 0;
+    unsigned long one = 0;
+    if (dispatch_source_get_extended_data(dsrc, &one, sizeof one) != 8 || one != d) dext_ok = 0;
+    dsum += d;
+    dcalls++;
+}
 static void *rsrc; static volatile unsigned long rgot; static int rfd;
 static void rhandler(void *c) { (void)c; char b[64]; long n = read(rfd, b, sizeof b); if (n > 0) rgot += (unsigned long)n; }
 static void *ssrc; static volatile unsigned long sgot; static void shandler(void *c) { (void)c; sgot += dispatch_source_get_data(ssrc); }
@@ -315,6 +327,16 @@ int main(void) {
     u64 end = now_ns() + NSEC;
     while (dsum < 100 && now_ns() < end) msleep(2);
     CHECK(dsum == 100 && dcalls < 100, "data_add soma 100 em %d chamadas", dcalls);
+    CHECK(dext_ok, "get_extended_data: {data, status 0}, tamanho limitado a 16");
+
+    /* _dispatch_main_queue_callback_4CF: quem recebe a mensagem da porta roda a fila principal */
+    void _dispatch_main_queue_callback_4CF(void *);
+    unsigned _dispatch_get_main_queue_port_4CF(void);
+    main_ran_on_main = 0;
+    dispatch_async_f(dispatch_get_main_queue(), 0, main_job);
+    _dispatch_main_queue_callback_4CF(0);
+    CHECK(main_ran_on_main, "_dispatch_main_queue_callback_4CF roda a fila principal na thread principal");
+    CHECK(_dispatch_get_main_queue_port_4CF() == 0, "porta da fila principal: 0 no host (sem Mach)");
 
     /* read: pipe */
     int pp[2];

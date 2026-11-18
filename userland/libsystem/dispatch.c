@@ -378,6 +378,40 @@ static void pool_push(dp_queue_t *r, dp_item_t *it) {
 static volatile int main_seq;
 volatile int cx_dispatch_main_used;   /* cfrunloop.c: a fila principal é fonte do run loop principal */
 volatile int cx_main_queue_live;      /* cfrunloop.c liga quando o CFRunLoop principal roda */
+/* Porta da fila principal para quem roda o próprio laço Mach (o CFRunLoop da Apple, e apps que imitam):
+ * _dispatch_get_main_queue_port_4CF cria uma porta de recepção; cada bloco que chega na fila manda uma
+ * mensagem vazia para ela (uma só pendente de cada vez), e quem a recebe chama _dispatch_main_queue_callback_4CF,
+ * que roda a fila e manda outra se ainda sobrou trabalho. O CFRunLoop do mOS não precisa dela: drena direto. */
+static volatile unsigned main_port;
+static volatile int main_port_sent;
+#ifdef MOS_HOST_TEST
+static void main_port_poke(void) {}
+unsigned _dispatch_get_main_queue_port_4CF(void) { return 0; }
+#else
+typedef struct { unsigned bits, size, remote, local, voucher; int id; } dp_mach_hdr_t;
+int mach_msg(void *msg, int option, unsigned send_size, unsigned rcv_size, unsigned rcv_name, unsigned timeout, unsigned notify);
+int mach_port_allocate(unsigned task, unsigned right, unsigned *name);
+int mach_port_insert_right(unsigned task, unsigned name, unsigned poly, unsigned poly_type);
+extern unsigned mach_task_self_;
+static void main_port_poke(void) {
+    unsigned port = main_port;
+    if (!port || !__sync_bool_compare_and_swap(&main_port_sent, 0, 1)) return;
+    /* remoto com MACH_MSG_TYPE_COPY_SEND (19); MACH_SEND_MSG|MACH_SEND_TIMEOUT com 0 ms: nunca bloqueia */
+    dp_mach_hdr_t h = {19, sizeof h, port, 0, 0, 0x4d51};   /* id: "MQ" */
+    if (mach_msg(&h, 0x1 | 0x10, sizeof h, 0, 0, 0, 0) != 0) main_port_sent = 0;
+}
+unsigned _dispatch_get_main_queue_port_4CF(void) {
+    if (!main_port) {
+        unsigned name = 0;
+        if (mach_port_allocate(mach_task_self_, 1 /* RECEIVE */, &name) != 0) return 0;
+        mach_port_insert_right(mach_task_self_, name, name, 20 /* MAKE_SEND */);
+        if (!__sync_bool_compare_and_swap(&main_port, 0, name)) return main_port;   /* outra thread chegou antes */
+        cx_dispatch_main_used = 1;
+        if (_dispatch_main_q.head) main_port_poke();
+    }
+    return main_port;
+}
+#endif
 static void main_push(dp_item_t *it) {
     dp_queue_t *m = &_dispatch_main_q;
     cx_dispatch_main_used = 1;
@@ -389,6 +423,7 @@ static void main_push(dp_item_t *it) {
     __sync_fetch_and_add(&main_seq, 1);
     dp_wake(&main_seq, 1);
     dp_main_wakeup();
+    main_port_poke();
 }
 int cx_dispatch_pending(void) { return _dispatch_main_q.head != 0 && !_dispatch_main_q.h.susp; }
 /* executa o que estiver na fila principal (só na thread principal); devolve quantos itens rodaram */
@@ -412,6 +447,14 @@ int cx_dispatch_drain_main(void) {
         ran++;
     }
     return ran;
+}
+/* a mensagem da porta já foi recebida por quem chama; roda a fila e, se sobrou, avisa de novo */
+void _dispatch_main_queue_callback_4CF(void *msg) {
+    (void)msg;
+    main_port_sent = 0;
+    cx_main_queue_live = 1;
+    cx_dispatch_drain_main();
+    if (cx_dispatch_pending()) main_port_poke();
 }
 void cx_dispatch_drain(void) { if (dp_is_main() && !main_draining) { main_draining = 1; cx_dispatch_drain_main(); main_draining = 0; } }
 /* dispatch_main: a thread principal vira o laço da fila principal e não volta */

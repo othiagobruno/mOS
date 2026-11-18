@@ -299,6 +299,7 @@ cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
 echo "==> libdispatch, runtime de blocos e Unicode do libSystem (testes de host)"
 sh "$ROOT/tools/dispatch_hosttest.sh"
 sh "$ROOT/tools/blocks_hosttest.sh"
+sh "$ROOT/tools/objcrt_hosttest.sh"
 cc -DMOS_HOST_TEST -O1 "$ROOT/userland/libsystem/swiftrt.c" "$ROOT/tools/swiftrt_hosttest.c" -o "$OUT/swiftrt_hosttest"
 "$OUT/swiftrt_hosttest"
 

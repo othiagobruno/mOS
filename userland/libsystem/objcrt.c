@@ -53,7 +53,9 @@ typedef struct proto {
     u32 size, flags;
 } proto_t;
 typedef struct { SEL name; const char *types; } objc_method_description;
+typedef struct { proto_t p; const char **ext; const char *demangled; const u8 *cprops; } proto_ext_t;
 
+static char g_incomplete_isa;   /* isa dos protocolos em construção (objc_allocateProtocol) */
 static proto_t **g_protos;
 static u32 g_nprotos, g_capprotos;
 proto_t *objc_getProtocol(const char *name) {
@@ -159,12 +161,109 @@ proto_t **objc_copyProtocolList(u32 *count) {
 }
 proto_t *objc_allocateProtocol(const char *name) {
     if (objc_getProtocol(name)) return 0;
-    proto_t *p = calloc(1, sizeof *p);
+    proto_t *p = calloc(1, sizeof(proto_ext_t));
+    p->isa = &g_incomplete_isa;
     p->name = strdup(name);
-    p->size = sizeof *p;
+    p->size = sizeof(proto_ext_t);
     return p;
 }
-void objc_registerProtocol(proto_t *p) { proto_register(p); }
+/* Protocolo em construção (objc_allocateProtocol até objc_registerProtocol): marcado pelo isa, como o
+ * __IncompleteProtocol da Apple. Só nele valem protocol_addMethodDescription/addProtocol/addProperty. */
+static int proto_building(proto_t *p) { return p && p->isa == &g_incomplete_isa; }
+/* method_list_t de protocolo: {entsize 24, count, {name, types, imp}[]}; cresce de um em um */
+static const u8 *ml_append(const u8 *ml, SEL sel, const char *types) {
+    u32 n = ml ? *(const u32 *)(ml + 4) : 0;
+    u8 *m = realloc((void *)ml, 8 + (u64)(n + 1) * 24);
+    if (!m) return ml;
+    *(u32 *)m = 24;
+    *(u32 *)(m + 4) = n + 1;
+    const char **e = (const char **)(m + 8 + (u64)n * 24);
+    e[0] = sel;
+    e[1] = strdup(types ? types : "");
+    e[2] = 0;
+    return m;
+}
+void protocol_addMethodDescription(proto_t *p, SEL sel, const char *types, BOOL required, BOOL instance) {
+    if (!proto_building(p) || !sel) return;
+    lk();
+    if (required && instance) p->inst = ml_append(p->inst, sel, types);
+    else if (required) p->cls = ml_append(p->cls, sel, types);
+    else if (instance) p->opt_inst = ml_append(p->opt_inst, sel, types);
+    else p->opt_cls = ml_append(p->opt_cls, sel, types);
+    ul();
+}
+/* addition precisa estar registrado (a Apple recusa um protocolo ainda em construção) */
+void protocol_addProtocol(proto_t *p, proto_t *addition) {
+    if (!proto_building(p) || !addition || proto_building(addition)) return;
+    lk();
+    u64 n = p->protocols ? p->protocols->count : 0;
+    void *l = realloc(p->protocols, 8 + (n + 1) * sizeof(proto_t *));
+    if (l) {
+        p->protocols = l;
+        p->protocols->list[n] = addition;
+        p->protocols->count = n + 1;
+    }
+    ul();
+}
+/* protocol_t completo (size >= 96): ... instanceProperties (+56), size, flags, extendedMethodTypes, demangledName,
+ * classProperties (+88). Os alocados aqui guardam as propriedades de classe no mesmo lugar (proto_ext_t). */
+static const u8 **props_slot(proto_t *p, BOOL instance) {
+    if (instance) return &p->props;
+    return p->size >= sizeof(proto_ext_t) ? &((proto_ext_t *)p)->cprops : 0;
+}
+typedef struct { const char *name, *value; } prop_attr_in_t;
+void protocol_addProperty(proto_t *p, const char *name, const prop_attr_in_t *attrs, u32 n, BOOL required, BOOL instance) {
+    if (!proto_building(p) || !name || !required) return;   /* propriedade opcional: a Apple também ignora */
+    const u8 **slot = props_slot(p, instance);
+    if (!slot) return;
+    /* "T@\"NSString\",C,N" a partir de {T, @"NSString"}, {C, ""}, {N, ""} */
+    size_t len = 1;
+    for (u32 i = 0; i < n; i++) len += strlen(attrs[i].name) + (attrs[i].value ? strlen(attrs[i].value) : 0) + 1;
+    char *a = calloc(1, len);
+    if (!a) return;
+    char *w = a;
+    for (u32 i = 0; i < n; i++) {
+        if (i) *w++ = ',';
+        size_t k = strlen(attrs[i].name);
+        memcpy(w, attrs[i].name, k);
+        w += k;
+        if (attrs[i].value) { k = strlen(attrs[i].value); memcpy(w, attrs[i].value, k); w += k; }
+    }
+    lk();
+    const u8 *pl = *slot;
+    u32 cnt = pl ? *(const u32 *)(pl + 4) : 0;
+    u8 *m = realloc((void *)pl, 8 + (u64)(cnt + 1) * sizeof(prop_t));
+    if (m) {
+        *(u32 *)m = sizeof(prop_t);
+        *(u32 *)(m + 4) = cnt + 1;
+        prop_t *e = (prop_t *)(m + 8) + cnt;
+        e->name = strdup(name);
+        e->attrs = a;
+        *slot = m;
+    } else free(a);
+    ul();
+}
+prop_t **protocol_copyPropertyList2(proto_t *p, u32 *count, BOOL required, BOOL instance) {
+    if (count) *count = 0;
+    if (!p || !required) return 0;
+    const u8 **slot = props_slot(p, instance);
+    const u8 *pl = slot ? *slot : 0;
+    u32 n = pl ? *(const u32 *)(pl + 4) : 0;
+    if (!n) return 0;
+    u32 es = *(const u32 *)pl;
+    prop_t **out = calloc(n + 1, sizeof *out);
+    if (!out) return 0;
+    for (u32 i = 0; i < n; i++) out[i] = (prop_t *)(pl + 8 + (u64)i * es);
+    if (count) *count = n;
+    return out;
+}
+prop_t **protocol_copyPropertyList(proto_t *p, u32 *count) { return protocol_copyPropertyList2(p, count, YES, YES); }
+void objc_registerProtocol(proto_t *p) {
+    if (!proto_building(p)) return;                      /* já registrado ou compilado: a Apple só avisa */
+    extern void *objc_getClass(const char *);
+    p->isa = objc_getClass("Protocol");
+    proto_register(p);
+}
 
 /* protocolos acrescentados em tempo de execução (class_addProtocol) e por categorias */
 static struct { cx_class_t *c; proto_t *p; } *g_extra;

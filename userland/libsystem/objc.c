@@ -675,13 +675,24 @@ BOOL _availability_version_check(u32 count, const struct { u32 platform, version
 /* isa do mOS é ponteiro puro e não há tagged pointers: a máscara do x86_64 da Apple preserva o ponteiro */
 const u64 objc_debug_isa_class_mask = 0x00007ffffffffff8ULL;
 const u64 objc_debug_taggedpointer_mask = 0;
+void *class_getInstanceVariable(cx_class_t *c, const char *name);
+/* entre objc_allocateClassPair e objc_registerClassPair; a ivar entra na lista do rw (class_getInstanceVariable,
+ * class_copyIvarList, object_getIvar) com uma variável de offset própria, como as compiladas */
 BOOL class_addIvar(cx_class_t *c, const char *name, u64 size, u8 align, const char *types) {
     cx_rw_t *rw = rw_of(c);
-    (void)name; (void)types;
-    if (!rw) return NO;
+    if (!rw || rw->meta || !name || class_getInstanceVariable(c, name)) return NO;
+    u32 *off = malloc(sizeof *off);
+    void *l = off ? realloc(rw->ivars, (rw->nivars + 1) * sizeof *rw->ivars) : 0;
+    if (!l) { free(off); return NO; }
+    rw->ivars = l;
     u32 a = 1u << align;
     rw->size = (rw->size + a - 1) & ~(a - 1);
+    *off = rw->size;
     rw->size += (u32)size;
+    rw->ivars[rw->nivars].name = strdup(name);
+    rw->ivars[rw->nivars].offset = off;
+    rw->ivars[rw->nivars].type = strdup(types ? types : "");
+    rw->nivars++;
     return YES;
 }
 
@@ -698,6 +709,20 @@ i64 ivar_getOffset(void *iv) { return iv ? *((u32 **)iv)[1] : 0; }   /* {name, o
 const char *ivar_getName(void *iv) { return iv ? *(const char **)iv : 0; }
 id object_getIvar(id o, void *iv) { return iv && o ? *(id *)((u8 *)o + **(u32 **)((u8 *)iv + 8)) : 0; }
 void object_setIvar(id o, void *iv, id v) { if (iv && o) *(id *)((u8 *)o + **(u32 **)((u8 *)iv + 8)) = v; }
+/* por nome: o valor de ponteiro na posição da ivar (sem retain, como na Apple) */
+void *object_getInstanceVariable(id o, const char *name, void **out) {
+    void *iv = o && name ? class_getInstanceVariable(o->isa, name) : 0;
+    if (out) *out = iv ? (void *)object_getIvar(o, iv) : 0;
+    return iv;
+}
+void *object_setInstanceVariable(id o, const char *name, void *value) {
+    void *iv = o && name ? class_getInstanceVariable(o->isa, name) : 0;
+    if (iv) object_setIvar(o, iv, (id)value);
+    return iv;
+}
+/* coleta de lixo do ObjC: saiu do macOS 10.12; o runtime da Apple responde NO e não registra nada */
+BOOL objc_collectingEnabled(void) { return NO; }
+void objc_registerThreadWithCollector(void) {}
 
 /* ================================================================ objetos e memória
  * Cada objeto criado aqui tem um cabeçalho de 16 bytes antes do isa: {magic, contagem}. Objetos
