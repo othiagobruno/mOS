@@ -584,3 +584,12 @@ void SetResourceSize(Handle h, long size) {
 }
 /* o Memory Manager do mOS não esvazia handles (não há purge): nada a ajustar */
 void SetResPurge(u8 install) { (void)install; g_err = noErr; }
+/* GetNextFOND: o próximo recurso 'FOND' da cadeia depois deste (a família seguinte); NULL no fim */
+Handle GetNextFOND(Handle fond) {
+    const ResType FOND = 0x464f4e44u;
+    short n = CountResources(FOND);
+    for (short i = 1; i <= n; i++)
+        if (GetIndResource(FOND, i) == fond) return i < n ? GetIndResource(FOND, (short)(i + 1)) : 0;
+    g_err = resNotFound;
+    return 0;
+}
