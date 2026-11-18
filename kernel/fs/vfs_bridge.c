@@ -416,6 +416,19 @@ static void detach_file(vnode_t *n) {
     n->ext = NULL;
 }
 
+/* arquivo aberto que vai sumir do volume (apagado, volume ejetado): o conteúdo fica na RAM */
+void vfs_keep_content(vnode_t *n) {
+    if (!n || n->dir || !n->ext) return;
+    detach_file(n);
+    if (n->ext) {                                        /* não coube na RAM: o nó do volume vai sumir, então não aponta mais */
+        dnode_t *d = n->ext;
+        if (d->in_lru && d->vn == n) lru_unlink(d);
+        kprintf("vfs: %s aberto, mas grande demais para ficar na RAM depois de sair do volume: lido como vazio\n", n->name);
+        n->ext = NULL;
+        n->size = 0;
+    }
+}
+
 /* carrega toda a subárvore para a RAM e solta os dnodes (antes de sair do volume) */
 static void materialize(vnode_t *n, int depth) {
     if (depth > 64) return;

@@ -69,7 +69,7 @@ static bool quiet_path(const char *p) {
 
 void vfs_ev(vnode_t *n, u32 flags) {
     extern bool vfs_meta_live;
-    if (!n || !vfs_meta_live || vfs_ev_mute) return;
+    if (!n || !vfs_meta_live || vfs_ev_mute || n->unlinked) return;   /* apagado mas aberto: não tem caminho */
     char *p = kmalloc(1024);
     if (!p) return;
     vfs_path(n, p, 1024);

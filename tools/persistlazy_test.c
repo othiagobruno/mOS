@@ -40,6 +40,9 @@ void acpi_reboot(void) {}
 bool update_boot_pending(fatfs_t *fs) { (void)fs; return false; }
 bool update_boot_apply(fatfs_t *fs) { (void)fs; return false; }
 void update_poll(void) {}
+void storage_seal(void) {}
+void bootlog_tick(void) {}
+void bootlog_start(fatfs_t *fs, int disk_index, u64 part_off) { (void)fs; (void)disk_index; (void)part_off; }
 char klog_buf[16];
 usize klog_len;
 void vfs_init(void);
@@ -115,6 +118,10 @@ int main(int argc, char **argv) {
     CHECK(vz && vz->size == 0 && vz->data);
 
     /* lookup traz o pequeno; o grande fica paginado e lê por trechos */
+    {   /* mmap: lookup sem conteúdo, só o trecho vem do disco */
+        char t[16];
+        CHECK(vfs_lookup_meta("/Aplicativos/X.app/main.js") == js && !js->data && vfs_read_at(js, 8, t, 6) == 6 && !memcmp(t, "log(1)", 6));
+    }
     CHECK(vfs_lookup("/Aplicativos/X.app/main.js") == js && js->data && !memcmp(js->data, "console.log(1)", 14));
     CHECK(vfs_lookup("/Aplicativos/X.app/big.bin") == bg && !bg->data);
     u8 buf[100000];
@@ -168,6 +175,33 @@ int main(int argc, char **argv) {
     /* apagar */
     vnode_t *m11 = vfs_lookup("/Aplicativos/X.app/m11.bin");
     CHECK(m11 && vfs_delete(m11));
+    /* fd -> vnode: arquivo aberto (vfs_ref) e apagado continua legível e gravável; o disco não o tem mais; o último
+     * vfs_unref libera (ASan acusa se ficar uso depois de liberado) */
+    vnode_t *m13 = peek("/Aplicativos/X.app", "m13.bin");
+    CHECK(m13 && !m13->data && m13->dclus);              /* ainda só no disco */
+    vfs_ref(m13);
+    CHECK(vfs_delete(m13));
+    CHECK(m13->unlinked && !m13->parent && m13->dclus == 0 && m13->data && m13->size == MID && !memcmp(m13->data, mid[13], MID));
+    CHECK(peek("/Aplicativos/X.app", "m13.bin") == NULL);
+    CHECK(vfs_append(m13, "x", 1) && m13->size == MID + 1);   /* grava só na RAM: persist não segue um apagado */
+    persist_sync();
+    vfs_unref(m13);
+    /* pasta apagada com um arquivo aberto dentro */
+    CHECK(vfs_mkdir("/Users/pasta") && vfs_write_file("/Users/pasta/a.txt", "abc", 3) && vfs_write_file("/Users/pasta/b.txt", "zz", 2));
+    vnode_t *pa = vfs_lookup("/Users/pasta/a.txt");
+    vfs_ref(pa);
+    CHECK(vfs_delete(vfs_lookup_dir("/Users/pasta")));
+    CHECK(vfs_lookup("/Users/pasta") == NULL && pa->unlinked && pa->size == 3 && !memcmp(pa->data, "abc", 3));
+    vfs_unref(pa);
+    /* rename por cima de um arquivo aberto: quem o abriu continua vendo o conteúdo antigo */
+    CHECK(vfs_write_file("/Users/alvo.txt", "velho", 5) && vfs_write_file("/Users/novo.txt", "novo", 4));
+    vnode_t *al = vfs_lookup("/Users/alvo.txt");
+    vfs_ref(al);
+    CHECK(vfs_delete(al) && vfs_move(vfs_lookup("/Users/novo.txt"), vfs_lookup_dir("/Users"), "alvo.txt"));
+    CHECK(al->size == 5 && !memcmp(al->data, "velho", 5));
+    vnode_t *al2 = vfs_lookup("/Users/alvo.txt");
+    CHECK(al2 && al2 != al && al2->size == 4 && !memcmp(al2->data, "novo", 4));
+    vfs_unref(al);
     /* cópia de um paginado */
     CHECK(vfs_copy_tree("/Aplicativos/X.app/m12.bin", "/Users/copia.bin"));
 
@@ -186,6 +220,11 @@ int main(int argc, char **argv) {
     CHECK(!fat_stat(fs, "/mOS/Aplicativos/X.app/m07.bin", &dir, NULL));
     CHECK(!fat_stat(fs, "/mOS/Aplicativos/X.app/m09.bin", &dir, NULL));
     CHECK(!fat_stat(fs, "/mOS/Aplicativos/X.app/m11.bin", &dir, NULL));
+    CHECK(!fat_stat(fs, "/mOS/Aplicativos/X.app/m13.bin", &dir, NULL) && !fat_stat(fs, "/mOS/m13.bin", &dir, NULL));
+    CHECK(!fat_stat(fs, "/mOS/Users/pasta", &dir, NULL));
+    x = fat_read_file(fs, "/mOS/Users/alvo.txt", &n);
+    CHECK(x && n == 4 && !memcmp(x, "novo", 4));
+    free(x);
     x = fat_read_file(fs, "/mOS/Users/copia.bin", &n);
     CHECK(x && n == MID && !memcmp(x, mid[12], MID));
     free(x);
