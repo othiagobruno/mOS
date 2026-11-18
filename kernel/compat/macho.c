@@ -1166,9 +1166,10 @@ static bool run_rebase(load_t *L, const u8 *p, const u8 *end) {
             if (!s) { snprintf(L->err, L->errlen, "rebase fora da imagem"); return false; }
             /* valor fora da imagem = símbolo absoluto codificado como rebase: não recebe slide (ver run_chained) */
             if (*s >= mo->vmin && *s <= mo->vmax) *s += (u64)L->slide;
-            /* arm64: o byte alto é ignorado pelo hardware (TBI) e carrega marcas, como o bit 63 do nome do RTTI não único
-             * da libc++ da Apple: o slide vai nos 56 bits baixos e a marca fica */
-            else if (L->K->arch && (*s & 0x00FFFFFFFFFFFFFFULL) >= mo->vmin && (*s & 0x00FFFFFFFFFFFFFFULL) <= mo->vmax) *s += (u64)L->slide;
+            /* byte alto marcado (bit 63 do nome do RTTI não único da libc++ da Apple; String do Swift com -O em
+             * __DATA,__const: bit 63 + endereço da cstring - 32, também no x86_64): o slide vai nos 56 bits baixos e a
+             * marca fica, como o dyld, que soma o slide sem conferir */
+            else if ((*s & 0x00FFFFFFFFFFFFFFULL) >= mo->vmin && (*s & 0x00FFFFFFFFFFFFFFULL) <= mo->vmax) *s += (u64)L->slide;
             off += 8 + skip;
         }
     }
