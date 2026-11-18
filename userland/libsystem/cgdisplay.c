@@ -85,12 +85,20 @@ static id sc_device(id self, SEL c) {
 static double sc_one(id self, SEL c) { (void)self; (void)c; return 1.0; }
 static double sc_refresh(id self, SEL c) { (void)self; (void)c; return 1.0 / 60.0; }
 static id sc_name(id self, SEL c) { (void)self; (void)c; return cx_str("Tela do mOS"); }
-/* ---- NSColorSpace (o mOS só tem sRGB): todos os espaços são o mesmo objeto; -CGColorSpace devolve
- * o próprio objeto (as funções CGColorSpace* do coregraphics.c aceitam qualquer ponteiro) */
+/* ---- NSColorSpace (o mOS só tem sRGB): todos os espaços são o mesmo objeto; -CGColorSpace devolve um CGColorSpace sRGB
+ * de verdade. Antes devolvia o próprio NSColorSpace, e as funções do motor ICC (cg_color.inc) leem os campos do cgspace_t:
+ * o Electron faz [[x colorSpace] CGColorSpace] e CGColorSpaceCopyICCData, que lia lixo como ponteiro do perfil e caía */
 cx_class_t NSColorSpace_c __asm__("OBJC_CLASS_$_NSColorSpace");
 cx_class_t NSColorSpace_m __asm__("OBJC_METACLASS_$_NSColorSpace");
 static id cs_shared(id cls, SEL c) { (void)c; static id s; if (!s) s = cx_alloc_instance((cx_class_t *)cls); return s; }
-static id cs_self(id self, SEL c) { (void)c; return self; }
+extern const void *kCGColorSpaceSRGB;
+void *CGColorSpaceCreateWithName(const void *name);
+static id cs_self(id self, SEL c) {
+    (void)self; (void)c;
+    static void *cg;   /* criado uma vez, vive para sempre (como o espaço sRGB do sistema no macOS) */
+    if (!cg) cg = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    return (id)cg;
+}
 static long cs_components(id self, SEL c) { (void)self; (void)c; return 3; }
 static long cs_model(id self, SEL c) { (void)self; (void)c; return 1; }          /* NSColorSpaceModelRGB */
 static id cs_name(id self, SEL c) { (void)self; (void)c; return cx_str("sRGB IEC61966-2.1"); }
