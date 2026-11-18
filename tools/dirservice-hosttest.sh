@@ -20,5 +20,5 @@ long fake_sys(long n, long a, long b, long c);
 #define SYS1(n, a) fake_sys(n, a, 0, 0)
 #define SYS3(n, a, b, c) fake_sys(n, (long)(a), (long)(b), (long)(c))
 H
-cc -O1 -Wall -Wno-unused-parameter -Wno-builtin-declaration-mismatch -I"$T" "$T/dirservice.c" "$ROOT/tools/dirservice_host.c" -o "$T/t"
+cc -std=gnu11 -O1 -Wall -Wno-unused-parameter -Wno-builtin-declaration-mismatch -I"$T" "$T/dirservice.c" "$ROOT/tools/dirservice_host.c" -o "$T/t"
 "$T/t"
