@@ -25,6 +25,7 @@ i32 FSRefMakePath(const FSRef *ref, u8 *path, u32 max);
 long getxattr(const char *p, const char *n, void *v, size_t s, u32 pos, int o);
 int setxattr(const char *p, const char *n, const void *v, size_t s, u32 pos, int o);
 int fstat(int fd, void *st);
+int snprintf(char *b, size_t n, const char *fmt, ...);
 
 enum { noErr = 0, eofErr = -39, fnfErr = -43, wrPermErr = -61, memFullErr = -108, paramErr = -50, permErr = -54,
        resNotFound = -192, resFNotFound = -193, addResFailed = -194, rmvResFailed = -196, resAttrErr = -198,

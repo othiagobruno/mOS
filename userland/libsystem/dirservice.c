@@ -22,6 +22,10 @@ typedef struct { u32 fReserved1; tAccessControlEntry fReserved2; u32 fAttributeV
 typedef struct { u32 fReserved1; tAccessControlEntry fReserved2; u32 fRecordAttributeCount; tDataNode fRecordNameAndType; } tRecordEntry;
 unsigned getuid(void);
 void CC_MD5(const void *d, u32 n, u8 *md);
+int snprintf(char *b, size_t n, const char *fmt, ...);
+char *strstr(const char *h, const char *n);
+char *strcat(char *d, const char *s);
+char *strncat(char *d, const char *s, size_t n);
 
 enum { eDSNoErr = 0, eDSNodeNotFound = -14008, eDSInvalidIndex = -14061, eDSIndexOutOfRange = -14062, eDSInvalidReference = -14071,
        eDSInvalidDirRef = -14073, eDSInvalidNodeRef = -14074, eDSInvalidAttrListRef = -14076, eDSInvalidAttrValueRef = -14077,
