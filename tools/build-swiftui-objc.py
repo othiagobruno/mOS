@@ -681,7 +681,11 @@ def stage_link():
     # DeveloperToolsSupport (ImageResource/ColorResource; userland/frameworks/DeveloperToolsSupport): o SwiftUI da Apple liga nele
     dts = dy + '/System/Library/Frameworks/DeveloperToolsSupport.framework/Versions/A/DeveloperToolsSupport'
     if os.path.exists(dts):
-        libs.append(dts)
+        lnk = os.path.join(SUI, 'c', 'DeveloperToolsSupport.dylib')   # o zig só aceita dylib com extensão (como o Combine)
+        if os.path.lexists(lnk):
+            os.remove(lnk)
+        os.symlink(dts, lnk)
+        libs.append(lnk)
     for m in ['Core', 'Foundation', 'Dispatch', 'ObjectiveC', 'Darwin', 'CoreFoundation', 'CoreGraphics', 'os', 'Observation',
               '_Concurrency', '_StringProcessing']:
         p = os.path.join(dy, 'usr/lib/swift/libswift%s.dylib' % m)
