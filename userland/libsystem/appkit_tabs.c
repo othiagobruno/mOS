@@ -71,6 +71,34 @@ static void select_window(id g, id w) {
     show_only_selected(g);
 }
 
+/* ---- NSWindowTab: título (o da janela quando vazio), título rico, dica e view acessória (fica na aba, à direita) */
+static char k_tab_title, k_tab_attr, k_tab_tip, k_tab_acc;
+static id tab_window_of(id tab) { return tab && responds(tab, "window") ? MSG0(id, tab, "window") : 0; }
+static void tab_changed(id tab) {
+    id w = tab_window_of(tab), g = w ? group_of(w) : 0;
+    if (g) layout_bar(g);
+}
+static id tab_get_title(id self, SEL c) { (void)c; id t = objc_getAssociatedObject(self, &k_tab_title); return t ? t : cx_str(""); }
+static void tab_set_title(id self, SEL c, id t) { (void)c; objc_setAssociatedObject(self, &k_tab_title, t ? MSG0(id, t, "copy") : 0, 1); tab_changed(self); }
+static id tab_get_attr(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_tab_attr); }
+static void tab_set_attr(id self, SEL c, id t) {
+    (void)c;
+    objc_setAssociatedObject(self, &k_tab_attr, t, 1);
+    if (t && responds(t, "string")) objc_setAssociatedObject(self, &k_tab_title, MSG0(id, MSG0(id, t, "string"), "copy"), 1);
+    tab_changed(self);
+}
+static id tab_get_tip(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_tab_tip); }
+static void tab_set_tip(id self, SEL c, id t) { (void)c; objc_setAssociatedObject(self, &k_tab_tip, t ? MSG0(id, t, "copy") : 0, 1); }
+static id tab_get_acc(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_tab_acc); }
+static void tab_set_acc(id self, SEL c, id v) {
+    (void)c;
+    id old = objc_getAssociatedObject(self, &k_tab_acc);
+    if (old == v) return;
+    if (old) MSG0(void, old, "removeFromSuperview");
+    objc_setAssociatedObject(self, &k_tab_acc, v, 1);
+    tab_changed(self);
+}
+
 /* ---- barra de abas: janela filha sem moldura com a view que desenha as abas */
 static id tab_title(id w) {
     id tab = responds(w, "tab") ? MSG0(id, w, "tab") : 0;
@@ -101,6 +129,15 @@ static void bar_draw(id self, SEL c, R dirty) {
         S z = ((S (*)(id, SEL, id))objc_msgSend)(title, sl("sizeWithAttributes:"), a);
         ((void (*)(id, SEL, P, id))objc_msgSend)(title, sl("drawAtPoint:withAttributes:"), (P){t.x + (t.w - z.w) / 2, (b.h - z.h) / 2}, a);
         ((void (*)(id, SEL, P, id))objc_msgSend)(cx_str("\xC3\x97"), sl("drawAtPoint:withAttributes:"), (P){t.x + 8, (b.h - z.h) / 2}, a);
+        id tab = responds(win, "tab") ? MSG0(id, win, "tab") : 0;
+        id acc = tab ? objc_getAssociatedObject(tab, &k_tab_acc) : 0;
+        if (acc) {   /* view acessória: centrada na altura, encostada à direita da aba */
+            R af = msg_rect(acc, "frame");
+            double aw = af.w > 0 ? af.w : 16, ah = af.h > 0 && af.h < b.h ? af.h : b.h - 8;
+            R nf = mkr(t.x + t.w - aw - 8, (b.h - ah) / 2, aw, ah);
+            if (af.x != nf.x || af.y != nf.y || af.w != nf.w || af.h != nf.h) ((void (*)(id, SEL, R))objc_msgSend)(acc, sl("setFrame:"), nf);
+            if (MSG0(id, acc, "superview") != self) MSG(void, self, "addSubview:", acc);
+        }
     }
     id pc = cx_color(0.1, 0.1, 0.12, 0.8);
     MSG(void, a, "setObject:forKey:", pc, NSForegroundColorAttributeName);
@@ -268,6 +305,13 @@ void cx_appkit_tabs_init(void) {
     ADD(w, "addTabbedWindow:ordered:", w_add_tabbed); ADD(w, "tabbedWindows", w_tabbed); ADD(w, "tabGroup", w_tab_group);
     ADD(w, "selectNextTab:", w_next_tab); ADD(w, "selectPreviousTab:", w_prev_tab); ADD(w, "mergeAllWindows:", w_merge_all);
     ADD(w, "moveTabToNewWindow:", w_move_to_new); ADD(w, "toggleTabBar:", w_toggle_bar);
+    cx_class_t *tk = kls("NSWindowTab");
+    if (tk) {
+        ADD(tk, "title", tab_get_title); ADD(tk, "setTitle:", tab_set_title);
+        ADD(tk, "attributedTitle", tab_get_attr); ADD(tk, "setAttributedTitle:", tab_set_attr);
+        ADD(tk, "toolTip", tab_get_tip); ADD(tk, "setToolTip:", tab_set_tip);
+        ADD(tk, "accessoryView", tab_get_acc); ADD(tk, "setAccessoryView:", tab_set_acc);
+    }
     /* acompanha fechamento e movimento das janelas com abas */
     static cx_class_t obs_c, obs_m;
     if (!kls("_MOSTabObserver")) cx_define_class(&obs_c, &obs_m, "_MOSTabObserver", obj, 0);

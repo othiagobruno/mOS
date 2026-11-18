@@ -259,6 +259,34 @@ static void ap_remove_windows_item(id self, SEL c, id w) { (void)self; (void)c; 
 static void ap_change_windows_item(id self, SEL c, id w, id title, BOOL fname) { (void)self; (void)c; (void)w; (void)title; (void)fname; g_wm_dirty = YES; }
 static void ap_update_windows_item(id self, SEL c, id w) { (void)self; (void)c; (void)w; g_wm_dirty = YES; }
 
+/* ---------------------------------------------------------------- miudezas de janela, view e app
+ * NSWindow identifier (NSUserInterfaceItemIdentification) e restorationClass; NSResponder invalidateRestorableState
+ * (marca o estado como sujo: isRestorableStateDirty); NSView invalidateIntrinsicContentSize (o Auto Layout pergunta de
+ * novo na próxima passada); NSProgressIndicator controlSize (o giratório: 32, 16 ou 10 pontos no sizeToFit);
+ * NSApplication automaticCustomizeTouchBarMenuItemEnabled (o mOS não tem Touch Bar: o item não entra no menu). */
+static char k_ident, k_restore_cls, k_restore_dirty, k_ctl_size, k_touchbar_item;
+static void w_set_ident(id self, SEL c, id v) { (void)c; objc_setAssociatedObject(self, &k_ident, v ? MSG0(id, v, "copy") : 0, 1); }
+static id w_ident(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_ident); }
+static void w_set_restore_cls(id self, SEL c, id cls) { (void)c; objc_setAssociatedObject(self, &k_restore_cls, cls, 0); }
+static id w_restore_cls(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_restore_cls); }
+static void r_invalidate_restorable(id self, SEL c) { (void)c; objc_setAssociatedObject(self, &k_restore_dirty, cx_num_i(1), 1); }
+static BOOL r_restorable_dirty(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_restore_dirty) != 0; }
+static void v_invalidate_intrinsic(id self, SEL c) {
+    (void)c;
+    MSG(void, self, "setNeedsLayout:", (BOOL)YES);
+    id sup = MSG0(id, self, "superview");
+    if (sup) MSG(void, sup, "setNeedsLayout:", (BOOL)YES);
+    MSG(void, self, "setNeedsDisplay:", (BOOL)YES);
+}
+static void pi_set_ctl_size(id self, SEL c, u64 sz) {
+    (void)c;
+    objc_setAssociatedObject(self, &k_ctl_size, cx_num_i((i64)sz), 1);
+    MSG(void, self, "setNeedsDisplay:", (BOOL)YES);
+}
+static u64 pi_ctl_size(id self, SEL c) { (void)c; id v = objc_getAssociatedObject(self, &k_ctl_size); return v ? MSG0(u64, v, "unsignedLongLongValue") : 0; }
+static void ap_set_tb_item(id self, SEL c, BOOL v) { (void)c; objc_setAssociatedObject(self, &k_touchbar_item, v ? cx_num_i(1) : 0, 1); }
+static BOOL ap_tb_item(id self, SEL c) { (void)c; return objc_getAssociatedObject(self, &k_touchbar_item) != 0; }
+
 /* ---------------------------------------------------------------- laço */
 void cx_app_more_tick(void) {
     static double last;
@@ -293,8 +321,23 @@ void cx_appkit_app_more_init(void) {
         cx_add_method(a, "changeWindowsItem:title:filename:", (void *)ap_change_windows_item);
         cx_add_method(a, "updateWindowsItem:", (void *)ap_update_windows_item);
     }
+    if (a) {
+        cx_add_method(a, "setAutomaticCustomizeTouchBarMenuItemEnabled:", (void *)ap_set_tb_item);
+        cx_add_method(a, "isAutomaticCustomizeTouchBarMenuItemEnabled", (void *)ap_tb_item);
+    }
+    cx_class_t *r = kls("NSResponder");
+    if (r) {
+        cx_add_method(r, "invalidateRestorableState", (void *)r_invalidate_restorable);
+        cx_add_method(r, "_cxRestorableStateIsDirty", (void *)r_restorable_dirty);
+    }
+    cx_class_t *v = kls("NSView");
+    if (v) cx_add_method(v, "invalidateIntrinsicContentSize", (void *)v_invalidate_intrinsic);
+    cx_class_t *pi = kls("NSProgressIndicator");
+    if (pi) { cx_add_method(pi, "setControlSize:", (void *)pi_set_ctl_size); cx_add_method(pi, "controlSize", (void *)pi_ctl_size); }
     cx_class_t *w = kls("NSWindow");
     if (w) {
+        cx_add_method(w, "setIdentifier:", (void *)w_set_ident); cx_add_method(w, "identifier", (void *)w_ident);
+        cx_add_method(w, "setRestorationClass:", (void *)w_set_restore_cls); cx_add_method(w, "restorationClass", (void *)w_restore_cls);
         cx_add_method(w, "setExcludedFromWindowsMenu:", (void *)w_set_excluded);
         cx_add_method(w, "isExcludedFromWindowsMenu", (void *)w_excluded);
     }
