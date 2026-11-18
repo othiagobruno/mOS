@@ -659,4 +659,14 @@ void cx_intents_auth_init(void) {
         cx_add_method(ac, "cancel", (void *)ac_cancel);
     }
     pk_init();
+    extern void cx_small2_init(void);
+    cx_small2_init();
 }
+
+/* para os outros frameworks pequenos (fw_small2.c): a mesma mecânica de classe com propriedades */
+cx_class_t *cx_pb_def(cx_class_t *k, cx_class_t *m, const char *n, const char *super) { return def(k, m, n, super); }
+void cx_pb_props(cx_class_t *k, const char *const *names) { props(k, names); }
+void cx_pb_inits(cx_class_t *k, const char *const *sels) { inits(k, sels); }
+void cx_pb_news(cx_class_t *k, const char *const *sels) { news(k, sels); }
+id cx_pb_bag(id o) { return bag(o); }
+id cx_pb_err(const char *dom, long code, const char *msg) { return err(dom, code, msg); }

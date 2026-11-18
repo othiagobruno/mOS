@@ -290,6 +290,7 @@ typedef struct {
 #define MOS_DESK_TAKE_EX   5   /* b = mos_desk_event_t *: 1 = evento, 0 = nenhum */
 #define MOS_DESK_SEARCH    7   /* b = texto: abre a busca do sistema com ele */
 #define MOS_DESK_REMOVE    6   /* b = token (0 = todas do processo): quantas saíram do banner e da Central */
+#define MOS_DESK_LOCK      8   /* bloqueia a tela agora (a de login, sem fechar os apps): 0 */
 
 /* MOS_DESK_BANNER_EX. Strings UTF-8 no espaço do app; 0 = vazio. `actions`: até 4 linhas "título\topções", opções em
  * decimal: bit0 destrutiva (vermelha), bit1 pede texto (campo + enviar), bit2 abre o app. */
