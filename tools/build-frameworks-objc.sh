@@ -26,6 +26,17 @@ RES=/tmp/mos-swift-resdir
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fails=0
+# runtime Swift real em dois níveis para o código Swift de um framework: libswiftCore, libswift_Concurrency e o
+# libswift<X>.dylib de cada módulo X que o overlay importa (Foundation, Dispatch, Observation...). Em busca plana os
+# swift_* iam para os do libSystem (openbot_swift.c: swift_task_switch não retoma a tarefa e o await salta para lixo)
+swift_rt() {
+    local d="$OBJC/dylib/usr/lib/swift" m f
+    for m in Core _Concurrency $(sed -n -E 's/^(@_exported )?import ([A-Za-z_]+).*/\2/p' "$1"*.swift 2>/dev/null | sort -u); do
+        f="$d/libswift$m.dylib"
+        [ -f "$f" ] && ! grep -a -q 'STUB mOS libswift' "$f" && echo "$f"
+    done
+    return 0
+}
 for fw in "$ROOT"/userland/frameworks/*/; do
     name=$(basename "$fw")
     # no Linux o libcompression entra no libSystem.mos (tools/build.sh, com os -I do lz4/lzfse/xz)
@@ -126,7 +137,10 @@ for fw in "$ROOT"/userland/frameworks/*/; do
     fi
     out="$DST$install"
     mkdir -p "$(dirname "$out")"
-    if ! "$ZIG" cc -target "$TARGET" -shared -o "$out" "-Wl,-install_name,$install" -Wl,-undefined,dynamic_lookup "${objs[@]}" 2>"$TMP/$name.link"; then
+    swrt=()
+    [ -f "$TMP/${name}_swift.o" ] && [ -z "$swdylib" ] && mapfile -t swrt < <(swift_rt "$fw")
+    if ! "$ZIG" cc -target "$TARGET" -shared -o "$out" "-Wl,-install_name,$install" -Wl,-undefined,dynamic_lookup "${objs[@]}" \
+            "${swrt[@]}" 2>"$TMP/$name.link"; then
         head -8 "$TMP/$name.link" | sed 's/^/  /' >&2
         echo "$name: link FALHOU" >&2
         fails=$((fails + 1))
@@ -135,11 +149,9 @@ for fw in "$ROOT"/userland/frameworks/*/; do
     fi
     if [ ${#swobjs[@]} -gt 0 ]; then
         mkdir -p "$(dirname "$DST$swdylib")"
-        # o libswiftCore real em dois níveis, quando existe: em busca plana os swift_* iam para os do libSystem
+        # o runtime Swift real em dois níveis, quando existe (swift_rt acima)
         swcore=()
-        [ -f "$OBJC/dylib/usr/lib/swift/libswiftCore.dylib" ] && \
-            ! grep -a -q 'STUB mOS libswift' "$OBJC/dylib/usr/lib/swift/libswiftCore.dylib" && \
-            swcore=("$OBJC/dylib/usr/lib/swift/libswiftCore.dylib")
+        mapfile -t swcore < <(swift_rt "$fw")
         if ! "$ZIG" cc -target "$TARGET" -shared -o "$DST$swdylib" "-Wl,-install_name,$swdylib" -Wl,-undefined,dynamic_lookup \
                 "${swobjs[@]}" "${swcore[@]}" 2>"$TMP/$name.swlink"; then
             head -8 "$TMP/$name.swlink" | sed 's/^/  /' >&2
