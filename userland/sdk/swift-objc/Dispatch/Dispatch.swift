@@ -8,6 +8,7 @@
 
 @_exported import Dispatch
 import Darwin
+import _Concurrency
 
 // MARK: - funções C do libSystem
 
@@ -54,7 +55,26 @@ internal let _mos_run_closure: @convention(c) (UnsafeMutableRawPointer?) -> Void
 @_silgen_name("dispatch_source_merge_data") internal func _mos_source_merge(_ s: DispatchSource, _ v: UInt)
 @_silgen_name("dispatch_source_set_timer") internal func _mos_source_set_timer(_ s: DispatchSource, _ start: UInt64, _ interval: UInt64, _ leeway: UInt64)
 
-internal let _mos_concurrent_attr = UnsafeMutableRawPointer.allocate(byteCount: 16, alignment: 16)
+@_silgen_name("dispatch_queue_attr_make_initially_inactive") internal func _mos_attr_inactive(_ a: UnsafeRawPointer?) -> UnsafeRawPointer?
+@_silgen_name("dispatch_queue_attr_make_with_autorelease_frequency") internal func _mos_attr_arf(_ a: UnsafeRawPointer?, _ f: UInt) -> UnsafeRawPointer?
+
+/// DISPATCH_QUEUE_CONCURRENT (&_dispatch_queue_attr_concurrent): o libdispatch do mOS só reconhece o atributo real
+/// (o Swift não importa o símbolo de dados; RTLD_DEFAULT = -2 o acha no libSystem, uma vez)
+internal let _mos_concurrent_attr: UnsafeRawPointer? = UnsafeRawPointer(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_dispatch_queue_attr_concurrent"))
+
+/// atributo da fila: concorrência, inativa, frequência de autorelease e QoS, na ordem do overlay da Apple
+internal func _mos_queue_attr(concurrent: Bool, inactive: Bool, autorelease: DispatchQueue.AutoreleaseFrequency,
+                              qos: DispatchQoS) -> __OS_dispatch_queue_attr? {
+    var attr: UnsafeRawPointer? = concurrent ? _mos_concurrent_attr : nil
+    if inactive { attr = _mos_attr_inactive(attr) }
+    switch autorelease {
+    case .inherit: break
+    case .workItem: attr = _mos_attr_arf(attr, 1)    // DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM
+    case .never: attr = _mos_attr_arf(attr, 2)       // DISPATCH_AUTORELEASE_FREQUENCY_NEVER
+    }
+    if qos.qosClass != .unspecified { attr = _mos_attr_qos(attr, qos.qosClass.rawValue, Int32(qos.relativePriority)) }
+    return attr.map { unsafeBitCast($0, to: __OS_dispatch_queue_attr.self) }
+}
 
 /// os tipos de fonte são símbolos de dados do libSystem (&_dispatch_source_type_read...)
 internal func _mos_source_type(_ name: String) -> UnsafeRawPointer {
@@ -314,12 +334,10 @@ extension DispatchQueue {
 
     public convenience init(label: String, qos: DispatchQoS = .unspecified, attributes: Attributes = [],
                             autoreleaseFrequency: AutoreleaseFrequency = .inherit, target: DispatchQueue? = nil) {
-        // DISPATCH_QUEUE_CONCURRENT é &_dispatch_queue_attr_concurrent; o dispatch do mOS só distingue nulo (serial)
-        // de não nulo, então qualquer endereço estável serve
-        var attr: UnsafeRawPointer? = attributes.contains(.concurrent) ? UnsafeRawPointer(_mos_concurrent_attr) : nil
         // a QoS vai no atributo (dispatch_queue_attr_make_with_qos_class) e a fila a guarda (DispatchQueue.qos)
-        if qos.qosClass != .unspecified { attr = _mos_attr_qos(attr, qos.qosClass.rawValue, Int32(qos.relativePriority)) }
-        self.init(__label: label, attr: attr.map { unsafeBitCast($0, to: __OS_dispatch_queue_attr.self) })
+        self.init(__label: label, attr: _mos_queue_attr(concurrent: attributes.contains(.concurrent),
+                                                         inactive: attributes.contains(.initiallyInactive),
+                                                         autorelease: autoreleaseFrequency, qos: qos))
         if let target { _mos_set_target(self, target) }
     }
 
@@ -529,4 +547,42 @@ public enum DispatchPredicate {
 public func dispatchPrecondition(condition: @autoclosure () -> DispatchPredicate) {
     // como no overlay da Apple: o precondition decide entre build de depuração e de release
     precondition(_dispatchPreconditionTest(condition()), "dispatchPrecondition failure")
+}
+
+// MARK: - DispatchSerialQueue (macOS 14): fila serial com tipo próprio, executor serial do Swift Concurrency
+
+extension DispatchSerialQueue {
+    public struct Attributes: OptionSet, Sendable {
+        public let rawValue: UInt64
+        public init(rawValue: UInt64) { self.rawValue = rawValue }
+        public static let initiallyInactive = Attributes(rawValue: 1 << 2)
+    }
+
+    public convenience init(label: String, qos: DispatchQoS = .unspecified, attributes: Attributes = [],
+                            autoreleaseFrequency: DispatchQueue.AutoreleaseFrequency = .inherit, target: DispatchQueue? = nil) {
+        self.init(__label: label, attr: _mos_queue_attr(concurrent: false, inactive: attributes.contains(.initiallyInactive),
+                                                        autorelease: autoreleaseFrequency, qos: qos), queue: target)
+    }
+}
+
+/// a base dos executores seriais do dispatch (DispatchSerialQueue, DispatchWorkloop, a fila principal): um job do
+/// Swift Concurrency enfileirado nela roda com dispatch_async_f e se executa com este executor como o atual
+extension _DispatchSerialExecutorQueue: @unchecked Sendable, SerialExecutor {
+    public func enqueue(_ job: consuming ExecutorJob) {
+        let j = UnownedJob(job)
+        let ctx = UnsafeMutableRawPointer.allocate(byteCount: MemoryLayout<(UnownedJob, UnownedSerialExecutor)>.stride,
+                                                   alignment: MemoryLayout<(UnownedJob, UnownedSerialExecutor)>.alignment)
+        ctx.initializeMemory(as: (UnownedJob, UnownedSerialExecutor).self, repeating: (j, asUnownedSerialExecutor()), count: 1)
+        _mos_async_f(self, ctx, _mos_run_job)
+    }
+
+    public func asUnownedSerialExecutor() -> UnownedSerialExecutor { UnownedSerialExecutor(ordinary: self) }
+}
+
+@_silgen_name("dispatch_async_f") internal func _mos_async_f(_ q: DispatchQueue, _ ctx: UnsafeMutableRawPointer?, _ f: @convention(c) (UnsafeMutableRawPointer?) -> Void)
+internal let _mos_run_job: @convention(c) (UnsafeMutableRawPointer?) -> Void = { ctx in
+    let p = ctx!.assumingMemoryBound(to: (UnownedJob, UnownedSerialExecutor).self)
+    let (job, ex) = p.move()
+    ctx!.deallocate()
+    job.runSynchronously(on: ex)
 }

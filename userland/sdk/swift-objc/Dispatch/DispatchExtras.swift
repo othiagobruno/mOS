@@ -244,3 +244,99 @@ extension DispatchSourceProcess {
     public var data: DispatchSource.ProcessEvent { DispatchSource.ProcessEvent(rawValue: _mos_source_data(_mos_src(self))) }
     public var mask: DispatchSource.ProcessEvent { DispatchSource.ProcessEvent(rawValue: _mos_source_mask(_mos_src(self))) }
 }
+
+// MARK: - DispatchData.copyBytes(to:from:) (a forma genérica do overlay da Apple)
+
+extension DispatchData {
+    /// Copia os bytes de `range` (ou do início) para `buffer`, no máximo `buffer` inteiro; devolve quantos bytes foram.
+    public func copyBytes<DestinationType>(to buffer: UnsafeMutableBufferPointer<DestinationType>, from range: Range<Int>? = nil) -> Int {
+        let cap = buffer.count * MemoryLayout<DestinationType>.stride
+        guard cap > 0, let dst = buffer.baseAddress else { return 0 }
+        let r = range ?? 0..<count
+        precondition(r.lowerBound >= 0 && r.upperBound <= count, "DispatchData.copyBytes: intervalo fora dos dados")
+        let n = Swift.min(cap, r.count)
+        guard n > 0, let p = _mos_cfdata_bytes(__wrapped) else { return 0 }
+        UnsafeMutableRawPointer(dst).copyMemory(from: p + r.lowerBound, byteCount: n)
+        return n
+    }
+}
+
+// MARK: - DispatchIO (a API do IO.swift do swift-corelibs-libdispatch, Apache 2.0, sobre o dispatch_io do libSystem)
+
+extension DispatchIO {
+    public enum StreamType: UInt {
+        case stream = 0
+        case random = 1
+    }
+
+    public struct CloseFlags: OptionSet, RawRepresentable, Sendable {
+        public let rawValue: UInt
+        public init(rawValue: UInt) { self.rawValue = rawValue }
+        public static let stop = CloseFlags(rawValue: 1)
+    }
+
+    public struct IntervalFlags: OptionSet, RawRepresentable, Sendable {
+        public let rawValue: UInt
+        public init(rawValue: UInt) { self.rawValue = rawValue }
+        public init(nilLiteral: ()) { self.rawValue = 0 }
+        public static let strictInterval = IntervalFlags(rawValue: 1)
+    }
+
+    public class func read(fromFileDescriptor: Int32, maxLength: Int, runningHandlerOn queue: DispatchQueue,
+                           handler: @escaping (_ data: DispatchData, _ error: Int32) -> Void) {
+        __dispatch_read(fromFileDescriptor, maxLength, queue) { (data: __DispatchData, error: Int32) in
+            handler(DispatchData(data: data), error)
+        }
+    }
+
+    public class func write(toFileDescriptor: Int32, data: DispatchData, runningHandlerOn queue: DispatchQueue,
+                            handler: @escaping (_ data: DispatchData?, _ error: Int32) -> Void) {
+        __dispatch_write(toFileDescriptor, data.__wrapped, queue) { (data: __DispatchData?, error: Int32) in
+            handler(data.map { DispatchData(data: $0) }, error)
+        }
+    }
+
+    public convenience init(type: StreamType, fileDescriptor: Int32, queue: DispatchQueue,
+                            cleanupHandler: @escaping (_ error: Int32) -> Void) {
+        self.init(__type: type.rawValue, fd: fileDescriptor, queue: queue, handler: cleanupHandler)
+    }
+
+    @available(swift, obsoleted: 4)
+    public convenience init(type: StreamType, path: UnsafePointer<Int8>, oflag: Int32, mode: mode_t, queue: DispatchQueue,
+                            cleanupHandler: @escaping (_ error: Int32) -> Void) {
+        self.init(__type: type.rawValue, path: path, oflag: oflag, mode: mode, queue: queue, handler: cleanupHandler)
+    }
+
+    @available(swift, introduced: 4)
+    public convenience init?(type: StreamType, path: UnsafePointer<Int8>, oflag: Int32, mode: mode_t, queue: DispatchQueue,
+                             cleanupHandler: @escaping (_ error: Int32) -> Void) {
+        self.init(__type: type.rawValue, path: path, oflag: oflag, mode: mode, queue: queue, handler: cleanupHandler)
+    }
+
+    public convenience init(type: StreamType, io: DispatchIO, queue: DispatchQueue,
+                            cleanupHandler: @escaping (_ error: Int32) -> Void) {
+        self.init(__type: type.rawValue, io: io, queue: queue, handler: cleanupHandler)
+    }
+
+    public func read(offset: off_t, length: Int, queue: DispatchQueue,
+                     ioHandler: @escaping (_ done: Bool, _ data: DispatchData?, _ error: Int32) -> Void) {
+        __dispatch_io_read(self, offset, length, queue) { (done: Bool, data: __DispatchData?, error: Int32) in
+            ioHandler(done, data.map { DispatchData(data: $0) }, error)
+        }
+    }
+
+    public func write(offset: off_t, data: DispatchData, queue: DispatchQueue,
+                      ioHandler: @escaping (_ done: Bool, _ data: DispatchData?, _ error: Int32) -> Void) {
+        __dispatch_io_write(self, offset, data.__wrapped, queue) { (done: Bool, data: __DispatchData?, error: Int32) in
+            ioHandler(done, data.map { DispatchData(data: $0) }, error)
+        }
+    }
+
+    public func setInterval(interval: DispatchTimeInterval, flags: IntervalFlags = []) {
+        __dispatch_io_set_interval(self, UInt64(interval._nanoseconds), flags.rawValue)
+    }
+
+    public func close(flags: CloseFlags = []) {
+        __dispatch_io_close(self, flags.rawValue)
+    }
+}
