@@ -95,6 +95,9 @@ void AddResource(Handle, uint32_t, short, const uint8_t *);
 void ChangedResource(Handle);
 void RemoveResource(Handle);
 void UpdateResFile(short);
+short DetachResourceFile(short);
+short InsertResourceFile(short, short);
+void SetResourceSize(Handle, long);
 short Unique1ID(uint32_t);
 short HomeResFile(Handle);
 void *FindNextComponent(void *, const cdesc_t *);
@@ -225,7 +228,12 @@ int main(int argc, char **argv) {
     Handle tx = Get1Resource(FCC('T', 'E', 'X', 'T'), uid);
     CHECK(tx && GetHandleSize(tx) == 3 && !memcmp(*tx, "xyz", 3));
     CHECK(GetResource(FCC('i', 'c', 'n', 's'), 1) != 0);
-    CloseResFile(rf);
+    CHECK(DetachResourceFile(rf) == 0 && !GetResource(FCC('i', 'c', 'n', 's'), 1) && ResError() == -192);
+    CHECK(InsertResourceFile(rf, 4) == 0 && CurResFile() == rf && GetResource(FCC('i', 'c', 'n', 's'), 1) != 0);
+    CHECK(DetachResourceFile(rf) == 0);
+    CloseResFile(rf);                                                            /* fecha mesmo destacado */
+    CHECK(ResError() == 0 && InsertResourceFile(rf, 4) == -193);
+    rf = FSOpenResFile(&ref, 1);
     n = (size_t)getxattr(argv[2], "", buf, sizeof buf, 0, 0);
     out = fopen(argv[3], "wb"); fwrite(buf, 1, n, out); fclose(out);
     /* data fork (.rsrc) e erros */

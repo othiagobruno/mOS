@@ -210,6 +210,7 @@ static OSErr save(rfile_t *f) {
     }
     return e;
 }
+static rfile_t *g_detached;
 static rfile_t *file_of(ResFileRefNum ref) { for (rfile_t *f = g_top; f; f = f->next) if (f->ref == ref) return f; return 0; }
 static void free_file(rfile_t *f) {
     for (int i = 0; i < f->n; i++) { free(f->res[i].data); if (f->res[i].h) DisposeHandle(f->res[i].h); }
@@ -333,7 +334,12 @@ void FSCreateResFile(const FSRef *parent, unsigned long nlen, const UniChar *nam
 }
 void CloseResFile(ResFileRefNum ref) {
     rfile_t *f = file_of(ref);
-    if (!f) { g_err = resFNotFound; return; }
+    if (!f) {                                                                    /* destacado da cadeia (DetachResourceFile) */
+        for (rfile_t **pp = &g_detached; *pp; pp = &(*pp)->next)
+            if ((*pp)->ref == ref) { f = *pp; *pp = f->next; g_err = save(f); free_file(f); return; }
+        g_err = resFNotFound;
+        return;
+    }
     g_err = save(f);
     for (rfile_t **pp = &g_top; *pp; pp = &(*pp)->next) if (*pp == f) { *pp = f->next; break; }
     if (g_cur == f) g_cur = f->next ? f->next : g_top;
@@ -543,3 +549,37 @@ static ResID unique(ResType t, int one) {
 }
 ResID UniqueID(ResType t) { g_err = noErr; return unique(t, 0); }
 ResID Unique1ID(ResType t) { g_err = noErr; return unique(t, 1); }
+
+/* ---- cadeia: tirar e recolocar arquivos sem fechá-los (não há mapa do sistema nem do app: "abaixo" = no fim) */
+enum { kRsrcChainBelowSystemMap = 0, kRsrcChainBelowApplicationMap = 1, kRsrcChainAboveApplicationMap = 2, kRsrcChainAboveAllMaps = 4 };
+OSErr DetachResourceFile(ResFileRefNum ref) {
+    rfile_t *f = file_of(ref);
+    if (!f) return g_err = resFNotFound;
+    for (rfile_t **pp = &g_top; *pp; pp = &(*pp)->next) if (*pp == f) { *pp = f->next; break; }
+    if (g_cur == f) g_cur = f->next ? f->next : g_top;
+    f->next = g_detached; g_detached = f;
+    return g_err = noErr;
+}
+OSErr InsertResourceFile(ResFileRefNum ref, i16 where) {
+    rfile_t *f = 0;
+    for (rfile_t **pp = &g_detached; *pp; pp = &(*pp)->next) if ((*pp)->ref == ref) { f = *pp; *pp = f->next; break; }
+    if (!f) return g_err = file_of(ref) ? noErr : resFNotFound;                 /* já está na cadeia */
+    if (where == kRsrcChainAboveAllMaps || where == kRsrcChainAboveApplicationMap || !g_top) { f->next = g_top; g_top = f; }
+    else { rfile_t *t = g_top; while (t->next) t = t->next; t->next = f; f->next = 0; }
+    if (!g_cur) g_cur = f;
+    return g_err = noErr;
+}
+/* tamanho no disco de um recurso não carregado (corta ou completa com zeros) */
+void SetResourceSize(Handle h, long size) {
+    rfile_t *f;
+    res_t *r = res_of(h, &f);
+    if (!r || size < 0) { g_err = r ? paramErr : resNotFound; return; }
+    if (r->attr & resProtected) { g_err = resAttrErr; return; }
+    u8 *d = realloc(r->data, size ? (size_t)size : 1);
+    if (!d) { g_err = memFullErr; return; }
+    if ((u32)size > r->len) memset(d + r->len, 0, (size_t)size - r->len);
+    r->data = d; r->len = (u32)size;
+    f->dirty = 1; g_err = noErr;
+}
+/* o Memory Manager do mOS não esvazia handles (não há purge): nada a ajustar */
+void SetResPurge(u8 install) { (void)install; g_err = noErr; }
