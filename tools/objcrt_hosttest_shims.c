@@ -9,6 +9,7 @@ void *cx_fdn_bundle_init(void){return 0;}
 void *cx_fdn_cfextra_init(void){return 0;}
 void *cx_fdn_cfsocket_init(void){return 0;}
 void *cx_fdn_charset_init(void){return 0;}
+void *cx_fdn_classes2_init(void){return 0;}
 void *cx_fdn_coll_init(void){return 0;}
 void *cx_fdn_decimal_init(void){return 0;}
 void *cx_fdn_filemanager_init(void){return 0;}
