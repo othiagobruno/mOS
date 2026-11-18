@@ -300,6 +300,16 @@ long dispatch_source_testcancel(void *s) { return is_src(s) ? ((dp_source_t *)s)
 unsigned long dispatch_source_get_handle(void *s) { return is_src(s) ? ((dp_source_t *)s)->handle : 0; }
 unsigned long dispatch_source_get_mask(void *s) { return is_src(s) ? ((dp_source_t *)s)->mask : 0; }
 unsigned long dispatch_source_get_data(void *s) { return is_src(s) ? ((dp_source_t *)s)->data : 0; }
+/* struct dispatch_source_extended_data_s {data, status}: copia até size bytes e devolve quantos. status só tem
+ * valor nas fontes que a Apple preenche pelo kevent (código de saída em DISPATCH_PROC_EXIT); o mOS não espia o
+ * código de saída sem colher o processo (waitid sem WNOWAIT), então ele sai 0, como numa fonte sem status. */
+size_t dispatch_source_get_extended_data(void *s, void *out, size_t size) {
+    unsigned long d[2] = {is_src(s) ? ((dp_source_t *)s)->data : 0, 0};
+    if (!out) return 0;
+    if (size > sizeof d) size = sizeof d;
+    memcpy(out, d, size);
+    return size;
+}
 void dispatch_source_merge_data(void *p, unsigned long v) {
     if (!is_src(p)) return;
     dp_source_t *s = p;
