@@ -95,6 +95,12 @@ i64 deskbridge_syscall(process_t *p, u64 op, u64 b, u64 c, u64 d) {
         desktop_spotlight_query(q);
         return 0;
     }
+    if (op == MOS_DESK_LOCK) {                          /* SACLockScreenImmediate: a tela de login por cima da sessão */
+        extern void login_show(void);
+        extern bool login_active(void);
+        if (!login_active()) login_show();
+        return 0;
+    }
     if (op == MOS_DESK_BADGE) {
         char label[64];
         if (!copy_user_str(p, b, label, (int)sizeof label)) return -MOS_EFAULT;

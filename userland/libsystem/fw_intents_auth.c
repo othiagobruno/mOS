@@ -21,10 +21,15 @@ void dispatch_async_f(void *q, void *ctx, void (*fn)(void *));
 void *dispatch_get_main_queue(void);
 
 static id cls(const char *n) { return (id)cx_class_named(n); }
-#define ST(o) (*(id *)((u8 *)(o) + 8))
+/* as propriedades moram num dicionário associado ao objeto: funciona em qualquer superclasse (NSViewController tem
+ * ivars logo depois do isa) */
+void objc_setAssociatedObject(id o, const void *k, id v, u64 policy);
+id objc_getAssociatedObject(id o, const void *k);
+static char k_bag;
 static id bag(id s) {
-    if (!ST(s)) ST(s) = objc_retain(MSG0(id, cls("NSMutableDictionary"), "dictionary"));
-    return ST(s);
+    id b = objc_getAssociatedObject(s, &k_bag);
+    if (!b) { b = MSG0(id, cls("NSMutableDictionary"), "dictionary"); objc_setAssociatedObject(s, &k_bag, b, 1 /* RETAIN_NONATOMIC */); }
+    return b;
 }
 static void key_of(const char *sel, char *out, size_t cap) {    /* "setFooBar:" -> "fooBar"; "fooBar" -> "fooBar" */
     const char *p = sel;
@@ -84,7 +89,7 @@ static id g_new(id k, SEL c, id a, id b, id d, id e) {
     return objc_autorelease(o);
 }
 static id g_kind(id k, SEL c) { return g_new(k, c, 0, 0, 0, 0); }   /* +needsValue, +notRequired, +unsupported */
-static id g_dealloc_bag(id s) { if (ST(s)) { objc_release(ST(s)); ST(s) = 0; } return s; }
+static id g_dealloc_bag(id s) { objc_setAssociatedObject(s, &k_bag, 0, 1); return s; }
 static void g_dealloc(id s, SEL c) {
     (void)c;
     g_dealloc_bag(s);
@@ -281,6 +286,196 @@ static void ac_perform(id s, SEL c) { (void)c; dispatch_async_f(dispatch_get_mai
 static id ac_init(id s, SEL c, id reqs) { (void)c; if (reqs) MSG(void, bag(s), "setObject:forKey:", reqs, cx_str("authorizationRequests")); return s; }
 static void ac_cancel(id s, SEL c) { (void)s; (void)c; }
 
+
+/* ================================================================ PassKit (Apple Pay e Carteira)
+ * O mOS não tem Apple Pay nem Carteira: canMakePayments = NO, a folha de pagamento não abre (presentWithCompletion: NO)
+ * e a biblioteca de passes está vazia. Os objetos de dados guardam o que o app grava; PKPass lê o pass.json do .pkpass
+ * (ZIP) para as propriedades. */
+DEF(PKPass) DEF(PKPassLibrary) DEF(PKAddPassesViewController) DEF(PKPaymentAuthorizationController) DEF(PKPaymentAuthorizationResult)
+DEF(PKPaymentMerchantSession) DEF(PKPaymentRequest) DEF(PKPaymentRequestMerchantSessionUpdate) DEF(PKPaymentRequestShippingContactUpdate)
+DEF(PKPaymentRequestShippingMethodUpdate) DEF(PKPaymentSummaryItem) DEF(PKRecurringPaymentSummaryItem) DEF(PKShippingMethod)
+size_t cz_raw_buffer(unsigned char *dst, size_t dn, const unsigned char *src, size_t sn, int encode);
+static u32 le32(const u8 *p) { return (u32)p[0] | (u32)p[1] << 8 | (u32)p[2] << 16 | (u32)p[3] << 24; }
+static u16 le16(const u8 *p) { return (u16)(p[0] | p[1] << 8); }
+/* um arquivo do ZIP (guardado ou deflate); malloc, *on = tamanho; 0 se não achou */
+static u8 *zip_get(const u8 *z, size_t n, const char *want, size_t *on) {
+    if (n < 22) return 0;
+    size_t e = n - 22;
+    while (e > 0 && le32(z + e) != 0x06054b50) e--;
+    if (le32(z + e) != 0x06054b50) return 0;
+    u32 cnt = le16(z + e + 10), cd = le32(z + e + 16);
+    size_t wl = strlen(want);
+    for (u32 i = 0; i < cnt && cd + 46 <= n; i++) {
+        const u8 *h = z + cd;
+        if (le32(h) != 0x02014b50) return 0;
+        u16 method = le16(h + 10), nl = le16(h + 28), xl = le16(h + 30), cl = le16(h + 32);
+        u32 csize = le32(h + 20), usize = le32(h + 24), loff = le32(h + 42);
+        if (cd + 46 + nl > n) return 0;
+        if (nl == wl && !memcmp(h + 46, want, wl)) {
+            if ((size_t)loff + 30 > n || le32(z + loff) != 0x04034b50) return 0;
+            size_t data = (size_t)loff + 30 + le16(z + loff + 26) + le16(z + loff + 28);
+            if (data + csize > n || usize > (64u << 20)) return 0;
+            u8 *out = malloc(usize ? usize : 1);
+            if (!out) return 0;
+            if (method == 0 && csize == usize) memcpy(out, z + data, usize);
+            else if (method != 8 || cz_raw_buffer(out, usize, z + data, csize, 0) != usize) { free(out); return 0; }
+            *on = usize;
+            return out;
+        }
+        cd += 46u + nl + xl + cl;
+    }
+    return 0;
+}
+static id pk_err(id *e, long code, const char *msg) {
+    if (e) *e = err("PKPassKitErrorDomain", code, msg);
+    return 0;
+}
+static id pass_init(id s, SEL c, id data, id *e) {
+    (void)c;
+    if (e) *e = 0;
+    const u8 *b = data ? MSG0(const u8 *, data, "bytes") : 0;
+    size_t n = data ? (size_t)MSG0(u64, data, "length") : 0, jn = 0;
+    u8 *j = b ? zip_get(b, n, "pass.json", &jn) : 0;
+    if (!j) { objc_release(s); return pk_err(e, 1 /* PKInvalidDataError */, "o arquivo não é um passe (.pkpass)"); }
+    id jd = MSG(id, cls("NSData"), "dataWithBytes:length:", j, (u64)jn);
+    free(j);
+    id d = MSG(id, cls("NSJSONSerialization"), "JSONObjectWithData:options:error:", jd, (u64)0, (id *)0);
+    if (!d || !MSG(BOOL, d, "isKindOfClass:", cls("NSDictionary"))) { objc_release(s); return pk_err(e, 1, "pass.json inválido"); }
+    static const char *const map[][2] = {{"passTypeIdentifier", "passTypeIdentifier"}, {"serialNumber", "serialNumber"},
+        {"authenticationToken", "authenticationToken"}, {"organizationName", "organizationName"}, {"description", "localizedDescription"},
+        {"teamIdentifier", "teamIdentifier"}, {"userInfo", "userInfo"}};
+    for (int i = 0; i < 7; i++) {
+        id v = MSG(id, d, "objectForKey:", cx_str(map[i][0]));
+        if (v) MSG(void, bag(s), "setObject:forKey:", v, cx_str(map[i][1]));
+    }
+    id ws = MSG(id, d, "objectForKey:", cx_str("webServiceURL"));
+    if (ws) { id u = MSG(id, cls("NSURL"), "URLWithString:", ws); if (u) MSG(void, bag(s), "setObject:forKey:", u, cx_str("webServiceURL")); }
+    id org = MSG(id, d, "objectForKey:", cx_str("organizationName"));
+    if (org) MSG(void, bag(s), "setObject:forKey:", org, cx_str("localizedName"));
+    MSG(void, bag(s), "setObject:forKey:", d, cx_str("_json"));
+    MSG(void, bag(s), "setObject:forKey:", data, cx_str("_data"));
+    return s;
+}
+/* campo de um dos grupos (headerFields, primaryFields...) do estilo do passe */
+static id pass_field(id s, SEL c, id key) {
+    (void)c;
+    id d = MSG(id, bag(s), "objectForKey:", cx_str("_json"));
+    static const char *const styles[] = {"boardingPass", "coupon", "eventTicket", "generic", "storeCard"};
+    static const char *const groups[] = {"headerFields", "primaryFields", "secondaryFields", "auxiliaryFields", "backFields"};
+    for (int i = 0; d && i < 5; i++) {
+        id st = MSG(id, d, "objectForKey:", cx_str(styles[i]));
+        for (int g = 0; st && g < 5; g++) {
+            id arr = MSG(id, st, "objectForKey:", cx_str(groups[g]));
+            u64 n = arr ? MSG0(u64, arr, "count") : 0;
+            for (u64 k = 0; k < n; k++) {
+                id f = MSG(id, arr, "objectAtIndex:", k);
+                id fk = MSG(id, f, "objectForKey:", cx_str("key"));
+                if (fk && key && MSG(BOOL, fk, "isEqualToString:", key)) return MSG(id, f, "objectForKey:", cx_str("value"));
+            }
+        }
+    }
+    return 0;
+}
+static id pass_data(id s, SEL c) { (void)c; return MSG(id, bag(s), "objectForKey:", cx_str("_data")); }
+static BOOL pk_no(id s, SEL c) { (void)s; (void)c; return 0; }
+static BOOL pk_no1(id s, SEL c, id a) { (void)s; (void)c; (void)a; return 0; }
+static BOOL pk_no2(id s, SEL c, id a, u64 b) { (void)s; (void)c; (void)a; (void)b; return 0; }
+static id pk_empty(id s, SEL c) { (void)s; (void)c; return MSG0(id, cls("NSArray"), "array"); }
+static id pk_empty1(id s, SEL c, long t) { (void)s; (void)c; (void)t; return MSG0(id, cls("NSArray"), "array"); }
+static id pk_nil2(id s, SEL c, id a, id b) { (void)s; (void)c; (void)a; (void)b; return 0; }
+typedef struct { void *isa; int flags, reserved; void (*invoke)(void *, BOOL); } blk_b_t;
+typedef struct { void *isa; int flags, reserved; void (*invoke)(void *); } blk_v_t;
+typedef struct { void *isa; int flags, reserved; void (*invoke)(void *, long); } blk_st_t;
+static void pk_add_passes(id s, SEL c, id passes, void *b) { (void)s; (void)c; (void)passes; if (b) ((blk_st_t *)b)->invoke(b, 2 /* DidCancelAddPasses */); }
+static BOOL pk_add_pass(id s, SEL c, id pass) { (void)s; (void)c; (void)pass; return 0; }
+static void pk_present(id s, SEL c, void *b) { (void)s; (void)c; if (b) ((blk_b_t *)b)->invoke(b, 0); }
+static void pk_dismiss(id s, SEL c, void *b) { (void)s; (void)c; if (b) ((blk_v_t *)b)->invoke(b); }
+static id pk_status_init(id s, SEL c, long status, id obj) {
+    const char *sel = sel_getName(c);
+    MSG(void, bag(s), "setObject:forKey:", cx_num_i(status), cx_str("status"));
+    if (obj) MSG(void, bag(s), "setObject:forKey:", obj, cx_str(strstr(sel, "merchantSession") ? "paymentMerchantSession" : "errors"));
+    return s;
+}
+static id pk_item(id k, SEL c, id label, id amount, long type) {
+    id o = objc_autorelease(MSG0(id, MSG0(id, k, "alloc"), "init"));
+    if (label) MSG(void, bag(o), "setObject:forKey:", label, cx_str("label"));
+    if (amount) MSG(void, bag(o), "setObject:forKey:", amount, cx_str("amount"));
+    MSG(void, bag(o), "setObject:forKey:", cx_num_i(strstr(sel_getName(c), "type:") ? type : 0), cx_str("type"));
+    return o;
+}
+static id pk_rec_init(id s, SEL c, id label, id amount) {
+    (void)c;
+    if (label) MSG(void, bag(s), "setObject:forKey:", label, cx_str("label"));
+    if (amount) MSG(void, bag(s), "setObject:forKey:", amount, cx_str("amount"));
+    MSG(void, bag(s), "setObject:forKey:", cx_num_i(8 /* NSCalendarUnitMonth */), cx_str("intervalUnit"));
+    MSG(void, bag(s), "setObject:forKey:", cx_num_i(1), cx_str("intervalCount"));
+    return s;
+}
+static void pk_init(void) {
+    cx_class_t *k;
+    k = def(&PKPass_c, &PKPass_m, "PKPass", "NSObject");
+    props(k, (const char *const[]){"passTypeIdentifier", "serialNumber", "authenticationToken", "webServiceURL", "localizedName",
+                                   "localizedDescription", "organizationName", "relevantDate", "userInfo", "passURL", "deviceName",
+                                   "teamIdentifier", "?remotePass", "#passType", 0});
+    cx_add_method(k, "initWithData:error:", (void *)pass_init);
+    cx_add_method(k, "localizedValueForFieldKey:", (void *)pass_field);
+    cx_add_method(k, "dataRepresentation", (void *)pass_data);
+    k = def(&PKPassLibrary_c, &PKPassLibrary_m, "PKPassLibrary", "NSObject");
+    cx_add_cmethod(k, "isPassLibraryAvailable", (void *)pk_no);
+    cx_add_cmethod(k, "isPaymentPassActivationAvailable", (void *)pk_no);
+    cx_add_method(k, "passes", (void *)pk_empty);
+    cx_add_method(k, "passesOfType:", (void *)pk_empty1);
+    cx_add_method(k, "remotePaymentPasses", (void *)pk_empty);
+    cx_add_method(k, "passWithPassTypeIdentifier:serialNumber:", (void *)pk_nil2);
+    cx_add_method(k, "containsPass:", (void *)pk_no1);
+    cx_add_method(k, "replacePassWithPass:", (void *)pk_add_pass);
+    cx_add_method(k, "addPasses:withCompletionHandler:", (void *)pk_add_passes);
+    cx_add_method(k, "canAddPaymentPassWithPrimaryAccountIdentifier:", (void *)pk_no1);
+    cx_add_method(k, "canAddSecureElementPassWithPrimaryAccountIdentifier:", (void *)pk_no1);
+    k = def(&PKAddPassesViewController_c, &PKAddPassesViewController_m, "PKAddPassesViewController", "NSViewController");
+    cx_add_cmethod(k, "canAddPasses", (void *)pk_no);
+    inits(k, (const char *const[]){"initWithPass:", "initWithPasses:", 0});
+    props(k, (const char *const[]){"pass", "passes", "delegate", 0});
+    k = def(&PKPaymentSummaryItem_c, &PKPaymentSummaryItem_m, "PKPaymentSummaryItem", "NSObject");
+    props(k, (const char *const[]){"label", "amount", "#type", 0});
+    cx_add_cmethod(k, "summaryItemWithLabel:amount:", (void *)pk_item);
+    cx_add_cmethod(k, "summaryItemWithLabel:amount:type:", (void *)pk_item);
+    k = def(&PKRecurringPaymentSummaryItem_c, &PKRecurringPaymentSummaryItem_m, "PKRecurringPaymentSummaryItem", "PKPaymentSummaryItem");
+    props(k, (const char *const[]){"startDate", "endDate", "#intervalUnit", "#intervalCount", 0});
+    cx_add_method(k, "initWithLabel:amount:", (void *)pk_rec_init);
+    k = def(&PKShippingMethod_c, &PKShippingMethod_m, "PKShippingMethod", "PKPaymentSummaryItem");
+    props(k, (const char *const[]){"identifier", "detail", "dateComponentsRange", 0});
+    k = def(&PKPaymentRequest_c, &PKPaymentRequest_m, "PKPaymentRequest", "NSObject");
+    props(k, (const char *const[]){"merchantIdentifier", "countryCode", "currencyCode", "#merchantCapabilities", "supportedNetworks",
+                                   "paymentSummaryItems", "shippingMethods", "requiredShippingContactFields", "requiredBillingContactFields",
+                                   "shippingContact", "billingContact", "applicationData", "#shippingType", "recurringPaymentRequest",
+                                   "automaticReloadPaymentRequest", "multiTokenContexts", "supportedCountries", "couponCode",
+                                   "?supportsCouponCode", "#shippingContactEditingMode", "#requiredShippingAddressFields",
+                                   "#requiredBillingAddressFields", 0});
+    k = def(&PKPaymentMerchantSession_c, &PKPaymentMerchantSession_m, "PKPaymentMerchantSession", "NSObject");
+    inits(k, (const char *const[]){"initWithDictionary:", 0});
+    k = def(&PKPaymentAuthorizationResult_c, &PKPaymentAuthorizationResult_m, "PKPaymentAuthorizationResult", "NSObject");
+    props(k, (const char *const[]){"#status", "errors", "orderDetails", 0});
+    cx_add_method(k, "initWithStatus:errors:", (void *)pk_status_init);
+    k = def(&PKPaymentRequestMerchantSessionUpdate_c, &PKPaymentRequestMerchantSessionUpdate_m, "PKPaymentRequestMerchantSessionUpdate", "NSObject");
+    props(k, (const char *const[]){"#status", "paymentMerchantSession", 0});
+    cx_add_method(k, "initWithStatus:merchantSession:", (void *)pk_status_init);
+    k = def(&PKPaymentRequestShippingMethodUpdate_c, &PKPaymentRequestShippingMethodUpdate_m, "PKPaymentRequestShippingMethodUpdate", "NSObject");
+    props(k, (const char *const[]){"#status", "paymentSummaryItems", 0});
+    inits(k, (const char *const[]){"initWithPaymentSummaryItems:", 0});
+    k = def(&PKPaymentRequestShippingContactUpdate_c, &PKPaymentRequestShippingContactUpdate_m, "PKPaymentRequestShippingContactUpdate", "NSObject");
+    props(k, (const char *const[]){"#status", "paymentSummaryItems", "shippingMethods", "errors", 0});
+    inits(k, (const char *const[]){"initWithErrors:paymentSummaryItems:shippingMethods:", "initWithPaymentSummaryItems:", 0});
+    k = def(&PKPaymentAuthorizationController_c, &PKPaymentAuthorizationController_m, "PKPaymentAuthorizationController", "NSObject");
+    props(k, (const char *const[]){"paymentRequest", "delegate", 0});
+    inits(k, (const char *const[]){"initWithPaymentRequest:", 0});
+    cx_add_cmethod(k, "canMakePayments", (void *)pk_no);
+    cx_add_cmethod(k, "canMakePaymentsUsingNetworks:", (void *)pk_no1);
+    cx_add_cmethod(k, "canMakePaymentsUsingNetworks:capabilities:", (void *)pk_no2);
+    cx_add_method(k, "presentWithCompletion:", (void *)pk_present);
+    cx_add_method(k, "dismissWithCompletion:", (void *)pk_dismiss);
+}
+
 void cx_intents_auth_init(void) {
     cx_class_t *k;
     /* ---- Intents */
@@ -463,4 +658,15 @@ void cx_intents_auth_init(void) {
         cx_add_method(ac, "performAutoFillAssistedRequests", (void *)ac_perform);
         cx_add_method(ac, "cancel", (void *)ac_cancel);
     }
+    pk_init();
+    extern void cx_small2_init(void);
+    cx_small2_init();
 }
+
+/* para os outros frameworks pequenos (fw_small2.c): a mesma mecânica de classe com propriedades */
+cx_class_t *cx_pb_def(cx_class_t *k, cx_class_t *m, const char *n, const char *super) { return def(k, m, n, super); }
+void cx_pb_props(cx_class_t *k, const char *const *names) { props(k, names); }
+void cx_pb_inits(cx_class_t *k, const char *const *sels) { inits(k, sels); }
+void cx_pb_news(cx_class_t *k, const char *const *sels) { news(k, sels); }
+id cx_pb_bag(id o) { return bag(o); }
+id cx_pb_err(const char *dom, long code, const char *msg) { return err(dom, code, msg); }

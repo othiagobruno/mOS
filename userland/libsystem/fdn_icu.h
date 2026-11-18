@@ -217,6 +217,8 @@ enum { UDAT_FULL = 0, UDAT_LONG = 1, UDAT_MEDIUM = 2, UDAT_SHORT = 3, UDAT_RELAT
     X(UCNV_TO_U_CALLBACK_STOP, void, (const void *, void *, const char *, int32_t, int, UErrorCode *)) \
     X(UCNV_FROM_U_CALLBACK_STOP, void, (const void *, void *, const UChar *, int32_t, UChar32, int, UErrorCode *)) \
     X(u_charType, int8_t, (UChar32)) \
+    X(u_getCombiningClass, uint8_t, (UChar32)) \
+    X(u_charDirection, int32_t, (UChar32)) \
     X(u_isalpha, UBool, (UChar32)) \
     X(u_isUWhiteSpace, UBool, (UChar32)) \
     X(u_hasBinaryProperty, UBool, (UChar32, int32_t))

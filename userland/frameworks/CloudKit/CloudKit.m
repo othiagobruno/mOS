@@ -658,6 +658,14 @@ CK_DEALLOC(NSObject)
 - (void)__mosFinishWithError:(NSError *)e { if (_fetchRecordZoneChangesCompletionBlock) _fetchRecordZoneChangesCompletionBlock(e); }
 CK_DEALLOC(CKDatabaseOperation)
 @end
+@implementation CKFetchRecordChangesOperation
+- (instancetype)initWithRecordZoneID:(CKRecordZoneID *)z previousServerChangeToken:(CKServerChangeToken *)t {
+    if ((self = [self init])) { [self setRecordZoneID:z]; [self setPreviousServerChangeToken:t]; }
+    return self;
+}
+- (void)__mosFinishWithError:(NSError *)e { if (_fetchRecordChangesCompletionBlock) _fetchRecordChangesCompletionBlock(nil, nil, e); }
+CK_DEALLOC(CKDatabaseOperation)
+@end
 @implementation CKFetchDatabaseChangesOperation
 - (instancetype)initWithPreviousServerChangeToken:(CKServerChangeToken *)t {
     if ((self = [self init])) { [self setPreviousServerChangeToken:t]; _fetchAllChanges = YES; }

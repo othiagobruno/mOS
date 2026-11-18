@@ -8,6 +8,7 @@
 #include "foundation.h"
 #include "libc.h"
 #include "fdn_encoding_core.h"
+#include "fdn_icu.h"
 
 typedef int OSStatus;
 typedef short OSErr;
@@ -561,3 +562,127 @@ OSErr UnregisterIconRef(OSType creator, OSType type) {
 /* para o AppKit: UTI do ícone e, se for um ícone registrado, os dados icns */
 const char *cx_iconref_uti(void *ref) { iconref_t *r = icon_of(ref); return r ? r->uti : 0; }
 const void *cx_iconref_icns(void *ref, long *len) { iconref_t *r = icon_of(ref); if (len) *len = r ? r->fsize : 0; return r ? r->family : 0; }
+
+/* ================================================================ propriedades de caractere (UCGetCharProperty) sobre o ICU */
+enum { kUCCharPropTypeGenlCategory = 1, kUCCharPropTypeCombiningClass = 2, kUCCharPropTypeBidiCategory = 3 };
+OSStatus UCGetCharProperty(const u16 *s, unsigned long n, u32 type, u32 *out) {
+    if (!s || !n || !out) return cs_paramErr;
+    const fdn_icu_t *I = fdn_icu();
+    if (!I || !I->ok) return cs_paramErr;
+    u32 c = s[0];
+    if (c >= 0xd800 && c < 0xdc00 && n > 1 && s[1] >= 0xdc00 && s[1] < 0xe000) c = 0x10000 + ((c - 0xd800) << 10) + (s[1] - 0xdc00);
+    switch (type) {
+    case kUCCharPropTypeGenlCategory: {
+        /* UCharCategory do ICU -> kUCGenlCat* (a ordem da Apple é outra) */
+        static const u8 map[30] = {0, 14, 15, 16, 17, 18, 5, 7, 6, 8, 9, 10, 11, 12, 13, 1, 2, 4, 3, 21, 22, 23, 20, 26, 28, 29, 30, 31, 24, 25};
+        int t = I->u_charType ? I->u_charType((UChar32)c) : 0;
+        *out = t >= 0 && t < 30 ? map[t] : 0;
+        return 0;
+    }
+    case kUCCharPropTypeCombiningClass:
+        *out = I->u_getCombiningClass ? I->u_getCombiningClass((UChar32)c) : 0;
+        return 0;
+    case kUCCharPropTypeBidiCategory: {
+        /* UCharDirection do ICU -> kUCBidiCat*; os isolados (19..22) viram neutro */
+        static const u8 map[19] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 12, 14, 16, 17, 18, 19};
+        int d = I->u_charDirection ? (int)I->u_charDirection((UChar32)c) : 0;
+        *out = d >= 0 && d < 19 ? map[d] : 11;
+        return 0;
+    }
+    }
+    return cs_paramErr;
+}
+
+/* ================================================================ Script Manager: só o script romano; a região vem do locale */
+enum { smVersion = 0, smMunged = 2, smEnabled = 4, smBidirect = 6, smFontForce = 8, smIntlForce = 10, smForced = 12, smDefault = 14,
+       smPrint = 16, smSysScript = 18, smLastScript = 20, smKeyScript = 22, smSysRef = 24, smKeyCache = 26, smKeySwap = 28,
+       smGenFlags = 30, smOverride = 32, smCharPortion = 34, smDoubleByte = 36, smKCHRCache = 38, smRegionCode = 40, smKeyDisableState = 42 };
+static int region_code(void) {
+    static const struct { const char *loc; int code; } t[] = {
+        {"en_US", 0}, {"fr_FR", 1}, {"en_GB", 2}, {"de_DE", 3}, {"it_IT", 4}, {"nl_NL", 5}, {"sv_SE", 7}, {"es_ES", 8}, {"ja_JP", 14},
+{"en_US", 0},
+{"nl_BE", 6},
+{"da_DK", 9},
+{"pt_PT", 10},
+{"he_IL", 13},
+{"ar", 16},
+{"fr_CH", 18},
+{"de_CH", 19},
+{"el_GR", 20},
+{"is_IS", 21},
+{"mt_MT", 22},
+{"tr_TR", 24},
+{"hi_IN", 33},
+{"ur_PK", 34},
+{"it_CH", 36},
+{"ro_RO", 39},
+{"lt_LT", 41},
+{"pl_PL", 42},
+{"hu_HU", 43},
+{"et_EE", 44},
+{"lv_LV", 45},
+{"se", 46},
+{"fo_FO", 47},
+{"fa_IR", 48},
+{"ru_RU", 49},
+{"ga_IE", 50},
+{"ko_KR", 51},
+{"zh_CN", 52},
+{"zh_TW", 53},
+{"th_TH", 54},
+{"cs_CZ", 56},
+{"sk_SK", 57},
+{"bn", 60},
+{"be_BY", 61},
+{"uk_UA", 62},
+{"sr_YU", 65},
+{"sl_SI", 66},
+{"mk_MK", 67},
+{"hr_HR", 68},
+{"de_DE", 70},
+{"pt_BR", 71},
+{"bg_BG", 72},
+{"ca_ES", 73},
+{"gd", 75},
+{"gv", 76},
+{"br", 77},
+{"iu_CA", 78},
+{"cy", 79},
+{"dz_BT", 83},
+{"hy_AM", 84},
+{"ka_GE", 85},
+{"es", 86},
+{"to_TO", 88},
+{"fr", 91},
+{"de_AT", 92},
+{"gu_IN", 94},
+{"pa", 95},
+{"ur_IN", 96},
+{"vi_VN", 97},
+{"fr_BE", 98},
+{"uz_UZ", 99},
+{"nn_NO", 101},
+{"af_ZA", 102},
+{"eo", 103},
+{"mr_IN", 104},
+{"bo", 105},
+{"ne_NP", 106},
+{"kl", 107},
+{"en_IE", 108},
+    };
+    const char *l = cx_locale_id();
+    if (!l) return 0;
+    for (size_t i = 0; i < sizeof t / sizeof t[0]; i++) if (!strncmp(l, t[i].loc, strlen(t[i].loc))) return t[i].code;
+    for (size_t i = 0; i < sizeof t / sizeof t[0]; i++) if (!strncmp(l, t[i].loc, 2)) return t[i].code;   /* só a língua */
+    return 0;
+}
+long GetScriptManagerVariable(short sel) {
+    switch (sel) {
+    case smVersion: return 0x0710;                                               /* Script Manager 7.1 */
+    case smEnabled: return 1;                                                    /* só o romano */
+    case smRegionCode: return region_code();
+    case smCharPortion: return 0x0100;                                           /* 1/4 do espaço para caracteres (padrão) */
+    default: return 0;                                                           /* smRoman, sem bidi, sem 2 bytes, teclado livre */
+    }
+}
+OSErr SetScriptManagerVariable(short sel, long v) { (void)sel; (void)v; return 0; }

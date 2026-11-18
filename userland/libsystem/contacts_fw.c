@@ -8,6 +8,8 @@ void cx_contacts_ui_init(void);
 int cx_tcc_request(const char *service);
 int cx_tcc_state(const char *service);
 id objc_autorelease(id o);
+void objc_release(id o);
+char *strtok(char *s, const char *d);
 
 extern cx_class_t CNContact_c __asm__("OBJC_CLASS_$_CNContact");
 extern cx_class_t CNContactStore_c __asm__("OBJC_CLASS_$_CNContactStore");
@@ -22,7 +24,7 @@ cx_class_t CNPostalAddress_m __asm__("OBJC_METACLASS_$_CNPostalAddress");
 cx_class_t CNMutablePostalAddress_c __asm__("OBJC_CLASS_$_CNMutablePostalAddress");
 cx_class_t CNMutablePostalAddress_m __asm__("OBJC_METACLASS_$_CNMutablePostalAddress");
 
-enum { CN_SLOTS = 48, CN_REQ = 16, CN_OP = 32 };
+enum { CN_REQ = 16, CN_OP = 32 };
 
 typedef struct {
     id obj;
@@ -41,7 +43,9 @@ typedef struct {
     cn_req_op_t op[CN_OP];
 } cn_req_t;
 
-static cn_slot_t g_slot[CN_SLOTS];
+/* um slot por objeto (contato ou endereço), alocado à parte para o ponteiro não mudar; solto no dealloc */
+static cn_slot_t **g_slots;
+static int g_nslots, g_capslots;
 static cn_req_t g_req[CN_REQ];
 
 static void field_copy(char *d, int cap, id s) {
@@ -55,18 +59,30 @@ static void field_copy(char *d, int cap, id s) {
 static id str_ar(const char *s) { return objc_autorelease(cx_str(s ? s : "")); }
 
 static cn_slot_t *slot_of(id o, int make) {
-    cn_slot_t *free_s = 0;
-    int i;
     if (!o) return 0;
-    for (i = 0; i < CN_SLOTS; i++) {
-        if (g_slot[i].used && g_slot[i].obj == o) return &g_slot[i];
-        if (!g_slot[i].used && !free_s) free_s = &g_slot[i];
+    for (int i = 0; i < g_nslots; i++) if (g_slots[i]->obj == o) return g_slots[i];
+    if (!make) return 0;
+    if (g_nslots == g_capslots) {
+        int cap = g_capslots ? g_capslots * 2 : 64;
+        cn_slot_t **n = realloc(g_slots, (size_t)cap * sizeof *n);
+        if (!n) return 0;
+        g_slots = n; g_capslots = cap;
     }
-    if (!make || !free_s) return 0;
-    memset(free_s, 0, sizeof *free_s);
-    free_s->used = 1;
-    free_s->obj = o;
-    return free_s;
+    cn_slot_t *s = calloc(1, sizeof *s);
+    if (!s) return 0;
+    s->used = 1;
+    s->obj = o;
+    g_slots[g_nslots++] = s;
+    return s;
+}
+static void slot_free(id o) {
+    for (int i = 0; i < g_nslots; i++)
+        if (g_slots[i]->obj == o) { free(g_slots[i]); g_slots[i] = g_slots[--g_nslots]; return; }
+}
+static void cn_dealloc(id self, SEL c) {
+    slot_free(self);
+    IMP sup = cx_lookup(cx_class_named("NSObject"), c);
+    if (sup) ((void (*)(id, SEL))sup)(self, c);
 }
 
 static cn_req_t *req_of(id o, int make) {
@@ -271,6 +287,175 @@ static id fmt_string(id self, SEL c, id obj) {
     return str_ar(buf);
 }
 
+
+/* ================================================================ CNContactVCardSerialization (vCard 3.0) */
+cx_class_t CNContactVCardSerialization_c __asm__("OBJC_CLASS_$_CNContactVCardSerialization");
+cx_class_t CNContactVCardSerialization_m __asm__("OBJC_METACLASS_$_CNContactVCardSerialization");
+typedef struct { char *p; size_t n, cap; } vbuf_t;
+static void vput(vbuf_t *b, const char *s, size_t n) {
+    if (b->n + n + 1 > b->cap) {
+        size_t c = b->cap ? b->cap * 2 : 1024;
+        while (c < b->n + n + 1) c *= 2;
+        char *q = realloc(b->p, c);
+        if (!q) return;
+        b->p = q; b->cap = c;
+    }
+    memcpy(b->p + b->n, s, n);
+    b->n += n;
+    b->p[b->n] = 0;
+}
+static void vstr(vbuf_t *b, const char *s) { vput(b, s, strlen(s)); }
+static void vesc(vbuf_t *b, const char *s) {                                    /* \ ; , e quebra de linha */
+    for (; *s; s++) {
+        if (*s == '\\' || *s == ';' || *s == ',') { vput(b, "\\", 1); vput(b, s, 1); }
+        else if (*s == '\n') vput(b, "\\n", 2);
+        else if (*s != '\r') vput(b, s, 1);
+    }
+}
+static void vline(vbuf_t *b, const char *name, const char *val) { if (val[0]) { vstr(b, name); vesc(b, val); vstr(b, "\r\n"); } }
+static void vcard_of(vbuf_t *b, const cx_cn_contact *c) {
+    vstr(b, "BEGIN:VCARD\r\nVERSION:3.0\r\nPRODID:-//mOS//Contatos//PT\r\nN:");
+    vesc(b, c->family); vstr(b, ";"); vesc(b, c->given); vstr(b, ";;"); vesc(b, c->prefix); vstr(b, ";"); vesc(b, c->suffix); vstr(b, "\r\n");
+    char fn[200];
+    snprintf(fn, sizeof fn, "%s%s%s", c->given, c->given[0] && c->family[0] ? " " : "", c->family);
+    vline(b, "FN:", fn[0] ? fn : c->org);
+    vline(b, "ORG:", c->org);
+    vline(b, "TEL;type=pref:", c->phone);
+    vline(b, "EMAIL;type=INTERNET;type=pref:", c->email);
+    if (c->street[0] || c->city[0] || c->state[0] || c->zip[0] || c->country[0]) {
+        vstr(b, "ADR;type=pref:;;"); vesc(b, c->street); vstr(b, ";"); vesc(b, c->city); vstr(b, ";"); vesc(b, c->state); vstr(b, ";");
+        vesc(b, c->zip); vstr(b, ";"); vesc(b, c->country); vstr(b, "\r\n");
+    }
+    vline(b, "URL:", c->url);
+    vline(b, "X-PHONETIC-FIRST-NAME:", c->phonetic_given);
+    vline(b, "X-PHONETIC-MIDDLE-NAME:", c->phonetic_middle);
+    vline(b, "X-PHONETIC-LAST-NAME:", c->phonetic_family);
+    vline(b, "X-PHONETIC-ORG:", c->phonetic_org);
+    vline(b, "X-MAIDENNAME:", c->previous);
+    if (c->im_user[0]) { char v[128]; snprintf(v, sizeof v, "%s:%s", c->im_service[0] ? c->im_service : "x-apple", c->im_user); vstr(b, "IMPP:"); vstr(b, v); vstr(b, "\r\n"); }
+    if (c->social_url[0] || c->social_user[0]) {
+        vstr(b, "X-SOCIALPROFILE;type="); vesc(b, c->social_service[0] ? c->social_service : "other");
+        if (c->social_user[0]) { vstr(b, ";x-user="); vesc(b, c->social_user); }
+        vstr(b, ":"); vesc(b, c->social_url[0] ? c->social_url : c->social_user); vstr(b, "\r\n");
+    }
+    vline(b, "X-ABRELATEDNAMES:", c->relation);
+    vline(b, "UID:", c->id);
+    vstr(b, "END:VCARD\r\n");
+}
+static id vcard_data(id cls, SEL c, id contacts, id *err) {
+    (void)cls; (void)c;
+    if (err) *err = 0;
+    vbuf_t b = {0};
+    u64 n = contacts ? MSG0(u64, contacts, "count") : 0;
+    for (u64 i = 0; i < n; i++) {
+        cn_slot_t *s = slot_of(MSG(id, contacts, "objectAtIndex:", i), 0);
+        cx_cn_contact empty;
+        memset(&empty, 0, sizeof empty);
+        vcard_of(&b, s ? &s->c : &empty);
+    }
+    id d = MSG(id, (id)cx_class_named("NSData"), "dataWithBytes:length:", b.p ? b.p : "", (u64)b.n);
+    free(b.p);
+    return d;
+}
+/* valor de vCard sem os escapes; comp = qual componente separado por ';' (-1 = tudo) */
+static void vunesc(const char *v, int comp, char *out, size_t cap) {
+    int k = 0;
+    size_t o = 0;
+    for (const char *p = v; *p; p++) {
+        if (*p == '\\' && p[1]) {
+            p++;
+            char ch = *p == 'n' || *p == 'N' ? '\n' : *p;
+            if ((comp < 0 || k == comp) && o + 1 < cap) out[o++] = ch;
+            continue;
+        }
+        if (*p == ';' && comp >= 0) { if (k == comp) break; k++; continue; }
+        if (comp < 0 || k == comp) { if (o + 1 < cap) out[o++] = *p; }
+    }
+    out[o] = 0;
+}
+static void put_field(char *dst, size_t cap, const char *v, int comp) { char t[512]; vunesc(v, comp, t, sizeof t); snprintf(dst, cap, "%s", t); }
+static void vcard_prop(cx_cn_contact *c, char *line, int *have) {
+    char *colon = strchr(line, ':');
+    if (!colon) return;
+    *colon = 0;
+    char *val = colon + 1, *name = line, *dot = strchr(name, '.');
+    char *semi = strchr(name, ';');
+    if (dot && (!semi || dot < semi)) name = dot + 1;                            /* "item1.EMAIL" */
+    char params[256] = "";
+    semi = strchr(name, ';');
+    if (semi) { snprintf(params, sizeof params, "%s", semi + 1); *semi = 0; }
+    for (char *q = name; *q; q++) if (*q >= 'a' && *q <= 'z') *q -= 32;
+    #define ONCE(bit) if (*have & (bit)) return; *have |= (bit)
+    if (!strcmp(name, "N")) { put_field(c->family, sizeof c->family, val, 0); put_field(c->given, sizeof c->given, val, 1);
+                              put_field(c->prefix, sizeof c->prefix, val, 3); put_field(c->suffix, sizeof c->suffix, val, 4); *have |= 1; }
+    else if (!strcmp(name, "FN")) { if (!(*have & 1)) { char t[200]; vunesc(val, -1, t, sizeof t); char *sp = strrchr(t, ' ');
+                                      if (sp) { *sp = 0; snprintf(c->given, sizeof c->given, "%s", t); snprintf(c->family, sizeof c->family, "%s", sp + 1); }
+                                      else snprintf(c->given, sizeof c->given, "%s", t); } }
+    else if (!strcmp(name, "ORG")) put_field(c->org, sizeof c->org, val, 0);
+    else if (!strcmp(name, "TEL")) { ONCE(2); put_field(c->phone, sizeof c->phone, val, -1); }
+    else if (!strcmp(name, "EMAIL")) { ONCE(4); put_field(c->email, sizeof c->email, val, -1); }
+    else if (!strcmp(name, "ADR")) { ONCE(8); put_field(c->street, sizeof c->street, val, 2); put_field(c->city, sizeof c->city, val, 3);
+                                     put_field(c->state, sizeof c->state, val, 4); put_field(c->zip, sizeof c->zip, val, 5);
+                                     put_field(c->country, sizeof c->country, val, 6); }
+    else if (!strcmp(name, "URL")) { ONCE(16); put_field(c->url, sizeof c->url, val, -1); }
+    else if (!strcmp(name, "X-PHONETIC-FIRST-NAME")) put_field(c->phonetic_given, sizeof c->phonetic_given, val, -1);
+    else if (!strcmp(name, "X-PHONETIC-MIDDLE-NAME")) put_field(c->phonetic_middle, sizeof c->phonetic_middle, val, -1);
+    else if (!strcmp(name, "X-PHONETIC-LAST-NAME")) put_field(c->phonetic_family, sizeof c->phonetic_family, val, -1);
+    else if (!strcmp(name, "X-PHONETIC-ORG")) put_field(c->phonetic_org, sizeof c->phonetic_org, val, -1);
+    else if (!strcmp(name, "X-MAIDENNAME")) put_field(c->previous, sizeof c->previous, val, -1);
+    else if (!strcmp(name, "X-ABRELATEDNAMES")) { ONCE(32); put_field(c->relation, sizeof c->relation, val, -1); }
+    else if (!strcmp(name, "UID")) put_field(c->id, sizeof c->id, val, -1);
+    else if (!strcmp(name, "IMPP")) {
+        ONCE(64);
+        char t[160]; vunesc(val, -1, t, sizeof t);
+        char *k = strchr(t, ':');
+        if (k) { *k = 0; snprintf(c->im_service, sizeof c->im_service, "%s", t); snprintf(c->im_user, sizeof c->im_user, "%s", k + 1); }
+        else snprintf(c->im_user, sizeof c->im_user, "%s", t);
+    } else if (!strcmp(name, "X-SOCIALPROFILE")) {
+        ONCE(128);
+        put_field(c->social_url, sizeof c->social_url, val, -1);
+        for (char *t = strtok(params, ";"); t; t = strtok(0, ";")) {
+            if (!strncasecmp(t, "type=", 5)) snprintf(c->social_service, sizeof c->social_service, "%s", t + 5);
+            else if (!strncasecmp(t, "x-user=", 7)) snprintf(c->social_user, sizeof c->social_user, "%s", t + 7);
+        }
+    }
+    #undef ONCE
+}
+static id vcard_contacts(id cls, SEL c, id data, id *err) {
+    (void)cls; (void)c;
+    if (err) *err = 0;
+    size_t n = data ? (size_t)MSG0(u64, data, "length") : 0;
+    const char *src = data ? MSG0(const char *, data, "bytes") : 0;
+    id out = MSG0(id, (id)cx_class_named("NSMutableArray"), "array");
+    if (!src) return out;
+    char *line = malloc(n + 1);
+    size_t ln = 0;
+    int in = 0, have = 0;
+    cx_cn_contact cur;
+    for (size_t i = 0; i <= n; i++) {
+        int eol = i == n || src[i] == '\n';
+        if (!eol) { if (src[i] != '\r') line[ln++] = src[i]; continue; }
+        if (i + 1 < n && (src[i + 1] == ' ' || src[i + 1] == '\t')) { i++; continue; }   /* linha dobrada */
+        line[ln] = 0;
+        if (!strncasecmp(line, "BEGIN:VCARD", 11)) { in = 1; have = 0; memset(&cur, 0, sizeof cur); }
+        else if (!strncasecmp(line, "END:VCARD", 9) && in) {
+            id o = contact_from(&cur);
+            MSG(void, out, "addObject:", o);
+            objc_release(o);
+            in = 0;
+        } else if (in && ln) vcard_prop(&cur, line, &have);
+        ln = 0;
+    }
+    free(line);
+    if (in || (n && !MSG0(u64, out, "count"))) {                               /* cartão sem fim ou nenhum cartão */
+        if (err) *err = MSG(id, (id)cx_class_named("NSError"), "errorWithDomain:code:userInfo:", cx_str("CNErrorDomain"), (long)700 /* CNErrorCodeVCardMalformed */, (id)0);
+        return in ? 0 : out;
+    }
+    return out;
+}
+static id vcard_desc_key(id cls, SEL c, id contacts) { (void)cls; (void)c; (void)contacts; return cx_str("CNContactVCardSerializationDescriptor"); }
+static id vcard_desc(id cls, SEL c) { (void)cls; (void)c; return cx_str("CNContactVCardSerializationDescriptor"); }
+
 static void add_m(cx_class_t *k, const char *sel, void *imp) {
     if (k && !cx_responds(k, sel_registerName(sel))) cx_add_method(k, sel, imp);
 }
@@ -284,6 +469,13 @@ void cx_contacts_init(void) {
     if (!cx_class_named("CNSaveRequest"))
         cx_define_class(&CNSaveRequest_c, &CNSaveRequest_m, "CNSaveRequest", obj, 0);
 
+    cx_add_method(&CNPostalAddress_c, "dealloc", (void *)cn_dealloc);
+    cx_add_method(&CNContact_c, "dealloc", (void *)cn_dealloc);
+    cx_define_class(&CNContactVCardSerialization_c, &CNContactVCardSerialization_m, "CNContactVCardSerialization", obj, 0);
+    cx_add_cmethod(&CNContactVCardSerialization_c, "dataWithContacts:error:", (void *)vcard_data);
+    cx_add_cmethod(&CNContactVCardSerialization_c, "contactsWithData:error:", (void *)vcard_contacts);
+    cx_add_cmethod(&CNContactVCardSerialization_c, "descriptorForRequiredKeys", (void *)vcard_desc);
+    cx_add_cmethod(&CNContactVCardSerialization_c, "descriptorForRequiredKeysForContacts:", (void *)vcard_desc_key);
     add_m(&CNPostalAddress_c, "street", (void *)get_street);
     add_m(&CNMutablePostalAddress_c, "setStreet:", (void *)set_street);
     add_m(&CNPostalAddress_c, "city", (void *)get_city);

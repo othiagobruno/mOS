@@ -426,6 +426,19 @@ CK_SWIFT_NAME(__CKRecordObjCValue)
 @property (nullable, copy) void (^fetchRecordZoneChangesCompletionBlock)(NSError *_Nullable operationError);
 @end
 
+/* API antiga (até o macOS 10.12), ainda ligada por apps: mudanças de uma zona */
+@interface CKFetchRecordChangesOperation : CKDatabaseOperation
+- (instancetype)initWithRecordZoneID:(CKRecordZoneID *)recordZoneID previousServerChangeToken:(nullable CKServerChangeToken *)previousServerChangeToken;
+@property (nullable, copy) CKRecordZoneID *recordZoneID;
+@property (nullable, copy) CKServerChangeToken *previousServerChangeToken;
+@property NSUInteger resultsLimit;
+@property (nullable, copy) NSArray<NSString *> *desiredKeys;
+@property (readonly) BOOL moreComing;
+@property (nullable, copy) void (^recordChangedBlock)(CKRecord *record);
+@property (nullable, copy) void (^recordWithIDWasDeletedBlock)(CKRecordID *recordID);
+@property (nullable, copy) void (^fetchRecordChangesCompletionBlock)(CKServerChangeToken *_Nullable serverChangeToken, NSData *_Nullable clientChangeTokenData, NSError *_Nullable operationError);
+@end
+
 @interface CKFetchDatabaseChangesOperation : CKDatabaseOperation
 - (instancetype)initWithPreviousServerChangeToken:(nullable CKServerChangeToken *)previousServerChangeToken;
 @property (nullable, copy) CKServerChangeToken *previousServerChangeToken;
