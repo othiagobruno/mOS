@@ -303,6 +303,14 @@ for dp, dn, fn in os.walk(base):
                             .replace('return NSPOSIXErrorDomain', 'return _mosString(NSPOSIXErrorDomain)')
                             .replace('return (self as NSError).localizedDescription',
                                      'return _mosString((self as NSError).localizedDescription)'))
+        # Bundle: na variante ObjC é o NSBundle (swift_name "Bundle" no Foundation.h), como na Apple. O `package struct
+        # Bundle` do stub do swift-foundation, no mesmo módulo (-import-underlying-module), casava com as referências a
+        # "Bundle" lidas de outros .swiftmodule e derrubava as declarações com Bundle (o SwiftUI ficava sem 74 delas).
+        if n == 'Bundle+Stub.swift':
+            for i, l in enumerate(lines):
+                if re.match(r'^\s*#\s*if\s+!FOUNDATION_FRAMEWORK\s*$', l):
+                    lines[i] = '#if !FOUNDATION_FRAMEWORK && !MOS_NS_OPTIONS'
+                    break
         if n == 'ComparisonResult.swift':
             for i, l in enumerate(lines):
                 if re.match(r'^\s*#\s*if\s+!FOUNDATION_FRAMEWORK\s*$', l):

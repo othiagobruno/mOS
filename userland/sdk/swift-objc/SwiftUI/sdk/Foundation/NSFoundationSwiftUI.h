@@ -20,26 +20,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)containsValueForKey:(NSString *)key;
 @end
 
-NS_SWIFT_NAME(Bundle) @interface NSBundle : NSObject
-@property (class, readonly, strong) NSBundle *mainBundle;
-+ (nullable instancetype)bundleWithPath:(NSString *)path;
-+ (nullable instancetype)bundleWithURL:(NSURL *)url;
-+ (NSBundle *)bundleForClass:(Class)aClass;
-+ (nullable NSBundle *)bundleWithIdentifier:(NSString *)identifier;
-- (nullable instancetype)initWithPath:(NSString *)path NS_DESIGNATED_INITIALIZER;
+/* NSBundle vem do Foundation.h desta variante (PR #690); aqui só o que ele ainda não declara */
+@interface NSBundle (MOSSwiftUI)
+- (nullable instancetype)initWithPath:(NSString *)path;
 - (nullable instancetype)initWithURL:(NSURL *)url;
-@property (readonly, copy) NSString *bundlePath;
-@property (readonly, copy) NSURL *bundleURL;
-@property (nullable, readonly, copy) NSString *resourcePath;
-@property (nullable, readonly, copy) NSURL *resourceURL;
-@property (nullable, readonly, copy) NSString *bundleIdentifier;
-@property (nullable, readonly, copy) NSDictionary<NSString *, id> *infoDictionary;
 @property (readonly, copy) NSArray<NSString *> *preferredLocalizations;
-- (nullable id)objectForInfoDictionaryKey:(NSString *)key;
-- (nullable NSString *)pathForResource:(nullable NSString *)name ofType:(nullable NSString *)ext;
-- (nullable NSURL *)URLForResource:(nullable NSString *)name withExtension:(nullable NSString *)ext;
 - (nullable NSURL *)URLForResource:(nullable NSString *)name withExtension:(nullable NSString *)ext subdirectory:(nullable NSString *)subpath;
-- (NSString *)localizedStringForKey:(NSString *)key value:(nullable NSString *)value table:(nullable NSString *)tableName;
 @end
 
 NS_SWIFT_NAME(Formatter) @interface NSFormatter : NSObject <NSCopying, NSCoding>
