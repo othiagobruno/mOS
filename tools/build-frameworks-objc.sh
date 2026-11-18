@@ -77,6 +77,40 @@ for fw in "$ROOT"/userland/frameworks/*/; do
             [ -e "$OBJC/overlays/$m.swiftmodule" ] || missing="$missing $m"
         done
     fi
+    # swiftui-needs: o overlay importa o SwiftUI, que no mOS é o OpenSwiftUI compilado com o ABI "SwiftUI"
+    # (tools/build-swiftui-objc.py). Compila com as opções do próprio OpenSwiftUI.rsp (filtradas como no
+    # tools/test-swiftui.sh), e liga ao SwiftUI.framework. O fonte importa OpenSwiftUI (ABI name "SwiftUI"): com
+    # -module-alias SwiftUI=OpenSwiftUI o mangling dos tipos do módulo OpenSwiftUI sairia 11OpenSwiftUI. Sai na passada que o
+    # tools/build.sh faz depois do SwiftUI
+    suirsp=
+    if [ -f "$fw/swiftui-needs" ]; then
+        rsp="$OBJC/swiftui/OpenSwiftUI/OpenSwiftUI.rsp"
+        suibin="$OBJC/dylib/System/Library/Frameworks/SwiftUI.framework/Versions/A/SwiftUI"
+        if [ -f "$rsp" ] && [ -f "$OBJC/swiftui/OpenSwiftUI/OpenSwiftUI.swiftmodule" ] && [ -f "$suibin" ]; then
+            suirsp="$TMP/$name-swiftui.rsp"
+            python3 - "$rsp" "$suirsp" <<'PY'
+import sys
+src, dst = sys.argv[1:3]
+drop_arg = {'-emit-module-path', '-o', '-module-name', '-module-abi-name', '-package-name', '-module-cache-path'}
+drop = {'-c', '-parse-as-library', '-enable-library-evolution', '-experimental-spi-only-imports', '-typecheck'}
+out, skip = [], False
+for line in open(src).read().split('\n'):
+    x = line.strip()
+    if skip:
+        skip = False
+        continue
+    if not x or x in drop or x.strip('"').endswith('.swift'):
+        continue
+    if x in drop_arg:
+        skip = True
+        continue
+    out.append(x)
+open(dst, 'w').write('\n'.join(out) + '\n')
+PY
+        else
+            missing="$missing SwiftUI"
+        fi
+    fi
     if ls "$fw"*.swift >/dev/null 2>&1 && [ -n "$missing" ]; then
         echo "$name: aviso: overlay Swift adiado (falta o módulo$missing); só a parte ObjC/C por enquanto" >&2
         # só Swift (ex.: CryptoKit): nada a ligar agora; sai inteiro na segunda passada
@@ -97,11 +131,19 @@ for fw in "$ROOT"/userland/frameworks/*/; do
                 done
                 inc+=(-I "$TMP/iface-$name")
             fi
-            if "$FE" -frontend -c -target $SWT -resource-dir "$RES" -module-name "$name" -parse-as-library -O \
+            if [ -n "$suirsp" ]; then
+                "$FE" -frontend @"$suirsp" -c -parse-as-library -enable-library-evolution -module-name "$name" \
+                    -import-underlying-module -I "$fw/include" -I "$OBJC/swiftui/OpenSwiftUI" \
+                    -module-cache-path "$OBJC/swiftui/modcache-fw" \
+                    -emit-module-path "$TMP/$name.swiftmodule" -o "$so" "$fw"*.swift 2>"$so.err"
+            else
+                "$FE" -frontend -c -target $SWT -resource-dir "$RES" -module-name "$name" -parse-as-library -O \
                     -enable-library-evolution -import-underlying-module "${inc[@]}" -I "$OBJC" -I "$OBJC/overlays" \
                     -I "$ROOT/.tools/swift-src/stdlib/public/SwiftShims/swift/shims" -module-cache-path "$OBJC/modcache" \
                     -Xcc "-isystem$OBJC/sdk/include" -Xcc -Wno-nullability-completeness -Xcc -DMOS_SWIFT_OBJC=1 \
-                    -emit-module-path "$TMP/$name.swiftmodule" -o "$so" "$fw"*.swift 2>"$so.err"; then
+                    -emit-module-path "$TMP/$name.swiftmodule" -o "$so" "$fw"*.swift 2>"$so.err"
+            fi
+            if [ $? -eq 0 ]; then
                 if [ -n "$swdylib" ]; then swobjs+=("$so"); else objs+=("$so"); fi
                 # o módulo fica visível para os frameworks seguintes (o ExtensionKit importa o ExtensionFoundation)
                 cp -f "$TMP/$name.swiftmodule" "$OBJC/overlays/$name.swiftmodule" 2>/dev/null || true
@@ -139,6 +181,8 @@ for fw in "$ROOT"/userland/frameworks/*/; do
     mkdir -p "$(dirname "$out")"
     swrt=()
     [ -f "$TMP/${name}_swift.o" ] && [ -z "$swdylib" ] && mapfile -t swrt < <(swift_rt "$fw")
+    # o zig não aceita o binário do framework sem extensão: liga o SwiftUI por um link .dylib
+    if [ -n "$suirsp" ]; then ln -sf "$suibin" "$TMP/SwiftUI.dylib"; swrt+=("$TMP/SwiftUI.dylib"); fi
     if ! "$ZIG" cc -target "$TARGET" -shared -o "$out" "-Wl,-install_name,$install" -Wl,-undefined,dynamic_lookup "${objs[@]}" \
             "${swrt[@]}" 2>"$TMP/$name.link"; then
         head -8 "$TMP/$name.link" | sed 's/^/  /' >&2

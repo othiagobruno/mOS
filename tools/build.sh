@@ -611,6 +611,9 @@ fi
 # SwiftUI.framework (OpenSwiftUI e dependências fixados por commit e SHA-256): depois do Foundation e do Combine acima
 if [ -e "$ROOT/build/swift/objc/overlays/Foundation.swiftmodule" ]; then
     MOS_ZIG="$ZIG" python3 "$ROOT/tools/build-swiftui-objc.py" || echo "aviso: SwiftUI.framework não compilou" >&2
+    # frameworks que importam o SwiftUI (arquivo swiftui-needs, ex.: TipKit): terceira passada, depois dele
+    precisa=$(cd "$ROOT/userland/frameworks" && ls */swiftui-needs 2>/dev/null | cut -d/ -f1 | paste -sd, -)
+    [ -n "$precisa" ] && { MOS_ZIG="$ZIG" bash "$ROOT/tools/build-frameworks-objc.sh" "" "$precisa" || echo "aviso: $precisa não compilou" >&2; }
 fi
 if [ -f "$ROOT/build/universal-swift/usr/lib/swift/libswiftCore.dylib" ]; then
     cp -a "$ROOT/build/universal-swift/." "$ESP/mOS/"

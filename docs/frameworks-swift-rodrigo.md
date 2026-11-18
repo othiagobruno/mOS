@@ -16,7 +16,7 @@ Cada framework fica em `userland/frameworks/<Nome>`, é compilado por `tools/bui
 | SwiftData | bartender, maccy, voiceink | 94 | código escrito; falta `Foundation.SortDescriptor` (Eduardo) para compilar |
 | _SwiftData_SwiftUI | voiceink | 5 | falta: `@Query` e `EnvironmentValues.modelContext` sobre o OpenSwiftUI |
 | WeatherKit | bartender, raycast | 129 | falta: `Foundation.Measurement<NSUnit*>` (Eduardo); sem serviço de clima, vai lançar erro |
-| TipKit | macwhisper | 21 | falta: depende do SwiftUI (OpenSwiftUI, `-module-alias SwiftUI=OpenSwiftUI`) |
+| TipKit | macwhisper | 21/21 | pronto, com teste: datastore em disco, invalidação, MaxDisplayCount, regras, displayFrequency, TipView |
 
 ## Comportamento no mOS
 - **ExtensionFoundation**: não há pluginkit, então `AppExtensionIdentity.matching(appExtensionPointIDs:)` e
@@ -34,6 +34,18 @@ Cada framework fica em `userland/frameworks/<Nome>`, é compilado por `tools/bui
     `Predicate.evaluate`.
 
   Não há SQLite do Core Data nem CloudKit. Hoje um container usa só a primeira configuração.
+
+- **TipKit**: o estado de cada dica (vezes mostrada, invalidada e o motivo) fica num JSON. O local padrão é
+  `~/Library/Application Support/<bundle id>/TipKit/tips.json`, ou o que vier em `Tips.configure`. Nenhuma dica
+  aparece antes de `Tips.configure()`. `Tips.Rule` aceita uma condição em closure; o macro `#Rule` com
+  `@Parameter` e eventos ainda não existe.
+
+## Frameworks sobre o SwiftUI (`swiftui-needs`)
+Um framework com o arquivo `swiftui-needs` é compilado numa passada do `tools/build.sh` que roda depois do
+`build-swiftui-objc.py`. Ele usa as opções do `OpenSwiftUI.rsp` filtradas e liga ao SwiftUI.framework. O fonte usa
+`import OpenSwiftUI`, porque o ABI name do módulo é `SwiftUI`. Com `-module-alias SwiftUI=OpenSwiftUI`, os tipos do
+módulo OpenSwiftUI, como o `Button`, sairiam com o nome mangled `11OpenSwiftUI` e não ligariam. O `.ps1` não tem
+essa passada: o build do Windows só compila o CryptoKit por `build-frameworks-objc.ps1`.
 
 ## Correções de infraestrutura feitas junto
 - `tools/build-frameworks-objc.sh`: o código Swift de um framework agora liga em dois níveis com `libswiftCore`,
