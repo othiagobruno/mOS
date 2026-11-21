@@ -1,57 +1,57 @@
 # Lacunas de compatibilidade no corpus macOS
 
 Gerado por `python3 tools/corpus/harness.py gaps` com as medidas atuais de `tools/corpus/varrer-tudo.sh`.
-libSystem medido: main ce6dc05c (merge #392), copiado de build do Ricardo 2026-11-16_01:41.
+libSystem medido: build final 4c39ade2 2026-11-17.
 O disco é o da varredura: libunwind, libc++, libswift*, libz, libcurl e, com o artefato do CI, os frameworks do
 mOS. Os baldes libc++ e Swift só contam o que nenhuma dessas exporta.
 Binários não estão no git. URLs e sha256 ficam em `tools/corpus/manifest.json`.
 
-Apps com pelo menos uma imagem Mach-O x86_64: **250**.
+Apps com pelo menos uma imagem Mach-O x86_64: **294**.
 
 ## Símbolos que faltam em mais apps
 
 | símbolo | apps |
 |---|---:|
-| `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF` | 94 |
-| `_$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ` | 93 |
-| `_$s10Foundation3URLVMa` | 90 |
-| `_$s10Foundation3URLVMn` | 90 |
-| `_$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF` | 90 |
-| `_$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ` | 89 |
-| `_$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF` | 87 |
-| `_$s10Foundation3URLV36_unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ` | 87 |
-| `_$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF` | 87 |
-| `_$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF` | 86 |
-| `_$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF` | 86 |
-| `_$sSD10FoundationE36_unconditionallyBridgeFromObjectiveCySDyxq_GSo12NSDictionaryCSgFZ` | 86 |
-| `_OBJC_CLASS_$_WebView` | 86 |
-| `_$s10Foundation4DataV36_unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ` | 85 |
-| `_OBJC_CLASS_$_WKUserScript` | 85 |
-| `_$s10Foundation3URLV6stringACSgSSh_tcfC` | 84 |
-| `_$s10Foundation12NotificationVMa` | 83 |
-| `_$ss5ErrorP10FoundationE20localizedDescriptionSSvg` | 83 |
-| `_$s10Foundation12NotificationV36_unconditionallyBridgeFromObjectiveCyACSo14NSNotificationCSgFZ` | 82 |
-| `_$s10Foundation4DateVMa` | 81 |
-| `_$sSS10FoundationE26_forceBridgeFromObjectiveC_6resultySo8NSStringC_SSSgztFZ` | 81 |
-| `_$sSS10FoundationE34_conditionallyBridgeFromObjectiveC_6resultSbSo8NSStringC_SSSgztFZ` | 81 |
-| `_$s10Foundation3URLV4pathSSvg` | 80 |
-| `_$sSS10FoundationE8EncodingV4utf8ACvgZ` | 80 |
-| `_$sSS10FoundationE8EncodingVMa` | 80 |
-| `_$s10Foundation4DateVMn` | 78 |
-| `_OBJC_CLASS_$_WKUserContentController` | 78 |
-| `_$sSy10FoundationE20replacingOccurrences2of4with7options5rangeSSqd___qd_0_So22NSStringCompareOptionsVSnySS5IndexVGSgtSyRd__SyRd_0_r0_lF` | 77 |
-| `_$s10Foundation4UUIDVMa` | 76 |
-| `_$s10Foundation6LocaleVMa` | 76 |
-| `_$sSS10FoundationE4data8encodingSSSgAA4DataVh_SSAAE8EncodingVtcfC` | 76 |
-| `_$s10Foundation13__DataStorageC6_bytesSvSgvg` | 75 |
-| `_$s10Foundation13__DataStorageC7_offsetSivg` | 75 |
-| `_$s10Foundation3URLV22appendingPathComponentyACSSF` | 75 |
-| `_$s10Foundation4DataVN` | 75 |
-| `_OBJC_CLASS_$_WebPreferences` | 75 |
-| `_$s10Foundation12CharacterSetVMa` | 74 |
-| `_$s10Foundation3URLV15fileURLWithPathACSSh_tcfC` | 74 |
-| `_$s10Foundation4DateV19_bridgeToObjectiveCSo6NSDateCyF` | 74 |
-| `_$s10Foundation13__DataStorageC7_lengthSivg` | 73 |
+| `_OBJC_CLASS_$_WKUserScript` | 106 |
+| `_OBJC_CLASS_$_WebView` | 102 |
+| `_OBJC_CLASS_$_WKUserContentController` | 96 |
+| `_vswprintf` | 88 |
+| `_OBJC_CLASS_$_WebPreferences` | 87 |
+| `_swprintf` | 86 |
+| `_$s4Body7SwiftUI4ViewPTl` | 69 |
+| `_$s7SwiftUI15ModifiedContentVMn` | 69 |
+| `_$s7SwiftUI15ModifiedContentVyxq_GAA4ViewA2aERzAA0E8ModifierR_rlMc` | 69 |
+| `_$s7SwiftUI4TextVyACxcSyRzlufC` | 69 |
+| `_$s7SwiftUI4ViewMp` | 69 |
+| `_$s7SwiftUI4ViewP05_makeC04view6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZTq` | 69 |
+| `_$s7SwiftUI4ViewP05_makeC4List4view6inputsAA01_cE7OutputsVAA11_GraphValueVyxG_AA01_cE6InputsVtFZTq` | 69 |
+| `_$s7SwiftUI4ViewP4BodyAC_AaBTn` | 69 |
+| `_$s7SwiftUI4ViewP4body4BodyQzvgTq` | 69 |
+| `_$s7SwiftUI4ViewPAAE05_makeC04view6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZ` | 69 |
+| `_$s7SwiftUI4ViewPAAE05_makeC4List4view6inputsAA01_cE7OutputsVAA11_GraphValueVyxG_AA01_cE6InputsVtFZ` | 69 |
+| `_$s7SwiftUI12_FrameLayoutVMn` | 68 |
+| `_$s7SwiftUI19HorizontalAlignmentV7leadingACvgZ` | 68 |
+| `_$s7SwiftUI4TextVMn` | 68 |
+| `_$s7SwiftUI4ViewP14_viewListCount6inputsSiSgAA01_ceF6InputsV_tFZTq` | 68 |
+| `_$s7SwiftUI4ViewPAAE14_viewListCount6inputsSiSgAA01_ceF6InputsV_tFZ` | 68 |
+| `_$s7SwiftUI6HStackVMn` | 68 |
+| `_$s7SwiftUI9AlignmentV6centerACvgZ` | 68 |
+| `_$s7SwiftUI9TupleViewVMn` | 68 |
+| `_$s7SwiftUI12_FrameLayoutV5width6height9alignmentAC12CoreGraphics7CGFloatVSg_AjA9AlignmentVtcfC` | 67 |
+| `_$s7SwiftUI19HorizontalAlignmentV6centerACvgZ` | 67 |
+| `_$s7SwiftUI19_ConditionalContentVMn` | 67 |
+| `_$s7SwiftUI30_EnvironmentKeyWritingModifierVMn` | 67 |
+| `_$s7SwiftUI5ColorVMn` | 67 |
+| `_$s7SwiftUI6SpacerVMn` | 67 |
+| `_$s7SwiftUI6VStackVMn` | 67 |
+| `_$s7SwiftUI6VStackVyxGAA4ViewAAMc` | 67 |
+| `_$s7SwiftUI7ForEachVA2A4ViewR0_rlE_2id7contentACyxq_q0_Gx_s7KeyPathCy7ElementQzq_Gq0_AKctcfC` | 67 |
+| `_$s7SwiftUI7ForEachVMn` | 67 |
+| `_$s7SwiftUI9EmptyViewVMn` | 67 |
+| `_$s7SwiftUI13_VStackLayoutVMn` | 66 |
+| `_$s7SwiftUI13_VariadicViewO4TreeVMn` | 66 |
+| `_$s7SwiftUI14_PaddingLayoutVMn` | 66 |
+| `_$s7SwiftUI15ModifiedContentVMa` | 66 |
 
 ## Por origem
 
@@ -59,67 +59,68 @@ Apps com pelo menos uma imagem Mach-O x86_64: **250**.
 
 | símbolo | apps |
 |---|---:|
-| `_OBJC_CLASS_$_WebView` | 86 |
-| `_OBJC_CLASS_$_WKUserScript` | 85 |
-| `_OBJC_CLASS_$_WKUserContentController` | 78 |
-| `_OBJC_CLASS_$_WebPreferences` | 75 |
-| `_OBJC_CLASS_$_NSAppleScript` | 61 |
-| `_$s10Foundation3URLV36_unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ` | 53 |
-| `_$s10Foundation3URLVMn` | 53 |
-| `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF` | 53 |
-| `_$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ` | 53 |
-| `_CFBundleGetBundleWithIdentifier` | 53 |
-| `_$s10Foundation3URLVMa` | 52 |
-| `_$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF` | 52 |
-| `_$ss5ErrorP10FoundationE20localizedDescriptionSSvg` | 52 |
-| `_$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF` | 51 |
-| `_$s10Foundation4DateVMa` | 51 |
+| `_OBJC_CLASS_$_WKUserScript` | 106 |
+| `_OBJC_CLASS_$_WebView` | 102 |
+| `_OBJC_CLASS_$_WKUserContentController` | 96 |
+| `_vswprintf` | 88 |
+| `_OBJC_CLASS_$_WebPreferences` | 87 |
+| `_swprintf` | 86 |
+| `_$s4Body7SwiftUI4ViewPTl` | 69 |
+| `_$s7SwiftUI15ModifiedContentVMn` | 69 |
+| `_$s7SwiftUI15ModifiedContentVyxq_GAA4ViewA2aERzAA0E8ModifierR_rlMc` | 69 |
+| `_$s7SwiftUI4TextVyACxcSyRzlufC` | 69 |
+| `_$s7SwiftUI4ViewMp` | 69 |
+| `_$s7SwiftUI4ViewP05_makeC04view6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZTq` | 69 |
+| `_$s7SwiftUI4ViewP05_makeC4List4view6inputsAA01_cE7OutputsVAA11_GraphValueVyxG_AA01_cE6InputsVtFZTq` | 69 |
+| `_$s7SwiftUI4ViewP4BodyAC_AaBTn` | 69 |
+| `_$s7SwiftUI4ViewP4body4BodyQzvgTq` | 69 |
 
 ### libc++
 
 | símbolo | apps |
 |---|---:|
+| `__ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm` | 2 |
+| `__ZN2v811HandleScopeC1EPNS_7IsolateE` | 2 |
+| `__ZN2v811HandleScopeD1Ev` | 2 |
+| `__ZN2v811HandleScopeD2Ev` | 2 |
+| `__ZN2v86Object32SetAlignedPointerInInternalFieldEiPv` | 2 |
+| `__ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEi` | 2 |
+| `__ZN2v87Context10GetIsolateEv` | 2 |
+| `__ZN2v88External3NewEPNS_7IsolateEPv` | 2 |
+| `__ZNK2v86String11WriteUtf8V2EPNS_7IsolateEPcmiPm` | 2 |
+| `__ZNK2v88External5ValueEv` | 2 |
+| `__ZdlPvSt19__type_descriptor_t` | 2 |
 | `__Z10add_friendP9tree_nodeS0_b` | 1 |
 | `__Z10build_declj9tree_codeP9tree_nodeS1_` | 1 |
 | `__Z10get_typeidP9tree_nodei` | 1 |
 | `__Z10start_enumP9tree_nodeS0_S0_S0_bPb` | 1 |
-| `__Z11begin_scope10scope_kindP9tree_node` | 1 |
-| `__Z11build_throwjP9tree_nodei` | 1 |
-| `__Z11clone_cdtorP9tree_nodeb` | 1 |
-| `__Z11fancy_abortPKciS0_` | 1 |
-| `__Z11fatal_errorjPKcz` | 1 |
-| `__Z11finish_enumP9tree_node` | 1 |
-| `__Z11ggc_reallocPvm` | 1 |
-| `__Z11layout_typeP9tree_node` | 1 |
-| `__Z11leave_scopev` | 1 |
-| `__Z11linemap_addP9line_maps9lc_reasonjPKcj` | 1 |
-| `__Z11lookup_nameP9tree_node` | 1 |
 
 ### Swift
 
 | símbolo | apps |
 |---|---:|
-| `_$sSo13os_log_type_ta0A0E5errorABvgZ` | 59 |
-| `_$s2os0A4_log_3dso0B0__ySo0a1_B7_type_ta_SVSo03OS_a1_B0Cs12StaticStringVs7CVarArg_pdtF` | 57 |
-| `_$s22UniformTypeIdentifiers6UTTypeVMa` | 55 |
-| `_$sSo13os_log_type_ta0A0E5faultABvgZ` | 55 |
-| `_$s22UniformTypeIdentifiers6UTTypeVMn` | 51 |
-| `_$s2os6LoggerV9logObjectSo03OS_a1_C0Cvg` | 50 |
-| `_$s2os6LoggerV9subsystem8categoryACSS_SStcfC` | 50 |
-| `_$s2os6LoggerVMa` | 50 |
-| `_$sSo13os_log_type_ta0A0E4infoABvgZ` | 48 |
-| `_$sSo13os_log_type_ta0A0E5debugABvgZ` | 42 |
-| `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF` | 41 |
-| `_$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ` | 40 |
-| `_$s10Foundation3URLVMa` | 38 |
-| `_$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF` | 38 |
-| `_$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ` | 38 |
+| `_$sSo10CGColorRefa12CoreGraphicsE5whiteABvgZ` | 16 |
+| `_$s6System8FilePathVMa` | 11 |
+| `_$sSo16CGMutablePathRefa12CoreGraphicsE10addEllipse2in9transformySo6CGRectV_So17CGAffineTransformVtF` | 11 |
+| `_$s10Foundation4DataV11referencingACSo6NSDataCh_tcfC` | 9 |
+| `_$s6System5ErrnoVN` | 8 |
+| `_$s6System5ErrnoVs5ErrorAAMc` | 8 |
+| `_$s6System8FilePathVyACSScfC` | 8 |
+| `_$s7Network10NWListenerCMn` | 8 |
+| `_$s6System14FileDescriptorV6_closes6ResultOyytAA5ErrnoVGyF` | 7 |
+| `_$s6System14FileDescriptorVMn` | 7 |
+| `_$s6System8FilePathV11withCStringyxxSPys4Int8VGKXEKlF` | 7 |
+| `_$s6System8FilePathV6stringSSvg` | 7 |
+| `_$s6System8FilePathVMn` | 7 |
+| `_$sSo16CGMutablePathRefa12CoreGraphicsE14addRoundedRect2in11cornerWidth0J6Height9transformySo6CGRectV_AC7CGFloatVALSo17CGAffineTransformVtF` | 7 |
+| `_$s6System14FileDescriptorV5_read4into16retryOnInterrupts6ResultOySiAA5ErrnoVGSw_SbtKF` | 6 |
 
 ### unwind
 
 | símbolo | apps |
 |---|---:|
-| — | 0 |
+| `__Unwind_Resume_or_Rethrow` | 2 |
+| `__Unwind_Find_FDE` | 1 |
 
 ## Por framework
 
@@ -127,274 +128,287 @@ Apps com pelo menos uma imagem Mach-O x86_64: **250**.
 
 | símbolo | apps |
 |---|---:|
-| `_$s7SwiftUI17VerticalAlignmentV3topACvgZ` | 49 |
-| `_$s7SwiftUI6IDViewVMn` | 48 |
-| `_$s7SwiftUI4ViewPAAE11toggleStyleyQrqd__AA06ToggleE0Rd__lF` | 45 |
-| `_$s7SwiftUI4ViewPAAE11toggleStyleyQrqd__AA06ToggleE0Rd__lFQOMQ` | 45 |
-| `_$s7SwiftUI26NSViewRepresentableContextV11coordinator11CoordinatorQzvg` | 43 |
-| `_$s7SwiftUI26NSViewRepresentableContextVMn` | 42 |
-| `_$s7SwiftUI21PinnedScrollableViewsVMa` | 40 |
-| `_$s7SwiftUI21PinnedScrollableViewsVs9OptionSetAAMc` | 40 |
+| `_$s4Body7SwiftUI4ViewPTl` | 69 |
+| `_$s7SwiftUI15ModifiedContentVMn` | 69 |
+| `_$s7SwiftUI15ModifiedContentVyxq_GAA4ViewA2aERzAA0E8ModifierR_rlMc` | 69 |
+| `_$s7SwiftUI4TextVyACxcSyRzlufC` | 69 |
+| `_$s7SwiftUI4ViewMp` | 69 |
+| `_$s7SwiftUI4ViewP05_makeC04view6inputsAA01_C7OutputsVAA11_GraphValueVyxG_AA01_C6InputsVtFZTq` | 69 |
+| `_$s7SwiftUI4ViewP05_makeC4List4view6inputsAA01_cE7OutputsVAA11_GraphValueVyxG_AA01_cE6InputsVtFZTq` | 69 |
+| `_$s7SwiftUI4ViewP4BodyAC_AaBTn` | 69 |
 
-### Foundation.framework
-
-| símbolo | apps |
-|---|---:|
-| `_OBJC_CLASS_$_NSAppleScript` | 61 |
-| `_$s10Foundation3URLV36_unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ` | 53 |
-| `_$s10Foundation3URLVMn` | 53 |
-| `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF` | 53 |
-| `_$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ` | 53 |
-| `_$s10Foundation3URLVMa` | 52 |
-| `_$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF` | 52 |
-| `_$ss5ErrorP10FoundationE20localizedDescriptionSSvg` | 52 |
-
-### libswiftFoundation.dylib
+### OfficeArt.framework
 
 | símbolo | apps |
 |---|---:|
-| `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF` | 41 |
-| `_$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ` | 40 |
-| `_$s10Foundation3URLVMa` | 38 |
-| `_$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF` | 38 |
-| `_$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayCSgFZ` | 38 |
-| `_$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF` | 37 |
-| `_$s10Foundation3URLVMn` | 37 |
-| `_$s10Foundation22_convertNSErrorToErrorys0E0_pSo0C0CSgF` | 36 |
+| `__Z17FlushMetroPackageR8IUnknown` | 1 |
+| `__Z20GetRemoteCmdXmlNamesv` | 1 |
+| `__Z24UnpackUtf8StreamToStringRN3Ofc8CIStreamERNS_7CVarStrE` | 1 |
+| `__Z29GetRemoteCmdXmlNamesShapeMovev` | 1 |
+| `__Z31GetRemoteCmdXmlNamesShapeFormatv` | 1 |
+| `__ZN10MediaUtils24GetTemporaryMediaFileURLEPK10__CFStringS2_` | 1 |
+| `__ZN11AutoCaption12ImageAdapter26FGetCompressedIBSFromImageERKN3GEL6IImageERN3Mso7TCntPtrI11IByteStreamEE` | 1 |
+| `__ZN11AutoCaption12ImageAdapter26FGetResizedImageByteStreamERKN3GEL6IImageERN3Mso7TCntPtrI11IByteStreamEERN15ImageCaptioning12ImageAdapter26CompressImageTelemetryDataE` | 1 |
 
 ### Combine.framework
 
 | símbolo | apps |
 |---|---:|
-| `_$s7Combine25ObservableObjectPublisherC4sendyyF` | 35 |
-| `_$s7Combine10PublishersO3MapVMn` | 32 |
-| `_$s7Combine10PublishersO3MapVy_xq_GAA9PublisherAAMc` | 32 |
-| `_$s7Combine9PublisherPAAE3mapyAA10PublishersO3MapVy_xqd__Gqd__6OutputQzclF` | 32 |
-| `_$s7Combine11CancellableMp` | 30 |
-| `_$s6Output7Combine9PublisherPTl` | 29 |
-| `_$s7Combine9PublisherMp` | 29 |
-| `_$s7Combine06CustomA21IdentifierConvertibleMp` | 28 |
-
-### CoreFoundation.framework
-
-| símbolo | apps |
-|---|---:|
-| `_CFBundleGetBundleWithIdentifier` | 52 |
-| `_CFStringGetSystemEncoding` | 40 |
-| `_kCFLocaleLanguageCode` | 37 |
-| `_CFSocketCreateWithNative` | 34 |
-| `_CFURLEnumeratorGetNextURL` | 30 |
-| `_kCFURLIsPackageKey` | 30 |
-| `_CFShow` | 28 |
-| `_CFSocketGetSocketFlags` | 28 |
-
-### AppIntents.framework
-
-| símbolo | apps |
-|---|---:|
-| `_$s10AppIntents09_SupportsA12DependenciesMp` | 17 |
-| `_$s10AppIntents0A6IntentMp` | 17 |
-| `_$s10AppIntents0A6IntentP04openA7WhenRunSbvgZTq` | 17 |
-| `_$s10AppIntents0A6IntentP11descriptionAA0C11DescriptionVSgvgZTq` | 17 |
-| `_$s10AppIntents0A6IntentP13PerformResultAC_AA0cE0Tn` | 17 |
-| `_$s10AppIntents0A6IntentP14SummaryContentAC_AA09ParameterD0Tn` | 17 |
-| `_$s10AppIntents0A6IntentP16parameterSummary0E7ContentQzvgZTq` | 17 |
-| `_$s10AppIntents0A6IntentP20authenticationPolicyAA0c14AuthenticationE0OvgZTq` | 17 |
-
-### AppKit.framework
-
-| símbolo | apps |
-|---|---:|
-| `_OBJC_CLASS_$_NSFontPanel` | 39 |
-| `_NSFileContentsPboardType` | 30 |
-| `_OBJC_CLASS_$_NSPageLayout` | 30 |
-| `_NSAccessibilityUnignoredChildrenForOnlyChild` | 29 |
-| `_OBJC_CLASS_$_NSPrintOperation` | 27 |
-| `_NSApplicationLoad` | 22 |
-| `_OBJC_CLASS_$_NSStepperCell` | 20 |
-| `_OBJC_CLASS_$_NSViewAnimation` | 20 |
-
-### CryptoKit.framework
-
-| símbolo | apps |
-|---|---:|
-| `_$s9CryptoKit6SHA256VAA12HashFunctionAAMc` | 42 |
-| `_$s9CryptoKit6SHA256VMa` | 42 |
-| `_$s9CryptoKit12HashFunctionP6update13bufferPointerySW_tFTj` | 41 |
-| `_$s9CryptoKit12SHA256DigestVMa` | 40 |
-| `_$s9CryptoKit12HashFunctionP8finalize6DigestQzyFTj` | 39 |
-| `_$s9CryptoKit12HashFunctionPxycfCTj` | 38 |
-| `_$s9CryptoKit12SHA256DigestVSTAAMc` | 35 |
-| `_$s9CryptoKit12SymmetricKeyVMa` | 25 |
-
-### libSystem.B.dylib
-
-| símbolo | apps |
-|---|---:|
-| `_putenv` | 37 |
-| `_getloadavg` | 29 |
-| `_getprotobyname` | 25 |
-| `_pthread_attr_getschedpolicy` | 23 |
-| `__os_activity_create` | 22 |
-| `_os_activity_scope_enter` | 22 |
-| `_os_activity_scope_leave` | 22 |
-| `_OSAtomicAdd32Barrier` | 21 |
-
-### Security.framework
-
-| símbolo | apps |
-|---|---:|
-| `_kSecAttrServer` | 35 |
-| `_kSecAttrProtocol` | 28 |
-| `_SSLSetDiffieHellmanParams` | 22 |
-| `_kSecAttrProtocolHTTPProxy` | 21 |
-| `_kSecAttrProtocolHTTPSProxy` | 21 |
-| `_kSecAttrProtocolFTPProxy` | 20 |
-| `_kSecImportExportKeychain` | 20 |
-| `_SecIdentitySearchCopyNext` | 19 |
-
-### CoreServices.framework
-
-| símbolo | apps |
-|---|---:|
-| `_kUTTypeFileURL` | 33 |
-| `_GetIconRef` | 31 |
-| `_FSPathMakeRefWithOptions` | 28 |
-| `_ReleaseIconRef` | 27 |
-| `_kUTTagClassNSPboardType` | 27 |
-| `_UCCreateCollator` | 26 |
-| `_FSGetCatalogInfo` | 23 |
-| `_UCGetCollationKey` | 23 |
-
-### libncurses.5.4.dylib
-
-| símbolo | apps |
-|---|---:|
-| `_setupterm` | 9 |
-| `_tigetnum` | 9 |
-| `_tigetflag` | 8 |
-| `_tigetstr` | 8 |
-| `_COLORS` | 7 |
-| `_COLOR_PAIRS` | 7 |
-| `_COLS` | 7 |
-| `_LINES` | 7 |
-
-### CoreGraphics.framework
-
-| símbolo | apps |
-|---|---:|
-| `_kCGColorWhite` | 32 |
-| `_CGDisplayCopyAllDisplayModes` | 28 |
-| `_CGEventTapCreateForPid` | 26 |
-| `_CGEventSourceButtonState` | 24 |
-| `_CGDisplaySetDisplayMode` | 23 |
-| `_CGDisplayCapture` | 21 |
-| `_CGDisplayModeCopyPixelEncoding` | 20 |
-| `_CGEventSourceCounterForEventType` | 20 |
-
-### ApplicationServices.framework
-
-| símbolo | apps |
-|---|---:|
-| `_PasteboardCreate` | 34 |
-| `_PasteboardSynchronize` | 34 |
-| `_PasteboardCopyItemFlavorData` | 23 |
-| `_PasteboardCopyItemFlavors` | 23 |
-| `_PasteboardGetItemCount` | 23 |
-| `_PasteboardGetItemIdentifier` | 23 |
-| `_PMGetDuplex` | 22 |
-| `_PasteboardClear` | 22 |
+| `_$s7Combine25ObservableObjectPublisherC4sendyyF` | 43 |
+| `_$s7Combine10PublishersO3MapVMn` | 40 |
+| `_$s7Combine10PublishersO3MapVy_xq_GAA9PublisherAAMc` | 40 |
+| `_$s7Combine9PublisherPAAE3mapyAA10PublishersO3MapVy_xqd__Gqd__6OutputQzclF` | 40 |
+| `_$s7Combine11CancellableMp` | 38 |
+| `_$s6Output7Combine9PublisherPTl` | 35 |
+| `_$s7Combine9PublisherMp` | 35 |
+| `_$s7Combine06CustomA21IdentifierConvertibleMp` | 34 |
 
 ### self)
 
 | símbolo | apps |
 |---|---:|
-| `_PyDict_New` | 4 |
-| `_PyDict_SetItem` | 4 |
-| `_PyDict_SetItemString` | 4 |
-| `_PyErr_Clear` | 4 |
-| `_PyErr_Format` | 4 |
-| `_PyErr_Occurred` | 4 |
-| `_PyErr_SetString` | 4 |
-| `_PyExc_AttributeError` | 4 |
+| `_PyDict_New` | 5 |
+| `_PyDict_SetItem` | 5 |
+| `_PyDict_SetItemString` | 5 |
+| `_PyErr_Clear` | 5 |
+| `_PyErr_Format` | 5 |
+| `_PyErr_Occurred` | 5 |
+| `_PyErr_SetString` | 5 |
+| `_PyExc_AttributeError` | 5 |
 
-### libswiftUniformTypeIdentifiers.dylib
-
-| símbolo | apps |
-|---|---:|
-| `_$s22UniformTypeIdentifiers6UTTypeVMa` | 55 |
-| `_$s22UniformTypeIdentifiers6UTTypeVMn` | 51 |
-| `_$s22UniformTypeIdentifiers6UTTypeV4dataACvgZ` | 36 |
-| `_$s22UniformTypeIdentifiers6UTTypeV10identifierSSvg` | 34 |
-| `_$s22UniformTypeIdentifiers6UTTypeV17filenameExtension12conformingToACSgSS_ACtcfC` | 34 |
-| `_$s22UniformTypeIdentifiers6UTTypeV19_bridgeToObjectiveCSoABCyF` | 28 |
-| `_$s22UniformTypeIdentifiers6UTTypeVyACSgSScfC` | 27 |
-| `_$s22UniformTypeIdentifiers6UTTypeV8conforms2toSbAC_tF` | 26 |
-
-### libswiftos.dylib
+### AppIntents.framework
 
 | símbolo | apps |
 |---|---:|
-| `_$sSo13os_log_type_ta0A0E5errorABvgZ` | 59 |
-| `_$s2os0A4_log_3dso0B0__ySo0a1_B7_type_ta_SVSo03OS_a1_B0Cs12StaticStringVs7CVarArg_pdtF` | 57 |
-| `_$sSo13os_log_type_ta0A0E5faultABvgZ` | 55 |
-| `_$s2os6LoggerV9logObjectSo03OS_a1_C0Cvg` | 50 |
-| `_$s2os6LoggerV9subsystem8categoryACSS_SStcfC` | 50 |
-| `_$s2os6LoggerVMa` | 50 |
-| `_$sSo13os_log_type_ta0A0E4infoABvgZ` | 48 |
-| `_$sSo13os_log_type_ta0A0E5debugABvgZ` | 42 |
+| `_$s10AppIntents09_SupportsA12DependenciesMp` | 22 |
+| `_$s10AppIntents0A6IntentMp` | 22 |
+| `_$s10AppIntents0A6IntentP04openA7WhenRunSbvgZTq` | 22 |
+| `_$s10AppIntents0A6IntentP11descriptionAA0C11DescriptionVSgvgZTq` | 22 |
+| `_$s10AppIntents0A6IntentP13PerformResultAC_AA0cE0Tn` | 22 |
+| `_$s10AppIntents0A6IntentP14SummaryContentAC_AA09ParameterD0Tn` | 22 |
+| `_$s10AppIntents0A6IntentP16parameterSummary0E7ContentQzvgZTq` | 22 |
+| `_$s10AppIntents0A6IntentP20authenticationPolicyAA0c14AuthenticationE0OvgZTq` | 22 |
+
+### Foundation.framework
+
+| símbolo | apps |
+|---|---:|
+| `_$s10Foundation23LocalizedStringResourceVMa` | 37 |
+| `_$s10Foundation23LocalizedStringResourceVMn` | 33 |
+| `_$s10Foundation23LocalizedStringResourceV13stringLiteralACSS_tcfC` | 28 |
+| `_$sSS10FoundationE9localized5table6bundle6locale7commentS2SAAE17LocalizationValueV_SSSgSo8NSBundleCSgAA6LocaleVs12StaticStringVSgtcfC` | 28 |
+| `_$s10Foundation6LocaleV8LanguageV12languageCodeAC0cE0VSgvg` | 23 |
+| `_$s10Foundation16AttributedStringV8markdown7options7baseURLACSS_AC22MarkdownParsingOptionsVAA0G0VSgtKcfC` | 21 |
+| `_$s10Foundation40CustomLocalizedStringResourceConvertibleMp` | 21 |
+| `_$s10Foundation40CustomLocalizedStringResourceConvertibleP09localizeddE0AA0cdE0VvgTq` | 21 |
+
+### mso99.framework
+
+| símbolo | apps |
+|---|---:|
+| `_$s17BrandKitTemplates0aB10ClientInfoC7hostApp9sessionIDACSS_SStcfc` | 1 |
+| `_$s17BrandKitTemplates0aB10ClientInfoCMa` | 1 |
+| `_$s17BrandKitTemplates0aB12TemplateItemC5titleSSvpWvd` | 1 |
+| `_$s17BrandKitTemplates0aB12TemplateItemC7assetIDSSvpWvd` | 1 |
+| `_$s17BrandKitTemplates0aB12TemplateItemC7setKindAA0ab3SetG0OvpWvd` | 1 |
+| `_$s17BrandKitTemplates0aB12TemplateItemC8mimeTypeSSvpWvd` | 1 |
+| `_$s17BrandKitTemplates0aB12TemplateItemC9assetTypeSSvpWvd` | 1 |
+| `_$s17BrandKitTemplates0aB12TemplateItemC9referenceSSvpWvd` | 1 |
+
+### Accelerate.framework
+
+| símbolo | apps |
+|---|---:|
+| `_vImagePremultiplyData_RGBA8888` | 8 |
+| `_vImageVerticalReflect_ARGB8888` | 6 |
+| `_vDSP_mmul` | 5 |
+| `_vDSP_vsmulD` | 5 |
+| `_vImageConvert_420Yp8_CbCr8ToARGB8888` | 5 |
+| `_vImageConvert_PlanarFtoPlanar16F` | 5 |
+| `_vDSP_vmulD` | 4 |
+| `_vDSP_vsq` | 4 |
+
+### libncurses.5.4.dylib
+
+| símbolo | apps |
+|---|---:|
+| `_setupterm` | 14 |
+| `_tigetnum` | 14 |
+| `_tigetstr` | 13 |
+| `_COLORS` | 12 |
+| `_COLOR_PAIRS` | 12 |
+| `_COLS` | 12 |
+| `_LINES` | 12 |
+| `_acs_map` | 12 |
+
+### libQt63DRender.6.dylib
+
+| símbolo | apps |
+|---|---:|
+| `__ZN10Qt3DRender10QAlphaTest11qt_metacallEN11QMetaObject4CallEiPPv` | 1 |
+| `__ZN10Qt3DRender10QAlphaTest11qt_metacastEPKc` | 1 |
+| `__ZN10Qt3DRender10QAlphaTest16setAlphaFunctionENS0_13AlphaFunctionE` | 1 |
+| `__ZN10Qt3DRender10QAlphaTest16staticMetaObjectE` | 1 |
+| `__ZN10Qt3DRender10QAlphaTest17setReferenceValueEf` | 1 |
+| `__ZN10Qt3DRender10QAlphaTestC2EPN8Qt3DCore5QNodeE` | 1 |
+| `__ZN10Qt3DRender10QAlphaTestD2Ev` | 1 |
+| `__ZN10Qt3DRender10QClipPlane11qt_metacallEN11QMetaObject4CallEiPPv` | 1 |
+
+### libSystem.B.dylib
+
+| símbolo | apps |
+|---|---:|
+| `_vswprintf` | 88 |
+| `_swprintf` | 86 |
+| `_hash_create` | 24 |
+| `_hash_search` | 24 |
+| `__res` | 20 |
+| `_dbm_clearerr` | 18 |
+| `_dbm_close` | 18 |
+| `_dbm_delete` | 18 |
 
 ### StoreKit.framework
 
 | símbolo | apps |
 |---|---:|
-| `_$s8StoreKit11TransactionVMa` | 7 |
-| `_$s8StoreKit11TransactionVMn` | 7 |
-| `_$s8StoreKit18VerificationResultOMn` | 7 |
-| `_$s8StoreKit10StorefrontV11countryCodeSSvg` | 6 |
-| `_$s8StoreKit10StorefrontVMa` | 6 |
-| `_$s8StoreKit11TransactionV12TransactionsV13AsyncIteratorV4nextAA18VerificationResultOyACGSgyYaF` | 6 |
-| `_$s8StoreKit11TransactionV12TransactionsV13AsyncIteratorV4nextAA18VerificationResultOyACGSgyYaFTu` | 6 |
-| `_$s8StoreKit11TransactionV12TransactionsV13AsyncIteratorVMa` | 6 |
+| `_$s8StoreKit11TransactionVMa` | 12 |
+| `_$s8StoreKit11TransactionVMn` | 12 |
+| `_$s8StoreKit18VerificationResultOMn` | 12 |
+| `_$s8StoreKit10StorefrontV11countryCodeSSvg` | 11 |
+| `_$s8StoreKit10StorefrontVMa` | 11 |
+| `_$s8StoreKit11TransactionV12TransactionsV13AsyncIteratorV4nextAA18VerificationResultOyACGSgyYaF` | 11 |
+| `_$s8StoreKit11TransactionV12TransactionsV13AsyncIteratorV4nextAA18VerificationResultOyACGSgyYaFTu` | 11 |
+| `_$s8StoreKit11TransactionV12TransactionsV13AsyncIteratorVMa` | 11 |
 
-### Carbon.framework
+### libQt6Charts.6.dylib
 
 | símbolo | apps |
 |---|---:|
-| `_GetEventDispatcherTarget` | 41 |
-| `_TISCreateInputSourceList` | 31 |
-| `_TISCopyInputMethodKeyboardLayoutOverride` | 29 |
-| `_kTISPropertyInputSourceIsASCIICapable` | 24 |
-| `_TISSelectInputSource` | 21 |
-| `_kTISPropertyInputSourceType` | 18 |
-| `_GetCurrentEventKeyModifiers` | 16 |
-| `_GetEventClass` | 16 |
+| `__ZN10QBarSeries11qt_metacallEN11QMetaObject4CallEiPPv` | 1 |
+| `__ZN10QBarSeries11qt_metacastEPKc` | 1 |
+| `__ZN10QBarSeries16staticMetaObjectE` | 1 |
+| `__ZN10QBarSeriesC2EP7QObject` | 1 |
+| `__ZN10QBarSeriesD2Ev` | 1 |
+| `__ZN10QChartView10wheelEventEP11QWheelEvent` | 1 |
+| `__ZN10QChartView11qt_metacallEN11QMetaObject4CallEiPPv` | 1 |
+| `__ZN10QChartView11qt_metacastEPKc` | 1 |
+
+### CoreGraphics.framework
+
+| símbolo | apps |
+|---|---:|
+| `_CGDisplayCopyAllDisplayModes` | 36 |
+| `_CGEventSourceButtonState` | 33 |
+| `_CGDisplayModeCopyPixelEncoding` | 31 |
+| `_CGEventTapCreateForPid` | 31 |
+| `_CGDisplaySetDisplayMode` | 29 |
+| `_CGEventSourceCounterForEventType` | 29 |
+| `_CGDisplayCapture` | 24 |
+| `_CGDisplayModeGetIOFlags` | 23 |
 
 ### libicucore.A.dylib
 
 | símbolo | apps |
 |---|---:|
-| `_u_strToLower` | 12 |
-| `_u_strToUpper` | 12 |
-| `_ubrk_close` | 12 |
-| `_ubrk_following` | 12 |
-| `_ubrk_open` | 12 |
-| `_ubrk_setText` | 12 |
-| `_unorm2_getNFCInstance` | 12 |
-| `_unorm2_normalize` | 12 |
+| `_u_strToLower` | 15 |
+| `_u_strToUpper` | 15 |
+| `_ubrk_close` | 15 |
+| `_ubrk_following` | 15 |
+| `_ubrk_open` | 15 |
+| `_ubrk_setText` | 15 |
+| `_unorm2_getNFCInstance` | 15 |
+| `_unorm2_normalize` | 15 |
 
-### AVFoundation.framework
+### libQt6Graphs.6.dylib
 
 | símbolo | apps |
 |---|---:|
-| `_OBJC_CLASS_$_AVPlayerLayer` | 18 |
-| `_OBJC_CLASS_$_AVCaptureStillImageOutput` | 10 |
-| `_AVCaptureSessionPresetLow` | 8 |
-| `_OBJC_CLASS_$_AVCaptureVideoPreviewLayer` | 8 |
-| `_OBJC_CLASS_$_AVMutableMetadataItem` | 8 |
-| `_OBJC_CLASS_$_AVAssetExportSession` | 7 |
-| `_OBJC_CLASS_$_AVAssetWriterInputPixelBufferAdaptor` | 7 |
-| `_OBJC_CLASS_$_AVMetadataItem` | 7 |
+| `__Z13comparesEqualRK11QGraphsLineS1_` | 1 |
+| `__ZN10QBarSeries11deselectAllEv` | 1 |
+| `__ZN10QBarSeries11setBarWidthEd` | 1 |
+| `__ZN10QBarSeries11setBarsTypeENS_8BarsTypeE` | 1 |
+| `__ZN10QBarSeries14removeMultipleExx` | 1 |
+| `__ZN10QBarSeries14setBarDelegateEP13QQmlComponent` | 1 |
+| `__ZN10QBarSeries14setLabelsAngleEd` | 1 |
+| `__ZN10QBarSeries15setBorderColorsERK5QListI6QColorE` | 1 |
+
+### mso20.framework
+
+| símbolo | apps |
+|---|---:|
+| `_MSOCopilotLicenseAvailable` | 1 |
+| `_MSOExperimentViewController` | 1 |
+| `_MSOProcessGetSharedSessionID` | 1 |
+| `_MSOShouldShowExperimentUI` | 1 |
+| `_MsoCpRgchToRgwchCore` | 1 |
+| `_MsoCreateFileW` | 1 |
+| `_MsoFAllocPx` | 1 |
+| `_MsoFAlphaWch` | 1 |
+
+### libQt63DExtras.6.dylib
+
+| símbolo | apps |
+|---|---:|
+| `__ZN10Qt3DExtras10QPlaneMesh11qt_metacallEN11QMetaObject4CallEiPPv` | 1 |
+| `__ZN10Qt3DExtras10QPlaneMesh11qt_metacastEPKc` | 1 |
+| `__ZN10Qt3DExtras10QPlaneMesh11setMirroredEb` | 1 |
+| `__ZN10Qt3DExtras10QPlaneMesh16staticMetaObjectE` | 1 |
+| `__ZN10Qt3DExtras10QPlaneMesh17setMeshResolutionERK5QSize` | 1 |
+| `__ZN10Qt3DExtras10QPlaneMesh8setWidthEf` | 1 |
+| `__ZN10Qt3DExtras10QPlaneMesh9setHeightEf` | 1 |
+| `__ZN10Qt3DExtras10QPlaneMeshC2EPN8Qt3DCore5QNodeE` | 1 |
+
+### WebKit.framework
+
+| símbolo | apps |
+|---|---:|
+| `_OBJC_CLASS_$_WKUserScript` | 106 |
+| `_OBJC_CLASS_$_WebView` | 102 |
+| `_OBJC_CLASS_$_WKUserContentController` | 96 |
+| `_OBJC_CLASS_$_WebPreferences` | 87 |
+| `_OBJC_CLASS_$_WKContentRuleListStore` | 54 |
+| `_OBJC_CLASS_$_WKContentWorld` | 18 |
+| `_OBJC_CLASS_$_WKPreferences` | 18 |
+| `_OBJC_CLASS_$_WKProcessPool` | 12 |
+
+### libQt6Multimedia.6.dylib
+
+| símbolo | apps |
+|---|---:|
+| `__ZN10QAudioSink11qt_metacallEN11QMetaObject4CallEiPPv` | 1 |
+| `__ZN10QAudioSink11qt_metacastEPKc` | 1 |
+| `__ZN10QAudioSink13setBufferSizeEx` | 1 |
+| `__ZN10QAudioSink16staticMetaObjectE` | 1 |
+| `__ZN10QAudioSink4stopEv` | 1 |
+| `__ZN10QAudioSink5resetEv` | 1 |
+| `__ZN10QAudioSink5startEP9QIODevice` | 1 |
+| `__ZN10QAudioSink5startEv` | 1 |
+
+### libedit.3.dylib
+
+| símbolo | apps |
+|---|---:|
+| `_add_history` | 18 |
+| `_read_history` | 16 |
+| `_rl_attempted_completion_function` | 16 |
+| `_write_history` | 16 |
+| `_history_truncate_file` | 15 |
+| `_rl_attempted_completion_over` | 15 |
+| `_rl_completion_append_character` | 15 |
+| `_rl_completion_matches` | 15 |
+
+### libcups.2.dylib
+
+| símbolo | apps |
+|---|---:|
+| `_ppdClose` | 31 |
+| `_ppdFindOption` | 31 |
+| `_ppdFindMarkedChoice` | 28 |
+| `_cupsGetDests2` | 20 |
+| `_ppdOpenFile` | 18 |
+| `_httpBlocking` | 16 |
+| `_httpError` | 16 |
+| `_ppdFindAttr` | 16 |
 
 ### Charts.framework
 
@@ -409,296 +423,327 @@ Apps com pelo menos uma imagem Mach-O x86_64: **250**.
 | `_$s6Charts14PlottableValueVMn` | 6 |
 | `_$s6Charts16AxisMarkPositionV9automaticACvgZ` | 6 |
 
-### UIKit.framework
+### IOKit.framework
 
 | símbolo | apps |
 |---|---:|
-| `_CGRectFromString` | 1 |
-| `_NSDirectionalEdgeInsetsZero` | 1 |
-| `_NSStringFromCGAffineTransform` | 1 |
-| `_OBJC_CLASS_$_NSCollectionLayoutDecorationItem` | 1 |
-| `_OBJC_CLASS_$_NSCollectionLayoutEdgeSpacing` | 1 |
-| `_OBJC_CLASS_$_NSDiffableDataSourceSnapshot` | 1 |
-| `_OBJC_CLASS_$_NSStringDrawingContext` | 1 |
-| `_OBJC_CLASS_$_UIAccessibilityCustomAction` | 1 |
+| `_IODisplayCreateInfoDictionary` | 33 |
+| `_IOHIDDeviceGetValue` | 22 |
+| `_IORegistryEntryGetChildIterator` | 22 |
+| `_IOHIDElementGetTypeID` | 17 |
+| `_IOIteratorIsValid` | 16 |
+| `_IOHIDElementGetCookie` | 14 |
+| `_IOObjectIsEqualTo` | 14 |
+| `_IOHIDElementGetChildren` | 13 |
 
-### WebKit.framework
-
-| símbolo | apps |
-|---|---:|
-| `_OBJC_CLASS_$_WebView` | 86 |
-| `_OBJC_CLASS_$_WKUserScript` | 85 |
-| `_OBJC_CLASS_$_WKUserContentController` | 78 |
-| `_OBJC_CLASS_$_WebPreferences` | 75 |
-| `_OBJC_CLASS_$_WKContentRuleListStore` | 46 |
-| `_OBJC_CLASS_$_WKContentWorld` | 13 |
-| `_OBJC_CLASS_$_WKPreferences` | 13 |
-| `_OBJC_CLASS_$_WKProcessPool` | 8 |
-
-### libswift_StringProcessing.dylib
+### JavaScriptCore.framework
 
 | símbolo | apps |
 |---|---:|
-| `_$s17_StringProcessing5RegexVMn` | 27 |
-| `_$s17_StringProcessing5RegexVyxGAA0C9ComponentAAMc` | 27 |
-| `_$s17_StringProcessing5RegexV06_regexA07versionACyxGSS_SitcfC` | 26 |
-| `_$s17_StringProcessing5RegexV5MatchVMn` | 26 |
-| `_$s17_StringProcessing14RegexComponentP5regexAA0C0Vy0C6OutputQzGvgTj` | 24 |
-| `_$s17_StringProcessing5RegexV5MatchV13dynamicMemberqd__s7KeyPathCyxqd__G_tcluig` | 20 |
-| `_$s17_StringProcessing5RegexV10firstMatch2inAC0E0Vyx_GSgSs_tKF` | 19 |
-| `_$s17_StringProcessing5RegexV5MatchV6outputxvg` | 15 |
+| `_OBJC_CLASS_$_JSContext` | 19 |
+| `_OBJC_CLASS_$_JSValue` | 13 |
+| `_JSGlobalContextRelease` | 11 |
+| `_JSStringGetUTF8CString` | 11 |
+| `_JSStringRelease` | 11 |
+| `_JSValueToObject` | 11 |
+| `_JSStringCreateWithUTF8CString` | 10 |
+| `_JSEvaluateScript` | 9 |
 
 ## Contagem distinta por app
 
 | app | distintos | sistema | libc++ | Swift | unwind |
 |---|---:|---:|---:|---:|---:|
-| macwhisper | 3063 | 2903 | 0 | 160 | 0 |
-| whatsapp | 2611 | 1262 | 0 | 1349 | 0 |
-| bettertouchtool | 2480 | 1716 | 0 | 764 | 0 |
-| cmux | 2134 | 2031 | 0 | 103 | 0 |
-| vorssaint | 2072 | 1990 | 0 | 82 | 0 |
-| openclaw | 2037 | 1895 | 0 | 142 | 0 |
-| bartender | 2025 | 1930 | 0 | 95 | 0 |
-| codexbar | 1899 | 1851 | 0 | 48 | 0 |
-| coteditor | 1878 | 1769 | 0 | 109 | 0 |
-| raycast | 1863 | 1579 | 0 | 284 | 0 |
-| duckduckgo | 1670 | 830 | 0 | 840 | 0 |
-| superwhisper | 1636 | 1459 | 0 | 177 | 0 |
-| fluidvoice | 1602 | 1499 | 0 | 103 | 0 |
-| supacode | 1511 | 1448 | 0 | 63 | 0 |
-| proxyman | 1508 | 1431 | 0 | 77 | 0 |
-| voiceink | 1500 | 1403 | 0 | 97 | 0 |
-| protonvpn | 1486 | 1416 | 0 | 70 | 0 |
-| orbstack | 1424 | 1382 | 0 | 42 | 0 |
-| easydict | 1406 | 1226 | 0 | 180 | 0 |
-| sfm | 1266 | 1163 | 0 | 103 | 0 |
-| tailscale-app | 1191 | 1154 | 0 | 37 | 0 |
-| thaw | 1188 | 1086 | 0 | 102 | 0 |
-| utm | 964 | 537 | 1 | 426 | 0 |
-| opensuperwhisper | 950 | 874 | 1 | 75 | 0 |
-| betterdisplay | 916 | 869 | 0 | 47 | 0 |
-| tableplus | 907 | 238 | 0 | 669 | 0 |
-| windows-app | 884 | 871 | 0 | 13 | 0 |
-| iterm2 | 848 | 804 | 0 | 44 | 0 |
-| hammerspoon | 836 | 836 | 0 | 0 | 0 |
-| caskhub | 826 | 801 | 0 | 25 | 0 |
-| clipy | 823 | 804 | 0 | 19 | 0 |
-| xcodes-app | 822 | 790 | 0 | 32 | 0 |
-| applite | 821 | 788 | 0 | 33 | 0 |
-| teamviewer | 806 | 281 | 0 | 525 | 0 |
-| cleanshot | 792 | 745 | 0 | 47 | 0 |
-| chatgpt | 768 | 640 | 0 | 128 | 0 |
-| maccy | 765 | 742 | 0 | 23 | 0 |
-| markedit | 762 | 716 | 0 | 46 | 0 |
-| pearcleaner | 754 | 732 | 0 | 22 | 0 |
-| calibre | 740 | 740 | 0 | 0 | 0 |
-| loop | 712 | 681 | 0 | 31 | 0 |
-| ghostty | 663 | 630 | 0 | 33 | 0 |
-| bbedit | 645 | 645 | 0 | 0 | 0 |
-| sequel-ace | 620 | 594 | 0 | 26 | 0 |
-| zoom | 615 | 335 | 0 | 280 | 0 |
-| dockdoor | 612 | 591 | 0 | 21 | 0 |
-| macpacker | 609 | 565 | 0 | 44 | 0 |
-| aldente | 549 | 277 | 0 | 272 | 0 |
-| puremac | 548 | 535 | 0 | 13 | 0 |
-| jordanbaird-ice | 547 | 532 | 0 | 15 | 0 |
-| adobe-acrobat-reader | 540 | 540 | 0 | 0 | 0 |
-| iina | 535 | 154 | 0 | 381 | 0 |
-| homebrew-app | 506 | 458 | 0 | 48 | 0 |
-| 1password | 500 | 343 | 0 | 157 | 0 |
-| finetune | 492 | 462 | 0 | 30 | 0 |
-| inkscape | 470 | 470 | 0 | 0 | 0 |
-| microsoft-teams | 461 | 453 | 0 | 8 | 0 |
-| deluge | 452 | 452 | 0 | 0 | 0 |
-| krita | 449 | 432 | 0 | 17 | 0 |
-| blender | 433 | 433 | 0 | 0 | 0 |
-| cloudflare-warp | 408 | 396 | 0 | 12 | 0 |
-| swiftbar | 377 | 160 | 0 | 217 | 0 |
-| linearmouse | 375 | 205 | 0 | 170 | 0 |
-| telegram | 372 | 372 | 0 | 0 | 0 |
-| qlmarkdown | 365 | 314 | 0 | 51 | 0 |
-| shotcut | 363 | 363 | 0 | 0 | 0 |
-| stats | 361 | 115 | 0 | 246 | 0 |
-| meld | 354 | 354 | 0 | 0 | 0 |
-| sourcetree | 350 | 235 | 0 | 115 | 0 |
-| syntax-highlight | 350 | 267 | 0 | 83 | 0 |
-| fork | 344 | 42 | 0 | 302 | 0 |
-| kitty | 339 | 339 | 0 | 0 | 0 |
-| shottr | 325 | 60 | 0 | 265 | 0 |
-| amethyst | 319 | 62 | 0 | 257 | 0 |
-| claude | 314 | 80 | 0 | 234 | 0 |
-| virtualbox | 304 | 304 | 0 | 0 | 0 |
-| obs | 301 | 290 | 0 | 11 | 0 |
-| kicad | 297 | 297 | 0 | 0 | 0 |
-| displaylink | 286 | 281 | 0 | 5 | 0 |
-| gemini | 285 | 285 | 0 | 0 | 0 |
-| wireshark-app | 272 | 272 | 0 | 0 | 0 |
-| marta | 269 | 50 | 0 | 219 | 0 |
-| localsend | 265 | 161 | 0 | 104 | 0 |
-| alt-tab | 255 | 58 | 0 | 197 | 0 |
-| keyclu | 252 | 108 | 0 | 144 | 0 |
+| microsoft-office | 12973 | 12824 | 143 | 6 | 0 |
+| freecad | 7301 | 7301 | 0 | 0 | 0 |
+| microsoft-outlook | 3291 | 3279 | 0 | 12 | 0 |
+| microsoft-powerpoint | 2974 | 2965 | 0 | 9 | 0 |
+| macwhisper | 2915 | 2854 | 0 | 61 | 0 |
+| qgis | 2893 | 2893 | 0 | 0 | 0 |
+| microsoft-excel | 2800 | 2798 | 0 | 2 | 0 |
+| microsoft-word | 2799 | 2798 | 0 | 1 | 0 |
+| bartender | 2032 | 1997 | 0 | 35 | 0 |
+| cmux | 1998 | 1990 | 0 | 8 | 0 |
+| bettertouchtool | 1913 | 1865 | 0 | 48 | 0 |
+| openclaw | 1824 | 1794 | 0 | 30 | 0 |
+| codexbar | 1805 | 1804 | 0 | 1 | 0 |
+| coteditor | 1714 | 1710 | 0 | 4 | 0 |
+| vorssaint | 1697 | 1685 | 0 | 12 | 0 |
+| fluidvoice | 1688 | 1685 | 0 | 3 | 0 |
+| whatsapp | 1671 | 1617 | 0 | 54 | 0 |
+| superwhisper | 1617 | 1579 | 0 | 38 | 0 |
+| supacode | 1599 | 1599 | 0 | 0 | 0 |
+| tailscale-app | 1510 | 1498 | 0 | 12 | 0 |
+| nordvpn | 1505 | 1491 | 0 | 14 | 0 |
+| thaw | 1504 | 1454 | 0 | 50 | 0 |
+| voiceink | 1487 | 1478 | 0 | 9 | 0 |
+| duckduckgo | 1481 | 1381 | 0 | 100 | 0 |
+| sfm | 1319 | 1308 | 0 | 11 | 0 |
+| raycast | 1286 | 1218 | 0 | 68 | 0 |
+| proxyman | 1278 | 1271 | 0 | 7 | 0 |
+| orbstack | 1273 | 1257 | 0 | 16 | 0 |
+| github-copilot-for-xcode | 1265 | 1253 | 0 | 12 | 0 |
+| anki | 1232 | 1231 | 0 | 1 | 0 |
+| protonvpn | 1211 | 1207 | 0 | 4 | 0 |
+| betterdisplay | 1105 | 1104 | 0 | 1 | 0 |
+| utm | 1070 | 1017 | 1 | 52 | 0 |
+| windows-app | 1070 | 1068 | 0 | 2 | 0 |
+| dockdoor | 1045 | 1045 | 0 | 0 | 0 |
+| loop | 1017 | 1013 | 0 | 4 | 0 |
+| pearcleaner | 1015 | 1015 | 0 | 0 | 0 |
+| easydict | 1010 | 934 | 0 | 76 | 0 |
+| applite | 999 | 999 | 0 | 0 | 0 |
+| maccy | 982 | 982 | 0 | 0 | 0 |
+| caskhub | 950 | 950 | 0 | 0 | 0 |
+| ghostty | 923 | 920 | 0 | 3 | 0 |
+| jordanbaird-ice | 918 | 916 | 0 | 2 | 0 |
+| orion | 904 | 904 | 0 | 0 | 0 |
+| sf-symbols | 885 | 878 | 0 | 7 | 0 |
+| xcodes-app | 846 | 846 | 0 | 0 | 0 |
+| puremac | 835 | 835 | 0 | 0 | 0 |
+| aldente | 805 | 798 | 0 | 7 | 0 |
+| finetune | 802 | 796 | 0 | 6 | 0 |
+| markedit | 792 | 790 | 0 | 2 | 0 |
+| 1password | 773 | 773 | 0 | 0 | 0 |
+| macpacker | 737 | 714 | 0 | 23 | 0 |
+| opensuperwhisper | 696 | 681 | 0 | 15 | 0 |
+| homebrew-app | 688 | 664 | 0 | 24 | 0 |
+| clipy | 685 | 684 | 0 | 1 | 0 |
+| linearmouse | 597 | 591 | 0 | 6 | 0 |
+| microsoft-teams | 572 | 572 | 0 | 0 | 0 |
+| claude | 551 | 551 | 0 | 0 | 0 |
+| calibre | 533 | 533 | 0 | 0 | 0 |
+| cleanshot | 528 | 518 | 0 | 10 | 0 |
+| keyclu | 507 | 507 | 0 | 0 | 0 |
+| swiftbar | 479 | 477 | 0 | 2 | 0 |
+| sequel-ace | 478 | 470 | 0 | 8 | 0 |
+| chatgpt | 476 | 452 | 0 | 24 | 0 |
+| crossover | 471 | 469 | 1 | 0 | 1 |
+| teamviewer | 461 | 445 | 0 | 16 | 0 |
+| inkscape | 431 | 431 | 0 | 0 | 0 |
+| displaylink | 407 | 407 | 0 | 0 | 0 |
+| rectangle | 349 | 346 | 0 | 3 | 0 |
+| karabiner-elements | 341 | 339 | 0 | 2 | 0 |
+| meld | 334 | 334 | 0 | 0 | 0 |
+| iina | 328 | 288 | 0 | 40 | 0 |
+| capcut | 317 | 317 | 0 | 0 | 0 |
+| kitty | 311 | 311 | 0 | 0 | 0 |
+| orcaslicer | 282 | 282 | 0 | 0 | 0 |
+| blender | 279 | 279 | 0 | 0 | 0 |
+| krita | 260 | 259 | 0 | 1 | 0 |
+| hammerspoon | 253 | 253 | 0 | 0 | 0 |
+| pycharm | 251 | 251 | 0 | 0 | 0 |
+| mysqlworkbench | 250 | 250 | 0 | 0 | 0 |
+| deluge | 249 | 249 | 0 | 0 | 0 |
 | lm-studio | 246 | 246 | 0 | 0 | 0 |
-| telegram-desktop | 240 | 240 | 0 | 0 | 0 |
-| emacs-app | 236 | 57 | 179 | 0 | 0 |
-| basictex | 230 | 230 | 0 | 0 | 0 |
-| xquartz | 227 | 227 | 0 | 0 | 0 |
-| bitwarden | 223 | 219 | 0 | 4 | 0 |
-| zotero | 211 | 148 | 0 | 63 | 0 |
-| lmms | 206 | 206 | 0 | 0 | 0 |
-| rustdesk | 202 | 202 | 0 | 0 | 0 |
-| skim | 202 | 202 | 0 | 0 | 0 |
-| mac-mouse-fix | 202 | 51 | 0 | 151 | 0 |
-| rectangle | 199 | 183 | 0 | 16 | 0 |
-| warp | 197 | 26 | 0 | 171 | 0 |
-| android-studio | 192 | 192 | 0 | 0 | 0 |
-| the-unarchiver | 188 | 188 | 0 | 0 | 0 |
-| monitorcontrol | 184 | 184 | 0 | 0 | 0 |
-| pgadmin4 | 181 | 181 | 0 | 0 | 0 |
-| libreoffice | 180 | 180 | 0 | 0 | 0 |
-| opencode-desktop | 176 | 176 | 0 | 0 | 0 |
-| stremio | 176 | 127 | 0 | 49 | 0 |
-| openscad | 175 | 175 | 0 | 0 | 0 |
-| moonlight | 174 | 174 | 0 | 0 | 0 |
-| dotnet-sdk | 171 | 171 | 0 | 0 | 0 |
-| mos | 156 | 156 | 0 | 0 | 0 |
-| jellyfin | 156 | 128 | 0 | 28 | 0 |
-| thunderbird | 152 | 152 | 0 | 0 | 0 |
-| webtorrent | 152 | 152 | 0 | 0 | 0 |
-| karabiner-elements | 152 | 66 | 0 | 86 | 0 |
-| openmtp | 148 | 148 | 0 | 0 | 0 |
-| quicklook-video | 144 | 36 | 0 | 108 | 0 |
-| nextcloud | 143 | 143 | 0 | 0 | 0 |
-| pencil | 141 | 141 | 0 | 0 | 0 |
-| vnote | 139 | 139 | 0 | 0 | 0 |
-| musescore | 136 | 136 | 0 | 0 | 0 |
-| syncthing-app | 134 | 134 | 0 | 0 | 0 |
-| another-redis-desktop-manager | 134 | 134 | 0 | 0 | 0 |
-| r-app | 132 | 132 | 0 | 0 | 0 |
-| macs-fan-control | 130 | 130 | 0 | 0 | 0 |
-| hex-fiend | 126 | 79 | 0 | 47 | 0 |
-| intellij-idea | 126 | 126 | 0 | 0 | 0 |
-| audacity | 124 | 124 | 0 | 0 | 0 |
-| cyberduck | 123 | 122 | 0 | 1 | 0 |
-| jetbrains-toolbox | 122 | 122 | 0 | 0 | 0 |
-| unnaturalscrollwheels | 122 | 122 | 0 | 0 | 0 |
-| vlc | 120 | 120 | 0 | 0 | 0 |
-| firefox | 119 | 119 | 0 | 0 | 0 |
-| floorp | 118 | 118 | 0 | 0 | 0 |
-| zen | 118 | 118 | 0 | 0 | 0 |
-| mullvad-browser | 117 | 117 | 0 | 0 | 0 |
-| librewolf | 117 | 117 | 0 | 0 | 0 |
-| tor-browser | 115 | 115 | 0 | 0 | 0 |
-| cryptomator | 111 | 111 | 0 | 0 | 0 |
-| visual-studio-code | 110 | 91 | 0 | 19 | 0 |
-| db-browser-for-sqlite | 110 | 110 | 0 | 0 | 0 |
-| gimp | 109 | 109 | 0 | 0 | 0 |
-| prusaslicer | 108 | 108 | 0 | 0 | 0 |
-| raspberry-pi-imager | 108 | 108 | 0 | 0 | 0 |
-| temurin | 106 | 106 | 0 | 0 | 0 |
-| github | 106 | 87 | 0 | 19 | 0 |
-| dbeaver-community | 105 | 105 | 0 | 0 | 0 |
-| keepassxc | 103 | 103 | 0 | 0 | 0 |
-| dolphin | 97 | 97 | 0 | 0 | 0 |
-| drawio | 95 | 28 | 0 | 67 | 0 |
-| prismlauncher | 95 | 95 | 0 | 0 | 0 |
-| squirrel-app | 89 | 73 | 0 | 16 | 0 |
-| alfred | 88 | 88 | 0 | 0 | 0 |
-| docker-desktop | 87 | 87 | 0 | 0 | 0 |
-| daisydisk | 82 | 82 | 0 | 0 | 0 |
-| qbittorrent | 80 | 80 | 0 | 0 | 0 |
-| espanso | 79 | 79 | 0 | 0 | 0 |
-| obsidian | 77 | 3 | 0 | 74 | 0 |
-| spotify | 77 | 77 | 0 | 0 | 0 |
-| realvnc-connect-viewer | 75 | 24 | 0 | 51 | 0 |
-| figma | 67 | 67 | 0 | 0 | 0 |
-| battery | 67 | 67 | 0 | 0 | 0 |
-| cursor | 64 | 0 | 0 | 64 | 0 |
-| android-file-transfer | 60 | 60 | 0 | 0 | 0 |
-| tic80 | 58 | 58 | 0 | 0 | 0 |
-| unity-hub | 57 | 57 | 0 | 0 | 0 |
-| keka | 49 | 49 | 0 | 0 | 0 |
-| handbrake-app | 49 | 49 | 0 | 0 | 0 |
-| typora | 49 | 49 | 0 | 0 | 0 |
+| iterm2 | 240 | 236 | 0 | 4 | 0 |
+| basictex | 225 | 225 | 0 | 0 | 0 |
+| xquartz | 217 | 217 | 0 | 0 | 0 |
+| emacs-app | 216 | 36 | 179 | 0 | 1 |
+| sourcetree | 188 | 187 | 0 | 1 | 0 |
+| rstudio | 181 | 181 | 0 | 0 | 0 |
+| cherry-studio | 181 | 181 | 0 | 0 | 0 |
+| stats | 180 | 174 | 0 | 6 | 0 |
+| opencode-desktop | 178 | 178 | 0 | 0 | 0 |
+| bbedit | 172 | 172 | 0 | 0 | 0 |
+| tableplus | 165 | 66 | 0 | 99 | 0 |
+| zoom | 164 | 156 | 0 | 8 | 0 |
+| shotcut | 157 | 157 | 0 | 0 | 0 |
+| coconutbattery | 157 | 143 | 0 | 14 | 0 |
+| feishu | 145 | 145 | 0 | 0 | 0 |
+| amethyst | 144 | 141 | 0 | 3 | 0 |
+| kicad | 143 | 143 | 0 | 0 | 0 |
+| dropbox | 141 | 141 | 0 | 0 | 0 |
+| virtualbox | 139 | 139 | 0 | 0 | 0 |
+| affinity | 127 | 127 | 0 | 0 | 0 |
+| qlmarkdown | 120 | 120 | 0 | 0 | 0 |
+| syntax-highlight | 120 | 119 | 0 | 1 | 0 |
+| mactex | 114 | 114 | 0 | 0 | 0 |
+| mactex-no-gui | 114 | 114 | 0 | 0 | 0 |
+| pgadmin4 | 111 | 111 | 0 | 0 | 0 |
+| r-app | 109 | 109 | 0 | 0 | 0 |
+| obs | 106 | 99 | 0 | 7 | 0 |
+| libreoffice | 103 | 103 | 0 | 0 | 0 |
+| anythingllm | 102 | 102 | 0 | 0 | 0 |
+| wireshark-app | 101 | 101 | 0 | 0 | 0 |
+| adobe-acrobat-reader | 88 | 88 | 0 | 0 | 0 |
+| gcc-arm-embedded | 82 | 82 | 0 | 0 | 0 |
+| localsend | 80 | 75 | 0 | 5 | 0 |
+| beekeeper-studio | 78 | 68 | 10 | 0 | 0 |
+| telegram | 76 | 76 | 0 | 0 | 0 |
+| moonlight | 74 | 74 | 0 | 0 | 0 |
+| onedrive | 73 | 73 | 0 | 0 | 0 |
+| gimp | 72 | 72 | 0 | 0 | 0 |
+| cloudflare-warp | 69 | 65 | 0 | 4 | 0 |
+| wechat | 69 | 69 | 0 | 0 | 0 |
+| stremio | 66 | 65 | 0 | 0 | 1 |
+| android-studio | 62 | 62 | 0 | 0 | 0 |
+| onlyoffice | 61 | 61 | 0 | 0 | 0 |
+| rancher | 60 | 60 | 0 | 0 | 0 |
+| shottr | 59 | 55 | 0 | 4 | 0 |
+| gemini | 57 | 57 | 0 | 0 | 0 |
+| jellyfin | 55 | 55 | 0 | 0 | 0 |
+| thebrowsercompany-dia | 52 | 47 | 0 | 5 | 0 |
+| monitorcontrol | 48 | 48 | 0 | 0 | 0 |
 | mongodb-compass | 48 | 38 | 10 | 0 | 0 |
-| mounty | 47 | 47 | 0 | 0 | 0 |
-| git-credential-manager | 46 | 46 | 0 | 0 | 0 |
-| zed | 45 | 45 | 0 | 0 | 0 |
-| microsoft-edge | 44 | 44 | 0 | 0 | 0 |
-| comfy | 43 | 43 | 0 | 0 | 0 |
-| openrct2 | 42 | 42 | 0 | 0 | 0 |
-| love | 40 | 40 | 0 | 0 | 0 |
-| openlogi | 40 | 40 | 0 | 0 | 0 |
-| ubersicht | 39 | 39 | 0 | 0 | 0 |
-| flycut | 38 | 38 | 0 | 0 | 0 |
-| clash-verge-rev | 38 | 38 | 0 | 0 | 0 |
-| fuse-t | 37 | 37 | 0 | 0 | 0 |
-| transmission | 36 | 36 | 0 | 0 | 0 |
-| godot | 36 | 36 | 0 | 0 | 0 |
-| pixelorama | 36 | 36 | 0 | 0 | 0 |
-| lulu | 36 | 36 | 0 | 0 | 0 |
-| hiddenbar | 35 | 35 | 0 | 0 | 0 |
-| multipass | 35 | 35 | 0 | 0 | 0 |
-| epic-games | 34 | 34 | 0 | 0 | 0 |
-| bruno | 33 | 33 | 0 | 0 | 0 |
-| anydesk | 33 | 33 | 0 | 0 | 0 |
-| tunnelblick | 33 | 33 | 0 | 0 | 0 |
-| ollama-app | 32 | 32 | 0 | 0 | 0 |
-| middleclick | 31 | 8 | 0 | 23 | 0 |
-| openttd | 30 | 30 | 0 | 0 | 0 |
-| handy | 29 | 29 | 0 | 0 | 0 |
-| sublime-text | 28 | 28 | 0 | 0 | 0 |
-| macdown-3000 | 28 | 28 | 0 | 0 | 0 |
-| macdown | 27 | 27 | 0 | 0 | 0 |
-| microsoft-auto-update | 24 | 24 | 0 | 0 | 0 |
-| steam | 23 | 23 | 0 | 0 | 0 |
-| cc-switch | 21 | 21 | 0 | 0 | 0 |
-| dbx | 21 | 21 | 0 | 0 | 0 |
-| libndi | 21 | 21 | 0 | 0 | 0 |
-| keycastr | 20 | 20 | 0 | 0 | 0 |
-| vagrant | 18 | 18 | 0 | 0 | 0 |
-| postman | 15 | 15 | 0 | 0 | 0 |
-| brave-browser | 14 | 14 | 0 | 0 | 0 |
-| tigervnc | 14 | 14 | 0 | 0 | 0 |
-| headlamp | 14 | 14 | 0 | 0 | 0 |
-| itsycal | 14 | 14 | 0 | 0 | 0 |
-| google-chrome | 13 | 13 | 0 | 0 | 0 |
-| antigravity-ide | 13 | 13 | 0 | 0 | 0 |
-| lunar | 13 | 13 | 0 | 0 | 0 |
-| appcleaner | 12 | 12 | 0 | 0 | 0 |
-| scroll-reverser | 12 | 12 | 0 | 0 | 0 |
-| alacritty | 11 | 11 | 0 | 0 | 0 |
-| imageoptim | 10 | 10 | 0 | 0 | 0 |
-| antigravity | 8 | 0 | 0 | 8 | 0 |
-| insomnia | 7 | 7 | 0 | 0 | 0 |
-| t3-code | 7 | 7 | 0 | 0 | 0 |
-| notunes | 7 | 0 | 0 | 7 | 0 |
-| background-music | 6 | 6 | 0 | 0 | 0 |
-| keepingyouawake | 5 | 5 | 0 | 0 | 0 |
-| redis-insight | 4 | 4 | 0 | 0 | 0 |
-| grandperspective | 4 | 4 | 0 | 0 | 0 |
-| wave | 4 | 4 | 0 | 0 | 0 |
+| hex-fiend | 47 | 47 | 0 | 0 | 0 |
+| arduino-ide | 47 | 35 | 12 | 0 | 0 |
+| cyberduck | 46 | 46 | 0 | 0 | 0 |
+| istat-menus | 46 | 38 | 0 | 8 | 0 |
+| rustdesk | 45 | 45 | 0 | 0 | 0 |
+| openmtp | 45 | 45 | 0 | 0 | 0 |
+| alt-tab | 41 | 36 | 0 | 5 | 0 |
+| skim | 40 | 40 | 0 | 0 | 0 |
+| comfy | 39 | 39 | 0 | 0 | 0 |
+| lmms | 38 | 38 | 0 | 0 | 0 |
+| pencil | 38 | 38 | 0 | 0 | 0 |
+| tic80 | 38 | 38 | 0 | 0 | 0 |
+| docker-desktop | 38 | 38 | 0 | 0 | 0 |
+| fuse-t | 36 | 36 | 0 | 0 | 0 |
+| android-file-transfer | 36 | 36 | 0 | 0 | 0 |
+| webtorrent | 33 | 33 | 0 | 0 | 0 |
+| mos | 32 | 32 | 0 | 0 | 0 |
+| the-unarchiver | 32 | 32 | 0 | 0 | 0 |
+| google-drive | 31 | 31 | 0 | 0 | 0 |
+| upscayl | 31 | 31 | 0 | 0 | 0 |
+| another-redis-desktop-manager | 31 | 31 | 0 | 0 | 0 |
+| intellij-idea | 30 | 30 | 0 | 0 | 0 |
+| zotero | 30 | 30 | 0 | 0 | 0 |
+| bambu-studio | 30 | 30 | 0 | 0 | 0 |
+| datagrip | 30 | 30 | 0 | 0 | 0 |
+| battery | 30 | 30 | 0 | 0 | 0 |
+| love | 29 | 29 | 0 | 0 | 0 |
+| drawio | 29 | 29 | 0 | 0 | 0 |
+| openscad | 28 | 28 | 0 | 0 | 0 |
+| bruno | 28 | 28 | 0 | 0 | 0 |
+| keka | 28 | 28 | 0 | 0 | 0 |
+| lulu | 28 | 28 | 0 | 0 | 0 |
+| syncthing-app | 28 | 28 | 0 | 0 | 0 |
+| openrct2 | 27 | 27 | 0 | 0 | 0 |
+| jetbrains-toolbox | 27 | 27 | 0 | 0 | 0 |
+| openlogi | 27 | 27 | 0 | 0 | 0 |
+| mac-mouse-fix | 27 | 26 | 0 | 1 | 0 |
+| handbrake-app | 26 | 26 | 0 | 0 | 0 |
+| bitwarden | 25 | 25 | 0 | 0 | 0 |
+| keepassxc | 24 | 24 | 0 | 0 | 0 |
+| dolphin | 24 | 24 | 0 | 0 | 0 |
+| telegram-desktop | 24 | 24 | 0 | 0 | 0 |
+| opera | 24 | 24 | 0 | 0 | 0 |
+| wispr-flow | 22 | 20 | 0 | 2 | 0 |
+| unnaturalscrollwheels | 22 | 22 | 0 | 0 | 0 |
+| temurin | 21 | 21 | 0 | 0 | 0 |
+| fork | 21 | 14 | 0 | 7 | 0 |
+| vnote | 20 | 20 | 0 | 0 | 0 |
+| dbeaver-community | 20 | 20 | 0 | 0 | 0 |
+| tor-browser | 19 | 19 | 0 | 0 | 0 |
+| github | 19 | 19 | 0 | 0 | 0 |
+| firefox | 18 | 18 | 0 | 0 | 0 |
+| thunderbird | 18 | 18 | 0 | 0 | 0 |
+| floorp | 18 | 18 | 0 | 0 | 0 |
+| zen | 18 | 18 | 0 | 0 | 0 |
+| librewolf | 18 | 18 | 0 | 0 | 0 |
+| epic-games | 18 | 18 | 0 | 0 | 0 |
+| marta | 18 | 6 | 0 | 12 | 0 |
+| macdown-3000 | 18 | 18 | 0 | 0 | 0 |
+| macdown | 17 | 17 | 0 | 0 | 0 |
+| vagrant | 17 | 17 | 0 | 0 | 0 |
+| cryptomator | 17 | 17 | 0 | 0 | 0 |
+| prusaslicer | 16 | 16 | 0 | 0 | 0 |
+| microsoft-edge | 16 | 16 | 0 | 0 | 0 |
+| figma | 16 | 16 | 0 | 0 | 0 |
+| anydesk | 16 | 16 | 0 | 0 | 0 |
+| vlc | 15 | 15 | 0 | 0 | 0 |
+| godot | 15 | 15 | 0 | 0 | 0 |
+| pixelorama | 15 | 15 | 0 | 0 | 0 |
+| nextcloud | 15 | 15 | 0 | 0 | 0 |
+| unity-hub | 13 | 13 | 0 | 0 | 0 |
+| typora | 13 | 13 | 0 | 0 | 0 |
+| flycut | 12 | 12 | 0 | 0 | 0 |
+| dotnet-sdk | 12 | 12 | 0 | 0 | 0 |
+| macs-fan-control | 12 | 12 | 0 | 0 | 0 |
+| ubersicht | 12 | 12 | 0 | 0 | 0 |
+| clash-verge-rev | 11 | 11 | 0 | 0 | 0 |
+| audacity | 10 | 10 | 0 | 0 | 0 |
+| postman | 10 | 10 | 0 | 0 | 0 |
+| brave-browser | 10 | 10 | 0 | 0 | 0 |
+| scroll-reverser | 10 | 10 | 0 | 0 | 0 |
+| headlamp | 10 | 10 | 0 | 0 | 0 |
+| tunnelblick | 10 | 10 | 0 | 0 | 0 |
+| antigravity-ide | 10 | 10 | 0 | 0 | 0 |
+| git-credential-manager | 9 | 9 | 0 | 0 | 0 |
+| keycastr | 9 | 9 | 0 | 0 | 0 |
+| steam | 8 | 8 | 0 | 0 | 0 |
+| microsoft-auto-update | 8 | 8 | 0 | 0 | 0 |
+| raspberry-pi-imager | 7 | 7 | 0 | 0 | 0 |
+| vivaldi | 7 | 7 | 0 | 0 | 0 |
+| espanso | 7 | 7 | 0 | 0 | 0 |
+| realvnc-connect-viewer | 7 | 7 | 0 | 0 | 0 |
+| musescore | 6 | 6 | 0 | 0 | 0 |
+| alacritty | 6 | 6 | 0 | 0 | 0 |
+| insomnia | 6 | 6 | 0 | 0 | 0 |
+| db-browser-for-sqlite | 6 | 6 | 0 | 0 | 0 |
+| prismlauncher | 6 | 6 | 0 | 0 | 0 |
+| middleclick | 6 | 6 | 0 | 0 | 0 |
+| cc-switch | 5 | 5 | 0 | 0 | 0 |
+| appcleaner | 5 | 5 | 0 | 0 | 0 |
+| alfred | 5 | 5 | 0 | 0 | 0 |
+| handy | 5 | 5 | 0 | 0 | 0 |
+| background-music | 5 | 5 | 0 | 0 | 0 |
+| quarto | 5 | 5 | 0 | 0 | 0 |
+| lunar | 5 | 5 | 0 | 0 | 0 |
+| dbx | 5 | 5 | 0 | 0 | 0 |
+| daisydisk | 5 | 5 | 0 | 0 | 0 |
+| keepingyouawake | 4 | 4 | 0 | 0 | 0 |
+| transmission | 4 | 4 | 0 | 0 | 0 |
+| obsidian | 4 | 4 | 0 | 0 | 0 |
+| tigervnc | 4 | 4 | 0 | 0 | 0 |
 | wailbrew | 4 | 4 | 0 | 0 | 0 |
-| block-goose | 3 | 3 | 0 | 0 | 0 |
-| macfuse | 2 | 2 | 0 | 0 | 0 |
-| wezterm | 2 | 2 | 0 | 0 | 0 |
+| itsycal | 4 | 4 | 0 | 0 | 0 |
+| squirrel-app | 4 | 4 | 0 | 0 | 0 |
+| imageoptim | 4 | 4 | 0 | 0 | 0 |
+| visual-studio-code | 3 | 3 | 0 | 0 | 0 |
+| warp | 3 | 2 | 0 | 1 | 0 |
+| termius | 3 | 3 | 0 | 0 | 0 |
+| element | 2 | 2 | 0 | 0 | 0 |
+| openttd | 2 | 2 | 0 | 0 | 0 |
+| vscodium | 2 | 2 | 0 | 0 | 0 |
+| dbgate | 2 | 2 | 0 | 0 | 0 |
+| cursor | 2 | 2 | 0 | 0 | 0 |
+| discord | 2 | 2 | 0 | 0 | 0 |
+| slack | 2 | 2 | 0 | 0 | 0 |
+| antigravity | 2 | 2 | 0 | 0 | 0 |
+| notion | 2 | 2 | 0 | 0 | 0 |
+| podman-desktop | 2 | 2 | 0 | 0 | 0 |
+| balenaetcher | 2 | 2 | 0 | 0 | 0 |
 | signal | 2 | 2 | 0 | 0 | 0 |
-| openvpn-connect | 2 | 2 | 0 | 0 | 0 |
-| blackhole-2ch | 1 | 1 | 0 | 0 | 0 |
-| caffeine | 1 | 1 | 0 | 0 | 0 |
-| blackhole-16ch | 1 | 1 | 0 | 0 | 0 |
-| helium-browser | 1 | 1 | 0 | 0 | 0 |
-| termius | 1 | 1 | 0 | 0 | 0 |
-| element | 0 | 0 | 0 | 0 | 0 |
+| ungoogled-chromium | 2 | 2 | 0 | 0 | 0 |
+| t3-code | 2 | 2 | 0 | 0 | 0 |
+| helium-browser | 2 | 2 | 0 | 0 | 0 |
+| freelens | 2 | 2 | 0 | 0 | 0 |
+| redis-insight | 2 | 2 | 0 | 0 | 0 |
+| maestro | 2 | 2 | 0 | 0 | 0 |
+| kiro | 2 | 2 | 0 | 0 | 0 |
+| burp-suite | 2 | 2 | 0 | 0 | 0 |
+| tabby | 2 | 2 | 0 | 0 | 0 |
+| wave | 2 | 2 | 0 | 0 | 0 |
+| block-goose | 2 | 2 | 0 | 0 | 0 |
+| linear | 2 | 2 | 0 | 0 | 0 |
+| lens | 2 | 2 | 0 | 0 | 0 |
+| quicklook-video | 2 | 1 | 0 | 1 | 0 |
+| qbittorrent | 1 | 1 | 0 | 0 | 0 |
+| ollama-app | 1 | 1 | 0 | 0 | 0 |
+| sublime-text | 1 | 1 | 0 | 0 | 0 |
+| wezterm | 1 | 1 | 0 | 0 | 0 |
+| mounty | 1 | 1 | 0 | 0 | 0 |
+| openvpn-connect | 1 | 1 | 0 | 0 | 0 |
+| hiddenbar | 0 | 0 | 0 | 0 | 0 |
 | finicky | 0 | 0 | 0 | 0 | 0 |
-| vscodium | 0 | 0 | 0 | 0 | 0 |
-| dbgate | 0 | 0 | 0 | 0 | 0 |
+| macfuse | 0 | 0 | 0 | 0 | 0 |
+| blackhole-2ch | 0 | 0 | 0 | 0 | 0 |
 | session-manager-plugin | 0 | 0 | 0 | 0 | 0 |
-| discord | 0 | 0 | 0 | 0 | 0 |
-| slack | 0 | 0 | 0 | 0 | 0 |
-| notion | 0 | 0 | 0 | 0 | 0 |
-| google-drive | 0 | 0 | 0 | 0 | 0 |
-| podman-desktop | 0 | 0 | 0 | 0 | 0 |
-| balenaetcher | 0 | 0 | 0 | 0 | 0 |
-| ungoogled-chromium | 0 | 0 | 0 | 0 | 0 |
+| zed | 0 | 0 | 0 | 0 | 0 |
+| caffeine | 0 | 0 | 0 | 0 | 0 |
+| multipass | 0 | 0 | 0 | 0 | 0 |
+| blackhole-16ch | 0 | 0 | 0 | 0 | 0 |
+| notunes | 0 | 0 | 0 | 0 | 0 |
+| grandperspective | 0 | 0 | 0 | 0 | 0 |
 | onyx | 0 | 0 | 0 | 0 | 0 |
-| tabby | 0 | 0 | 0 | 0 | 0 |

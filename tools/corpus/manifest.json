@@ -3228,8 +3228,8 @@
       "id": "devin-desktop",
       "nome": "Devin Desktop",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
-      "url": "https://windsurf-stable.codeiumdata.com/darwin-x64-dmg/stable/0122b42e158c7ca62960222fb9725f087cd9544f/Devin-darwin-x64-3.12.59.dmg",
-      "sha256": "f27665ac136a80e59d8531c48be3b31958eb8fbed4eb8418bebd52ba3f2f5115",
+      "url": "https://windsurf-stable.codeiumdata.com/darwin-arm64-dmg/stable/0122b42e158c7ca62960222fb9725f087cd9544f/Devin-darwin-arm64-3.12.59.dmg",
+      "sha256": "58fa77309af8d63d886ed6a11e6f85c89f38a1e15692ceb62bb5bc2418277b78",
       "cask": "devin-desktop",
       "versao": "3.12.59,0122b42e158c7ca62960222fb9725f087cd9544f",
       "tipo": "app",
@@ -3237,7 +3237,8 @@
       "rank_brew_365d": 321,
       "instalacoes_365d": 9992,
       "url_arm64": "https://windsurf-stable.codeiumdata.com/darwin-arm64-dmg/stable/0122b42e158c7ca62960222fb9725f087cd9544f/Devin-darwin-arm64-3.12.59.dmg",
-      "sha256_arm64": "58fa77309af8d63d886ed6a11e6f85c89f38a1e15692ceb62bb5bc2418277b78"
+      "sha256_arm64": "58fa77309af8d63d886ed6a11e6f85c89f38a1e15692ceb62bb5bc2418277b78",
+      "url_x86_64_404": "https://windsurf-stable.codeiumdata.com/darwin-x64-dmg/stable/0122b42e158c7ca62960222fb9725f087cd9544f/Devin-darwin-x64-3.12.59.dmg"
     },
     {
       "id": "lens",
@@ -3511,13 +3512,14 @@
       "nome": "iStats Menus",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
       "url": "https://cdn.istatmenus.app/files/istatmenus7/versions/iStatMenus7.50.3.zip",
-      "sha256": null,
+      "sha256": "e477dc76606a6181697652ead6f3ce977e716b878165ac1aa945cc470b9ce25d",
       "cask": "istat-menus",
       "versao": "7.50.3",
       "tipo": "app",
       "homepage": "https://bjango.com/mac/istatmenus/",
       "rank_brew_365d": 352,
-      "instalacoes_365d": 8597
+      "instalacoes_365d": 8597,
+      "sha256_fixado_em": "2026-11-19"
     },
     {
       "id": "supacode",
@@ -3631,7 +3633,7 @@
       "nome": "AnythingLLM",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
       "url": "https://cdn.anythingllm.com/latest/AnythingLLMDesktop.dmg",
-      "sha256": null,
+      "sha256": "5255b43221f56dbde3ec745636743910a3adebafc0f67e86aa573462fabf68a9",
       "cask": "anythingllm",
       "versao": "1.19.0",
       "tipo": "app",
@@ -3639,7 +3641,8 @@
       "rank_brew_365d": 367,
       "instalacoes_365d": 8138,
       "url_arm64": "https://cdn.anythingllm.com/latest/AnythingLLMDesktop-Silicon.dmg",
-      "sha256_arm64": null
+      "sha256_arm64": null,
+      "sha256_fixado_em": "2026-11-19"
     },
     {
       "id": "epic-games",
@@ -3767,7 +3770,7 @@
       "nome": "SF Symbols",
       "licenca": "não declarada no cask; download público do autor, usado só para medir (não redistribuído)",
       "url": "https://devimages-cdn.apple.com/design/resources/download/SF-Symbols-7.dmg",
-      "sha256": null,
+      "sha256": "c2f227790299ca514220369ce83057077457fbcc08f0e0a3262e33bca4408a02",
       "cask": "sf-symbols",
       "versao": "27.2,150",
       "tipo": "pkg",
@@ -3775,7 +3778,8 @@
       "rank_brew_365d": 382,
       "instalacoes_365d": 7621,
       "url_arm64": "https://devimages-cdn.apple.com/design/resources/download/SF-Symbols-27.dmg",
-      "sha256_arm64": null
+      "sha256_arm64": null,
+      "sha256_fixado_em": "2026-11-19"
     },
     {
       "id": "macpacker",

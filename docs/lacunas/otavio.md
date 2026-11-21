@@ -3,64 +3,62 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Otavio (OpenGL, Metal, Core Animation) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**266** símbolos distintos.
+**280** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| CoreVideo.framework | `_kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey` | 12 | calibre, iina, krita, obs |
-| CoreVideo.framework | `_CVBufferGetAttachments` | 8 | handbrake-app, iina, krita, obs |
-| CoreVideo.framework | `_CVDisplayLinkSetCurrentCGDisplayFromOpenGLContext` | 8 | krita, love, moonlight, openrct2 |
-| CoreVideo.framework | `_kCVImageBufferColorPrimaries_P22` | 8 | firefox, floorp, librewolf, mullvad-browser |
-| AppKit.framework | `_NSOpenGLGetOption` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| AppKit.framework | `_NSOpenGLGetVersion` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| AppKit.framework | `_NSOpenGLSetOption` | 7 | bitwarden, gemini, monitorcontrol, mos |
-| CoreVideo.framework | `_CVImageBufferGetEncodedSize` | 7 | adobe-acrobat-reader, calibre, iina, jellyfin |
 | CoreML.framework | `_OBJC_CLASS_$_MLFeatureDescription` | 6 | fluidvoice, macwhisper, openclaw, opensuperwhisper |
-| CoreVideo.framework | `_CVOpenGLTextureCacheCreate` | 5 | calibre, nextcloud, shotcut, telegram |
-| CoreVideo.framework | `_CVOpenGLTextureCacheCreateTextureFromImage` | 5 | calibre, nextcloud, shotcut, telegram |
-| CoreVideo.framework | `_CVOpenGLTextureGetName` | 5 | calibre, nextcloud, shotcut, telegram |
-| CoreML.framework | `_OBJC_CLASS_$_MLArrayBatchProvider` | 4 | fluidvoice, macwhisper, opensuperwhisper, voiceink |
-| CoreVideo.framework | `_CVOpenGLTextureCacheFlush` | 4 | calibre, shotcut, telegram, wireshark-app |
+| CoreML.framework | `_OBJC_CLASS_$_MLArrayBatchProvider` | 5 | feishu, fluidvoice, macwhisper, opensuperwhisper |
+| OpenCL.framework | `_clBuildProgram` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clCreateBuffer` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clCreateCommandQueue` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clCreateContext` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clCreateKernel` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clCreateProgramWithSource` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clEnqueueFillBuffer` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clEnqueueMapBuffer` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clEnqueueNDRangeKernel` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clEnqueueUnmapMemObject` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clFlush` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clGetDeviceIDs` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clGetDeviceInfo` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clGetMemObjectInfo` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clGetPlatformIDs` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clGetPlatformInfo` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clGetProgramBuildInfo` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clReleaseCommandQueue` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clReleaseContext` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clReleaseEvent` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clReleaseKernel` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clReleaseMemObject` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clReleaseProgram` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clSetKernelArg` | 5 | affinity, crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clWaitForEvents` | 5 | affinity, crossover, jellyfin, shotcut |
+| MetalPerformanceShaders.framework | `_OBJC_CLASS_$_MPSImageAreaMax` | 4 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
+| MetalPerformanceShaders.framework | `_OBJC_CLASS_$_MPSImageAreaMin` | 4 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
+| MetalPerformanceShaders.framework | `_OBJC_CLASS_$_MPSImageBox` | 4 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
+| MetalPerformanceShaders.framework | `_OBJC_CLASS_$_MPSImageConvolution` | 4 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
+| OpenCL.framework | `_clCreateImage` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clEnqueueCopyImage` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clEnqueueMapImage` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clEnqueueReadBuffer` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clEnqueueReadImage` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clEnqueueWriteBuffer` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clEnqueueWriteImage` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clFinish` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clGetEventProfilingInfo` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clGetImageInfo` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clGetSupportedImageFormats` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clRetainCommandQueue` | 4 | crossover, jellyfin, shotcut, stremio |
+| OpenGL.framework | `_gluCheckExtension` | 4 | crossover, cryptomator, freecad, lmms |
 | CoreML.framework | `_$sSf6CoreML19MLShapedArrayScalarAAWP` | 3 | fluidvoice, openclaw, voiceink |
 | CoreML.framework | `_OBJC_CLASS_$_MLModelAsset` | 3 | macwhisper, microsoft-teams, voiceink |
-| CoreVideo.framework | `_CVOpenGLTextureRelease` | 3 | calibre, shotcut, wireshark-app |
-| OpenCL.framework | `_clBuildProgram` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clCreateBuffer` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clCreateCommandQueue` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clCreateContext` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clCreateImage` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clCreateKernel` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clCreateProgramWithSource` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clEnqueueCopyImage` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clEnqueueFillBuffer` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clEnqueueMapBuffer` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clEnqueueMapImage` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clEnqueueNDRangeKernel` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clEnqueueReadBuffer` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clEnqueueReadImage` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clEnqueueUnmapMemObject` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clEnqueueWriteBuffer` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clEnqueueWriteImage` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clFinish` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clFlush` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clGetDeviceIDs` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clGetDeviceInfo` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clGetEventProfilingInfo` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clGetImageInfo` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clGetMemObjectInfo` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clGetPlatformIDs` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clGetPlatformInfo` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clGetProgramBuildInfo` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clGetSupportedImageFormats` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clReleaseCommandQueue` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clReleaseContext` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clReleaseEvent` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clReleaseKernel` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clReleaseMemObject` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clReleaseProgram` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clRetainCommandQueue` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clSetKernelArg` | 3 | jellyfin, shotcut, stremio |
-| OpenCL.framework | `_clWaitForEvents` | 3 | jellyfin, shotcut, stremio |
+| OpenCL.framework | `_clEnqueueCopyBufferRect` | 3 | affinity, crossover, shotcut |
+| OpenCL.framework | `_clEnqueueCopyBufferToImage` | 3 | crossover, jellyfin, shotcut |
+| OpenCL.framework | `_clEnqueueReadBufferRect` | 3 | affinity, crossover, shotcut |
+| OpenCL.framework | `_clEnqueueWriteBufferRect` | 3 | affinity, crossover, shotcut |
+| OpenGL.framework | `_gluUnProject` | 3 | freecad, lmms, openscad |
+| QuartzCore.framework | `_OBJC_CLASS_$_CABackdropLayer` | 3 | bettertouchtool, orion, zoom |
 | libswiftCoreML.dylib | `_$s6CoreML13MLShapedArrayVMn` | 3 | macwhisper, opensuperwhisper, superwhisper |
 | libswiftCoreML.dylib | `_$s6CoreML13MLShapedArrayVyxGAA0cD8ProtocolAAMc` | 3 | macwhisper, opensuperwhisper, superwhisper |
 | libswiftCoreML.dylib | `_$s6CoreML21MLShapedArrayProtocolPAAE7scalarsSay6ScalarQzGvg` | 3 | macwhisper, opensuperwhisper, superwhisper |
@@ -84,20 +82,66 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreML.framework | `_$ss5Int32V6CoreML19MLShapedArrayScalarACWP` | 2 | fluidvoice, openclaw |
 | CoreML.framework | `_MLModelCreatorDefinedKey` | 2 | microsoft-teams, openclaw |
 | CoreVideo.framework | `_CVImageBufferGetColorSpace` | 2 | cleanshot, microsoft-teams |
-| CoreVideo.framework | `_kCVImageBufferFieldDetailTemporalBottomFirst` | 2 | handbrake-app, libndi |
-| CoreVideo.framework | `_kCVImageBufferFieldDetailTemporalTopFirst` | 2 | handbrake-app, libndi |
-| Metal.framework | `_OBJC_CLASS_$_MTLAccelerationStructureBoundingBoxGeometryDescriptor` | 2 | blender, utm |
-| Metal.framework | `_OBJC_CLASS_$_MTLAccelerationStructureTriangleGeometryDescriptor` | 2 | blender, utm |
-| Metal.framework | `_OBJC_CLASS_$_MTLInstanceAccelerationStructureDescriptor` | 2 | blender, utm |
-| Metal.framework | `_OBJC_CLASS_$_MTLIntersectionFunctionDescriptor` | 2 | blender, utm |
-| Metal.framework | `_OBJC_CLASS_$_MTLIntersectionFunctionTableDescriptor` | 2 | blender, utm |
-| Metal.framework | `_OBJC_CLASS_$_MTLPrimitiveAccelerationStructureDescriptor` | 2 | blender, utm |
-| OpenCL.framework | `_clEnqueueCopyBufferToImage` | 2 | jellyfin, shotcut |
-| OpenGL.framework | `_gluCheckExtension` | 2 | cryptomator, lmms |
+| CoreVideo.framework | `_kCVImageBufferFieldDetailTemporalBottomFirst` | 2 | crossover, handbrake-app |
+| CoreVideo.framework | `_kCVImageBufferFieldDetailTemporalTopFirst` | 2 | crossover, handbrake-app |
+| CoreVideo.framework | `_kCVPixelBufferExtendedPixelsBottomKey` | 2 | handbrake-app, orion |
+| CoreVideo.framework | `_kCVPixelBufferExtendedPixelsRightKey` | 2 | handbrake-app, orion |
+| CoreVideo.framework | `_kCVPixelFormatOpenGLCompatibility` | 2 | feishu, telegram |
+| Metal.framework | `_MTLMakeShaderCacheWritableByAllUsers` | 2 | crossover, utm |
+| Metal.framework | `_MTLSetShaderCachePath` | 2 | crossover, utm |
+| Metal.framework | `_MTLTextureSwizzleChannelsToKey` | 2 | crossover, utm |
+| Metal.framework | `_MTLTextureSwizzleKeyToChannels` | 2 | crossover, utm |
+| Metal.framework | `_OBJC_CLASS_$_MTLAccelerationStructureAllocationDescriptor` | 2 | crossover, utm |
+| Metal.framework | `_OBJC_CLASS_$_MTLMeshRenderPipelineDescriptor` | 2 | crossover, utm |
+| MetalFX.framework | `_OBJC_CLASS_$_MTLFXSpatialScalerDescriptor` | 2 | crossover, utm |
+| MetalFX.framework | `_OBJC_CLASS_$_MTLFXTemporalScalerDescriptor` | 2 | crossover, utm |
+| MetalPerformanceShaders.framework | `_OBJC_CLASS_$_MPSImageGaussianBlur` | 2 | capcut, feishu |
+| OpenCL.framework | `_clCreateContextFromType` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clCreateKernelsInProgram` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clCreateProgramWithBinary` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clCreateProgramWithBuiltInKernels` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clCreateSampler` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clCreateSubBuffer` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clCreateSubDevices` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clCreateUserEvent` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clEnqueueBarrierWithWaitList` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clEnqueueCopyBuffer` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clEnqueueCopyImageToBuffer` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clEnqueueFillImage` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clEnqueueMarkerWithWaitList` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clEnqueueMigrateMemObjects` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clEnqueueTask` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clGetCommandQueueInfo` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clGetContextInfo` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clGetEventInfo` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clGetKernelArgInfo` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clGetKernelInfo` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clGetKernelWorkGroupInfo` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clGetProgramInfo` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clGetSamplerInfo` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clReleaseDevice` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clReleaseSampler` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clRetainContext` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clRetainDevice` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clRetainEvent` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clRetainKernel` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clRetainMemObject` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clRetainProgram` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clRetainSampler` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clSetEventCallback` | 2 | affinity, shotcut |
+| OpenCL.framework | `_clSetUserEventStatus` | 2 | crossover, shotcut |
+| OpenCL.framework | `_clUnloadPlatformCompiler` | 2 | crossover, shotcut |
+| OpenGL.framework | `_gluCylinder` | 2 | freecad, kicad |
+| OpenGL.framework | `_gluDeleteQuadric` | 2 | freecad, kicad |
 | OpenGL.framework | `_gluDeleteTess` | 2 | kicad, openscad |
+| OpenGL.framework | `_gluDisk` | 2 | freecad, kicad |
 | OpenGL.framework | `_gluErrorString` | 2 | kicad, openscad |
+| OpenGL.framework | `_gluLookAt` | 2 | freecad, openscad |
+| OpenGL.framework | `_gluNewQuadric` | 2 | freecad, kicad |
 | OpenGL.framework | `_gluNewTess` | 2 | kicad, openscad |
 | OpenGL.framework | `_gluPerspective` | 2 | kicad, openscad |
+| OpenGL.framework | `_gluProject` | 2 | freecad, openscad |
+| OpenGL.framework | `_gluSphere` | 2 | freecad, kicad |
 | OpenGL.framework | `_gluTessBeginContour` | 2 | kicad, openscad |
 | OpenGL.framework | `_gluTessBeginPolygon` | 2 | kicad, openscad |
 | OpenGL.framework | `_gluTessCallback` | 2 | kicad, openscad |
@@ -106,8 +150,23 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | OpenGL.framework | `_gluTessNormal` | 2 | kicad, openscad |
 | OpenGL.framework | `_gluTessProperty` | 2 | kicad, openscad |
 | OpenGL.framework | `_gluTessVertex` | 2 | kicad, openscad |
-| OpenGL.framework | `_gluUnProject` | 2 | lmms, openscad |
-| QuartzCore.framework | `_OBJC_CLASS_$_CABackdropLayer` | 2 | bettertouchtool, zoom |
+| QuartzCore.framework | `_OBJC_CLASS_$_CAFilter` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterColorBurnBlendMode` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterColorDodgeBlendMode` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterColorSaturate` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterDarkenBlendMode` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterDifferenceBlendMode` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterExclusionBlendMode` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterGaussianBlur` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterHardLightBlendMode` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterLightenBlendMode` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterMultiplyBlendMode` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterOverlayBlendMode` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterScreenBlendMode` | 2 | orion, zoom |
+| QuartzCore.framework | `_kCAFilterSoftLightBlendMode` | 2 | orion, zoom |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNNode` | 2 | istat-menus, telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNScene` | 2 | istat-menus, telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNView` | 2 | istat-menus, telegram |
 | libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLE15withUnsafeBytesyxxSWKXEKlF` | 2 | macwhisper, superwhisper |
 | libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLE22withUnsafeMutableBytesyxxSw_SaySiGtKXEKlF` | 2 | macwhisper, superwhisper |
 | libswiftCoreML.dylib | `_$sSo12MLMultiArrayC6CoreMLEyABxcAC08MLShapedB8ProtocolRzlufC` | 2 | macwhisper, superwhisper |
@@ -118,77 +177,32 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreML.framework | `_$sSo12MLMultiArrayC6CoreMLE23withUnsafeBufferPointer6ofType_q_xm_q_SRyxGKXEtKAC08MLShapedB6ScalarRzr0_lF` | 1 | voiceink |
 | CoreML.framework | `_$sSo14MLFeatureValueC6CoreMLE011shapedArrayB02ofAC08MLShapedF0VyxGSgxm_tAC0hF6ScalarRzlF` | 1 | fluidvoice |
 | CoreML.framework | `_MLModelDescriptionKey` | 1 | openclaw |
-| CoreVideo.framework | `_CVImageBufferGetDisplaySize` | 1 | adobe-acrobat-reader |
-| CoreVideo.framework | `_CVOpenGLTextureGetTarget` | 1 | telegram |
-| CoreVideo.framework | `_kCVImageBufferChromaLocation_DV420` | 1 | vlc |
+| CoreVideo.framework | `_CVPixelFormatDescriptionArrayCreateWithAllPixelFormatTypes` | 1 | crossover |
 | CoreVideo.framework | `_kCVImageBufferDisplayDimensionsKey` | 1 | handbrake-app |
 | CoreVideo.framework | `_kCVImageBufferDisplayHeightKey` | 1 | handbrake-app |
 | CoreVideo.framework | `_kCVImageBufferDisplayWidthKey` | 1 | handbrake-app |
-| CoreVideo.framework | `_kCVImageBufferFieldCountKey` | 1 | libndi |
-| CoreVideo.framework | `_kCVImageBufferFieldDetailKey` | 1 | libndi |
-| CoreVideo.framework | `_kCVImageBufferFieldDetailSpatialFirstLineEarly` | 1 | libndi |
-| CoreVideo.framework | `_kCVImageBufferFieldDetailSpatialFirstLineLate` | 1 | libndi |
-| CoreVideo.framework | `_kCVPixelBufferExtendedPixelsBottomKey` | 1 | handbrake-app |
-| CoreVideo.framework | `_kCVPixelBufferExtendedPixelsRightKey` | 1 | handbrake-app |
+| CoreVideo.framework | `_kCVPixelBufferExtendedPixelsLeftKey` | 1 | orion |
+| CoreVideo.framework | `_kCVPixelBufferExtendedPixelsTopKey` | 1 | orion |
 | CoreVideo.framework | `_kCVPixelFormatComponentRange_VideoRange` | 1 | handbrake-app |
-| CoreVideo.framework | `_kCVPixelFormatOpenGLCompatibility` | 1 | telegram |
+| CoreVideo.framework | `_kCVPixelFormatConstant` | 1 | crossover |
 | GameplayKit.framework | `_OBJC_CLASS_$_GKNoise` | 1 | shottr |
 | GameplayKit.framework | `_OBJC_CLASS_$_GKNoiseMap` | 1 | shottr |
 | GameplayKit.framework | `_OBJC_CLASS_$_GKPerlinNoiseSource` | 1 | shottr |
-| Metal.framework | `_MTLMakeShaderCacheWritableByAllUsers` | 1 | utm |
-| Metal.framework | `_MTLSetShaderCachePath` | 1 | utm |
-| Metal.framework | `_MTLTextureSwizzleChannelsToKey` | 1 | utm |
-| Metal.framework | `_MTLTextureSwizzleKeyToChannels` | 1 | utm |
-| Metal.framework | `_OBJC_CLASS_$_MTLAccelerationStructureAllocationDescriptor` | 1 | utm |
-| Metal.framework | `_OBJC_CLASS_$_MTLAccelerationStructurePassDescriptor` | 1 | utm |
-| Metal.framework | `_OBJC_CLASS_$_MTLMeshRenderPipelineDescriptor` | 1 | utm |
-| Metal.framework | `_OBJC_CLASS_$_MTLVisibleFunctionTableDescriptor` | 1 | utm |
-| MetalFX.framework | `_OBJC_CLASS_$_MTLFXSpatialScalerDescriptor` | 1 | utm |
-| MetalFX.framework | `_OBJC_CLASS_$_MTLFXTemporalScalerDescriptor` | 1 | utm |
+| IOSurface.framework | `_IOSurfaceSetOwnershipIdentity` | 1 | orion |
+| IOSurface.framework | `_kIOSurfaceContentHeadroom` | 1 | orion |
+| MetalPerformanceShaders.framework | `_OBJC_CLASS_$_MPSImage` | 1 | wechat |
+| MetalPerformanceShaders.framework | `_OBJC_CLASS_$_MPSImageDescriptor` | 1 | wechat |
+| MetalPerformanceShaders.framework | `_OBJC_CLASS_$_MPSTemporaryImage` | 1 | wechat |
 | OpenCL.framework | `_clCompileProgram` | 1 | shotcut |
-| OpenCL.framework | `_clCreateContextFromType` | 1 | shotcut |
-| OpenCL.framework | `_clCreateKernelsInProgram` | 1 | shotcut |
-| OpenCL.framework | `_clCreateProgramWithBinary` | 1 | shotcut |
-| OpenCL.framework | `_clCreateProgramWithBuiltInKernels` | 1 | shotcut |
-| OpenCL.framework | `_clCreateSampler` | 1 | shotcut |
-| OpenCL.framework | `_clCreateSubBuffer` | 1 | shotcut |
-| OpenCL.framework | `_clCreateSubDevices` | 1 | shotcut |
-| OpenCL.framework | `_clCreateUserEvent` | 1 | shotcut |
-| OpenCL.framework | `_clEnqueueBarrierWithWaitList` | 1 | shotcut |
-| OpenCL.framework | `_clEnqueueCopyBuffer` | 1 | shotcut |
-| OpenCL.framework | `_clEnqueueCopyBufferRect` | 1 | shotcut |
-| OpenCL.framework | `_clEnqueueCopyImageToBuffer` | 1 | shotcut |
-| OpenCL.framework | `_clEnqueueFillImage` | 1 | shotcut |
-| OpenCL.framework | `_clEnqueueMarkerWithWaitList` | 1 | shotcut |
-| OpenCL.framework | `_clEnqueueMigrateMemObjects` | 1 | shotcut |
 | OpenCL.framework | `_clEnqueueNativeKernel` | 1 | shotcut |
-| OpenCL.framework | `_clEnqueueReadBufferRect` | 1 | shotcut |
-| OpenCL.framework | `_clEnqueueTask` | 1 | shotcut |
-| OpenCL.framework | `_clEnqueueWriteBufferRect` | 1 | shotcut |
-| OpenCL.framework | `_clGetCommandQueueInfo` | 1 | shotcut |
-| OpenCL.framework | `_clGetContextInfo` | 1 | shotcut |
-| OpenCL.framework | `_clGetEventInfo` | 1 | shotcut |
 | OpenCL.framework | `_clGetExtensionFunctionAddressForPlatform` | 1 | shotcut |
-| OpenCL.framework | `_clGetKernelArgInfo` | 1 | shotcut |
-| OpenCL.framework | `_clGetKernelInfo` | 1 | shotcut |
-| OpenCL.framework | `_clGetKernelWorkGroupInfo` | 1 | shotcut |
-| OpenCL.framework | `_clGetProgramInfo` | 1 | shotcut |
-| OpenCL.framework | `_clGetSamplerInfo` | 1 | shotcut |
 | OpenCL.framework | `_clLinkProgram` | 1 | shotcut |
-| OpenCL.framework | `_clReleaseDevice` | 1 | shotcut |
-| OpenCL.framework | `_clReleaseSampler` | 1 | shotcut |
-| OpenCL.framework | `_clRetainContext` | 1 | shotcut |
-| OpenCL.framework | `_clRetainDevice` | 1 | shotcut |
-| OpenCL.framework | `_clRetainEvent` | 1 | shotcut |
-| OpenCL.framework | `_clRetainKernel` | 1 | shotcut |
-| OpenCL.framework | `_clRetainMemObject` | 1 | shotcut |
-| OpenCL.framework | `_clRetainProgram` | 1 | shotcut |
-| OpenCL.framework | `_clRetainSampler` | 1 | shotcut |
-| OpenCL.framework | `_clSetEventCallback` | 1 | shotcut |
 | OpenCL.framework | `_clSetMemObjectDestructorCallback` | 1 | shotcut |
-| OpenCL.framework | `_clSetUserEventStatus` | 1 | shotcut |
-| OpenCL.framework | `_clUnloadPlatformCompiler` | 1 | shotcut |
 | OpenGL.framework | `_CGLCopyContext` | 1 | xquartz |
+| OpenGL.framework | `_CGLCreatePBuffer` | 1 | crossover |
+| OpenGL.framework | `_CGLReleasePBuffer` | 1 | crossover |
+| OpenGL.framework | `_CGLSetPBuffer` | 1 | crossover |
+| OpenGL.framework | `_CGLTexImagePBuffer` | 1 | crossover |
 | OpenGL.framework | `_glColorSubTable` | 1 | xquartz |
 | OpenGL.framework | `_glColorTable` | 1 | xquartz |
 | OpenGL.framework | `_glColorTableParameterfv` | 1 | xquartz |
@@ -222,45 +236,46 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | OpenGL.framework | `_glResetMinmax` | 1 | xquartz |
 | OpenGL.framework | `_glSeparableFilter2D` | 1 | xquartz |
 | OpenGL.framework | `_gluBuild2DMipmaps` | 1 | adobe-acrobat-reader |
-| OpenGL.framework | `_gluCylinder` | 1 | kicad |
-| OpenGL.framework | `_gluDeleteQuadric` | 1 | kicad |
-| OpenGL.framework | `_gluDisk` | 1 | kicad |
-| OpenGL.framework | `_gluLookAt` | 1 | openscad |
-| OpenGL.framework | `_gluNewQuadric` | 1 | kicad |
 | OpenGL.framework | `_gluOrtho2D` | 1 | adobe-acrobat-reader |
-| OpenGL.framework | `_gluProject` | 1 | openscad |
+| OpenGL.framework | `_gluPickMatrix` | 1 | freecad |
 | OpenGL.framework | `_gluQuadricDrawStyle` | 1 | kicad |
 | OpenGL.framework | `_gluQuadricNormals` | 1 | kicad |
-| OpenGL.framework | `_gluSphere` | 1 | kicad |
-| QuartzCore.framework | `_OBJC_CLASS_$_CAFilter` | 1 | zoom |
+| QuartzCore.framework | `_CABackingStoreCollectBlocking` | 1 | orion |
+| QuartzCore.framework | `_CARenderServerGetServerPort` | 1 | orion |
+| QuartzCore.framework | `_CAToneMapModeIfSupported` | 1 | orion |
+| QuartzCore.framework | `_OBJC_CLASS_$_CAPresentationModifier` | 1 | orion |
+| QuartzCore.framework | `_OBJC_CLASS_$_CAPresentationModifierGroup` | 1 | orion |
+| QuartzCore.framework | `_kCAFilterColorBlendMode` | 1 | orion |
 | QuartzCore.framework | `_kCAFilterColorBrightness` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterColorBurnBlendMode` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterColorDodgeBlendMode` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterColorSaturate` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterDarkenBlendMode` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterDifferenceBlendMode` | 1 | zoom |
+| QuartzCore.framework | `_kCAFilterColorHueRotate` | 1 | orion |
+| QuartzCore.framework | `_kCAFilterColorInvert` | 1 | orion |
+| QuartzCore.framework | `_kCAFilterColorMatrix` | 1 | orion |
+| QuartzCore.framework | `_kCAFilterColorMonochrome` | 1 | orion |
 | QuartzCore.framework | `_kCAFilterDivideBlendMode` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterExclusionBlendMode` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterGaussianBlur` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterHardLightBlendMode` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterLightenBlendMode` | 1 | zoom |
+| QuartzCore.framework | `_kCAFilterHueBlendMode` | 1 | orion |
+| QuartzCore.framework | `_kCAFilterInputColorMatrix` | 1 | orion |
 | QuartzCore.framework | `_kCAFilterLinearBurnBlendMode` | 1 | zoom |
 | QuartzCore.framework | `_kCAFilterLinearDodgeBlendMode` | 1 | zoom |
 | QuartzCore.framework | `_kCAFilterLinearLightBlendMode` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterMultiplyBlendMode` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterOverlayBlendMode` | 1 | zoom |
+| QuartzCore.framework | `_kCAFilterLuminosityBlendMode` | 1 | orion |
 | QuartzCore.framework | `_kCAFilterPinLightBlendMode` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterScreenBlendMode` | 1 | zoom |
-| QuartzCore.framework | `_kCAFilterSoftLightBlendMode` | 1 | zoom |
+| QuartzCore.framework | `_kCAFilterPlusD` | 1 | orion |
+| QuartzCore.framework | `_kCAFilterPlusL` | 1 | orion |
+| QuartzCore.framework | `_kCAFilterSaturationBlendMode` | 1 | orion |
 | QuartzCore.framework | `_kCAFilterSubtractBlendMode` | 1 | zoom |
+| QuartzCore.framework | `_kCAFilterVibrantColorMatrix` | 1 | orion |
+| QuartzCore.framework | `_kCAScrollBoth` | 1 | microsoft-outlook |
 | SceneKit.framework | `_OBJC_CLASS_$_SCNAction` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNCamera` | 1 | istat-menus |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNFloor` | 1 | istat-menus |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNLight` | 1 | istat-menus |
 | SceneKit.framework | `_OBJC_CLASS_$_SCNMaterial` | 1 | telegram |
-| SceneKit.framework | `_OBJC_CLASS_$_SCNNode` | 1 | telegram |
 | SceneKit.framework | `_OBJC_CLASS_$_SCNParticlePropertyController` | 1 | telegram |
 | SceneKit.framework | `_OBJC_CLASS_$_SCNParticleSystem` | 1 | telegram |
-| SceneKit.framework | `_OBJC_CLASS_$_SCNScene` | 1 | telegram |
+| SceneKit.framework | `_OBJC_CLASS_$_SCNPlane` | 1 | istat-menus |
 | SceneKit.framework | `_OBJC_CLASS_$_SCNTransaction` | 1 | telegram |
-| SceneKit.framework | `_OBJC_CLASS_$_SCNView` | 1 | telegram |
+| SceneKit.framework | `_OBJC_METACLASS_$_SCNNode` | 1 | istat-menus |
+| SceneKit.framework | `_SCNLightTypeArea` | 1 | istat-menus |
 | SceneKit.framework | `_SCNParticlePropertyColor` | 1 | telegram |
 | SceneKit.framework | `_SCNParticlePropertyOpacity` | 1 | telegram |
 | SceneKit.framework | `_SCNParticlePropertySize` | 1 | telegram |
@@ -270,6 +285,5 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE10prediction4from7optionsSo17MLFeatureProvider_pSoAG_p_So19MLPredictionOptionsCtYaKFTu` | 1 | opensuperwhisper |
 | libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE12compileModel2at10Foundation3URLVAH_tYaKFZ` | 1 | opensuperwhisper |
 | libswiftCoreML.dylib | `_$sSo7MLModelC6CoreMLE12compileModel2at10Foundation3URLVAH_tYaKFZTu` | 1 | opensuperwhisper |
-| libswiftMetal.dylib | `_$sSo23MTLRenderCommandEncoderP5MetalE16setVertexBuffers_7offsets5rangeySaySo9MTLBuffer_pSgG_SaySiGSnySiGtF` | 1 | obs |
 | libswiftMetal.dylib | `_$sSo23MTLRenderCommandEncoderP5MetalE19setFragmentTextures_5rangeySaySo10MTLTexture_pSgG_SnySiGtF` | 1 | raycast |
 | libswiftQuartzCore.dylib | `_$sSo13CATransform3DV10QuartzCoreE34_conditionallyBridgeFromObjectiveC_6resultSbSo7NSValueC_ABSgztFZ` | 1 | mac-mouse-fix |

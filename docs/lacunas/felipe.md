@@ -7,7 +7,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| CoreWLAN.framework | `_OBJC_CLASS_$_CWInterface` | 7 | adobe-acrobat-reader, bartender, hammerspoon, protonvpn |
+| IOBluetooth.framework | `_IOBluetoothNSStringToDeviceAddress` | 2 | anki, qgis |
+| IOBluetooth.framework | `_OBJC_CLASS_$_IOBluetoothDevicePair` | 2 | anki, qgis |
 | CoreWLAN.framework | `_CWBSSIDDidChangeNotification` | 1 | hammerspoon |
 | CoreWLAN.framework | `_CWCountryCodeDidChangeNotification` | 1 | hammerspoon |
 | CoreWLAN.framework | `_CWKeychainFindWiFiPassword` | 1 | prusaslicer |
@@ -19,7 +20,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CoreWLAN.framework | `_CWPowerDidChangeNotification` | 1 | hammerspoon |
 | CoreWLAN.framework | `_CWSSIDDidChangeNotification` | 1 | hammerspoon |
 | CoreWLAN.framework | `_CWScanCacheDidUpdateNotification` | 1 | hammerspoon |
-| CoreWLAN.framework | `_OBJC_CLASS_$_CWChannel` | 1 | stats |
 | CoreWLAN.framework | `_OBJC_CLASS_$_CWNetwork` | 1 | bartender |
 | CoreWLAN.framework | `_OBJC_CLASS_$_CWNetworkProfile` | 1 | protonvpn |
 | CoreWLAN.framework | `_OBJC_METACLASS_$_CWNetworkProfile` | 1 | protonvpn |

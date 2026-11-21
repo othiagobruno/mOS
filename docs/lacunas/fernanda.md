@@ -3,143 +3,33 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Fernanda (Swift runtime, Dispatch) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**772** símbolos distintos.
+**637** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| libswiftos.dylib | `_$sSo13os_log_type_ta0A0E5errorABvgZ` | 59 | 1password, aldente, applite, bartender |
-| libswiftos.dylib | `_$s2os0A4_log_3dso0B0__ySo0a1_B7_type_ta_SVSo03OS_a1_B0Cs12StaticStringVs7CVarArg_pdtF` | 57 | 1password, aldente, applite, bartender |
-| libswiftos.dylib | `_$sSo13os_log_type_ta0A0E5faultABvgZ` | 55 | 1password, aldente, applite, bartender |
-| libswiftos.dylib | `_$s2os6LoggerV9logObjectSo03OS_a1_C0Cvg` | 50 | 1password, aldente, applite, bartender |
-| libswiftos.dylib | `_$s2os6LoggerV9subsystem8categoryACSS_SStcfC` | 50 | 1password, aldente, applite, bartender |
-| libswiftos.dylib | `_$s2os6LoggerVMa` | 50 | 1password, aldente, applite, bartender |
-| libswiftos.dylib | `_$sSo13os_log_type_ta0A0E4infoABvgZ` | 48 | 1password, applite, bartender, betterdisplay |
-| libswiftos.dylib | `_$sSo13os_log_type_ta0A0E5debugABvgZ` | 42 | bartender, betterdisplay, bettertouchtool, caskhub |
-| libswiftos.dylib | `_$sSo13os_log_type_ta0A0E7defaultABvgZ` | 38 | 1password, aldente, applite, bartender |
-| libswiftos.dylib | `_$s2os6LoggerVMn` | 32 | applite, bartender, bettertouchtool, bitwarden |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexVMn` | 27 | applite, bettertouchtool, caskhub, chatgpt |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexVyxGAA0C9ComponentAAMc` | 27 | applite, bettertouchtool, caskhub, chatgpt |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV06_regexA07versionACyxGSS_SitcfC` | 26 | applite, bettertouchtool, caskhub, chatgpt |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV5MatchVMn` | 26 | applite, bettertouchtool, caskhub, chatgpt |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing14RegexComponentP5regexAA0C0Vy0C6OutputQzGvgTj` | 24 | applite, bettertouchtool, caskhub, chatgpt |
-| libswiftos.dylib | `_$sSo9OS_os_logC0B0E7defaultABvgZ` | 22 | 1password, aldente, bartender, betterdisplay |
-| libobjc.A.dylib | `_class_getIvarLayout` | 20 | alt-tab, android-file-transfer, bbedit, bettertouchtool |
-| libobjc.A.dylib | `_objc_initializeClassPair` | 20 | alt-tab, android-file-transfer, bbedit, bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV5MatchV13dynamicMemberqd__s7KeyPathCyxqd__G_tcluig` | 20 | applite, bettertouchtool, caskhub, claude |
-| libswiftos.dylib | `_$s2os0A4_log_3dso0B04type_ys12StaticStringV_SVSgSo03OS_a1_B0CSo0a1_b1_D2_tas7CVarArg_pdtF` | 20 | 1password, aldente, bartender, betterdisplay |
-| libswiftos.dylib | `_$s2os21OSAllocatedUnfairLockVMn` | 20 | applite, bartender, chatgpt, claude |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV10firstMatch2inAC0E0Vyx_GSgSs_tKF` | 19 | applite, bettertouchtool, caskhub, chatgpt |
-| libswiftObservation.dylib | `_$s11Observation0A9RegistrarV12withMutation2of7keyPath_q0_x_s03KeyG0Cyxq_Gq0_yKXEtKAA10ObservableRzr1_lF` | 18 | applite, bartender, caskhub, chatgpt |
-| libswiftObservation.dylib | `_$s11Observation0A9RegistrarV6access_7keyPathyx_s03KeyE0Cyxq_GtAA10ObservableRzr0_lF` | 18 | applite, bartender, caskhub, chatgpt |
-| libswiftObservation.dylib | `_$s11Observation0A9RegistrarVACycfC` | 18 | applite, bartender, caskhub, chatgpt |
-| libswiftObservation.dylib | `_$s11Observation0A9RegistrarVMa` | 18 | applite, bartender, caskhub, chatgpt |
-| libswiftObservation.dylib | `_$s11Observation0A9RegistrarVMn` | 18 | applite, bartender, caskhub, chatgpt |
-| libswiftObservation.dylib | `_$s11Observation10ObservableMp` | 18 | applite, bartender, caskhub, chatgpt |
-| libswiftObservation.dylib | `_$s11Observation0A9RegistrarV6didSet_7keyPathyx_s03KeyF0Cyxq_GtAA10ObservableRzr0_lF` | 16 | applite, bartender, caskhub, chatgpt |
-| libswiftObservation.dylib | `_$s11Observation0A9RegistrarV7willSet_7keyPathyx_s03KeyF0Cyxq_GtAA10ObservableRzr0_lF` | 16 | applite, bartender, caskhub, chatgpt |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV5MatchV6outputxvg` | 15 | bettertouchtool, chatgpt, codexbar, coteditor |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV10wholeMatch2inAC0E0Vyx_GSgSs_tKF` | 13 | chatgpt, cmux, codexbar, coteditor |
-| libswiftos.dylib | `_$s2os12OSSignpostIDV3logACSo03OS_a1_D0C_tcfC` | 13 | bartender, bettertouchtool, chatgpt, cmux |
-| libswiftos.dylib | `_$s2os12OSSignpostIDVMa` | 13 | bartender, bettertouchtool, chatgpt, cmux |
-| libswiftos.dylib | `_$sSo18os_signpost_type_ta0A0E3endABvgZ` | 13 | bartender, bettertouchtool, chatgpt, cmux |
-| libswiftos.dylib | `_$sSo18os_signpost_type_ta0A0E5beginABvgZ` | 13 | bartender, bettertouchtool, chatgpt, cmux |
-| libswift_StringProcessing.dylib | `_$sSK17_StringProcessingSs11SubSequenceRtzrlE8containsySbqd__AA14RegexComponentRd__lF` | 12 | coteditor, easydict, fluidvoice, ghostty |
-| libSystem.B.dylib | `_dispatch_queue_set_width` | 11 | duckduckgo, iina, karabiner-elements, keyclu |
-| libswift_StringProcessing.dylib | `_$sSm17_StringProcessingSs11SubSequenceRtzrlE9replacing_15maxReplacements4withxqd_1__Siqd_0_AA5RegexV5MatchVyqd___GKXEtK0I6OutputQyd_1_Rsd__SlRd_0_AA0I9ComponentRd_1_SJ7ElementRtd_0_r1_lF` | 11 | bettertouchtool, coteditor, fluidvoice, markedit |
-| libswift_StringProcessing.dylib | `_$sSm17_StringProcessingSs11SubSequenceRtzrlE9replacing_4with15maxReplacementsxqd_0__qd__SitSlRd__AA14RegexComponentRd_0_SJ7ElementRtd__r0_lF` | 11 | bettertouchtool, chatgpt, coteditor, easydict |
-| libswiftObservation.dylib | `_$s11Observation04withA8Tracking_8onChangexxyXE_yyYbcyXKtlF` | 10 | bartender, chatgpt, cmux, codexbar |
-| libswiftRegexBuilder.dylib | `_$sSy12RegexBuilderSs11SubSequenceRtzrlE5split9separator9maxSplits25omittingEmptySubsequencesSaySsGSS_SiSbtF` | 10 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswift_StringProcessing.dylib | `_$sSK17_StringProcessingSs11SubSequenceRtzrlE7matches2ofSayAA5RegexV5MatchVyqd___GGqd_0__t0G6OutputQyd_0_Rsd__AA0G9ComponentRd_0_r0_lF` | 10 | applite, bettertouchtool, caskhub, cmux |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder0a9ComponentB0O15buildExpressionyxx17_StringProcessing0aC0RzlFZ` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder0a9ComponentB0O17buildPartialBlock5first17_StringProcessing0A0Vy0A6OutputQzGx_tAF0aC0RzlFZ` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder10ZeroOrMoreVMn` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder10ZeroOrMoreVyACyxG17_StringProcessing0A0VyxGcfC` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder10ZeroOrMoreVyxG17_StringProcessing0A9ComponentAAMc` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder11makeFactory17_StringProcessing01_aD0VyF` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder14CharacterClassV17_StringProcessing0A9ComponentAAMc` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder14CharacterClassVMa` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s17_StringProcessing5RegexV0C7BuilderEyACyxGqd__yXEc0C6OutputQyd__RszAA0C9ComponentRd__lufC` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$sSS17_StringProcessing14RegexComponent0C7BuilderMc` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftSystem.dylib | `_$s6System8FilePathVMa` | 9 | chatgpt, easydict, ghostty, homebrew-app |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV10accumulateyAA0C0VyxGq__q0_tAA0C9ComponentR_AaHR0_r1_lF` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV10zeroOrMoreyAA0C0VyxGq__AA0C18RepetitionBehaviorVSgtAA0C9ComponentR_r0_lF` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryVMa` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing23RegexRepetitionBehaviorVMa` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing23RegexRepetitionBehaviorVMn` | 9 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswift_StringProcessing.dylib | `_$sSK17_StringProcessingSs11SubSequenceRtzrlE6starts4withSbqd___tAA14RegexComponentRd__lF` | 9 | chatgpt, coteditor, easydict, fluidvoice |
-| libswift_StringProcessing.dylib | `_$sSm17_StringProcessingSQ7ElementRpzrlE9replacing_4with15maxReplacementsxqd___qd_0_SitSlRd__SlRd_0_ABQyd__ACRSABQyd_0_AGRSr0_lF` | 9 | chatgpt, clipy, coteditor, easydict |
-| libswiftos.dylib | `_$s2os12OSSignpostIDV8rawValues6UInt64Vvg` | 9 | bettertouchtool, chatgpt, cmux, fluidvoice |
-| libswiftos.dylib | `_$s2os12OSSignposterV9logHandleSo03OS_a1_C0Cvg` | 9 | bettertouchtool, chatgpt, cmux, fluidvoice |
-| libswiftos.dylib | `_$s2os12OSSignposterVMa` | 9 | bettertouchtool, chatgpt, cmux, fluidvoice |
-| libswiftos.dylib | `_$s2os15OSSignpostErrorO9doubleEndyA2CmFWC` | 9 | bettertouchtool, chatgpt, cmux, fluidvoice |
-| libswiftos.dylib | `_$s2os15OSSignpostErrorOMa` | 9 | bettertouchtool, chatgpt, cmux, fluidvoice |
-| libswiftos.dylib | `_$s2os23OSSignpostIntervalStateC10signpostIDAA0bF0Vvg` | 9 | bettertouchtool, chatgpt, cmux, fluidvoice |
-| libswiftos.dylib | `_$s2os23OSSignpostIntervalStateC2id6isOpenAcA0B2IDV_Sbtcfc` | 9 | bettertouchtool, chatgpt, cmux, fluidvoice |
-| libswiftos.dylib | `_$s2os23OSSignpostIntervalStateCMa` | 9 | bettertouchtool, chatgpt, cmux, fluidvoice |
-| libswiftos.dylib | `_$s2os28checkForErrorAndConsumeState5stateAA010OSSignpostD0OAA0i8IntervalG0C_tF` | 9 | bettertouchtool, chatgpt, cmux, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder10OptionallyVMn` | 8 | chatgpt, easydict, fluidvoice, openclaw |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder10OptionallyVyACyxG17_StringProcessing0A0VyxGcfC` | 8 | chatgpt, easydict, fluidvoice, openclaw |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder10OptionallyVyxG17_StringProcessing0A9ComponentAAMc` | 8 | chatgpt, easydict, fluidvoice, openclaw |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder7CaptureVMn` | 8 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder7CaptureVyACyxG17_StringProcessing0A0VyxGcfC` | 8 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder7CaptureVyxG17_StringProcessing0A9ComponentAAMc` | 8 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder9OneOrMoreVMn` | 8 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder9OneOrMoreVyACyxG17_StringProcessing0A0VyxGcfC` | 8 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder9OneOrMoreVyxG17_StringProcessing0A9ComponentAAMc` | 8 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswiftRegexBuilder.dylib | `_$s17_StringProcessing14RegexComponentP0C7BuilderAD14CharacterClassVRszrlE3anyAFvgZ` | 8 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV7captureyAA0C0VyxGq_AA0C9ComponentR_r0_lF` | 8 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV9oneOrMoreyAA0C0VyxGq__AA0C18RepetitionBehaviorVSgtAA0C9ComponentR_r0_lF` | 8 | bettertouchtool, chatgpt, easydict, fluidvoice |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV9zeroOrOneyAA0C0VyxGq__AA0C18RepetitionBehaviorVSgtAA0C9ComponentR_r0_lF` | 8 | chatgpt, easydict, fluidvoice, openclaw |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing14AnyRegexOutputVMn` | 8 | bettertouchtool, coteditor, easydict, markedit |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV11ignoresCaseyACyxGSbF` | 8 | coteditor, fluidvoice, loop, openclaw |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexVA2A03AnyC6OutputVRszlEyACyAEGSSKcfC` | 8 | bettertouchtool, coteditor, easydict, markedit |
-| libswift_StringProcessing.dylib | `_$sSl17_StringProcessingSQ7ElementRpzrlE14trimmingPrefixy11SubSequenceQzqd__STRd__ABQyd__ACRSlF` | 8 | codexbar, fluidvoice, macwhisper, openclaw |
-| libswiftos.dylib | `_$s2os12OSSignpostIDV9exclusiveACvgZ` | 8 | chatgpt, codexbar, fluidvoice, macwhisper |
-| libswiftos.dylib | `_$s2os6LoggerVACycfC` | 8 | applite, fluidvoice, macwhisper, markedit |
-| libswiftos.dylib | `_$s2os6LoggerVyACSo03OS_A4_logCcfC` | 8 | chatgpt, clipy, dockdoor, loop |
-| libswiftos.dylib | `_$sSo18os_signpost_type_ta0A0E5eventABvgZ` | 8 | bartender, cmux, codexbar, macwhisper |
-| libobjc.A.dylib | `_object_getInstanceVariable` | 7 | adobe-acrobat-reader, cmux, daisydisk, ghostty |
+| libswiftSystem.dylib | `_$s6System8FilePathVMa` | 11 | chatgpt, easydict, ghostty, github-copilot-for-xcode |
+| libswiftSystem.dylib | `_$s6System5ErrnoVN` | 8 | chatgpt, github-copilot-for-xcode, homebrew-app, macpacker |
+| libswiftSystem.dylib | `_$s6System5ErrnoVs5ErrorAAMc` | 8 | chatgpt, github-copilot-for-xcode, homebrew-app, macpacker |
+| libswiftSystem.dylib | `_$s6System8FilePathVyACSScfC` | 8 | chatgpt, ghostty, homebrew-app, macpacker |
+| libswiftSystem.dylib | `_$s6System14FileDescriptorV6_closes6ResultOyytAA5ErrnoVGyF` | 7 | chatgpt, github-copilot-for-xcode, homebrew-app, macpacker |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorVMn` | 7 | chatgpt, homebrew-app, macpacker, openclaw |
-| libswiftSystem.dylib | `_$s6System5ErrnoVN` | 7 | chatgpt, homebrew-app, macpacker, openclaw |
-| libswiftSystem.dylib | `_$s6System5ErrnoVs5ErrorAAMc` | 7 | chatgpt, homebrew-app, macpacker, openclaw |
-| libswiftSystem.dylib | `_$s6System8FilePathVyACSScfC` | 7 | chatgpt, ghostty, homebrew-app, macpacker |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing23RegexRepetitionBehaviorV9reluctantACvgZ` | 7 | bettertouchtool, chatgpt, fluidvoice, openclaw |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV5MatchV5rangeSnySS5IndexVGvg` | 7 | bettertouchtool, caskhub, coteditor, easydict |
-| libswiftos.dylib | `_$s2os0A9_signpost_3dso3log4name0B2ID__ySo0a1_B7_type_ta_SVSo03OS_a1_D0Cs12StaticStringVAA010OSSignpostF0VALs7CVarArg_pdtF` | 7 | bartender, codexbar, protonvpn, raycast |
-| libswiftos.dylib | `_$s2os0A9_signpost_3dso3log4name0B2IDySo0a1_B7_type_ta_SVSo03OS_a1_D0Cs12StaticStringVAA010OSSignpostF0VtF` | 7 | bartender, bettertouchtool, codexbar, protonvpn |
-| libswiftos.dylib | `_$s2os12OSSignposterVMn` | 7 | chatgpt, cmux, fluidvoice, protonvpn |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder14CharacterClassV8invertedACvg` | 6 | chatgpt, easydict, fluidvoice, openclaw |
-| libswiftRegexBuilder.dylib | `_$s17_StringProcessing14RegexComponentP0C7BuilderAD14CharacterClassVRszrlE5anyOfyAFqd__STRd__SJ7ElementRtd__lFZ` | 6 | chatgpt, easydict, fluidvoice, openclaw |
+| libswiftSystem.dylib | `_$s6System8FilePathV11withCStringyxxSPys4Int8VGKXEKlF` | 7 | easydict, github-copilot-for-xcode, homebrew-app, macpacker |
+| libswiftSystem.dylib | `_$s6System8FilePathV6stringSSvg` | 7 | chatgpt, ghostty, github-copilot-for-xcode, homebrew-app |
+| libswiftSystem.dylib | `_$s6System8FilePathVMn` | 7 | chatgpt, github-copilot-for-xcode, homebrew-app, macpacker |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorV5_read4into16retryOnInterrupts6ResultOySiAA5ErrnoVGSw_SbtKF` | 6 | chatgpt, homebrew-app, macpacker, openclaw |
-| libswiftSystem.dylib | `_$s6System14FileDescriptorV6_closes6ResultOyytAA5ErrnoVGyF` | 6 | chatgpt, homebrew-app, macpacker, openclaw |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorV6_write_16retryOnInterrupts6ResultOySiAA5ErrnoVGSW_SbtF` | 6 | chatgpt, homebrew-app, macpacker, openclaw |
-| libswiftSystem.dylib | `_$s6System8FilePathV11withCStringyxxSPys4Int8VGKXEKlF` | 6 | easydict, homebrew-app, macpacker, openclaw |
-| libswiftSystem.dylib | `_$s6System8FilePathV6stringSSvg` | 6 | chatgpt, ghostty, homebrew-app, macpacker |
+| libswiftSystem.dylib | `_$s6System8FilePathV9appendingyACSSnF` | 6 | chatgpt, github-copilot-for-xcode, homebrew-app, macpacker |
 | libswiftDarwin.dylib | `_$s6Darwin7environSpySpys4Int8VGSgGvg` | 5 | betterdisplay, cmux, codexbar, openclaw |
-| libswiftDispatch.dylib | `_$s8Dispatch0A12DataIteratorVMa` | 5 | chatgpt, claude, cmux, easydict |
-| libswiftDispatch.dylib | `_$s8Dispatch0A12DataIteratorVMn` | 5 | chatgpt, claude, cmux, easydict |
-| libswiftDispatch.dylib | `_$s8Dispatch0A12DataIteratorVStAAMc` | 5 | chatgpt, claude, cmux, easydict |
+| libswiftSystem.dylib | `_$s6System14FileDescriptorV5_open__7options11permissions16retryOnInterrupts6ResultOyAcA5ErrnoVGSPys4Int8VG_AC10AccessModeVAC11OpenOptionsVAA0B11PermissionsVSgSbtFZ` | 5 | github-copilot-for-xcode, homebrew-app, macpacker, openclaw |
+| libswiftSystem.dylib | `_$s6System14FileDescriptorVN` | 5 | github-copilot-for-xcode, homebrew-app, macpacker, openclaw |
+| libswiftSystem.dylib | `_$s6System8FilePathV13stringLiteralACSS_tcfC` | 5 | github-copilot-for-xcode, homebrew-app, macpacker, openclaw |
 | libswiftSystem.dylib | `_$s6System8FilePathV2eeoiySbAC_ACtFZ` | 5 | chatgpt, homebrew-app, macpacker, openclaw |
-| libswiftSystem.dylib | `_$s6System8FilePathV9appendingyACSSnF` | 5 | chatgpt, homebrew-app, macpacker, openclaw |
-| libswiftSystem.dylib | `_$s6System8FilePathVMn` | 5 | chatgpt, homebrew-app, macpacker, openclaw |
 | libswiftSystem.dylib | `_$s6System8FilePathVSHAAMc` | 5 | chatgpt, homebrew-app, macpacker, openclaw |
 | libswiftSystem.dylib | `_$sSS6SystemE18withPlatformStringyxxSPys4Int8VGKXEKlF` | 5 | homebrew-app, macpacker, openclaw, teamviewer |
-| libswift_StringProcessing.dylib | `_$sSl17_StringProcessingE14trimmingPrefix5while11SubSequenceQzSb7ElementQzKXE_tKF` | 5 | chatgpt, easydict, openclaw, superwhisper |
-| libswiftos.dylib | `_$s2os12OSSignpostIDVMn` | 5 | bettertouchtool, protonvpn, supacode, utm |
-| libswiftos.dylib | `_$s2os12OSSignposterV9subsystem8categoryACSS_SStcfC` | 5 | bettertouchtool, chatgpt, cmux, fluidvoice |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA0Mp` | 4 | cmux, fuse-t, qlmarkdown, syntax-highlight |
-| libswiftSynchronization.dylib | `_$s15Synchronization5MutexVMn` | 4 | coteditor, homebrew-app, openclaw, thaw |
-| libswiftSystem.dylib | `_$s6System14FileDescriptorV5_open__7options11permissions16retryOnInterrupts6ResultOyAcA5ErrnoVGSPys4Int8VG_AC10AccessModeVAC11OpenOptionsVAA0B11PermissionsVSgSbtFZ` | 4 | homebrew-app, macpacker, openclaw, thaw |
-| libswiftSystem.dylib | `_$s6System14FileDescriptorVN` | 4 | homebrew-app, macpacker, openclaw, thaw |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorVSHAAMc` | 4 | homebrew-app, macpacker, openclaw, thaw |
 | libswiftSystem.dylib | `_$s6System5ErrnoV11descriptionSSvg` | 4 | homebrew-app, macpacker, openclaw, thaw |
 | libswiftSystem.dylib | `_$s6System5ErrnoVMn` | 4 | homebrew-app, macpacker, openclaw, thaw |
-| libswiftSystem.dylib | `_$s6System8FilePathV13stringLiteralACSS_tcfC` | 4 | homebrew-app, macpacker, openclaw, thaw |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV11prefixMatch2inAC0E0Vyx_GSgSs_tKF` | 4 | coteditor, openclaw, sfm, thaw |
-| libswiftos.dylib | `_$s2os12OSSignposterV6loggerAcA6LoggerV_tcfC` | 4 | chatgpt, macwhisper, raycast, superwhisper |
-| libswiftos.dylib | `_$s2os12OSSignposterV9subsystem8categoryACSS_So03OS_A4_logCAAE8CategoryVtcfC` | 4 | cmux, fluidvoice, opensuperwhisper, superwhisper |
-| libswiftos.dylib | `_$s2os23OSSignpostIntervalStateCMn` | 4 | cmux, protonvpn, raycast, whatsapp |
-| libswiftos.dylib | `_$sSo9OS_os_logC0B0E8CategoryVMa` | 4 | cmux, fluidvoice, opensuperwhisper, superwhisper |
 | ExtensionFoundation.framework | `_$s13Configuration19ExtensionFoundation03AppB0PTl` | 3 | fuse-t, qlmarkdown, syntax-highlight |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA0P13ConfigurationAC_AA0caD0Tn` | 3 | fuse-t, qlmarkdown, syntax-highlight |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA0P13configuration13ConfigurationQzvgTq` | 3 | fuse-t, qlmarkdown, syntax-highlight |
@@ -173,29 +63,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftData.framework | `_$s9SwiftData6SchemaC16PropertyMetadataV4name7keypath12defaultValue8metadataAESS_s10AnyKeyPathCypSgAA0cD0_pSgtcfC` | 3 | bartender, maccy, voiceink |
 | SwiftData.framework | `_$s9SwiftData6SchemaC16PropertyMetadataVMa` | 3 | bartender, maccy, voiceink |
 | SwiftData.framework | `_$s9SwiftData6SchemaC16PropertyMetadataVMn` | 3 | bartender, maccy, voiceink |
-| libobjc.A.dylib | `_protocol_addProtocol` | 3 | bitwarden, emacs-app, orbstack |
-| libswiftDispatch.dylib | `_$sSo24OS_dispatch_queue_serialC8DispatchE10AttributesVMa` | 3 | macwhisper, supacode, voiceink |
-| libswiftDispatch.dylib | `_$sSo24OS_dispatch_queue_serialC8DispatchE10AttributesVMn` | 3 | macwhisper, supacode, voiceink |
-| libswiftDispatch.dylib | `_$sSo24OS_dispatch_queue_serialC8DispatchE10AttributesVs10SetAlgebraACMc` | 3 | macwhisper, supacode, voiceink |
-| libswiftDispatch.dylib | `_$sSo24OS_dispatch_queue_serialC8DispatchE5label3qos10attributes20autoreleaseFrequency6targetABSS_AC0E3QoSVAbCE10AttributesVSo0a1_b1_C0CACE011AutoreleaseJ0OANSgtcfC` | 3 | macwhisper, supacode, voiceink |
-| libswiftDispatch.dylib | `_$sSo33OS_dispatch_queue_serial_executorC8DispatchE23asUnownedSerialExecutorSceyF` | 3 | macwhisper, supacode, voiceink |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder011AlternationB0V15buildExpressionyxx17_StringProcessing0A9ComponentRzlFZ` | 3 | bettertouchtool, easydict, sfm |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder011AlternationB0V17buildPartialBlock5firstAA8ChoiceOfVy0A6OutputQzGx_t17_StringProcessing0A9ComponentRzlFZ` | 3 | bettertouchtool, easydict, sfm |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder8ChoiceOfVMn` | 3 | bettertouchtool, easydict, sfm |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder8ChoiceOfVyACyxG17_StringProcessing0A0VyxGcfC` | 3 | bettertouchtool, easydict, sfm |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder8ChoiceOfVyACyxGADyXEcfC` | 3 | bettertouchtool, easydict, sfm |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder8ChoiceOfVyxG17_StringProcessing0A9ComponentAAMc` | 3 | bettertouchtool, easydict, sfm |
-| libswiftSynchronization.dylib | `_$s15Synchronization5MutexVMa` | 3 | coteditor, openclaw, thaw |
+| Translation.framework | `_$s11Translation0A7SessionC07prepareA0yyYaKFTjTu` | 3 | macwhisper, markedit, orion |
+| Translation.framework | `_$s11Translation0A7SessionC8ResponseV10targetTextSSvg` | 3 | macwhisper, markedit, orion |
+| Translation.framework | `_$s11Translation0A7SessionC8ResponseVMa` | 3 | macwhisper, markedit, orion |
+| Translation.framework | `_$s11Translation0A7SessionCMa` | 3 | macwhisper, markedit, orion |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorV10_duplicate2as16retryOnInterrupts6ResultOyAcA5ErrnoVGACSg_SbtKF` | 3 | homebrew-app, macpacker, thaw |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorV5_pipes6ResultOyAC7readEnd_AC05writeG0tAA5ErrnoVGyFZ` | 3 | homebrew-app, macpacker, thaw |
 | libswiftSystem.dylib | `_$s6System8FilePathV10isAbsoluteSbvg` | 3 | homebrew-app, openclaw, thaw |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV21accumulateAlternationyAA0C0VyxGq__q0_tAA0C9ComponentR_AaHR0_r1_lF` | 3 | bettertouchtool, easydict, sfm |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing14AnyRegexOutputVMa` | 3 | bettertouchtool, markedit, openclaw |
-| libswift_StringProcessing.dylib | `_$sSl17_StringProcessingSQ7ElementRpzrlE5split9separator9maxSplits25omittingEmptySubsequencesSay11SubSequenceQzGqd___SiSbtSlRd__ABQyd__ACRSlF` | 3 | bartender, codexbar, coteditor |
-| libswift_StringProcessing.dylib | `_$sSl17_StringProcessingSQ7ElementRpzrlE8containsySbqd__SlRd__ABQyd__ACRSlF` | 3 | macwhisper, superwhisper, xcodes-app |
-| libswift_StringProcessing.dylib | `_$sSm17_StringProcessingSQ7ElementRpzrlE7replace_4with15maxReplacementsyqd___qd_0_SitSlRd__SlRd_0_ABQyd__ACRSABQyd_0_AGRSr0_lF` | 3 | chatgpt, coteditor, superwhisper |
-| libswift_StringProcessing.dylib | `_$sSm17_StringProcessingSs11SubSequenceRtzrlE7replace_4with15maxReplacementsyqd_0__qd__SitSlRd__AA14RegexComponentRd_0_SJ7ElementRtd__r0_lF` | 3 | coteditor, easydict, squirrel-app |
-| libswiftos.dylib | `_$sSo9OS_os_logC0B0E8CategoryV16pointsOfInterestAEvgZ` | 3 | fluidvoice, opensuperwhisper, superwhisper |
 | SwiftData.framework | `_$s9SwiftData10ModelActorMp` | 2 | bartender, voiceink |
 | SwiftData.framework | `_$s9SwiftData10ModelActorP13modelExecutorAA0cF0_pvgTq` | 2 | bartender, voiceink |
 | SwiftData.framework | `_$s9SwiftData10ModelActorP14modelContainerAA0cF0CvgTq` | 2 | bartender, voiceink |
@@ -225,11 +99,21 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftData.framework | `_$s9SwiftData6SchemaC7VersionVyAESi_S2itcfC` | 2 | bartender, voiceink |
 | SwiftData.framework | `_$s9SwiftData6SchemaCMa` | 2 | bartender, voiceink |
 | SwiftData.framework | `_$s9SwiftData6SchemaC_7versionACSayAA15PersistentModel_pXpG_AC7VersionVtcfc` | 2 | bartender, voiceink |
-| Translation.framework | `_$s11Translation0A7SessionC07prepareA0yyYaKFTjTu` | 2 | macwhisper, markedit |
-| Translation.framework | `_$s11Translation0A7SessionC8ResponseV10targetTextSSvg` | 2 | macwhisper, markedit |
-| Translation.framework | `_$s11Translation0A7SessionC8ResponseVMa` | 2 | macwhisper, markedit |
+| Translation.framework | `_$s11Translation0A5ErrorV18nothingToTranslateACvgZ` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation0A5ErrorV2teoiySbAC_s0B0_ptFZ` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation0A5ErrorVMa` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation0A5ErrorVs0B0AAMc` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation0A7SessionC7RequestV10sourceText16clientIdentifierAESS_SSSgtcfC` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation0A7SessionC7RequestVMa` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation0A7SessionC7RequestVMn` | 2 | macwhisper, orion |
 | Translation.framework | `_$s11Translation0A7SessionC9translateyAC8ResponseVSSYaKFTjTu` | 2 | macwhisper, markedit |
-| Translation.framework | `_$s11Translation0A7SessionCMa` | 2 | macwhisper, markedit |
+| Translation.framework | `_$s11Translation20LanguageAvailabilityC18supportedLanguagesSay10Foundation6LocaleV0B0VGvgTjTu` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation20LanguageAvailabilityC6StatusO9installedyA2EmFWC` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation20LanguageAvailabilityC6StatusOMa` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation20LanguageAvailabilityC6StatusOSQAAMc` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation20LanguageAvailabilityC6status4from2toAC6StatusO10Foundation6LocaleV0B0V_AMSgtYaFTjTu` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation20LanguageAvailabilityCACycfc` | 2 | macwhisper, orion |
+| Translation.framework | `_$s11Translation20LanguageAvailabilityCMa` | 2 | macwhisper, orion |
 | WeatherKit.framework | `_$s10WeatherKit03DayA0V14lowTemperature10Foundation11MeasurementVySo06NSUnitE0CGvg` | 2 | bartender, raycast |
 | WeatherKit.framework | `_$s10WeatherKit03DayA0V15highTemperature10Foundation11MeasurementVySo06NSUnitE0CGvg` | 2 | bartender, raycast |
 | WeatherKit.framework | `_$s10WeatherKit03DayA0V3sunAA9SunEventsVvg` | 2 | bartender, raycast |
@@ -262,53 +146,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | _AVKit_SwiftUI.framework | `_$s14_AVKit_SwiftUI11VideoPlayerVAA0bC09EmptyViewVRszrlE6playerACyAFGSo8AVPlayerCSg_tcfC` | 2 | openclaw, proxyman |
 | _AVKit_SwiftUI.framework | `_$s14_AVKit_SwiftUI11VideoPlayerVMn` | 2 | openclaw, proxyman |
 | _AppIntents_AppKit.framework | `_$s10AppIntents21DisplayRepresentationV5ImageV01_ab1_A3KitE10systemName9tintColor19symbolConfigurationAESgSS_So7NSColorCSgSo013NSImageSymbolL0CSgtcfC` | 2 | bartender, tailscale-app |
-| libSystem.B.dylib | `__dispatch_main_queue_callback_4CF` | 2 | cloudflare-warp, telegram-desktop |
-| libobjc.A.dylib | `_protocol_addMethodDescription` | 2 | bitwarden, orbstack |
-| libobjc.A.dylib | `_protocol_copyPropertyList` | 2 | easydict, teamviewer |
-| libswiftCore.dylib | `_$sSs17UnicodeScalarViewVMn` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$s8Dispatch0A12TimeIntervalOMa` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$s8Dispatch0A13WorkItemFlagsVMa` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$s8Dispatch0A13WorkItemFlagsVMn` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$s8Dispatch0A13WorkItemFlagsVs10SetAlgebraAAMc` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$s8Dispatch0A3QoSVMa` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$s8Dispatch0A4TimeVMa` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$s8Dispatch1poiyAA0A4TimeVAD_SdtF` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo17OS_dispatch_groupC8DispatchE4waityyF` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo17OS_dispatch_queueC8DispatchE10AttributesVMa` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo17OS_dispatch_queueC8DispatchE10AttributesVMn` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo17OS_dispatch_queueC8DispatchE10AttributesVs10SetAlgebraACMc` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo17OS_dispatch_queueC8DispatchE20AutoreleaseFrequencyOMa` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo17OS_dispatch_queueC8DispatchE4mainABvgZ` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo17OS_dispatch_queueC8DispatchE5async5group3qos5flags7executeySo0a1_b1_F0CSg_AC0D3QoSVAC0D13WorkItemFlagsVyyXBtF` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE10TimerFlagsVMa` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE10TimerFlagsVMn` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE10TimerFlagsVs10SetAlgebraACMc` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceP8DispatchE15setEventHandler3qos5flags7handleryAC0D3QoSV_AC0D13WorkItemFlagsVyyXBSgtF` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceP8DispatchE6cancelyyF` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceP8DispatchE6resumeyyF` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo21OS_dispatch_semaphoreC8DispatchE4wait7timeoutAC0D13TimeoutResultOAC0D4TimeV_tF` | 2 | opensuperwhisper, vorssaint |
-| libswiftDispatch.dylib | `_$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF` | 2 | opensuperwhisper, vorssaint |
-| libswiftObservation.dylib | `_$s11Observation12ObservationsV17makeAsyncIteratorAC0E0Vyxq__GyF` | 2 | coteditor, thaw |
-| libswiftObservation.dylib | `_$s11Observation12ObservationsV8IteratorV4next9isolationxSgScA_pSgYi_tYaq_YKF` | 2 | coteditor, thaw |
-| libswiftObservation.dylib | `_$s11Observation12ObservationsV8IteratorV4next9isolationxSgScA_pSgYi_tYaq_YKFTu` | 2 | coteditor, thaw |
-| libswiftObservation.dylib | `_$s11Observation12ObservationsV8IteratorVMn` | 2 | coteditor, thaw |
-| libswiftObservation.dylib | `_$s11Observation12ObservationsVMn` | 2 | coteditor, thaw |
-| libswiftObservation.dylib | `_$s11Observation12ObservationsVyACyxq_GxyYbq_YKYAccfC` | 2 | coteditor, thaw |
-| libswiftObservation.dylib | `_$s11Observation12ObservationsVyxq_GSciAAMc` | 2 | coteditor, thaw |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder3OneVMn` | 2 | easydict, sfm |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder3OneVyACyxGqd__c0A6OutputQyd__Rsz17_StringProcessing0A9ComponentRd__lufC` | 2 | easydict, sfm |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder3OneVyxG17_StringProcessing0A9ComponentAAMc` | 2 | easydict, sfm |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder6AnchorV11startOfLineACvgZ` | 2 | bettertouchtool, easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder6AnchorV17_StringProcessing0A9ComponentAAMc` | 2 | bettertouchtool, easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder6AnchorVMa` | 2 | bettertouchtool, easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder6RepeatVMn` | 2 | easydict, raycast |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder6RepeatVyACyxG17_StringProcessing0A0VyxGcfC` | 2 | easydict, raycast |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder6RepeatVyxG17_StringProcessing0A9ComponentAAMc` | 2 | easydict, raycast |
-| libswiftRegexBuilder.dylib | `_$s17_StringProcessing14RegexComponentP0C7BuilderAD14CharacterClassVRszrlE10whitespaceAFvgZ` | 2 | easydict, sfm |
-| libswiftRegexBuilder.dylib | `_$s17_StringProcessing14RegexComponentP0C7BuilderAD14CharacterClassVRszrlE4wordAFvgZ` | 2 | easydict, sfm |
-| libswiftRegexBuilder.dylib | `_$s17_StringProcessing14RegexComponentP0C7BuilderAD14CharacterClassVRszrlE5digitAFvgZ` | 2 | easydict, raycast |
-| libswiftSynchronization.dylib | `_$s15Synchronization5_CellVMa` | 2 | openclaw, thaw |
+| libobjc.A.dylib | `_OBJC_CLASS_$_Protocol` | 2 | crossover, dropbox |
+| libobjc.A.dylib | `_class_getVersion` | 2 | crossover, dropbox |
+| libobjc.A.dylib | `_class_setVersion` | 2 | crossover, dropbox |
 | libswiftSystem.dylib | `_$s6System8FilePathV14platformStringACSPys4Int8VG_tcfC` | 2 | easydict, orbstack |
+| libswiftSystem.dylib | `_$s6System8FilePathV9ComponentV6stringSSvg` | 2 | chatgpt, nordvpn |
+| libswiftSystem.dylib | `_$s6System8FilePathV9ComponentVMa` | 2 | chatgpt, nordvpn |
+| libswiftSystem.dylib | `_$s6System8FilePathV9ComponentVMn` | 2 | chatgpt, nordvpn |
 | libswiftXPC.dylib | `_$s3XPC0A16_TYPE_CONNECTIONs13OpaquePointerVvg` | 2 | cloudflare-warp, orbstack |
 | libswiftXPC.dylib | `_$s3XPC10XPCSessionC10xpcService11targetQueue7options19cancellationHandlerACSS_So17OS_dispatch_queueCSgAC21InitializationOptionsVyAA12XPCRichErrorVcSgtKcfC` | 2 | bartender, thaw |
 | libswiftXPC.dylib | `_$s3XPC10XPCSessionC21InitializationOptionsV8inactiveAEvgZ` | 2 | bartender, thaw |
@@ -331,18 +175,31 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftXPC.dylib | `_$s3XPC18XPCPeerRequirementVMa` | 2 | bartender, thaw |
 | libswiftXPC.dylib | `_$s3XPC18XPCReceivedMessageV6decode2asxxm_tKSeRzlF` | 2 | bartender, thaw |
 | libswiftXPC.dylib | `_$s3XPC18XPCReceivedMessageVMn` | 2 | bartender, thaw |
-| libswift_Concurrency.dylib | `_$sScA15unownedExecutorScevgTj` | 2 | opensuperwhisper, vorssaint |
-| libswift_Concurrency.dylib | `_$sScP8rawValues5UInt8Vvg` | 2 | opensuperwhisper, vorssaint |
-| libswift_Concurrency.dylib | `_$sScPMa` | 2 | opensuperwhisper, vorssaint |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing14AnyRegexOutputV7ElementVMa` | 2 | bettertouchtool, openclaw |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV10wholeMatch2inAC0E0Vyx_GSgSS_tKF` | 2 | coteditor, squirrel-app |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV5MatchV13dynamicMemberxs7KeyPathCyx_yt9_doNotUsetxG_tcig` | 2 | easydict, sfm |
-| libswift_StringProcessing.dylib | `_$sSK17_StringProcessingSs11SubSequenceRtzrlE10firstRange2ofSnySS5IndexVGSgqd___tAA14RegexComponentRd__lF` | 2 | coteditor, supacode |
-| libswift_StringProcessing.dylib | `_$sSK17_StringProcessingSs11SubSequenceRtzrlE6ranges2ofSaySnySS5IndexVGGqd___tAA14RegexComponentRd__lF` | 2 | bettertouchtool, squirrel-app |
-| libswift_StringProcessing.dylib | `_$sSm17_StringProcessingSs11SubSequenceRtzrlE7replace_15maxReplacements4withyqd_1__Siqd_0_AA5RegexV5MatchVyqd___GKXEtK0I6OutputQyd_1_Rsd__SlRd_0_AA0I9ComponentRd_1_SJ7ElementRtd_0_r1_lF` | 2 | bettertouchtool, easydict |
-| libswiftos.dylib | `_$s2os12OSSignpostIDV3log6objectACSo03OS_a1_D0C_yXltcfC` | 2 | bartender, raycast |
-| libswiftos.dylib | `_$s2os12OSSignpostIDV7invalidACvgZ` | 2 | bettertouchtool, utm |
-| libswiftos.dylib | `_$sSo9OS_os_logC0B0E8disabledABvgZ` | 2 | chatgpt, clipy |
+| CocoaUI.framework | `_$s7CocoaUI15CUIPresenceViewC10dataSourceAA0cd4DataF0_pSgvs` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI15CUIPresenceViewC28userInterfaceLayoutDirectionSo06NSUserfgH0Vvs` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI15CUIPresenceViewCMa` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI15CUIPresenceViewCMn` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI18AnyViewObjCWrapperC4viewAC05SwiftB00cD0V_tcfc` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI18AnyViewObjCWrapperCMa` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI19OverlayHostGeometryC12contentFrame2inSo6CGRectVSgSo8NSWindowCSg_tF` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI19OverlayHostGeometryC18hasMeasuredContentSbvg` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI19OverlayHostGeometryC20contentFrameInGlobalSo6CGRectVSgvg` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI19OverlayHostGeometryC23setMeasurementRequestedyySbF` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI19OverlayHostGeometryCMa` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI19OverlayHostGeometryCMn` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI25DocumentShellFocusElementC4viewACSo6NSViewC_tcfc` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI25DocumentShellFocusElementCMa` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI28TitleBarBackgroundPreferenceOMn` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI28TitleBarBackgroundPreferenceON` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI28TitleBarBackgroundPreferenceOSHAAMc` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI28TitleBarBackgroundPreferenceOSQAAMc` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI29KeyboardNavigationFocusBridgeC11hostingView15excludedSubtreeACSo6NSViewC_AGSgtcfc` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI29KeyboardNavigationFocusBridgeC5startyyF` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI29KeyboardNavigationFocusBridgeCMa` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI29KeyboardNavigationFocusBridgeCMn` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI35TitleBarBackgroundPreferenceManagerC18aluminumThemeLabelSSvau` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI35TitleBarBackgroundPreferenceManagerC18colorfulThemeLabelSSvau` | 1 | microsoft-office |
+| CocoaUI.framework | `_$s7CocoaUI35TitleBarBackgroundPreferenceManagerC21themeChangeAlertLabelSSvau` | 1 | microsoft-office |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA5PointV10IdentifierVMa` | 1 | fuse-t |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA5PointV10IdentifierVyAEs12StaticStringVcfC` | 1 | fuse-t |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA5PointV10identifierACs12StaticStringV_tKcfC` | 1 | fuse-t |
@@ -369,6 +226,37 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA8IdentityVMa` | 1 | cmux |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA8IdentityVMn` | 1 | cmux |
 | ExtensionFoundation.framework | `_$s19ExtensionFoundation03AppA8IdentityVSQAAMc` | 1 | cmux |
+| FluentUI.framework | `_$s8FluentUI0A5ThemeC10ColorTokenOMn` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI0A5ThemeC12swiftUIColory05SwiftB05ColorVAC0G5TokenOF` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI0A5ThemeC15TypographyTokenOMn` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI0A5ThemeC6sharedACvgZ` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI0A5ThemeCACycfC` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI0A5ThemeCMa` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI0A5ThemeCMn` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI10ShadowInfoC11ambientBlur12CoreGraphics7CGFloatVvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI10ShadowInfoC12ambientColor05SwiftB00F0Vvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI10ShadowInfoC4xKey12CoreGraphics7CGFloatVvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI10ShadowInfoC4yKey12CoreGraphics7CGFloatVvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI10ShadowInfoC7keyBlur12CoreGraphics7CGFloatVvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI10ShadowInfoC8keyColor05SwiftB00F0Vvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI10ShadowInfoC8xAmbient12CoreGraphics7CGFloatVvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI10ShadowInfoC8yAmbient12CoreGraphics7CGFloatVvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI10ShadowInfoCMn` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI12GlobalTokensC12SpacingTokenOMn` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI12GlobalTokensC16StrokeWidthTokenOMn` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI12GlobalTokensC17CornerRadiusTokenOMn` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI12GlobalTokensC18sharedSwiftUIColory0fB05ColorVAC06SharedH3SetO_AC0iH5TokenOtFZ` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI12GlobalTokensC19neutralSwiftUIColory0fB05ColorVAC07NeutralH5TokenOFZ` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI12GlobalTokensC4icony12CoreGraphics7CGFloatVAC13IconSizeTokenOFZ` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI12GlobalTokensC6cornery12CoreGraphics7CGFloatVAC17CornerRadiusTokenOFZ` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI12GlobalTokensC6strokey12CoreGraphics7CGFloatVAC16StrokeWidthTokenOFZ` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI12GlobalTokensC7spacingy12CoreGraphics7CGFloatVAC12SpacingTokenOFZ` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI12GlobalTokensCMa` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI8FontInfoC4nameSSSgvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI8FontInfoC4size12CoreGraphics7CGFloatVvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$s8FluentUI8FontInfoC6weight05SwiftB00C0V6WeightVvg` | 1 | microsoft-office |
+| FluentUI.framework | `_$sSo7NSColorC8FluentUIE5light4darkA2B_ABSgtcfC` | 1 | microsoft-office |
+| FluentUI.framework | `_$sSo7NSColorC8FluentUIE8hexValueABs6UInt32V_tcfC` | 1 | microsoft-office |
 | FoundationModels.framework | `_$s16FoundationModels17GenerationOptionsV12SamplingModeV6greedyAEvgZ` | 1 | markedit |
 | FoundationModels.framework | `_$s16FoundationModels17GenerationOptionsV12SamplingModeV6random20probabilityThreshold4seedAESd_s6UInt64VSgtFZ` | 1 | markedit |
 | FoundationModels.framework | `_$s16FoundationModels17GenerationOptionsV12SamplingModeV6random3top4seedAESi_s6UInt64VSgtFZ` | 1 | markedit |
@@ -455,9 +343,36 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | SwiftData.framework | `_$s9SwiftData6SchemaC9AttributeCMa` | 1 | voiceink |
 | SwiftData.framework | `_$s9SwiftData6SchemaC9AttributeC_12originalName12hashModifierA2E6OptionVd_SSSgAJtcfc` | 1 | voiceink |
 | SwiftData.framework | `_$sSayxG9SwiftData22RelationshipCollectionA2B15PersistentModelRzlMc` | 1 | maccy |
+| TabularData.framework | `_$s11TabularData0B5FrameV03csvB07columns4rows5types7optionsAC10Foundation0B0V_SaySSGSgSnySiGSgSDySSAA7CSVTypeOGAA17CSVReadingOptionsVtKcfC` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV13indexOfColumnySiSgSSF` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV17contentsOfCSVFile7columns4rows5types7optionsAC10Foundation3URLV_SaySSGSgSnySiGSgSDySSAA7CSVTypeOGAA17CSVReadingOptionsVtKcfC` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV3RowVMa` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV3RowVyxSgAA8ColumnIDVyxGcluig` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV3RowVyxSgSS_xmtcluig` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV4RowsVMa` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV4RowsVMn` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV4RowsVSTAAMc` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV4RowsVSlAAMc` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV4rowsAC4RowsVvg` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameV7columnsSayAA9AnyColumnVGvg` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameVMa` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData0B5FrameVMn` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData17CSVReadingOptionsV12hasHeaderRow12nilEncodings04trueI005falseI017floatingPointType17ignoresEmptyLines11usesQuoting0R8Escaping9delimiter15escapeCharacterACSb_ShySSGA2nA7CSVTypeOS3bS2JtcfC` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData17CSVReadingOptionsVMa` | 1 | sf-symbols |
 | TabularData.framework | `_$s11TabularData6ColumnV010eraseToAnyC0AA0fC0VyF` | 1 | tableplus |
 | TabularData.framework | `_$s11TabularData6ColumnV4name8contentsACyxGSS_qd__tcSTRd__xSg7ElementRtd__lufC` | 1 | tableplus |
 | TabularData.framework | `_$s11TabularData6ColumnVMa` | 1 | tableplus |
+| TabularData.framework | `_$s11TabularData7CSVTypeO6doubleyA2CmFWC` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData7CSVTypeO6stringyA2CmFWC` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData7CSVTypeO7booleanyA2CmFWC` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData7CSVTypeO7integeryA2CmFWC` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData7CSVTypeOMa` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData7CSVTypeOMn` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData8ColumnIDV4nameSSvg` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData8ColumnIDVMn` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData8ColumnIDVyACyxGSS_xmtcfC` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData9AnyColumnV18wrappedElementTypeypXpvg` | 1 | sf-symbols |
+| TabularData.framework | `_$s11TabularData9AnyColumnVMa` | 1 | sf-symbols |
 | TipKit.framework | `_$s6TipKit03AnyA0VMn` | 1 | macwhisper |
 | TipKit.framework | `_$s6TipKit0A0Mp` | 1 | macwhisper |
 | TipKit.framework | `_$s6TipKit0A0P2idSSvgTq` | 1 | macwhisper |
@@ -480,14 +395,15 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | TipKit.framework | `_$s6TipKit4TipsO18InvalidationReasonOMa` | 1 | macwhisper |
 | TipKit.framework | `_$s6TipKit4TipsO9configureyySayAC19ConfigurationOptionVGKFZ` | 1 | macwhisper |
 | Translation.framework | `_$s11Translation0A5ErrorV08internalB0ACvgZ` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation0A5ErrorV18nothingToTranslateACvgZ` | 1 | macwhisper |
 | Translation.framework | `_$s11Translation0A5ErrorV25unsupportedSourceLanguageACvgZ` | 1 | macwhisper |
 | Translation.framework | `_$s11Translation0A5ErrorV25unsupportedTargetLanguageACvgZ` | 1 | macwhisper |
 | Translation.framework | `_$s11Translation0A5ErrorV26unsupportedLanguagePairingACvgZ` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation0A5ErrorV2teoiySbAC_s0B0_ptFZ` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation0A5ErrorVMa` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation0A5ErrorVs0B0AAMc` | 1 | macwhisper |
+| Translation.framework | `_$s11Translation0A5ErrorVMn` | 1 | orion |
 | Translation.framework | `_$s11Translation0A7SessionC12translations4fromSayAC8ResponseVGSayAC7RequestVG_tYaKFTjTu` | 1 | macwhisper |
+| Translation.framework | `_$s11Translation0A7SessionC13BatchResponseV13AsyncIteratorVMa` | 1 | orion |
+| Translation.framework | `_$s11Translation0A7SessionC13BatchResponseV13AsyncIteratorVScIAAMc` | 1 | orion |
+| Translation.framework | `_$s11Translation0A7SessionC13BatchResponseV17makeAsyncIteratorAE0fG0VyF` | 1 | orion |
+| Translation.framework | `_$s11Translation0A7SessionC13BatchResponseVMa` | 1 | orion |
 | Translation.framework | `_$s11Translation0A7SessionC13ConfigurationV10invalidateyyF` | 1 | macwhisper |
 | Translation.framework | `_$s11Translation0A7SessionC13ConfigurationV6source10Foundation6LocaleV8LanguageVSgvg` | 1 | macwhisper |
 | Translation.framework | `_$s11Translation0A7SessionC13ConfigurationV6source6targetAE10Foundation6LocaleV8LanguageVSg_AMtcfC` | 1 | macwhisper |
@@ -496,17 +412,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Translation.framework | `_$s11Translation0A7SessionC13ConfigurationVMn` | 1 | macwhisper |
 | Translation.framework | `_$s11Translation0A7SessionC14targetLanguage10Foundation6LocaleV0D0VSgvg` | 1 | macwhisper |
 | Translation.framework | `_$s11Translation0A7SessionC15installedSource6targetAC10Foundation6LocaleV8LanguageV_AJSgtcfC` | 1 | markedit |
-| Translation.framework | `_$s11Translation0A7SessionC7RequestV10sourceText16clientIdentifierAESS_SSSgtcfC` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation0A7SessionC7RequestVMa` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation0A7SessionC7RequestVMn` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation20LanguageAvailabilityC18supportedLanguagesSay10Foundation6LocaleV0B0VGvgTjTu` | 1 | macwhisper |
+| Translation.framework | `_$s11Translation0A7SessionC8ResponseV16clientIdentifierSSSgvg` | 1 | orion |
+| Translation.framework | `_$s11Translation0A7SessionC8ResponseVMn` | 1 | orion |
+| Translation.framework | `_$s11Translation0A7SessionC9translate5batchAC13BatchResponseVSayAC7RequestVG_tFTj` | 1 | orion |
+| Translation.framework | `_$s11Translation0A7SessionCMn` | 1 | orion |
 | Translation.framework | `_$s11Translation20LanguageAvailabilityC6StatusO11unsupportedyA2EmFWC` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation20LanguageAvailabilityC6StatusO9installedyA2EmFWC` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation20LanguageAvailabilityC6StatusOMa` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation20LanguageAvailabilityC6StatusOSQAAMc` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation20LanguageAvailabilityC6status4from2toAC6StatusO10Foundation6LocaleV0B0V_AMSgtYaFTjTu` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation20LanguageAvailabilityCACycfc` | 1 | macwhisper |
-| Translation.framework | `_$s11Translation20LanguageAvailabilityCMa` | 1 | macwhisper |
+| Translation.framework | `_$s11Translation20LanguageAvailabilityC6StatusO2eeoiySbAE_AEtFZ` | 1 | orion |
+| Translation.framework | `_$s11Translation20LanguageAvailabilityC6StatusO9supportedyA2EmFWC` | 1 | orion |
 | WeatherKit.framework | `_$s10WeatherKit03DayA0V10symbolNameSSvg` | 1 | bartender |
 | WeatherKit.framework | `_$s10WeatherKit03DayA0V14rainfallAmount10Foundation11MeasurementVySo12NSUnitLengthCGvg` | 1 | raycast |
 | WeatherKit.framework | `_$s10WeatherKit03DayA0V14snowfallAmount10Foundation11MeasurementVySo12NSUnitLengthCGvg` | 1 | raycast |
@@ -613,119 +525,44 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | _SwiftData_SwiftUI.framework | `_$s011_SwiftData_A2UI5QueryVMa` | 1 | voiceink |
 | _SwiftData_SwiftUI.framework | `_$s011_SwiftData_A2UI5QueryVMn` | 1 | voiceink |
 | _SwiftData_SwiftUI.framework | `_$s011_SwiftData_A2UI5QueryV_11transactionACyxSayxGG0aB015FetchDescriptorVyxG_0aC011TransactionVSgtcAERs_rlufC` | 1 | voiceink |
-| libSystem.B.dylib | `__dispatch_get_main_queue_port_4CF` | 1 | cloudflare-warp |
-| libSystem.B.dylib | `_dispatch_source_get_extended_data` | 1 | microsoft-teams |
-| libobjc.A.dylib | `_objc_collectingEnabled` | 1 | android-file-transfer |
-| libobjc.A.dylib | `_objc_registerThreadWithCollector` | 1 | android-file-transfer |
+| libobjc.A.dylib | `__class_setCustomDeallocInitiation` | 1 | orion |
+| libobjc.A.dylib | `__objc_deallocOnMainThreadHelper` | 1 | orion |
+| libobjc.A.dylib | `__protocol_getMethodTypeEncoding` | 1 | orion |
 | libswiftCompression.dylib | `_$s11Compression11InputFilterC8readData8ofLength10Foundation0E0VSgSi_tKFTj` | 1 | bartender |
 | libswiftCompression.dylib | `_$s11Compression11InputFilterCMn` | 1 | bartender |
 | libswiftCompression.dylib | `_$s11Compression11InputFilterC_5using14bufferCapacity11readingFromACyxGAA0C9OperationO_AA9AlgorithmOSixSgSiKctKcfc` | 1 | bartender |
 | libswiftCompression.dylib | `_$s11Compression9AlgorithmO8rawValueACSgSo21compression_algorithma_tcfC` | 1 | bartender |
 | libswiftCompression.dylib | `_$s11Compression9AlgorithmOMn` | 1 | bartender |
 | libswiftCompression.dylib | `_$s11Compression9AlgorithmOSQAAMc` | 1 | bartender |
-| libswiftCore.dylib | `_$sSNyxGSksSxRzSZ6StrideRpzrlMc` | 1 | vorssaint |
-| libswiftCore.dylib | `_$sSR7indicesSnySiGvg` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$sSR8endIndexSivg` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$sSS8IteratorVMn` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$sSSs26ExpressibleByStringLiteralsWP` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$sSdSxsWP` | 1 | vorssaint |
-| libswiftCore.dylib | `_$sSf5write2toyxz_ts16TextOutputStreamRzlF` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$sSh7isEmptySbvpMV` | 1 | vorssaint |
-| libswiftCore.dylib | `_$sSlsE5countSivpMV` | 1 | vorssaint |
-| libswiftCore.dylib | `_$sSm17_customRemoveLast7ElementQzSgyFTj` | 1 | vorssaint |
-| libswiftCore.dylib | `_$ss10SetAlgebraP16formIntersectionyyxFTj` | 1 | vorssaint |
-| libswiftCore.dylib | `_$ss10SetAlgebraP19symmetricDifferenceyxxnFTj` | 1 | vorssaint |
-| libswiftCore.dylib | `_$ss10SetAlgebraP7isEmptySbvgTj` | 1 | vorssaint |
-| libswiftCore.dylib | `_$ss10SetAlgebraP8isSubset2ofSbx_tFTj` | 1 | vorssaint |
-| libswiftCore.dylib | `_$ss10SetAlgebraP8subtractyyxFTj` | 1 | vorssaint |
-| libswiftCore.dylib | `_$ss12_IteratorBoxCMn` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss14PrefixSequenceV12makeIteratorAB0D0Vyx_GyF` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss14PrefixSequenceV8IteratorV4next7ElementQzSgyF` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss14PrefixSequenceV8IteratorVMa` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss14PrefixSequenceVMa` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss18ReversedCollectionVyxGSksSkRzrlMc` | 1 | vorssaint |
-| libswiftCore.dylib | `_$ss21_ClosureBasedIteratorVMn` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss24UnkeyedDecodingContainerP6decodeyS2umKFTj` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss24UnkeyedEncodingContainerP6encodeyySuKFTj` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss28SingleValueDecodingContainerP6decodeyS2fmKFTj` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss28SingleValueEncodingContainerP6encodeyySfKFTj` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss7Float16VMn` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss7Float16VN` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss7UnicodeO15GeneralCategoryO10privateUseyA2DmFWC` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss7UnicodeO15GeneralCategoryO10unassignedyA2DmFWC` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss7UnicodeO15GeneralCategoryO9surrogateyA2DmFWC` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss7UnicodeO6ScalarV10PropertiesV12isAlphabeticSbvg` | 1 | vorssaint |
-| libswiftCore.dylib | `_$ss7UnicodeO6ScalarV10PropertiesV15isEmojiModifierSbvg` | 1 | vorssaint |
-| libswiftCore.dylib | `_$ss7UnicodeO6ScalarV10PropertiesV19isEmojiModifierBaseSbvg` | 1 | vorssaint |
-| libswiftCore.dylib | `_$ss8DurationV2peoiyyABz_ABtFZ` | 1 | opensuperwhisper |
-| libswiftCore.dylib | `_$ss8RepeatedVyxGSKsMc` | 1 | opensuperwhisper |
 | libswiftDarwin.dylib | `_$s6Darwin10SEM_FAILEDSpys5Int32VGSgvg` | 1 | orbstack |
 | libswiftDarwin.dylib | `_$s6Darwin14POSIXErrorCodeO5ELASTACvgZ` | 1 | protonvpn |
 | libswiftDarwin.dylib | `_$s6Darwin8sem_openySpys5Int32VGSgSPys4Int8VG_ADs6UInt16Vs6UInt32VtF` | 1 | orbstack |
 | libswiftDarwin.dylib | `_$s6Darwin8sem_openySpys5Int32VGSgSPys4Int8VG_ADtF` | 1 | orbstack |
-| libswiftDispatch.dylib | `_$s8Dispatch0A12TimeIntervalO12millisecondsyACSicACmFWC` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$s8Dispatch0A4DataV9copyBytes2to4fromSiSryxG_SnySiGSgtlF` | 1 | xcodes-app |
-| libswiftDispatch.dylib | `_$s8Dispatch1poiyAA0A4TimeVAD_AA0aB8IntervalOtF` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo14OS_dispatch_ioC8DispatchE10StreamTypeO6randomyA2EmFWC` | 1 | cmux |
-| libswiftDispatch.dylib | `_$sSo17OS_dispatch_groupC8DispatchE4wait7timeoutAC0D13TimeoutResultOAC0D4TimeV_tF` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo17OS_dispatch_queueC8DispatchE3qosAC0D3QoSVvg` | 1 | opensuperwhisper |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventV6attribAEvgZ` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventV6deleteAEvgZ` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventV6extendAEvgZ` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventV6renameAEvgZ` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventV6revokeAEvgZ` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventVMn` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventVSQACMc` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventVSYACMc` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventVs10SetAlgebraACMc` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceC8DispatchE15FileSystemEventVs9OptionSetACMc` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo24OS_dispatch_source_timerP8DispatchE8schedule8deadline9repeating6leewayyAC0E4TimeV_AC0eJ8IntervalOAKtF` | 1 | vorssaint |
-| libswiftDispatch.dylib | `_$sSo24OS_dispatch_source_vnodeP8DispatchE4dataSo0a1_b1_C0CACE15FileSystemEventVvg` | 1 | vorssaint |
-| libswiftObservation.dylib | `_$s11Observation12ObservationsV8IteratorVyxq__GScIAAMc` | 1 | coteditor |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder10TryCaptureVMn` | 1 | raycast |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder10TryCaptureVyACyxG17_StringProcessing0A0VyxGcfC` | 1 | raycast |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder10TryCaptureVyxG17_StringProcessing0A9ComponentAAMc` | 1 | raycast |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder14CharacterClassVMn` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder17NegativeLookaheadVMn` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder17NegativeLookaheadVyACyxGqd__c0A6OutputQyd__Rsz17_StringProcessing0A9ComponentRd__lufC` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder17NegativeLookaheadVyACyxGqd__yXEc0A6OutputQyd__Rsz17_StringProcessing0A9ComponentRd__lufC` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder17NegativeLookaheadVyxG17_StringProcessing0A9ComponentAAMc` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder3zzzoiyAA14CharacterClassVSJ_SJtF` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder6AnchorV12endOfSubjectACvgZ` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder6AnchorV12wordBoundaryACvgZ` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder6AnchorV14startOfSubjectACvgZ` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder6AnchorV9endOfLineACvgZ` | 1 | bettertouchtool |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder9LookaheadVMn` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder9LookaheadVyACyxGqd__yXEc0A6OutputQyd__Rsz17_StringProcessing0A9ComponentRd__lufC` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder9LookaheadVyxG17_StringProcessing0A9ComponentAAMc` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder9ReferenceV4_rawSivg` | 1 | bettertouchtool |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder9ReferenceVMn` | 1 | bettertouchtool |
-| libswiftRegexBuilder.dylib | `_$s12RegexBuilder9ReferenceVyACyxGxmcfC` | 1 | bettertouchtool |
-| libswiftRegexBuilder.dylib | `_$s17_StringProcessing14RegexComponentP0C7BuilderAD14CharacterClassVRszrlE15newlineSequenceAFvgZ` | 1 | sfm |
-| libswiftRegexBuilder.dylib | `_$s17_StringProcessing14RegexComponentP0C7BuilderAD14CharacterClassVRszrlE20horizontalWhitespaceAFvgZ` | 1 | bettertouchtool |
-| libswiftRegexBuilder.dylib | `_$s17_StringProcessing14RegexComponentP0C7BuilderAD14CharacterClassVRszrlEyA2F_AFdtcfC` | 1 | easydict |
-| libswiftRegexBuilder.dylib | `_$s17_StringProcessing5RegexV5MatchV0C7BuilderEyqd__AF9ReferenceVyqd__Gcluig` | 1 | bettertouchtool |
-| libswiftRegexBuilder.dylib | `_$sSs17_StringProcessing14RegexComponent0C7BuilderMc` | 1 | easydict |
-| libswiftSynchronization.dylib | `_$s15Synchronization5_CellVMn` | 1 | coteditor |
+| libswiftDispatch.dylib | `_$s8Dispatch0A4DataVys5SliceVyACGSnySiGcig` | 1 | nordvpn |
+| libswiftDispatch.dylib | `_$sSo17OS_dispatch_queueC8DispatchE12asyncAndWait7executexxyKXE_tKlF` | 1 | microsoft-outlook |
+| libswiftDispatch.dylib | `_$sSo18OS_dispatch_sourceP8DispatchE16setCancelHandler7handleryAC0D8WorkItemC_tF` | 1 | nordvpn |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorV11OpenOptionsVMn` | 1 | whatsapp |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorV11OpenOptionsVN` | 1 | whatsapp |
 | libswiftSystem.dylib | `_$s6System14FileDescriptorV11OpenOptionsVs10SetAlgebraAAMc` | 1 | whatsapp |
 | libswiftSystem.dylib | `_$s6System15FilePermissionsVMn` | 1 | whatsapp |
 | libswiftSystem.dylib | `_$s6System15FilePermissionsVN` | 1 | whatsapp |
 | libswiftSystem.dylib | `_$s6System15FilePermissionsVs10SetAlgebraAAMc` | 1 | whatsapp |
+| libswiftSystem.dylib | `_$s6System8FilePathV10componentsAC13ComponentViewVvg` | 1 | nordvpn |
+| libswiftSystem.dylib | `_$s6System8FilePathV11descriptionSSvg` | 1 | github-copilot-for-xcode |
+| libswiftSystem.dylib | `_$s6System8FilePathV13ComponentViewV5IndexVMa` | 1 | nordvpn |
+| libswiftSystem.dylib | `_$s6System8FilePathV13ComponentViewVMa` | 1 | nordvpn |
+| libswiftSystem.dylib | `_$s6System8FilePathV13ComponentViewVSKAAMc` | 1 | nordvpn |
+| libswiftSystem.dylib | `_$s6System8FilePathV13ComponentViewVSlAAMc` | 1 | nordvpn |
 | libswiftSystem.dylib | `_$s6System8FilePathV13lastComponentAC0E0VSgvg` | 1 | chatgpt |
 | libswiftSystem.dylib | `_$s6System8FilePathV9ComponentV4KindO2eeoiySbAG_AGtFZ` | 1 | chatgpt |
 | libswiftSystem.dylib | `_$s6System8FilePathV9ComponentV4kindAE4KindOvg` | 1 | chatgpt |
-| libswiftSystem.dylib | `_$s6System8FilePathV9ComponentV6stringSSvg` | 1 | chatgpt |
 | libswiftSystem.dylib | `_$s6System8FilePathV9ComponentV9extensionSSSgvg` | 1 | chatgpt |
-| libswiftSystem.dylib | `_$s6System8FilePathV9ComponentVMa` | 1 | chatgpt |
-| libswiftSystem.dylib | `_$s6System8FilePathV9ComponentVMn` | 1 | chatgpt |
 | libswiftSystem.dylib | `_$s6System8FilePathV9ComponentVyAESgSScfC` | 1 | chatgpt |
+| libswiftSystem.dylib | `_$s6System8FilePathVACycfC` | 1 | nordvpn |
 | libswiftSystem.dylib | `_$s6System8FilePathVSEAAMc` | 1 | chatgpt |
 | libswiftSystem.dylib | `_$s6System8FilePathVSQAAMc` | 1 | openclaw |
 | libswiftSystem.dylib | `_$s6System8FilePathVSeAAMc` | 1 | chatgpt |
 | libswiftSystem.dylib | `_$s6System8FilePathVs23CustomStringConvertibleAAMc` | 1 | chatgpt |
-| libswiftSystem_Foundation.dylib | `_$s6System8FilePathV01_A11_FoundationEyACSg0D03URLVcfC` | 1 | chatgpt |
 | libswiftXPC.dylib | `_$s3XPC0A10_TYPE_DATEs13OpaquePointerVvg` | 1 | orbstack |
 | libswiftXPC.dylib | `_$s3XPC0A11_TYPE_SHMEMs13OpaquePointerVvg` | 1 | orbstack |
 | libswiftXPC.dylib | `_$s3XPC0A14_TYPE_ACTIVITYs13OpaquePointerVvg` | 1 | orbstack |
@@ -740,42 +577,70 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftXPC.dylib | `_$s3XPC11XPCListenerC22IncomingSessionRequestC8DecisionVMn` | 1 | bartender |
 | libswiftXPC.dylib | `_$s3XPC11XPCListenerC7service11targetQueue7options22incomingSessionHandlerACSS_So17OS_dispatch_queueCSgAC21InitializationOptionsVAC08IncomingH7RequestC8DecisionVANctKcfc` | 1 | thaw |
 | libswiftXPC.dylib | `_$s3XPC11XPCListenerC8activateyyKFTj` | 1 | bartender |
-| libswift_Concurrency.dylib | `_$sScs12ContinuationV11YieldResultO10terminatedyADyxq___GAFms5ErrorR_r0_lFWC` | 1 | opensuperwhisper |
-| libswift_Concurrency.dylib | `_$sScs12ContinuationV11YieldResultO7droppedyADyxq___GxcAFms5ErrorR_r0_lFWC` | 1 | opensuperwhisper |
-| libswift_Concurrency.dylib | `_$sScs12ContinuationV11YieldResultO8enqueuedyADyxq___GSi_tcAFms5ErrorR_r0_lFWC` | 1 | opensuperwhisper |
-| libswift_Concurrency.dylib | `_$sScs8IteratorVyxq__GScIsMc` | 1 | opensuperwhisper |
-| libswift_StringProcessing.dylib | `_$s11RegexOutput17_StringProcessing0A9ComponentPTl` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV15captureOptionalyAA0C0VyxGq1__SiSgq0_Sgq_KctAA0C9ComponentR1_r2_lF` | 1 | raycast |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV27ignoreCapturesInTypedOutputyAA0C0VySsGxAA0C9ComponentRzlF` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV7captureyAA0C0VyxGq__SitAA0C9ComponentR_r0_lF` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV7exactlyyAA0C0VyxGSi_q_tAA0C9ComponentR_r0_lF` | 1 | raycast |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing13_RegexFactoryV9repeatingyAA0C0VyxGSnySiG_AA0C18RepetitionBehaviorVSgq_tAA0C9ComponentR_r0_lF` | 1 | easydict |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing14AnyRegexOutputV7ElementV5rangeSnySS5IndexVGSgvg` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing14AnyRegexOutputV7ElementV9substringSsSgvg` | 1 | openclaw |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing14AnyRegexOutputVSlAAMc` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing14AnyRegexOutputVyAC7ElementVSicig` | 1 | openclaw |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing14RegexComponentMp` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing14RegexComponentP5regexAA0C0Vy0C6OutputQzGvgTq` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing18RegexSemanticLevelV13unicodeScalarACvgZ` | 1 | coteditor |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing18RegexSemanticLevelVMa` | 1 | coteditor |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing29CustomConsumingRegexComponentMp` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing29CustomConsumingRegexComponentP9consuming_10startingAt2inSS5IndexV10upperBound_0E6OutputQz6outputtSgSS_AHSnyAHGtKFTq` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing29CustomConsumingRegexComponentPAA0eF0Tb` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing29CustomConsumingRegexComponentPAAE5regexAA0E0Vy0E6OutputQzGvg` | 1 | bettertouchtool |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV10firstMatch2inAC0E0Vyx_GSgSS_tKF` | 1 | squirrel-app |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV17matchingSemanticsyACyxGAA0C13SemanticLevelVF` | 1 | coteditor |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV18dotMatchesNewlinesyACyxGSbF` | 1 | easydict |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV23anchorsMatchLineEndingsyACyxGSbF` | 1 | coteditor |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV5MatchV13dynamicMemberqd__s7KeyPathCyxqd__G_tcluipMV` | 1 | coteditor |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV5MatchV6outputxvpMV` | 1 | coteditor |
-| libswift_StringProcessing.dylib | `_$s17_StringProcessing5RegexV_2asACyxGSS_xmtKcfC` | 1 | coteditor |
-| libswift_StringProcessing.dylib | `_$sSK17_StringProcessingSL7ElementRpzrlE10firstRange2ofSny5IndexQzGSgqd___tSlRd__ABQyd__ACRSlF` | 1 | microsoft-teams |
-| libswift_StringProcessing.dylib | `_$sSK17_StringProcessingSs11SubSequenceRtzrlE5split9separator9maxSplits25omittingEmptySubsequencesSaySsGqd___SiSbtAA14RegexComponentRd__lF` | 1 | orbstack |
-| libswift_StringProcessing.dylib | `_$sSl17_StringProcessingSQ7ElementRpzrlE6ranges2ofSaySny5IndexQzGGqd___tSlRd__ABQyd__ACRSlF` | 1 | orbstack |
-| libswift_StringProcessing.dylib | `_$sSm17_StringProcessingE10trimPrefix5whileySb7ElementQzKXE_tKF` | 1 | jordanbaird-ice |
-| libswift_StringProcessing.dylib | `_$sSm17_StringProcessingSKRzSs11SubSequenceSlRtzrlE10trimPrefixyyqd__AA14RegexComponentRd__lF` | 1 | sfm |
-| libswift_StringProcessing.dylib | `_$sSy17_StringProcessingE8containsySbSSF` | 1 | supacode |
-| libswiftos.dylib | `_$s2os12OSSignposterV9isEnabledSbvg` | 1 | cmux |
 | libswiftos.dylib | `_$s2os12OSSignposterVACycfC` | 1 | protonvpn |
-| libswiftos.dylib | `_$sSo9OS_os_logC0B0E8CategoryV14dynamicTracingAEvgZ` | 1 | cmux |
 | libswiftsimd.dylib | `_$sSo13simd_float3x3a0A0EyABSo0A6_quatfacfC` | 1 | raycast |
+| mbuinstrument.framework | `_$s13mbuinstrument15LoggingCategoryV11copilotChatACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument15LoggingCategoryV6docsuiACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument15LoggingSeverityV4infoACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument15LoggingSeverityV5errorACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument15LoggingSeverityV7verboseACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument15LoggingSeverityV7warningACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument19sendDiagnosticTrace3tag8category8severity19validDataCategories5label9argumentsys6UInt32V_AA15LoggingCategoryVAA0N8SeverityVAA0n5ValidiJ0VSSSDySSAA26ClassifiedStructuredObject_p_AA0nI14ClassificationVtGtF` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV014publicPersonalC0ACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV017publicNonPersonalC0ACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV07accountC0ACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV07supportC0ACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV13accessControlACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV14systemMetadataACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV15customerContentACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV24essentialServiceMetadataACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV30endUserIdentifiableInformationACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV30endUserPseudonymousInformationACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationV35organizationIdentifiableInformationACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument25LoggingDataClassificationVMn` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument26ClassifiedStructuredObjectMp` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$s13mbuinstrument26LoggingValidDataCategoriesV19productServiceUsageACvau` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$sSS13mbuinstrument26ClassifiedStructuredObjectAAWP` | 1 | microsoft-office |
+| mbuinstrument.framework | `_$sSi13mbuinstrument26ClassifiedStructuredObjectAAWP` | 1 | microsoft-office |
+| mbukernel.framework | `_$s16MBUIdleWorkAsync0ab3AddC0yySi_So0aB10CoalescingVSbyYaYbctYaF` | 1 | microsoft-office |
+| mbukernel.framework | `_$s16MBUIdleWorkAsync0ab3AddC0yySi_So0aB10CoalescingVSbyYaYbctYaFTu` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB10ClientInfoC7hostApp9sessionIDACSS_SStcfc` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB10ClientInfoCMa` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB12TemplateItemC5titleSSvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB12TemplateItemC7assetIDSSvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB12TemplateItemC7setKindAA0ab3SetG0OvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB12TemplateItemC8mimeTypeSSvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB12TemplateItemC9assetTypeSSvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB12TemplateItemC9referenceSSvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB12TemplateItemCMa` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB12TemplateItemCN` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB13ServiceConfigV08isInlineB13FieldsEnabled0f23StreamingInResolveAssetI00fab5CacheI00f17ThumbnailPrefetchI009thumbnailP11Concurrency0qP5Limit0f4BootpI00f19Thumbnail404RemovalI019evictionStatusCodes15cacheTtlMinutes25searchAssetsFirstPageSize20searchAssetsPageSize0f26IdentityScopedLicenseCheckI0ACSb_S3bS2iS2bSaySiGS3iSbtcfC` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB13ServiceConfigVN` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC06cancelD8DownloadyyF` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC08downloadaD07assetID9reference0G4Type04mimeJ05title10completionySS_S4Sy10Foundation3URLVSgctF` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC08downloadaD13WithCacheInfo7assetID9reference0J4Type04mimeM05title010completionghI0ySS_S4Sy10Foundation3URLVSg_SbtctF` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC13updateHandleryycSgvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC14fetchThumbnail12forReference7setKind10completionySS_AA0ab3SetK0Oy10Foundation4DataVSgctF` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC14retrievalStateAA0abd9RetrievalG0OvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC16hadCacheDeliverySbvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC20clearCacheForSignOutyyF` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC4stopyyF` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC5startyyF` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC6create10clientInfo12capabilities6configAcA0ab6ClientH0C_AA0abD12CapabilitiesCAA0aB13ServiceConfigVtKFZ` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC6flowIDSSvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC6reloadyyF` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC8activate4modeyAA0abD9FetchModeO_tF` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC8allItemsSayAA0abD4ItemCGvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsC9isOfflineSbvpWvd` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsCMa` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB18TemplateOperationsCMn` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB20TemplateCapabilitiesC9assetType23supportedFileExtensions18defaultAspectRatioACSS_SaySSGSdtcfc` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB20TemplateCapabilitiesCMa` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB22TemplateRetrievalStateON` | 1 | microsoft-office |
+| mso99.framework | `_$s17BrandKitTemplates0aB7SetKindON` | 1 | microsoft-office |
+| mso99.framework | `_$s19AggregatedMRUFacade0A9MRUUpdateVMa` | 1 | microsoft-office |
+| mso99.framework | `_$s19AggregatedMRUFacade0A9MRUUpdateVMn` | 1 | microsoft-office |
+| mso99.framework | `_$s19AggregatedMRUFacadeAAC5appID7optionsABSgSo019MSOAggregatedMRUAppD0V_AA0A10MRUOptionsVtYacfc` | 1 | microsoft-office |
+| mso99.framework | `_$s19AggregatedMRUFacadeAAC5appID7optionsABSgSo019MSOAggregatedMRUAppD0V_AA0A10MRUOptionsVtYacfcTu` | 1 | microsoft-office |
+| mso99.framework | `_$s19AggregatedMRUFacadeAACMa` | 1 | microsoft-office |
+| mso99.framework | `_$s19AggregatedMRUFacadeAACMn` | 1 | microsoft-office |
