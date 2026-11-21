@@ -3,128 +3,106 @@
 Símbolos que os apps do corpus importam e o mOS não exporta, na frente de Patricia (rede para apps) (`TIME.md`).
 Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/harness.py donos`.
 
-**738** símbolos distintos.
+**696** símbolos distintos.
 
 | biblioteca | símbolo | apps | exemplos |
 |---|---|---:|---|
-| CFNetwork.framework | `_kCFProxyPasswordKey` | 30 | 1password, adobe-acrobat-reader, audacity, bettertouchtool |
-| CFNetwork.framework | `_kCFProxyUsernameKey` | 30 | 1password, adobe-acrobat-reader, audacity, bettertouchtool |
-| CFNetwork.framework | `_kCFProxyTypeFTP` | 21 | audacity, calibre, db-browser-for-sqlite, keepassxc |
-| CFNetwork.framework | `_kCFNetworkProxiesSOCKSPort` | 19 | anydesk, applite, audacity, calibre |
-| CFNetwork.framework | `_kCFNetworkProxiesSOCKSProxy` | 19 | anydesk, applite, audacity, calibre |
-| CFNetwork.framework | `_kCFNetworkProxiesExcludeSimpleHostnames` | 14 | audacity, calibre, cmux, keepassxc |
-| Network.framework | `_nw_release` | 14 | audacity, bbedit, calibre, dotnet-sdk |
-| CFNetwork.framework | `_kCFNetworkProxiesFTPEnable` | 13 | audacity, calibre, keepassxc, moonlight |
-| CFNetwork.framework | `_kCFNetworkProxiesFTPPort` | 13 | audacity, calibre, keepassxc, moonlight |
-| CFNetwork.framework | `_kCFNetworkProxiesFTPProxy` | 13 | audacity, calibre, keepassxc, moonlight |
-| SystemConfiguration.framework | `_kSCPropNetProxiesGopherEnable` | 13 | android-studio, blender, calibre, deluge |
-| SystemConfiguration.framework | `_kSCPropNetProxiesGopherPort` | 13 | android-studio, blender, calibre, deluge |
-| SystemConfiguration.framework | `_kSCPropNetProxiesGopherProxy` | 13 | android-studio, blender, calibre, deluge |
-| SystemConfiguration.framework | `_kSCCompAnyRegex` | 12 | adobe-acrobat-reader, firefox, floorp, librewolf |
-| libresolv.9.dylib | `_res_9_nmkquery` | 11 | audacity, calibre, keepassxc, moonlight |
-| libresolv.9.dylib | `_res_9_nsend` | 11 | audacity, calibre, keepassxc, moonlight |
-| libresolv.9.dylib | `_res_9_setservers` | 11 | audacity, calibre, keepassxc, moonlight |
-| SystemConfiguration.framework | `_kSCDynamicStoreDomainSetup` | 10 | cloudflare-warp, firefox, floorp, librewolf |
-| SystemConfiguration.framework | `_kSCEntNetDNS` | 10 | cloudflare-warp, firefox, floorp, librewolf |
-| Network.framework | `_nw_path_monitor_set_cancel_handler` | 8 | audacity, calibre, keepassxc, moonlight |
-| NetworkExtension.framework | `_NEVPNStatusDidChangeNotification` | 8 | brave-browser, cloudflare-warp, cmux, duckduckgo |
-| SystemConfiguration.framework | `_SCNetworkInterfaceGetInterfaceType` | 8 | adobe-acrobat-reader, cmux, microsoft-teams, rustdesk |
-| SystemConfiguration.framework | `_SCNetworkServiceGetInterface` | 8 | clash-verge-rev, cloudflare-warp, microsoft-teams, stats |
+| libresolv.9.dylib | `_res_9_ns_initparse` | 10 | adobe-acrobat-reader, beekeeper-studio, freecad, microsoft-edge |
+| libresolv.9.dylib | `_res_9_ns_parserr` | 10 | adobe-acrobat-reader, beekeeper-studio, freecad, microsoft-edge |
+| NetworkExtension.framework | `_NEVPNStatusDidChangeNotification` | 9 | brave-browser, cloudflare-warp, cmux, duckduckgo |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEProvider` | 9 | cloudflare-warp, cmux, duckduckgo, lulu |
+| libresolv.9.dylib | `_res_9_init` | 9 | crossover, deluge, dolphin, microsoft-edge |
+| Kerberos.framework | `_com_err_va` | 8 | android-studio, cyberduck, datagrip, dbeaver-community |
+| Kerberos.framework | `_krb5_cc_default` | 8 | android-studio, cyberduck, datagrip, dbeaver-community |
+| Kerberos.framework | `_krb5_cc_end_seq_get` | 8 | android-studio, cyberduck, datagrip, dbeaver-community |
+| Kerberos.framework | `_krb5_cc_next_cred` | 8 | android-studio, cyberduck, datagrip, dbeaver-community |
+| Kerberos.framework | `_krb5_cc_set_flags` | 8 | android-studio, cyberduck, datagrip, dbeaver-community |
+| Kerberos.framework | `_krb5_cc_start_seq_get` | 8 | android-studio, cyberduck, datagrip, dbeaver-community |
+| Network.framework | `_$s7Network11IPv6AddressVMa` | 8 | cmux, fluidvoice, nordvpn, openclaw |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NETunnelProviderProtocol` | 8 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| libSystem.B.dylib | `_DNSServiceSetDispatchQueue` | 8 | cmux, microsoft-excel, microsoft-outlook, microsoft-powerpoint |
 | libswiftNetwork.dylib | `_$s7Network10NWListenerCMn` | 8 | bettertouchtool, duckduckgo, easydict, fork |
-| CFNetwork.framework | `_CFHTTPMessageCopyAllHeaderFields` | 7 | adobe-acrobat-reader, bbedit, bettertouchtool, hammerspoon |
-| CFNetwork.framework | `_CFHTTPMessageSetHeaderFieldValue` | 7 | adobe-acrobat-reader, bettertouchtool, daisydisk, hammerspoon |
-| CFNetwork.framework | `_kCFHTTPVersion1_1` | 7 | adobe-acrobat-reader, bettertouchtool, daisydisk, hammerspoon |
-| IOKit.framework | `_SCPreferencesCreate` | 7 | cloudflare-warp, hammerspoon, proxyman, stats |
 | Network.framework | `_$s7Network10NWListenerCMn` | 7 | bartender, cmux, codexbar, fluidvoice |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEProvider` | 7 | cloudflare-warp, cmux, duckduckgo, lulu |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NETunnelProviderProtocol` | 7 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| SystemConfiguration.framework | `_SCNetworkInterfaceGetLocalizedDisplayName` | 7 | cmux, stats, teamviewer, virtualbox |
-| libresolv.9.dylib | `_res_9_ns_initparse` | 7 | adobe-acrobat-reader, microsoft-edge, mongodb-compass, pgadmin4 |
-| libresolv.9.dylib | `_res_9_ns_parserr` | 7 | adobe-acrobat-reader, microsoft-edge, mongodb-compass, pgadmin4 |
-| CFNetwork.framework | `_CFHTTPMessageAppendBytes` | 6 | bbedit, bettertouchtool, hammerspoon, raycast |
-| CFNetwork.framework | `_CFHTTPMessageCopySerializedMessage` | 6 | bettertouchtool, daisydisk, hammerspoon, raycast |
-| CFNetwork.framework | `_CFHTTPMessageCreateEmpty` | 6 | bbedit, bettertouchtool, hammerspoon, raycast |
-| CFNetwork.framework | `_CFHTTPMessageCreateRequest` | 6 | adobe-acrobat-reader, bettertouchtool, hammerspoon, raycast |
-| CFNetwork.framework | `_CFHTTPMessageGetResponseStatusCode` | 6 | adobe-acrobat-reader, bettertouchtool, hammerspoon, raycast |
-| CFNetwork.framework | `_CFHTTPMessageIsHeaderComplete` | 6 | bbedit, bettertouchtool, hammerspoon, raycast |
-| CFNetwork.framework | `_CFHTTPMessageSetBody` | 6 | adobe-acrobat-reader, bettertouchtool, daisydisk, hammerspoon |
-| Kerberos.framework | `_com_err_va` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| Kerberos.framework | `_krb5_cc_default` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| Kerberos.framework | `_krb5_cc_end_seq_get` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| Kerberos.framework | `_krb5_cc_next_cred` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| Kerberos.framework | `_krb5_cc_set_flags` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| Kerberos.framework | `_krb5_cc_start_seq_get` | 6 | android-studio, cyberduck, dbeaver-community, intellij-idea |
-| Network.framework | `_$s7Network11IPv6AddressVMa` | 6 | cmux, fluidvoice, openclaw, orbstack |
-| Network.framework | `_nw_parameters_copy_default_protocol_stack` | 6 | bbedit, dotnet-sdk, git-credential-manager, github |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEOnDemandRuleConnect` | 6 | brave-browser, cloudflare-warp, duckduckgo, protonvpn |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NETunnelProviderManager` | 6 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| SystemConfiguration.framework | `_SCNetworkServiceCopyAll` | 6 | cloudflare-warp, microsoft-teams, proxyman, stats |
-| SystemConfiguration.framework | `_SCNetworkServiceGetServiceID` | 6 | clash-verge-rev, cloudflare-warp, microsoft-teams, stats |
-| libSystem.B.dylib | `_DNSServiceBrowse` | 6 | cmux, cyberduck, libndi, realvnc-connect-viewer |
-| libSystem.B.dylib | `_DNSServiceResolve` | 6 | cmux, cyberduck, libndi, realvnc-connect-viewer |
-| libresolv.9.dylib | `_res_9_init` | 6 | deluge, dolphin, microsoft-edge, microsoft-teams |
+| Network.framework | `_$s7Network11IPv6AddressVMn` | 7 | cmux, nordvpn, openclaw, orbstack |
+| Network.framework | `_$s7Network6NWPathV17usesInterfaceTypeySbAA11NWInterfaceV0dE0OF` | 7 | cmux, microsoft-office, microsoft-outlook, nordvpn |
+| Network.framework | `_$s7Network6NWPathV6StatusO18requiresConnectionyA2EmFWC` | 7 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEDNSSettings` | 7 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEIPv4Route` | 7 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEIPv4Settings` | 7 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEIPv6Route` | 7 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEIPv6Settings` | 7 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEOnDemandRuleConnect` | 7 | brave-browser, cloudflare-warp, duckduckgo, nordvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEPacketTunnelNetworkSettings` | 7 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEPacketTunnelProvider` | 7 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NETunnelProviderManager` | 7 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| NetworkExtension.framework | `_OBJC_METACLASS_$_NEPacketTunnelProvider` | 7 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| GSS.framework | `_GSSCreateName` | 6 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
+| GSS.framework | `___gss_c_nt_export_name_oid_desc` | 6 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
+| GSS.framework | `_gss_aapl_initial_cred` | 6 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
+| GSS.framework | `_gss_add_oid_set_member` | 6 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
+| GSS.framework | `_gss_create_empty_oid_set` | 6 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
+| GSS.framework | `_gss_destroy_cred` | 6 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
+| GSS.framework | `_gss_inquire_cred` | 6 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
+| Network.framework | `_$s7Network10NWEndpointO4PortV8rawValues6UInt16Vvg` | 6 | cmux, nordvpn, openclaw, orbstack |
+| Network.framework | `_$s7Network11IPv4AddressV8rawValue10Foundation4DataVvg` | 6 | cmux, openclaw, orbstack, orion |
+| Network.framework | `_$s7Network11IPv6AddressV8rawValue10Foundation4DataVvg` | 6 | cmux, openclaw, orbstack, orion |
+| Network.framework | `_$s7Network13NWPathMonitorC11currentPathAA0B0Vvg` | 6 | applite, cmux, microsoft-outlook, nordvpn |
+| Network.framework | `_nw_framer_async` | 6 | dotnet-sdk, git-credential-manager, github, jellyfin |
+| Network.framework | `_nw_framer_create_definition` | 6 | dotnet-sdk, git-credential-manager, github, jellyfin |
+| Network.framework | `_nw_framer_create_options` | 6 | dotnet-sdk, git-credential-manager, github, jellyfin |
+| Network.framework | `_nw_framer_deliver_input` | 6 | dotnet-sdk, git-credential-manager, github, jellyfin |
+| Network.framework | `_nw_framer_message_create` | 6 | dotnet-sdk, git-credential-manager, github, jellyfin |
+| Network.framework | `_nw_framer_parse_output` | 6 | dotnet-sdk, git-credential-manager, github, jellyfin |
+| Network.framework | `_nw_framer_set_cleanup_handler` | 6 | dotnet-sdk, git-credential-manager, github, jellyfin |
+| Network.framework | `_nw_framer_set_output_handler` | 6 | dotnet-sdk, git-credential-manager, github, jellyfin |
+| Network.framework | `_nw_framer_set_stop_handler` | 6 | dotnet-sdk, git-credential-manager, github, jellyfin |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEOnDemandRule` | 6 | cloudflare-warp, duckduckgo, nordvpn, protonvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NETunnelProviderSession` | 6 | duckduckgo, nordvpn, protonvpn, proxyman |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEVPNConnection` | 6 | cloudflare-warp, cmux, duckduckgo, nordvpn |
+| libswiftNetwork.dylib | `_$s7Network12NWParametersC20defaultProtocolStackAC0dE0Cvg` | 6 | bettertouchtool, duckduckgo, iina, istat-menus |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC21requiredLocalEndpointAA10NWEndpointOSgvs` | 6 | duckduckgo, easydict, fork, raycast |
-| CFNetwork.framework | `_CFHTTPMessageCreateResponse` | 5 | bettertouchtool, daisydisk, hammerspoon, raycast |
-| CFNetwork.framework | `_kCFStreamPropertySSLPeerTrust` | 5 | bettertouchtool, hammerspoon, raycast, superwhisper |
+| GSS.framework | `___gss_krb5_copy_ccache_x_oid_desc` | 5 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
+| GSS.framework | `_gss_export_name` | 5 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
+| GSS.framework | `_gss_inquire_cred_by_oid` | 5 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
+| GSS.framework | `_gss_release_buffer_set` | 5 | microsoft-excel, microsoft-office, microsoft-outlook, microsoft-powerpoint |
 | Network.framework | `_$s7Network10NWEndpointO4HostO4ipv6yAeA11IPv6AddressVcAEmFWC` | 5 | cmux, fluidvoice, orbstack, protonvpn |
-| Network.framework | `_$s7Network10NWEndpointO4PortV8rawValues6UInt16Vvg` | 5 | cmux, openclaw, orbstack, protonvpn |
-| Network.framework | `_$s7Network11IPv4AddressV8rawValue10Foundation4DataVvg` | 5 | cmux, openclaw, orbstack, protonvpn |
-| Network.framework | `_$s7Network11IPv6AddressV8rawValue10Foundation4DataVvg` | 5 | cmux, openclaw, orbstack, protonvpn |
-| Network.framework | `_$s7Network11IPv6AddressVMn` | 5 | cmux, openclaw, orbstack, protonvpn |
-| Network.framework | `_nw_connection_copy_protocol_metadata` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_framer_async` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_framer_create_definition` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_framer_create_options` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_framer_deliver_input` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_framer_message_create` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_framer_parse_output` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_framer_set_cleanup_handler` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_framer_set_output_handler` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_framer_set_stop_handler` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_parameters_create_secure_udp` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_protocol_copy_tls_definition` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_protocol_stack_prepend_application_protocol` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_tls_copy_sec_protocol_metadata` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| Network.framework | `_nw_tls_create_options` | 5 | dotnet-sdk, git-credential-manager, github, jellyfin |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEDNSSettings` | 5 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEIPv4Route` | 5 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEIPv4Settings` | 5 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEIPv6Route` | 5 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEIPv6Settings` | 5 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEOnDemandRule` | 5 | cloudflare-warp, duckduckgo, protonvpn, sfm |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEPacketTunnelNetworkSettings` | 5 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEPacketTunnelProvider` | 5 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NETunnelProviderSession` | 5 | duckduckgo, protonvpn, proxyman, sfm |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEVPNConnection` | 5 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| NetworkExtension.framework | `_OBJC_METACLASS_$_NEPacketTunnelProvider` | 5 | cloudflare-warp, cmux, duckduckgo, protonvpn |
-| SystemConfiguration.framework | `_SCNetworkServiceGetName` | 5 | clash-verge-rev, proxyman, teamviewer, virtualbox |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeIEEE80211` | 5 | adobe-acrobat-reader, stats, teamviewer, wireshark-app |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeWWAN` | 5 | adobe-acrobat-reader, stats, teamviewer, wireshark-app |
+| Network.framework | `_$s7Network11IPv6AddressVyACSgSScfC` | 5 | cmux, nordvpn, openclaw, orion |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NENetworkRule` | 5 | duckduckgo, lulu, nordvpn, protonvpn |
+| SystemConfiguration.framework | `_SCNetworkSetCopyCurrent` | 5 | clash-verge-rev, crossover, istat-menus, virtualbox |
+| libSystem.B.dylib | `_DNSServiceBrowse` | 5 | cmux, cyberduck, realvnc-connect-viewer, teamviewer |
+| libSystem.B.dylib | `_DNSServiceResolve` | 5 | cmux, cyberduck, realvnc-connect-viewer, teamviewer |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO4PortV8rawValues6UInt16Vvg` | 5 | bettertouchtool, duckduckgo, easydict, sequel-ace |
 | libswiftNetwork.dylib | `_$s7Network11IPv6AddressVMa` | 5 | duckduckgo, easydict, tableplus, tailscale-app |
-| libswiftNetwork.dylib | `_$s7Network12NWParametersC20defaultProtocolStackAC0dE0Cvg` | 5 | bettertouchtool, duckduckgo, iina, raycast |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC23allowLocalEndpointReuseSbvs` | 5 | bettertouchtool, duckduckgo, easydict, iina |
-| CFNetwork.framework | `_CFHTTPMessageCopyHeaderFieldValue` | 4 | adobe-acrobat-reader, bettertouchtool, hammerspoon, ubersicht |
-| CFNetwork.framework | `_CFHTTPMessageCopyRequestMethod` | 4 | bettertouchtool, hammerspoon, raycast, superwhisper |
+| vmnet.framework | `_vmnet_interface_set_event_callback` | 5 | docker-desktop, orbstack, rancher, utm |
+| vmnet.framework | `_vmnet_max_packet_size_key` | 5 | docker-desktop, orbstack, rancher, utm |
+| vmnet.framework | `_vmnet_operation_mode_key` | 5 | docker-desktop, orbstack, rancher, utm |
+| vmnet.framework | `_vmnet_read` | 5 | docker-desktop, orbstack, rancher, utm |
+| vmnet.framework | `_vmnet_start_interface` | 5 | docker-desktop, orbstack, rancher, utm |
+| vmnet.framework | `_vmnet_write` | 5 | docker-desktop, orbstack, rancher, utm |
+| GSS.framework | `_GSSCredentialCopyUUID` | 4 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
+| GSS.framework | `_gss_compare_name` | 4 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
 | Network.framework | `_$s7Network10NWEndpointO4HostO2eeoiySbAE_AEtFZ` | 4 | cmux, orbstack, protonvpn, proxyman |
 | Network.framework | `_$s7Network10NWListenerC4portAA10NWEndpointO4PortVSgvg` | 4 | cmux, openclaw, orbstack, proxyman |
 | Network.framework | `_$s7Network11IPv4AddressVyACSg10Foundation4DataV_AA11NWInterfaceVSgtcfC` | 4 | cmux, orbstack, protonvpn, proxyman |
 | Network.framework | `_$s7Network11IPv6AddressVyACSg10Foundation4DataV_AA11NWInterfaceVSgtcfC` | 4 | cmux, orbstack, protonvpn, proxyman |
 | Network.framework | `_$s7Network12NWConnectionC10parametersAA12NWParametersCvg` | 4 | cmux, orbstack, protonvpn, proxyman |
+| Network.framework | `_$s7Network12NWConnectionC14ContentContextC12finalMessageAEvgZ` | 4 | cmux, nordvpn, orbstack, proxyman |
 | Network.framework | `_$s7Network12NWParametersC23allowLocalEndpointReuseSbvs` | 4 | bartender, cmux, orbstack, proxyman |
-| Network.framework | `_$s7Network13NWPathMonitorC11currentPathAA0B0Vvg` | 4 | applite, cmux, protonvpn, supacode |
-| Network.framework | `_$s7Network6NWPathV17usesInterfaceTypeySbAA11NWInterfaceV0dE0OF` | 4 | cmux, protonvpn, proxyman, windows-app |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NENetworkRule` | 4 | duckduckgo, lulu, protonvpn, proxyman |
+| Network.framework | `_$s7Network13NWPathMonitorC17makeAsyncIteratorAC0F0VyF` | 4 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
+| Network.framework | `_$s7Network13NWPathMonitorC8IteratorV4nextAA0B0VSgyYaF` | 4 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
+| Network.framework | `_$s7Network13NWPathMonitorC8IteratorV4nextAA0B0VSgyYaFTu` | 4 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
+| Network.framework | `_$s7Network13NWPathMonitorC8IteratorVMa` | 4 | microsoft-excel, microsoft-outlook, microsoft-powerpoint, microsoft-word |
+| Network.framework | `_OBJC_CLASS_$_NWHostEndpoint` | 4 | duckduckgo, lulu, nordvpn, protonvpn |
+| NetworkExtension.framework | `_NEVPNErrorDomain` | 4 | cloudflare-warp, duckduckgo, nordvpn, proxyman |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEAppProxyTCPFlow` | 4 | duckduckgo, nordvpn, protonvpn, proxyman |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NETransparentProxyManager` | 4 | duckduckgo, nordvpn, protonvpn, proxyman |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NETransparentProxyNetworkSettings` | 4 | duckduckgo, nordvpn, protonvpn, proxyman |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NETransparentProxyProvider` | 4 | duckduckgo, nordvpn, protonvpn, proxyman |
+| NetworkExtension.framework | `_OBJC_METACLASS_$_NETransparentProxyProvider` | 4 | duckduckgo, nordvpn, protonvpn, proxyman |
+| SystemConfiguration.framework | `_SCDynamicStoreCopyDHCPInfo` | 4 | crossover, hammerspoon, tailscale-app, unity-hub |
 | SystemConfiguration.framework | `_SCDynamicStoreKeyCreateConsoleUser` | 4 | anydesk, displaylink, openvpn-connect, teamviewer |
-| SystemConfiguration.framework | `_SCNetworkServiceGetEnabled` | 4 | clash-verge-rev, proxyman, teamviewer, zoom |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeBluetooth` | 4 | stats, teamviewer, wireshark-app, zoom |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeEthernet` | 4 | adobe-acrobat-reader, stats, teamviewer, zoom |
-| libSystem.B.dylib | `_DNSServiceSetDispatchQueue` | 4 | cmux, spotify, teamviewer, utm |
-| libSystem.B.dylib | `_TXTRecordCreate` | 4 | libndi, spotify, teamviewer, zoom |
-| libSystem.B.dylib | `_TXTRecordDeallocate` | 4 | libndi, spotify, teamviewer, zoom |
-| libSystem.B.dylib | `_TXTRecordGetBytesPtr` | 4 | libndi, spotify, teamviewer, zoom |
-| libSystem.B.dylib | `_TXTRecordGetLength` | 4 | libndi, spotify, teamviewer, zoom |
-| libSystem.B.dylib | `_TXTRecordSetValue` | 4 | libndi, spotify, teamviewer, zoom |
+| libresolv.9.dylib | `_res_9_query` | 4 | crossover, deluge, freecad, windows-app |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO4HostO4ipv6yAeA11IPv6AddressVcAEmFWC` | 4 | duckduckgo, easydict, tableplus, utm |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO4unixyACSS_tcACmFWC` | 4 | duckduckgo, easydict, fork, tableplus |
 | libswiftNetwork.dylib | `_$s7Network10NWListenerC4portAA10NWEndpointO4PortVSgvg` | 4 | bettertouchtool, easydict, sequel-ace, tableplus |
@@ -138,44 +116,38 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network13NWProtocolTLSC8MetadataCMa` | 4 | bettertouchtool, easydict, tableplus, utm |
 | libswiftNetwork.dylib | `_$s7Network13NWProtocolTLSCMa` | 4 | bettertouchtool, easydict, tableplus, utm |
 | libswiftNetwork.dylib | `_$s7Network6NWPathV17usesInterfaceTypeySbAA11NWInterfaceV0dE0OF` | 4 | duckduckgo, sfm, tableplus, tailscale-app |
-| vmnet.framework | `_vmnet_interface_set_event_callback` | 4 | docker-desktop, orbstack, utm, virtualbox |
-| vmnet.framework | `_vmnet_max_packet_size_key` | 4 | docker-desktop, orbstack, utm, virtualbox |
-| vmnet.framework | `_vmnet_operation_mode_key` | 4 | docker-desktop, orbstack, utm, virtualbox |
-| vmnet.framework | `_vmnet_read` | 4 | docker-desktop, orbstack, utm, virtualbox |
-| vmnet.framework | `_vmnet_start_interface` | 4 | docker-desktop, orbstack, utm, virtualbox |
-| vmnet.framework | `_vmnet_write` | 4 | docker-desktop, orbstack, utm, virtualbox |
-| CFNetwork.framework | `_CFHTTPMessageCopyBody` | 3 | bbedit, bettertouchtool, hammerspoon |
-| CFNetwork.framework | `_CFHTTPMessageCopyRequestURL` | 3 | adobe-acrobat-reader, bettertouchtool, hammerspoon |
-| CFNetwork.framework | `_CFHTTPMessageCopyVersion` | 3 | adobe-acrobat-reader, bettertouchtool, hammerspoon |
+| vmnet.framework | `_vmnet_allocate_mac_address_key` | 4 | orbstack, rancher, utm, virtualbox |
+| vmnet.framework | `_vmnet_interface_id_key` | 4 | docker-desktop, orbstack, rancher, virtualbox |
+| vmnet.framework | `_vmnet_mtu_key` | 4 | docker-desktop, orbstack, rancher, utm |
+| vmnet.framework | `_vmnet_stop_interface` | 4 | orbstack, rancher, utm, virtualbox |
+| CFNetwork.framework | `_CFNetDiagnosticCreateWithURL` | 3 | cyberduck, mactex, mactex-no-gui |
+| Kerberos.framework | `_cc_initialize` | 3 | freecad, mysqlworkbench, pgadmin4 |
 | Network.framework | `_$s7Network10NWEndpointO2eeoiySbAC_ACtFZ` | 3 | orbstack, protonvpn, proxyman |
 | Network.framework | `_$s7Network10NWEndpointO4HostO4nameyAESS_AA11NWInterfaceVSgtcAEmFWC` | 3 | cmux, fluidvoice, protonvpn |
+| Network.framework | `_$s7Network10NWEndpointO4PortVyAESgSScfC` | 3 | cmux, nordvpn, protonvpn |
 | Network.framework | `_$s7Network10NWEndpointO4unixyACSS_tcACmFWC` | 3 | cmux, orbstack, proxyman |
 | Network.framework | `_$s7Network10NWListenerC5StateOMn` | 3 | bartender, cmux, fluidvoice |
-| Network.framework | `_$s7Network11IPv6AddressVyACSgSScfC` | 3 | cmux, openclaw, protonvpn |
-| Network.framework | `_$s7Network12NWConnectionC14ContentContextC12finalMessageAEvgZ` | 3 | cmux, orbstack, proxyman |
+| Network.framework | `_$s7Network11IPv4AddressVSQAAMc` | 3 | cmux, nordvpn, protonvpn |
+| Network.framework | `_$s7Network11IPv6AddressVSQAAMc` | 3 | cmux, nordvpn, protonvpn |
 | Network.framework | `_$s7Network12NWConnectionC17pathUpdateHandleryAA6NWPathVcSgvs` | 3 | cmux, orbstack, proxyman |
 | Network.framework | `_$s7Network12NWParametersC21requiredLocalEndpointAA10NWEndpointOSgvs` | 3 | cmux, orbstack, proxyman |
 | Network.framework | `_$s7Network13NWProtocolTCPC7OptionsC7noDelaySbvsTj` | 3 | cmux, orbstack, proxyman |
-| Network.framework | `_OBJC_CLASS_$_NWHostEndpoint` | 3 | duckduckgo, lulu, protonvpn |
-| Network.framework | `_nw_listener_cancel` | 3 | bbedit, dotnet-sdk, spotify |
-| Network.framework | `_nw_listener_create` | 3 | bbedit, dotnet-sdk, spotify |
-| Network.framework | `_nw_listener_set_new_connection_handler` | 3 | bbedit, dotnet-sdk, spotify |
-| Network.framework | `_nw_listener_set_queue` | 3 | bbedit, dotnet-sdk, spotify |
-| Network.framework | `_nw_listener_start` | 3 | bbedit, dotnet-sdk, spotify |
+| Network.framework | `_$s7Network6NWPathV6StatusOMn` | 3 | macwhisper, nordvpn, protonvpn |
 | NetworkExtension.framework | `_NEVPNConfigurationChangeNotification` | 3 | duckduckgo, protonvpn, tailscale-app |
-| NetworkExtension.framework | `_NEVPNErrorDomain` | 3 | cloudflare-warp, duckduckgo, proxyman |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEAppProxyTCPFlow` | 3 | duckduckgo, protonvpn, proxyman |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NETransparentProxyManager` | 3 | duckduckgo, protonvpn, proxyman |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NETransparentProxyNetworkSettings` | 3 | duckduckgo, protonvpn, proxyman |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NETransparentProxyProvider` | 3 | duckduckgo, protonvpn, proxyman |
-| NetworkExtension.framework | `_OBJC_METACLASS_$_NETransparentProxyProvider` | 3 | duckduckgo, protonvpn, proxyman |
-| SystemConfiguration.framework | `_SCDynamicStoreCopyDHCPInfo` | 3 | hammerspoon, tailscale-app, unity-hub |
-| SystemConfiguration.framework | `_SCNetworkSetCopyCurrent` | 3 | clash-verge-rev, virtualbox, zoom |
-| SystemConfiguration.framework | `_SCPreferencesCreate` | 3 | clash-verge-rev, microsoft-teams, zoom |
-| SystemConfiguration.framework | `_kSCEntNetProxies` | 3 | cloudflare-warp, proxyman, teamviewer |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypePPP` | 3 | teamviewer, wireshark-app, zoom |
-| libSystem.B.dylib | `_DNSServiceConstructFullName` | 3 | cyberduck, libndi, zoom |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEOnDemandRuleDisconnect` | 3 | nordvpn, sfm, tailscale-app |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEProxySettings` | 3 | brave-browser, nordvpn, sfm |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEVPNManager` | 3 | brave-browser, nordvpn, protonvpn |
+| SystemConfiguration.framework | `_DHCPInfoGetOptionData` | 3 | crossover, tailscale-app, unity-hub |
+| SystemConfiguration.framework | `_SCNetworkConnectionCreateWithServiceID` | 3 | istat-menus, microsoft-outlook, microsoft-teams |
+| SystemConfiguration.framework | `_SCNetworkSetCopyServices` | 3 | clash-verge-rev, crossover, virtualbox |
+| SystemConfiguration.framework | `_kSCPropNetIPv6PrefixLength` | 3 | cloudflare-warp, nordvpn, teamviewer |
 | libSystem.B.dylib | `_DNSServiceNATPortMappingCreate` | 3 | gemini, the-unarchiver, utm |
+| libSystem.B.dylib | `_DNSServiceRegisterRecord` | 3 | cmux, cyberduck, orion |
+| libresolv.9.dylib | `_dns_free` | 3 | freecad, mysqlworkbench, pgadmin4 |
+| libresolv.9.dylib | `_dns_open` | 3 | freecad, mysqlworkbench, pgadmin4 |
+| libresolv.9.dylib | `_dns_search` | 3 | freecad, mysqlworkbench, pgadmin4 |
+| libresolv.9.dylib | `_dns_search_list_domain` | 3 | freecad, mysqlworkbench, pgadmin4 |
+| libresolv.9.dylib | `_res_9_ns_name_uncompress` | 3 | freecad, mysqlworkbench, pgadmin4 |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO2eeoiySbAC_ACtFZ` | 3 | bettertouchtool, easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO4HostO2eeoiySbAE_AEtFZ` | 3 | duckduckgo, easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network11IPv4AddressV16debugDescriptionSSvg` | 3 | duckduckgo, easydict, tableplus |
@@ -188,38 +160,32 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network13NWProtocolTCPC7OptionsC7noDelaySbvsTj` | 3 | bettertouchtool, easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network17NWProtocolOptionsCMa` | 3 | iina, raycast, utm |
 | libswiftNetwork.dylib | `_$s7Network18NWProtocolMetadataCMn` | 3 | easydict, iina, tableplus |
-| vmnet.framework | `_vmnet_allocate_mac_address_key` | 3 | orbstack, utm, virtualbox |
-| vmnet.framework | `_vmnet_interface_id_key` | 3 | docker-desktop, orbstack, virtualbox |
-| vmnet.framework | `_vmnet_mtu_key` | 3 | docker-desktop, orbstack, utm |
-| vmnet.framework | `_vmnet_stop_interface` | 3 | orbstack, utm, virtualbox |
-| CFNetwork.framework | `_CFHTTPMessageCopyResponseStatusLine` | 2 | adobe-acrobat-reader, hammerspoon |
-| CFNetwork.framework | `_CFHostCreateWithAddress` | 2 | hammerspoon, lulu |
-| CFNetwork.framework | `_NSURLSessionTaskPriorityDefault` | 2 | cleanshot, protonvpn |
-| CFNetwork.framework | `_NSURLSessionTaskPriorityLow` | 2 | cleanshot, protonvpn |
-| CFNetwork.framework | `_kCFHTTPVersion1_0` | 2 | bettertouchtool, hammerspoon |
-| CFNetwork.framework | `_kCFStreamErrorDomainFTP` | 2 | hammerspoon, windows-app |
-| CFNetwork.framework | `_kCFStreamErrorDomainHTTP` | 2 | hammerspoon, windows-app |
-| CFNetwork.framework | `_kCFStreamErrorDomainMach` | 2 | hammerspoon, windows-app |
-| CFNetwork.framework | `_kCFStreamErrorDomainSystemConfiguration` | 2 | hammerspoon, windows-app |
+| libswiftNetwork.dylib | `_$s7Network6NWPathV6StatusO18requiresConnectionyA2EmFWC` | 3 | raycast, sfm, tailscale-app |
+| vmnet.framework | `_vmnet_enable_isolation_key` | 3 | orbstack, rancher, utm |
+| vmnet.framework | `_vmnet_end_address_key` | 3 | rancher, utm, virtualbox |
+| vmnet.framework | `_vmnet_network_identifier_key` | 3 | orbstack, rancher, utm |
+| vmnet.framework | `_vmnet_shared_interface_name_key` | 3 | rancher, utm, virtualbox |
+| vmnet.framework | `_vmnet_start_address_key` | 3 | rancher, utm, virtualbox |
+| vmnet.framework | `_vmnet_subnet_mask_key` | 3 | rancher, utm, virtualbox |
+| CFNetwork.framework | `_CFNetDiagnosticCopyNetworkStatusPassively` | 2 | mactex, mactex-no-gui |
+| CFNetwork.framework | `_CFNetServiceBrowserCreate` | 2 | bbedit, dropbox |
+| CFNetwork.framework | `_CFNetServiceSetClient` | 2 | bbedit, dropbox |
 | CFNetwork.framework | `_kCFStreamErrorDomainWinSock` | 2 | hammerspoon, windows-app |
-| CFNetwork.framework | `_kCFStreamPropertySSLContext` | 2 | raycast, superwhisper |
-| IOKit.framework | `_SCPreferencesApplyChanges` | 2 | hammerspoon, proxyman |
-| IOKit.framework | `_SCPreferencesCommitChanges` | 2 | hammerspoon, proxyman |
 | LDAP.framework | `_ldap_count_entries` | 2 | adobe-acrobat-reader, tableplus |
 | LDAP.framework | `_ldap_result` | 2 | adobe-acrobat-reader, tableplus |
 | LDAP.framework | `_ldap_unbind` | 2 | adobe-acrobat-reader, tableplus |
+| Network.framework | `_$s7Network10NWEndpointO3urlyAC10Foundation3URLVcACmFWC` | 2 | nordvpn, windows-app |
 | Network.framework | `_$s7Network10NWEndpointO4HostOSHAAMc` | 2 | cmux, protonvpn |
 | Network.framework | `_$s7Network10NWEndpointO4PortVSHAAMc` | 2 | cmux, protonvpn |
 | Network.framework | `_$s7Network10NWEndpointO4PortVSQAAMc` | 2 | cmux, protonvpn |
-| Network.framework | `_$s7Network10NWEndpointO4PortVyAESgSScfC` | 2 | cmux, protonvpn |
+| Network.framework | `_$s7Network10NWEndpointOSQAAMc` | 2 | cmux, nordvpn |
 | Network.framework | `_$s7Network10NWListenerC10parametersAA12NWParametersCvg` | 2 | orbstack, proxyman |
 | Network.framework | `_$s7Network10NWListenerC5stateAC5StateOvg` | 2 | orbstack, proxyman |
 | Network.framework | `_$s7Network11IPv4AddressV16debugDescriptionSSvg` | 2 | orbstack, proxyman |
 | Network.framework | `_$s7Network11IPv4AddressVAA9IPAddressAAMc` | 2 | cmux, protonvpn |
-| Network.framework | `_$s7Network11IPv4AddressVSQAAMc` | 2 | cmux, protonvpn |
 | Network.framework | `_$s7Network11IPv6AddressV16debugDescriptionSSvg` | 2 | orbstack, proxyman |
 | Network.framework | `_$s7Network11IPv6AddressVAA9IPAddressAAMc` | 2 | cmux, protonvpn |
-| Network.framework | `_$s7Network11IPv6AddressVSQAAMc` | 2 | cmux, protonvpn |
+| Network.framework | `_$s7Network11NWInterfaceV13InterfaceTypeOSQAAMc` | 2 | cmux, nordvpn |
 | Network.framework | `_$s7Network11NWInterfaceV5indexSivg` | 2 | cmux, protonvpn |
 | Network.framework | `_$s7Network12NWConnectionC19EstablishmentReportVMa` | 2 | orbstack, proxyman |
 | Network.framework | `_$s7Network12NWConnectionC19EstablishmentReportVMn` | 2 | orbstack, proxyman |
@@ -265,48 +231,48 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Network.framework | `_$s7Network13NWProtocolUDPC7OptionsCMa` | 2 | orbstack, proxyman |
 | Network.framework | `_$s7Network13NWProtocolUDPC7OptionsCMn` | 2 | orbstack, proxyman |
 | Network.framework | `_$s7Network18NWProtocolMetadataCMn` | 2 | orbstack, proxyman |
+| Network.framework | `_$s7Network18ProxyConfigurationV07socksv5B0AcA10NWEndpointO_tcfC` | 2 | cmux, orion |
+| Network.framework | `_$s7Network18ProxyConfigurationV15excludedDomainsSaySSGvs` | 2 | cmux, orion |
+| Network.framework | `_$s7Network18ProxyConfigurationV16httpCONNECTProxy10tlsOptionsAcA10NWEndpointO_AA13NWProtocolTLSC0G0CSgtcfC` | 2 | cmux, orion |
+| Network.framework | `_$s7Network18ProxyConfigurationVMa` | 2 | cmux, orion |
+| Network.framework | `_$s7Network18ProxyConfigurationVMn` | 2 | cmux, orion |
 | Network.framework | `_$s7Network20NWProtocolDefinitionC2eeoiySbAC_ACtFZ` | 2 | orbstack, proxyman |
 | Network.framework | `_$s7Network20NWProtocolDefinitionCMa` | 2 | orbstack, proxyman |
 | Network.framework | `_$s7Network20NWProtocolDefinitionCMn` | 2 | orbstack, proxyman |
 | Network.framework | `_$s7Network6NWPathV2eeoiySbAC_ACtFZ` | 2 | orbstack, proxyman |
-| Network.framework | `_$s7Network6NWPathV6StatusOMn` | 2 | macwhisper, protonvpn |
+| Network.framework | `_$s7Network6NWPathV8gatewaysSayAA10NWEndpointOGvg` | 2 | cmux, nordvpn |
 | Network.framework | `_$s7Network9IPAddressMp` | 2 | cmux, protonvpn |
 | Network.framework | `_$s7Network9IPAddressP8rawValue10Foundation4DataVvgTj` | 2 | cmux, protonvpn |
 | Network.framework | `_$s7Network9NWBrowserCMn` | 2 | openclaw, protonvpn |
-| Network.framework | `_nw_listener_get_port` | 2 | bbedit, dotnet-sdk |
-| Network.framework | `_nw_listener_set_state_changed_handler` | 2 | bbedit, dotnet-sdk |
-| Network.framework | `_nw_parameters_set_local_endpoint` | 2 | bbedit, dotnet-sdk |
-| Network.framework | `_nw_retain` | 2 | bbedit, dotnet-sdk |
 | NetworkExtension.framework | `_NEAppProxyErrorDomain` | 2 | duckduckgo, proxyman |
+| NetworkExtension.framework | `_NEVPNConnectionErrorDomain` | 2 | nordvpn, tailscale-app |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEAppProxyFlow` | 2 | duckduckgo, nordvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEAppProxyUDPFlow` | 2 | nordvpn, protonvpn |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEDNSOverHTTPSSettings` | 2 | protonvpn, tailscale-app |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEEvaluateConnectionRule` | 2 | sfm, tailscale-app |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEOnDemandRuleDisconnect` | 2 | sfm, tailscale-app |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEOnDemandRuleEvaluateConnection` | 2 | sfm, tailscale-app |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEProxySettings` | 2 | brave-browser, sfm |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEVPNManager` | 2 | brave-browser, protonvpn |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEVPNProtocolIKEv2` | 2 | brave-browser, protonvpn |
-| SystemConfiguration.framework | `_DHCPInfoGetOptionData` | 2 | tailscale-app, unity-hub |
-| SystemConfiguration.framework | `_SCNetworkInterfaceCopyMediaOptions` | 2 | stats, teamviewer |
-| SystemConfiguration.framework | `_SCNetworkServiceCopy` | 2 | clash-verge-rev, zoom |
-| SystemConfiguration.framework | `_SCNetworkSetCopyServices` | 2 | clash-verge-rev, virtualbox |
+| SystemConfiguration.framework | `_SCNetworkConnectionGetStatus` | 2 | microsoft-outlook, microsoft-teams |
+| SystemConfiguration.framework | `_SCNetworkConnectionStart` | 2 | istat-menus, microsoft-outlook |
+| SystemConfiguration.framework | `_SCNetworkConnectionStop` | 2 | istat-menus, microsoft-outlook |
+| SystemConfiguration.framework | `_SCNetworkProtocolGetConfiguration` | 2 | clash-verge-rev, nordvpn |
+| SystemConfiguration.framework | `_SCNetworkServiceCopyProtocol` | 2 | clash-verge-rev, nordvpn |
+| SystemConfiguration.framework | `_SCNetworkSetCopyAll` | 2 | hammerspoon, istat-menus |
+| SystemConfiguration.framework | `_SCNetworkSetGetName` | 2 | hammerspoon, istat-menus |
 | SystemConfiguration.framework | `_SCNetworkSetGetServiceOrder` | 2 | clash-verge-rev, zoom |
-| SystemConfiguration.framework | `_kSCEntNetAirPort` | 2 | cloudflare-warp, teamviewer |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeIPSec` | 2 | teamviewer, zoom |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeModem` | 2 | teamviewer, wireshark-app |
-| SystemConfiguration.framework | `_kSCPropNetDNSDomainName` | 2 | cloudflare-warp, teamviewer |
-| SystemConfiguration.framework | `_kSCPropNetDNSServerAddresses` | 2 | cloudflare-warp, teamviewer |
-| SystemConfiguration.framework | `_kSCPropNetEthernetMediaSubType` | 2 | stats, teamviewer |
-| SystemConfiguration.framework | `_kSCPropNetIPv4Addresses` | 2 | cloudflare-warp, teamviewer |
-| SystemConfiguration.framework | `_kSCPropNetIPv4Router` | 2 | cloudflare-warp, teamviewer |
-| SystemConfiguration.framework | `_kSCPropNetIPv4SubnetMasks` | 2 | cloudflare-warp, teamviewer |
-| SystemConfiguration.framework | `_kSCPropNetIPv6Addresses` | 2 | cloudflare-warp, teamviewer |
-| SystemConfiguration.framework | `_kSCPropNetIPv6PrefixLength` | 2 | cloudflare-warp, teamviewer |
-| SystemConfiguration.framework | `_kSCPropNetIPv6Router` | 2 | cloudflare-warp, teamviewer |
+| SystemConfiguration.framework | `_SCNetworkSetGetSetID` | 2 | hammerspoon, istat-menus |
+| SystemConfiguration.framework | `_kSCEntNetModem` | 2 | adobe-acrobat-reader, microsoft-outlook |
+| SystemConfiguration.framework | `_kSCPropNetIPv6ConfigMethod` | 2 | nordvpn, teamviewer |
+| SystemConfiguration.framework | `_kSCValNetIPv6ConfigMethodLinkLocal` | 2 | nordvpn, teamviewer |
+| SystemConfiguration.framework | `_kSCValNetIPv6ConfigMethodManual` | 2 | nordvpn, teamviewer |
+| libSystem.B.dylib | `_DNSServiceConstructFullName` | 2 | cyberduck, zoom |
 | libSystem.B.dylib | `_DNSServiceReconfirmRecord` | 2 | cyberduck, teamviewer |
-| libSystem.B.dylib | `_DNSServiceRegisterRecord` | 2 | cmux, cyberduck |
-| libSystem.B.dylib | `_TXTRecordContainsKey` | 2 | libndi, teamviewer |
+| libSystem.B.dylib | `_TXTRecordCreate` | 2 | teamviewer, zoom |
+| libSystem.B.dylib | `_TXTRecordDeallocate` | 2 | teamviewer, zoom |
+| libSystem.B.dylib | `_TXTRecordGetBytesPtr` | 2 | teamviewer, zoom |
 | libSystem.B.dylib | `_TXTRecordGetCount` | 2 | teamviewer, zoom |
-| libSystem.B.dylib | `_TXTRecordGetValuePtr` | 2 | libndi, teamviewer |
-| libresolv.9.dylib | `_res_9_query` | 2 | deluge, windows-app |
+| libSystem.B.dylib | `_TXTRecordGetLength` | 2 | teamviewer, zoom |
+| libSystem.B.dylib | `_TXTRecordSetValue` | 2 | teamviewer, zoom |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO4HostO4nameyAESS_AA11NWInterfaceVSgtcAEmFWC` | 2 | duckduckgo, utm |
 | libswiftNetwork.dylib | `_$s7Network10NWListenerC10parametersAA12NWParametersCvg` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network10NWListenerC5StateO2eeoiySbAE_AEtFZ` | 2 | bettertouchtool, iina |
@@ -316,6 +282,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network11IPv6AddressVAA9IPAddressAAMc` | 2 | duckduckgo, tailscale-app |
 | libswiftNetwork.dylib | `_$s7Network11IPv6AddressVyACSgSScfC` | 2 | duckduckgo, tailscale-app |
 | libswiftNetwork.dylib | `_$s7Network11NWInterfaceV13InterfaceTypeOSQAAMc` | 2 | duckduckgo, tailscale-app |
+| libswiftNetwork.dylib | `_$s7Network11NWInterfaceV5indexSivg` | 2 | sfm, tailscale-app |
 | libswiftNetwork.dylib | `_$s7Network12NWConnectionC10parametersAA12NWParametersCvg` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network12NWConnectionC14ContentContextC12finalMessageAEvgZ` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network12NWConnectionC14ContentContextC16protocolMetadataSayAA010NWProtocolF0CGvgTj` | 2 | iina, raycast |
@@ -330,6 +297,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network12NWConnectionC26requestEstablishmentReport5queue10completionySo012OS_dispatch_F0C_yAC0dE0VSgctF` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network12NWConnectionC5StateO2eeoiySbAE_AEtFZ` | 2 | bettertouchtool, duckduckgo |
 | libswiftNetwork.dylib | `_$s7Network12NWConnectionC5batchyyyyXEF` | 2 | easydict, tableplus |
+| libswiftNetwork.dylib | `_$s7Network12NWParametersC13ProtocolStackC08internetC0AA17NWProtocolOptionsCSgvgTj` | 2 | duckduckgo, istat-menus |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC20MultipathServiceTypeO8disabledyA2EmFWC` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC20MultipathServiceTypeOMa` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC20MultipathServiceTypeOMn` | 2 | easydict, tableplus |
@@ -337,6 +305,11 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC21requiredLocalEndpointAA10NWEndpointOSgvg` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC4dtls3udpAcA13NWProtocolTLSC7OptionsCSg_AA0E3UDPCAHCtcfC` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersCMn` | 2 | easydict, tableplus |
+| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsC7VersionO2v4yA2GmFWC` | 2 | duckduckgo, istat-menus |
+| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsC7VersionO2v6yA2GmFWC` | 2 | duckduckgo, istat-menus |
+| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsC7VersionOMa` | 2 | duckduckgo, istat-menus |
+| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsC7versionAE7VersionOvsTj` | 2 | duckduckgo, istat-menus |
+| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsCMa` | 2 | duckduckgo, istat-menus |
 | libswiftNetwork.dylib | `_$s7Network13NWProtocolTCPC7OptionsC02noD0SbvgTj` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network13NWProtocolTCPC7OptionsC02noD0SbvsTj` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network13NWProtocolTCPC7OptionsC13keepaliveIdleSivgTj` | 2 | easydict, tableplus |
@@ -378,26 +351,23 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network20NWProtocolDefinitionCMn` | 2 | easydict, tableplus |
 | libswiftNetwork.dylib | `_$s7Network6NWPathV17UnsatisfiedReasonO05localA6DeniedyA2EmFWC` | 2 | sequel-ace, utm |
 | libswiftNetwork.dylib | `_$s7Network6NWPathV2eeoiySbAC_ACtFZ` | 2 | easydict, tableplus |
-| libswiftNetwork.dylib | `_$s7Network6NWPathV6StatusO18requiresConnectionyA2EmFWC` | 2 | raycast, sfm |
 | libswiftNetwork.dylib | `_$s7Network6NWPathV8gatewaysSayAA10NWEndpointOGvg` | 2 | duckduckgo, sfm |
 | libswiftNetwork.dylib | `_$s7Network9IPAddressMp` | 2 | duckduckgo, tailscale-app |
 | libswiftNetwork.dylib | `_$s7Network9IPAddressP8rawValue10Foundation4DataVvgTj` | 2 | duckduckgo, tailscale-app |
 | libswiftNetwork.dylib | `_$s7Network9NWBrowserCMn` | 2 | bettertouchtool, utm |
-| vmnet.framework | `_vmnet_enable_isolation_key` | 2 | orbstack, utm |
-| vmnet.framework | `_vmnet_end_address_key` | 2 | utm, virtualbox |
-| vmnet.framework | `_vmnet_network_identifier_key` | 2 | orbstack, utm |
-| vmnet.framework | `_vmnet_shared_interface_name_key` | 2 | utm, virtualbox |
-| vmnet.framework | `_vmnet_start_address_key` | 2 | utm, virtualbox |
-| vmnet.framework | `_vmnet_subnet_mask_key` | 2 | utm, virtualbox |
-| CFNetwork.framework | `_CFHTTPAuthenticationCreateFromResponse` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_CFHTTPAuthenticationRequiresUserNameAndPassword` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_CFHTTPMessageAddAuthentication` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_CFHTTPMessageApplyCredentialDictionary` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_CFHTTPMessageGetTypeID` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_CFHostGetReachability` | 1 | hammerspoon |
-| CFNetwork.framework | `_CFNetDiagnosticCreateWithURL` | 1 | cyberduck |
+| vmnet.framework | `_vmnet_copy_shared_interface_list` | 2 | rancher, utm |
+| vmnet.framework | `_vmnet_estimated_packets_available_key` | 2 | rancher, virtualbox |
+| vmnet.framework | `_vmnet_nat66_prefix_key` | 2 | rancher, utm |
+| CFNetwork.framework | `_CFHTTPCookieStorageCopyCookies` | 1 | orion |
+| CFNetwork.framework | `_CFHTTPCookieStorageCreateFromFile` | 1 | orion |
+| CFNetwork.framework | `_CFHTTPCookieStorageCreateFromIdentifyingData` | 1 | orion |
+| CFNetwork.framework | `_CFHTTPCookieStorageCreateIdentifyingData` | 1 | orion |
+| CFNetwork.framework | `_CFHTTPCookieStorageDeleteAllCookies` | 1 | orion |
+| CFNetwork.framework | `_CFHTTPCookieStorageDeleteCookie` | 1 | orion |
+| CFNetwork.framework | `_CFHTTPCookieStorageGetCookieAcceptPolicy` | 1 | orion |
+| CFNetwork.framework | `_CFHTTPCookieStorageScheduleWithRunLoop` | 1 | orion |
+| CFNetwork.framework | `_CFHTTPCookieStorageSetCookieAcceptPolicy` | 1 | orion |
 | CFNetwork.framework | `_CFNetDiagnosticDiagnoseProblemInteractively` | 1 | cyberduck |
-| CFNetwork.framework | `_CFNetServiceBrowserCreate` | 1 | bbedit |
 | CFNetwork.framework | `_CFNetServiceBrowserInvalidate` | 1 | bbedit |
 | CFNetwork.framework | `_CFNetServiceBrowserScheduleWithRunLoop` | 1 | bbedit |
 | CFNetwork.framework | `_CFNetServiceBrowserSearchForServices` | 1 | bbedit |
@@ -407,13 +377,55 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CFNetwork.framework | `_CFNetServiceGetName` | 1 | bbedit |
 | CFNetwork.framework | `_CFNetServiceGetPortNumber` | 1 | bbedit |
 | CFNetwork.framework | `_CFNetServiceGetTargetHost` | 1 | bbedit |
+| CFNetwork.framework | `_CFNetServiceMonitorCreate` | 1 | dropbox |
 | CFNetwork.framework | `_CFNetServiceResolve` | 1 | bbedit |
 | CFNetwork.framework | `_CFNetServiceScheduleWithRunLoop` | 1 | bbedit |
-| CFNetwork.framework | `_CFNetServiceSetClient` | 1 | bbedit |
 | CFNetwork.framework | `_CFNetServiceUnscheduleFromRunLoop` | 1 | bbedit |
-| CFNetwork.framework | `_CFReadStreamCreateForHTTPRequest` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_CFReadStreamCreateForStreamedHTTPRequest` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_NSHTTPCookieOriginURL` | 1 | protonvpn |
+| CFNetwork.framework | `_CFURLCacheCopyResponseForRequest` | 1 | orion |
+| CFNetwork.framework | `_CFURLCacheCopySharedURLCache` | 1 | orion |
+| CFNetwork.framework | `_CFURLCacheMemoryCapacity` | 1 | orion |
+| CFNetwork.framework | `_CFURLCacheSetDiskCapacity` | 1 | orion |
+| CFNetwork.framework | `_CFURLCacheSetMemoryCapacity` | 1 | orion |
+| CFNetwork.framework | `_CFURLRequestCreateMutableCopy` | 1 | orion |
+| CFNetwork.framework | `_CFURLRequestGetRequestPriority` | 1 | orion |
+| CFNetwork.framework | `_CFURLRequestSetHTTPRequestBody` | 1 | orion |
+| CFNetwork.framework | `_CFURLRequestSetHTTPRequestBodyStream` | 1 | orion |
+| CFNetwork.framework | `_CFURLRequestSetRequestPriority` | 1 | orion |
+| CFNetwork.framework | `_CFURLRequestSetShouldPipelineHTTP` | 1 | orion |
+| CFNetwork.framework | `_CFURLResponseGetHTTPResponse` | 1 | orion |
+| CFNetwork.framework | `_CFURLResponseGetMIMEType` | 1 | orion |
+| CFNetwork.framework | `_CFURLResponseGetURL` | 1 | orion |
+| CFNetwork.framework | `_CFURLResponseSetMIMEType` | 1 | orion |
+| CFNetwork.framework | `_NSURLAuthenticationMethodOAuth` | 1 | orion |
+| CFNetwork.framework | `_OBJC_CLASS_$_NSURLDownload` | 1 | orion |
+| CFNetwork.framework | `_OBJC_CLASS_$__NSHSTSStorage` | 1 | orion |
+| CFNetwork.framework | `_OBJC_CLASS_$__NSHTTPAlternativeServicesFilter` | 1 | orion |
+| CFNetwork.framework | `_OBJC_CLASS_$__NSHTTPAlternativeServicesStorage` | 1 | orion |
+| CFNetwork.framework | `_OBJC_METACLASS_$_NSURLDownload` | 1 | orion |
+| CFNetwork.framework | `__CFCachedURLResponseGetMemMappedData` | 1 | orion |
+| CFNetwork.framework | `__CFCachedURLResponseSetBecameFileBackedCallBackBlock` | 1 | orion |
+| CFNetwork.framework | `__CFHTTPCookieStorageGetDefault` | 1 | orion |
+| CFNetwork.framework | `__CFHTTPMessageSetResponseProxyURL` | 1 | orion |
+| CFNetwork.framework | `__CFHTTPMessageSetResponseURL` | 1 | orion |
+| CFNetwork.framework | `__CFHostIsDomainTopLevel` | 1 | orion |
+| CFNetwork.framework | `__CFNetworkCopyATSContext` | 1 | orion |
+| CFNetwork.framework | `__CFNetworkHTTPConnectionCacheGetLimit` | 1 | orion |
+| CFNetwork.framework | `__CFNetworkHTTPConnectionCacheSetLimit` | 1 | orion |
+| CFNetwork.framework | `__CFNetworkIsKnownHSTSHostWithSession` | 1 | orion |
+| CFNetwork.framework | `__CFNetworkSetATSContext` | 1 | orion |
+| CFNetwork.framework | `__CFURLCacheCopyCacheDirectory` | 1 | orion |
+| CFNetwork.framework | `__CFURLConnectionSetFrameworkStubs` | 1 | orion |
+| CFNetwork.framework | `__CFURLRequestSetProtocolProperty` | 1 | orion |
+| CFNetwork.framework | `__CFURLRequestSetStorageSession` | 1 | orion |
+| CFNetwork.framework | `__CFURLResponseGetSSLCertificateContext` | 1 | orion |
+| CFNetwork.framework | `__CFURLStorageSessionCopyCache` | 1 | orion |
+| CFNetwork.framework | `__CFURLStorageSessionCopyCookieStorage` | 1 | orion |
+| CFNetwork.framework | `__CFURLStorageSessionCreate` | 1 | orion |
+| CFNetwork.framework | `__CFURLStorageSessionDisableCache` | 1 | orion |
+| CFNetwork.framework | `__kCFStreamSocketSetNoDelay` | 1 | orion |
+| CFNetwork.framework | `__kCFURLCachePartitionKey` | 1 | orion |
+| CFNetwork.framework | `__kCFURLConnectionPropertyShouldSniff` | 1 | orion |
+| CFNetwork.framework | `__kCFURLStorageSessionIsPrivate` | 1 | orion |
 | CFNetwork.framework | `_kCFErrorDomainWinSock` | 1 | windows-app |
 | CFNetwork.framework | `_kCFFTPResourceGroup` | 1 | bbedit |
 | CFNetwork.framework | `_kCFFTPResourceLink` | 1 | bbedit |
@@ -423,17 +435,16 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | CFNetwork.framework | `_kCFFTPResourceOwner` | 1 | bbedit |
 | CFNetwork.framework | `_kCFFTPResourceSize` | 1 | bbedit |
 | CFNetwork.framework | `_kCFFTPResourceType` | 1 | bbedit |
-| CFNetwork.framework | `_kCFHTTPAuthenticationPassword` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_kCFHTTPAuthenticationSchemeNegotiate` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_kCFHTTPAuthenticationUsername` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_kCFStreamPropertyHTTPFinalURL` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_kCFStreamPropertyHTTPProxy` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_kCFStreamPropertyHTTPProxyHost` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_kCFStreamPropertyHTTPProxyPort` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_kCFStreamPropertyHTTPResponseHeader` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_kCFStreamPropertyHTTPSProxyHost` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_kCFStreamPropertyHTTPSProxyPort` | 1 | adobe-acrobat-reader |
-| CFNetwork.framework | `_kCFStreamPropertyHTTPShouldAutoredirect` | 1 | adobe-acrobat-reader |
+| CFNetwork.framework | `_kCFHTTPCookieLocalFileDomain` | 1 | orion |
+| CFNetwork.framework | `_kCFStreamPropertyCONNECTAdditionalHeaders` | 1 | orion |
+| CFNetwork.framework | `_kCFStreamPropertyCONNECTProxy` | 1 | orion |
+| CFNetwork.framework | `_kCFStreamPropertyCONNECTProxyHost` | 1 | orion |
+| CFNetwork.framework | `_kCFStreamPropertyCONNECTProxyPort` | 1 | orion |
+| CFNetwork.framework | `_kCFStreamPropertyCONNECTResponse` | 1 | orion |
+| CFNetwork.framework | `_kCFStreamPropertySourceApplication` | 1 | orion |
+| CFNetwork.framework | `_kCFStreamSocketSecurityLevelTLSv1_2` | 1 | orion |
+| CFNetwork.framework | `_kCFURLRequestAllowAllPOSTCaching` | 1 | orion |
+| CFNetwork.framework | `_kCFURLRequestContentDecoderSkipURLCheck` | 1 | orion |
 | GSS.framework | `___ApplePrivate_gss_krb5_get_tkt_flags` | 1 | pgadmin4 |
 | GSS.framework | `___ApplePrivate_gss_krb5_import_cred` | 1 | pgadmin4 |
 | GSS.framework | `___ApplePrivate_gss_release_iov_buffer` | 1 | pgadmin4 |
@@ -442,16 +453,10 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | GSS.framework | `___ApplePrivate_gss_wrap_iov_length` | 1 | pgadmin4 |
 | GSS.framework | `___ApplePrivate_gsskrb5_extract_authtime_from_sec_context` | 1 | pgadmin4 |
 | GSS.framework | `___gss_c_nt_anonymous_oid_desc` | 1 | pgadmin4 |
-| GSS.framework | `___gss_c_nt_export_name_oid_desc` | 1 | pgadmin4 |
 | GSS.framework | `___gss_c_nt_machine_uid_name_oid_desc` | 1 | pgadmin4 |
 | GSS.framework | `___gss_c_nt_string_uid_name_oid_desc` | 1 | pgadmin4 |
 | GSS.framework | `___gss_krb5_nt_principal_name_oid_desc` | 1 | pgadmin4 |
-| GSS.framework | `_gss_destroy_cred` | 1 | windows-app |
-| GSS.framework | `_gss_inquire_cred` | 1 | windows-app |
 | GSS.framework | `_gss_wrap_size_limit` | 1 | tableplus |
-| IOKit.framework | `_SCPreferencesCreateWithAuthorization` | 1 | proxyman |
-| IOKit.framework | `_SCPreferencesGetValue` | 1 | proxyman |
-| Kerberos.framework | `_cc_initialize` | 1 | pgadmin4 |
 | Kerberos.framework | `_gss_add_oid_set_member` | 1 | wireshark-app |
 | Kerberos.framework | `_gss_create_empty_oid_set` | 1 | wireshark-app |
 | Kerberos.framework | `_gss_inquire_cred` | 1 | wireshark-app |
@@ -460,6 +465,8 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Kerberos.framework | `_gss_test_oid_set_member` | 1 | wireshark-app |
 | Kerberos.framework | `_gss_wrap_size_limit` | 1 | libreoffice |
 | Kerberos.framework | `_krb5_c_decrypt` | 1 | wireshark-app |
+| Kerberos.framework | `_krb5_free_host_realm` | 1 | microsoft-excel |
+| Kerberos.framework | `_krb5_get_host_realm` | 1 | microsoft-excel |
 | Kerberos.framework | `_krb5_kt_resolve` | 1 | wireshark-app |
 | LDAP.framework | `_ldap_bind_s` | 1 | adobe-acrobat-reader |
 | LDAP.framework | `_ldap_count_values_len` | 1 | adobe-acrobat-reader |
@@ -468,12 +475,13 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | LDAP.framework | `_ldap_search_st` | 1 | tableplus |
 | LDAP.framework | `_ldap_simple_bind` | 1 | tableplus |
 | Network.framework | `_$s7Network10NWEndpointO16debugDescriptionSSvg` | 1 | protonvpn |
-| Network.framework | `_$s7Network10NWEndpointO3urlyAC10Foundation3URLVcACmFWC` | 1 | windows-app |
 | Network.framework | `_$s7Network10NWEndpointO4PortV16debugDescriptionSSvg` | 1 | proxyman |
 | Network.framework | `_$s7Network10NWEndpointO9txtRecordAA11NWTXTRecordVSgvg` | 1 | openclaw |
-| Network.framework | `_$s7Network10NWEndpointOSQAAMc` | 1 | cmux |
+| Network.framework | `_$s7Network10NWEndpointOSHAAMc` | 1 | nordvpn |
 | Network.framework | `_$s7Network11IPv4AddressV9broadcastACvgZ` | 1 | windows-app |
-| Network.framework | `_$s7Network11NWInterfaceV13InterfaceTypeOSQAAMc` | 1 | cmux |
+| Network.framework | `_$s7Network11IPv4AddressV9interfaceAA11NWInterfaceVSgvg` | 1 | nordvpn |
+| Network.framework | `_$s7Network11NWInterfaceV13InterfaceTypeO2eeoiySbAE_AEtFZ` | 1 | nordvpn |
+| Network.framework | `_$s7Network11NWInterfaceV13InterfaceTypeOSHAAMc` | 1 | nordvpn |
 | Network.framework | `_$s7Network11NWTXTRecordV10dictionarySDyS2SGvg` | 1 | openclaw |
 | Network.framework | `_$s7Network11NWTXTRecordVMa` | 1 | openclaw |
 | Network.framework | `_$s7Network11NWTXTRecordVMn` | 1 | openclaw |
@@ -486,17 +494,18 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Network.framework | `_$s7Network12NWParametersC14PrivacyContextC7defaultAEvgZ` | 1 | macwhisper |
 | Network.framework | `_$s7Network12NWParametersC14PrivacyContextCMa` | 1 | macwhisper |
 | Network.framework | `_$s7Network12NWParametersC20MultipathServiceTypeO8handoveryA2EmFWC` | 1 | orbstack |
+| Network.framework | `_$s7Network12NWParametersC3tlsACvgZ` | 1 | nordvpn |
+| Network.framework | `_$s7Network13NWPathMonitorC17pathUpdateHandleryAA0B0VcSgvM` | 1 | nordvpn |
+| Network.framework | `_$s7Network13NWPathMonitorC5queueSo012OS_dispatch_D0CSgvg` | 1 | nordvpn |
 | Network.framework | `_$s7Network13NWProtocolTLSC7OptionsCAEycfCTj` | 1 | orbstack |
-| Network.framework | `_$s7Network18ProxyConfigurationV07socksv5B0AcA10NWEndpointO_tcfC` | 1 | cmux |
 | Network.framework | `_$s7Network18ProxyConfigurationV12matchDomainsSaySSGvs` | 1 | cmux |
 | Network.framework | `_$s7Network18ProxyConfigurationV13allowFailoverSbvs` | 1 | cmux |
 | Network.framework | `_$s7Network18ProxyConfigurationV15applyCredential8username8passwordySS_SStF` | 1 | cmux |
-| Network.framework | `_$s7Network18ProxyConfigurationV15excludedDomainsSaySSGvs` | 1 | cmux |
-| Network.framework | `_$s7Network18ProxyConfigurationV16httpCONNECTProxy10tlsOptionsAcA10NWEndpointO_AA13NWProtocolTLSC0G0CSgtcfC` | 1 | cmux |
-| Network.framework | `_$s7Network18ProxyConfigurationVMa` | 1 | cmux |
-| Network.framework | `_$s7Network18ProxyConfigurationVMn` | 1 | cmux |
-| Network.framework | `_$s7Network6NWPathV6StatusO18requiresConnectionyA2EmFWC` | 1 | protonvpn |
-| Network.framework | `_$s7Network6NWPathV8gatewaysSayAA10NWEndpointOGvg` | 1 | cmux |
+| Network.framework | `_$s7Network18ProxyConfigurationV15excludedDomainsSaySSGvM` | 1 | orion |
+| Network.framework | `_$s7Network6NWPathV16debugDescriptionSSvg` | 1 | nordvpn |
+| Network.framework | `_$s7Network6NWPathV17UnsatisfiedReasonO11vpnInactiveyA2EmFWC` | 1 | nordvpn |
+| Network.framework | `_$s7Network6NWPathV17UnsatisfiedReasonO12notAvailableyA2EmFWC` | 1 | nordvpn |
+| Network.framework | `_$s7Network6NWPathV17UnsatisfiedReasonO2eeoiySbAE_AEtFZ` | 1 | nordvpn |
 | Network.framework | `_$s7Network9NWBrowserC5StateOMn` | 1 | openclaw |
 | Network.framework | `_$s7Network9NWBrowserC6ResultV6ChangeO5FlagsVMa` | 1 | protonvpn |
 | Network.framework | `_$s7Network9NWBrowserC6ResultV6ChangeO5FlagsVMn` | 1 | protonvpn |
@@ -512,31 +521,25 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | Network.framework | `_$sSo25NSURLSessionConfigurationC7NetworkE19proxyConfigurationsSayAC05ProxyB0VGvs` | 1 | cmux |
 | Network.framework | `_OBJC_CLASS_$_NWEndpoint` | 1 | duckduckgo |
 | Network.framework | `_OBJC_CLASS_$_NWTCPConnection` | 1 | protonvpn |
-| Network.framework | `__nw_content_context_default_stream` | 1 | sfm |
-| Network.framework | `__nw_content_context_final_send` | 1 | bbedit |
-| Network.framework | `_nw_advertise_descriptor_create_bonjour_service` | 1 | spotify |
-| Network.framework | `_nw_advertise_descriptor_set_txt_record_object` | 1 | spotify |
-| Network.framework | `_nw_browse_descriptor_set_include_txt_record` | 1 | spotify |
-| Network.framework | `_nw_browse_result_copy_txt_record_object` | 1 | spotify |
-| Network.framework | `_nw_connection_copy_current_path` | 1 | bbedit |
-| Network.framework | `_nw_content_context_create` | 1 | bbedit |
-| Network.framework | `_nw_content_context_set_metadata_for_protocol` | 1 | bbedit |
-| Network.framework | `_nw_endpoint_get_address` | 1 | bbedit |
+| Network.framework | `_nw_array_get_count` | 1 | orion |
+| Network.framework | `_nw_array_get_object_at_index` | 1 | orion |
+| Network.framework | `_nw_context_create` | 1 | orion |
+| Network.framework | `_nw_context_set_privacy_level` | 1 | orion |
+| Network.framework | `_nw_endpoint_get_known_tracker_name` | 1 | orion |
 | Network.framework | `_nw_framer_copy_options` | 1 | dotnet-sdk |
 | Network.framework | `_nw_framer_options_copy_object_value` | 1 | dotnet-sdk |
 | Network.framework | `_nw_framer_options_set_object_value` | 1 | dotnet-sdk |
 | Network.framework | `_nw_ip_create_metadata` | 1 | bbedit |
 | Network.framework | `_nw_ip_metadata_set_service_class` | 1 | bbedit |
-| Network.framework | `_nw_listener_set_advertise_descriptor` | 1 | spotify |
-| Network.framework | `_nw_parameters_set_reuse_local_address` | 1 | bbedit |
-| Network.framework | `_nw_parameters_set_service_class` | 1 | bbedit |
-| Network.framework | `_nw_path_copy_effective_local_endpoint` | 1 | bbedit |
-| Network.framework | `_nw_path_copy_effective_remote_endpoint` | 1 | bbedit |
-| Network.framework | `_nw_protocol_stack_copy_transport_protocol` | 1 | bbedit |
-| Network.framework | `_nw_tcp_options_set_enable_keepalive` | 1 | bbedit |
-| Network.framework | `_nw_txt_record_access_key` | 1 | spotify |
-| Network.framework | `_nw_txt_record_create_dictionary` | 1 | spotify |
-| Network.framework | `_nw_txt_record_set_key` | 1 | spotify |
+| Network.framework | `_nw_parameters_set_context` | 1 | orion |
+| Network.framework | `_nw_parameters_set_source_application_by_bundle_id` | 1 | orion |
+| Network.framework | `_nw_path_create_evaluator_for_endpoint` | 1 | orion |
+| Network.framework | `_nw_path_evaluator_copy_path` | 1 | orion |
+| Network.framework | `_nw_resolver_cancel` | 1 | orion |
+| Network.framework | `_nw_resolver_create_with_path` | 1 | orion |
+| Network.framework | `_nw_resolver_set_update_handler` | 1 | orion |
+| Network.framework | `_nw_ws_metadata_copy_server_response` | 1 | microsoft-outlook |
+| Network.framework | `_nw_ws_response_enumerate_additional_headers` | 1 | microsoft-outlook |
 | NetworkExtension.framework | `_$s16NetworkExtension25NEAppProxyUDPFlowHandlingMp` | 1 | proxyman |
 | NetworkExtension.framework | `_$s16NetworkExtension25NEAppProxyUDPFlowHandlingP09handleNewE0_25initialRemoteFlowEndpointSbSo0cdE0C_0A010NWEndpointOtFTq` | 1 | proxyman |
 | NetworkExtension.framework | `_$sSo13NENetworkRuleC16NetworkExtensionE011destinationC8Endpoint6prefix8protocolAB0C010NWEndpointO_SiSo0aB8ProtocolVtcfC` | 1 | proxyman |
@@ -545,10 +548,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | NetworkExtension.framework | `_$sSo14NEAppProxyFlowC16NetworkExtensionE4open09withLocalC8Endpoint17completionHandlery0D010NWEndpointOSg_ys5Error_pSgctF` | 1 | proxyman |
 | NetworkExtension.framework | `_$sSo14NEAppProxyFlowC16NetworkExtensionE9interface0D011NWInterfaceVSgvs` | 1 | proxyman |
 | NetworkExtension.framework | `_$sSo17NEAppProxyTCPFlowC16NetworkExtensionE18remoteFlowEndpoint0D010NWEndpointOvg` | 1 | proxyman |
-| NetworkExtension.framework | `_NEVPNConnectionErrorDomain` | 1 | tailscale-app |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEAppProxyFlow` | 1 | duckduckgo |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEAppProxyUDPFlow` | 1 | protonvpn |
-| NetworkExtension.framework | `_OBJC_CLASS_$_NEDNSOverHTTPSSettings` | 1 | protonvpn |
+| NetworkExtension.framework | `_NETunnelProviderErrorDomain` | 1 | nordvpn |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEDNSOverTLSSettings` | 1 | protonvpn |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEFilterDataProvider` | 1 | lulu |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEFilterManager` | 1 | lulu |
@@ -561,6 +561,7 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEHotspotNetwork` | 1 | whatsapp |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEOnDemandRuleIgnore` | 1 | sfm |
 | NetworkExtension.framework | `_OBJC_CLASS_$_NEProxyServer` | 1 | sfm |
+| NetworkExtension.framework | `_OBJC_CLASS_$_NEVPNProtocol` | 1 | nordvpn |
 | NetworkExtension.framework | `_OBJC_METACLASS_$_NEFilterDataProvider` | 1 | lulu |
 | NetworkStatistics.framework | `_NStatManagerAddAllTCP` | 1 | lulu |
 | NetworkStatistics.framework | `_NStatManagerAddAllUDP` | 1 | lulu |
@@ -580,77 +581,41 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | NetworkStatistics.framework | `_kNStatSrcKeyTCPState` | 1 | lulu |
 | NetworkStatistics.framework | `_kNStatSrcKeyTxBytes` | 1 | lulu |
 | NetworkStatistics.framework | `_kNStatSrcKeyUUID` | 1 | lulu |
+| SystemConfiguration.framework | `_SCCopyLastError` | 1 | nordvpn |
 | SystemConfiguration.framework | `_SCDynamicStoreCopyLocation` | 1 | hammerspoon |
-| SystemConfiguration.framework | `_SCNetworkConnectionCreateWithServiceID` | 1 | microsoft-teams |
-| SystemConfiguration.framework | `_SCNetworkConnectionGetStatus` | 1 | microsoft-teams |
-| SystemConfiguration.framework | `_SCNetworkInterfaceCopyMTU` | 1 | teamviewer |
-| SystemConfiguration.framework | `_SCNetworkInterfaceGetSupportedInterfaceTypes` | 1 | teamviewer |
-| SystemConfiguration.framework | `_SCNetworkInterfaceGetSupportedProtocolTypes` | 1 | teamviewer |
-| SystemConfiguration.framework | `_SCNetworkProtocolGetConfiguration` | 1 | clash-verge-rev |
+| SystemConfiguration.framework | `_SCNetworkConnectionCopyExtendedStatus` | 1 | istat-menus |
+| SystemConfiguration.framework | `_SCNetworkConnectionCopyUserPreferences` | 1 | microsoft-outlook |
+| SystemConfiguration.framework | `_SCNetworkInterfaceForceConfigurationRefresh` | 1 | istat-menus |
+| SystemConfiguration.framework | `_SCNetworkProtocolGetEnabled` | 1 | nordvpn |
 | SystemConfiguration.framework | `_SCNetworkProtocolSetConfiguration` | 1 | clash-verge-rev |
-| SystemConfiguration.framework | `_SCNetworkServiceCopyProtocol` | 1 | clash-verge-rev |
-| SystemConfiguration.framework | `_SCNetworkServiceGetTypeID` | 1 | microsoft-teams |
-| SystemConfiguration.framework | `_SCNetworkSetCopyAll` | 1 | hammerspoon |
-| SystemConfiguration.framework | `_SCNetworkSetGetName` | 1 | hammerspoon |
-| SystemConfiguration.framework | `_SCNetworkSetGetSetID` | 1 | hammerspoon |
 | SystemConfiguration.framework | `_SCNetworkSetSetCurrent` | 1 | hammerspoon |
-| SystemConfiguration.framework | `_SCPreferencesApplyChanges` | 1 | clash-verge-rev |
-| SystemConfiguration.framework | `_SCPreferencesCommitChanges` | 1 | clash-verge-rev |
 | SystemConfiguration.framework | `_SCPreferencesCreateWithOptions` | 1 | hammerspoon |
-| SystemConfiguration.framework | `_SCPreferencesLock` | 1 | clash-verge-rev |
 | SystemConfiguration.framework | `_SCPreferencesPathSetValue` | 1 | proxyman |
-| SystemConfiguration.framework | `_SCPreferencesSynchronize` | 1 | proxyman |
-| SystemConfiguration.framework | `_SCPreferencesUnlock` | 1 | clash-verge-rev |
+| SystemConfiguration.framework | `_kSCDynamicStorePropNetInterfaces` | 1 | orion |
 | SystemConfiguration.framework | `_kSCDynamicStorePropNetPrimaryService` | 1 | cloudflare-warp |
-| SystemConfiguration.framework | `_kSCEntNetDHCP` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCEntNetEthernet` | 1 | cloudflare-warp |
-| SystemConfiguration.framework | `_kSCEntNetLink` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCEntNetModem` | 1 | adobe-acrobat-reader |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceType6to4` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeBond` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeFireWire` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeIPv4` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeL2TP` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeSerial` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCNetworkInterfaceTypeVLAN` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCPrefNetworkServices` | 1 | proxyman |
-| SystemConfiguration.framework | `_kSCPropInterfaceName` | 1 | cloudflare-warp |
-| SystemConfiguration.framework | `_kSCPropNetDNSSearchDomains` | 1 | cloudflare-warp |
-| SystemConfiguration.framework | `_kSCPropNetEthernetMediaOptions` | 1 | teamviewer |
 | SystemConfiguration.framework | `_kSCPropNetIPv4BroadcastAddresses` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCPropNetIPv4ConfigMethod` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCPropNetIPv6ConfigMethod` | 1 | teamviewer |
 | SystemConfiguration.framework | `_kSCPropNetIPv6Flags` | 1 | cloudflare-warp |
-| SystemConfiguration.framework | `_kSCPropNetInterfaceDeviceName` | 1 | cloudflare-warp |
-| SystemConfiguration.framework | `_kSCPropNetInterfaceHardware` | 1 | cloudflare-warp |
 | SystemConfiguration.framework | `_kSCPropNetModemConnectSpeed` | 1 | adobe-acrobat-reader |
-| SystemConfiguration.framework | `_kSCPropNetProxiesFTPPassive` | 1 | cyberduck |
-| SystemConfiguration.framework | `_kSCPropNetServiceOrder` | 1 | cloudflare-warp |
+| SystemConfiguration.framework | `_kSCPropNetPPPDialOnDemand` | 1 | microsoft-outlook |
 | SystemConfiguration.framework | `_kSCValNetIPv4ConfigMethodAutomatic` | 1 | teamviewer |
 | SystemConfiguration.framework | `_kSCValNetIPv4ConfigMethodBOOTP` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCValNetIPv4ConfigMethodDHCP` | 1 | teamviewer |
 | SystemConfiguration.framework | `_kSCValNetIPv4ConfigMethodINFORM` | 1 | teamviewer |
 | SystemConfiguration.framework | `_kSCValNetIPv4ConfigMethodLinkLocal` | 1 | teamviewer |
 | SystemConfiguration.framework | `_kSCValNetIPv4ConfigMethodManual` | 1 | teamviewer |
 | SystemConfiguration.framework | `_kSCValNetIPv4ConfigMethodPPP` | 1 | teamviewer |
 | SystemConfiguration.framework | `_kSCValNetIPv6ConfigMethod6to4` | 1 | teamviewer |
 | SystemConfiguration.framework | `_kSCValNetIPv6ConfigMethodAutomatic` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCValNetIPv6ConfigMethodLinkLocal` | 1 | teamviewer |
-| SystemConfiguration.framework | `_kSCValNetIPv6ConfigMethodManual` | 1 | teamviewer |
 | SystemConfiguration.framework | `_kSCValNetIPv6ConfigMethodRouterAdvertisement` | 1 | teamviewer |
 | libSystem.B.dylib | `_DNSServiceAddRecord` | 1 | cyberduck |
 | libSystem.B.dylib | `_DNSServiceEnumerateDomains` | 1 | cyberduck |
 | libSystem.B.dylib | `_DNSServiceRemoveRecord` | 1 | cyberduck |
 | libSystem.B.dylib | `_DNSServiceUpdateRecord` | 1 | cyberduck |
+| libSystem.B.dylib | `_TXTRecordContainsKey` | 1 | teamviewer |
 | libSystem.B.dylib | `_TXTRecordGetItemAtIndex` | 1 | zoom |
+| libSystem.B.dylib | `_TXTRecordGetValuePtr` | 1 | teamviewer |
 | libSystem.B.dylib | `_dns_configuration_copy` | 1 | emacs-app |
 | libSystem.B.dylib | `_dns_configuration_free` | 1 | emacs-app |
 | libSystem.B.dylib | `_dns_configuration_notify_key` | 1 | emacs-app |
-| libresolv.9.dylib | `_dns_free` | 1 | pgadmin4 |
-| libresolv.9.dylib | `_dns_open` | 1 | pgadmin4 |
-| libresolv.9.dylib | `_dns_search` | 1 | pgadmin4 |
-| libresolv.9.dylib | `_dns_search_list_domain` | 1 | pgadmin4 |
-| libresolv.9.dylib | `_res_9_ns_name_uncompress` | 1 | pgadmin4 |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO16debugDescriptionSSvg` | 1 | iina |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO4HostOSHAAMc` | 1 | duckduckgo |
 | libswiftNetwork.dylib | `_$s7Network10NWEndpointO4PortV5httpsAEvgZ` | 1 | duckduckgo |
@@ -677,7 +642,6 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network11IPv6AddressV8loopbackACvgZ` | 1 | duckduckgo |
 | libswiftNetwork.dylib | `_$s7Network11IPv6AddressVSHAAMc` | 1 | duckduckgo |
 | libswiftNetwork.dylib | `_$s7Network11IPv6AddressVSQAAMc` | 1 | duckduckgo |
-| libswiftNetwork.dylib | `_$s7Network11NWInterfaceV5indexSivg` | 1 | sfm |
 | libswiftNetwork.dylib | `_$s7Network11NWTXTRecordVMa` | 1 | utm |
 | libswiftNetwork.dylib | `_$s7Network11NWTXTRecordVMn` | 1 | utm |
 | libswiftNetwork.dylib | `_$s7Network11NWTXTRecordVyACSDyS2SGcfC` | 1 | utm |
@@ -685,17 +649,12 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC12ServiceClassO16interactiveVideoyA2EmFWC` | 1 | bettertouchtool |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC12ServiceClassOMa` | 1 | bettertouchtool |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC12serviceClassAC07ServiceD0Ovs` | 1 | bettertouchtool |
-| libswiftNetwork.dylib | `_$s7Network12NWParametersC13ProtocolStackC08internetC0AA17NWProtocolOptionsCSgvgTj` | 1 | duckduckgo |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC13ProtocolStackC09transportC0AA17NWProtocolOptionsCSgvgTj` | 1 | bettertouchtool |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC13ProtocolStackC09transportC0AA17NWProtocolOptionsCSgvsTj` | 1 | duckduckgo |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC20MultipathServiceTypeO8handoveryA2EmFWC` | 1 | easydict |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC20prohibitedInterfacesSayAA11NWInterfaceVGSgvs` | 1 | duckduckgo |
 | libswiftNetwork.dylib | `_$s7Network12NWParametersC3udpACvgZ` | 1 | duckduckgo |
-| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsC7VersionO2v4yA2GmFWC` | 1 | duckduckgo |
-| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsC7VersionO2v6yA2GmFWC` | 1 | duckduckgo |
-| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsC7VersionOMa` | 1 | duckduckgo |
-| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsC7versionAE7VersionOvsTj` | 1 | duckduckgo |
-| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsCMa` | 1 | duckduckgo |
+| libswiftNetwork.dylib | `_$s7Network12NWProtocolIPC7OptionsC7VersionOMn` | 1 | istat-menus |
 | libswiftNetwork.dylib | `_$s7Network13NWPathMonitorC21requiredInterfaceTypeAcA11NWInterfaceV0eF0O_tcfCTj` | 1 | raycast |
 | libswiftNetwork.dylib | `_$s7Network13NWPathMonitorC24prohibitedInterfaceTypesACSayAA11NWInterfaceV0E4TypeOG_tcfCTj` | 1 | raycast |
 | libswiftNetwork.dylib | `_$s7Network16NWProtocolFramerC10DefinitionC14implementationAeA0bC14Implementation_pXp_tcfc` | 1 | utm |
@@ -736,12 +695,11 @@ Ordenados pelo número de apps que pedem o símbolo. Gerado por `tools/corpus/ha
 | libswiftNetwork.dylib | `_$s7Network9IPAddressPyxSg10Foundation4DataV_AA11NWInterfaceVSgtcfCTj` | 1 | duckduckgo |
 | libswiftNetwork.dylib | `_$s7Network9NWBrowserC10DescriptorO20bonjourWithTXTRecordyAESS_SSSgtcAEmFWC` | 1 | utm |
 | libswiftNetwork.dylib | `_$s7Network9NWBrowserC13browseResultsShyAC6ResultVGvg` | 1 | utm |
-| vmnet.framework | `_vmnet_copy_shared_interface_list` | 1 | utm |
+| self) | `_SCNetworkConnectionCreateWithServiceID` | 1 | dropbox |
+| self) | `_SCPreferencesSetCallback` | 1 | dropbox |
 | vmnet.framework | `_vmnet_enable_checksum_offload_key` | 1 | orbstack |
 | vmnet.framework | `_vmnet_enable_tso_key` | 1 | orbstack |
-| vmnet.framework | `_vmnet_estimated_packets_available_key` | 1 | virtualbox |
 | vmnet.framework | `_vmnet_host_ip_address_key` | 1 | orbstack |
 | vmnet.framework | `_vmnet_host_ipv6_address_key` | 1 | orbstack |
 | vmnet.framework | `_vmnet_host_subnet_mask_key` | 1 | orbstack |
 | vmnet.framework | `_vmnet_mac_address_key` | 1 | docker-desktop |
-| vmnet.framework | `_vmnet_nat66_prefix_key` | 1 | utm |
