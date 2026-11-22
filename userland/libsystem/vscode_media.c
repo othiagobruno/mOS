@@ -695,6 +695,7 @@ static double vt_num(id v) { return v ? MSG0(double, v, "doubleValue") : 0; }
 static int vt_bool(id v) { return v && MSG0(BOOL, v, "boolValue"); }
 static int vt_contains(const char *s, const char *w) { for (; s && *s; s++) if (!strncmp(s, w, strlen(w))) return 1; return 0; }
 OSStatus VTSessionSetProperty(void *s, id key, id val) {
+    { int cx_vt_rot_property(void *s, id key, id val, int *rc), rc; if (cx_vt_rot_property(s, key, val, &rc)) return rc; }   /* openbot_vt.c */
     if (vts_as(s, VT_DEC)) return 0;   /* o decodificador não tem propriedade ajustável no mOS (formato vem dos atributos) */
     vts_t *v = vts_as(s, VT_ENC);
     if (!v) return kVTInvalidSessionErr;
@@ -920,7 +921,7 @@ int cupsCheckDestSupported(void *http, cups_dest_t *d, void *info, const char *o
 void *cupsFindDestSupported(void *http, cups_dest_t *d, void *info, const char *o) { (void)http; (void)d; (void)info; (void)o; return 0; }
 void *cupsFindDestDefault(void *http, cups_dest_t *d, void *info, const char *o) { (void)http; (void)d; (void)info; (void)o; return 0; }
 const char *cupsLocalizeDestValue(void *http, cups_dest_t *d, void *info, const char *o, const char *v) { (void)http; (void)d; (void)info; (void)o; return v; }
-const char *cupsGetOption(const char *name, int n, void *opts) { (void)name; (void)n; (void)opts; return 0; }
+/* cupsGetOption e as outras funções de opção: cups_corpus.c */
 int cupsLastError(void) { return 0x0400; /* IPP_STATUS_ERROR_NOT_FOUND */ }
 const char *cupsLastErrorString(void) { return "Nenhuma impressora configurada"; }
 const char *cupsServer(void) { return "/private/var/run/cupsd"; }
@@ -1047,6 +1048,92 @@ int krb5_kt_start_seq_get(void *ctx, void *kt, void *cur) { (void)ctx; (void)kt;
 int krb5_kt_next_entry(void *ctx, void *kt, void *e, void *cur) { (void)ctx; (void)kt; (void)e; (void)cur; return KRB5_KT_END; }
 int krb5_kt_end_seq_get(void *ctx, void *kt, void *cur) { (void)ctx; (void)kt; (void)cur; return 0; }
 const char *error_message(long code) { (void)code; return "Kerberos indisponivel no mOS"; }
+/* cache de credenciais: o padrão existe e está vazio (a enumeração termina na primeira chamada) */
+#define KRB5_CC_END (-1765328242)
+int krb5_cc_default(void *ctx, void **cc) { (void)ctx; if (cc) *cc = calloc(1, 16); return cc && *cc ? 0 : -1; }
+int krb5_cc_resolve(void *ctx, const char *name, void **cc) { (void)name; return krb5_cc_default(ctx, cc); }
+const char *krb5_cc_default_name(void *ctx) { (void)ctx; return "API:mOS"; }
+int krb5_cc_close(void *ctx, void *cc) { (void)ctx; free(cc); return 0; }
+int krb5_cc_destroy(void *ctx, void *cc) { (void)ctx; free(cc); return 0; }
+int krb5_cc_set_flags(void *ctx, void *cc, int flags) { (void)ctx; (void)cc; (void)flags; return 0; }
+int krb5_cc_start_seq_get(void *ctx, void *cc, void *cur) { (void)ctx; (void)cc; if (cur) *(void **)cur = 0; return 0; }
+int krb5_cc_next_cred(void *ctx, void *cc, void *cur, void *creds) { (void)ctx; (void)cc; (void)cur; (void)creds; return KRB5_CC_END; }
+int krb5_cc_end_seq_get(void *ctx, void *cc, void *cur) { (void)ctx; (void)cc; (void)cur; return 0; }
+int krb5_cc_get_principal(void *ctx, void *cc, void **p) { (void)ctx; (void)cc; if (p) *p = 0; return KRB5_CC_NOTFOUND; }
+const char *krb5_cc_get_name(void *ctx, void *cc) { (void)ctx; (void)cc; return "mOS"; }
+const char *krb5_cc_get_type(void *ctx, void *cc) { (void)ctx; (void)cc; return "API"; }
+/* com_err: mensagem para o stderr, como o original sem gancho instalado */
+extern int vsnprintf(char *, size_t, const char *, __builtin_va_list);
+long write(int fd, const void *b, unsigned long n);
+void com_err_va(const char *whoami, long code, const char *fmt, __builtin_va_list ap) {
+    char b[512];
+    int n = snprintf(b, sizeof b, "%s: %s ", whoami ? whoami : "", code ? error_message(code) : "");
+    if (n < 0) n = 0;
+    if (fmt && n < (int)sizeof b) vsnprintf(b + n, sizeof b - (size_t)n, fmt, ap);
+    size_t l = strlen(b);
+    if (l + 1 < sizeof b) { b[l++] = '\n'; b[l] = 0; }
+    long w = write(2, b, l);
+    (void)w;
+}
+void com_err(const char *whoami, long code, const char *fmt, ...) {
+    __builtin_va_list ap; __builtin_va_start(ap, fmt); com_err_va(whoami, code, fmt, ap); __builtin_va_end(ap);
+}
+/* CCAPI (Kerberos.framework): sem cache */
+int cc_initialize(void **ctx, u32 ver, u32 *supported, char const **vendor) {
+    (void)ver;
+    if (ctx) *ctx = 0;
+    if (supported) *supported = 0;
+    if (vendor) *vendor = "mOS";
+    return 201;                                   /* ccErrNoMem? o cliente cai no "sem Kerberos" */
+}
+/* GSS: o resto do que os clientes de Kerberos/SPNEGO pedem; sem credenciais */
+typedef struct { size_t count; gss_oid_desc *elements; } gss_oid_set_desc;
+gss_oid_desc __gss_c_nt_export_name_oid_desc = {6, (void *)"\x2b\x06\x01\x05\x06\x04"};
+gss_oid_desc __gss_krb5_copy_ccache_x_oid_desc = {11, (void *)"\x2a\x86\x48\x86\xf7\x12\x01\x02\x02\x05\x01"};
+u32 gss_create_empty_oid_set(u32 *mi, gss_oid_set_desc **set) {
+    if (mi) *mi = 0;
+    if (!set) return GSS_S_FAILURE;
+    *set = calloc(1, sizeof **set);
+    return *set ? 0 : GSS_S_FAILURE;
+}
+u32 gss_add_oid_set_member(u32 *mi, const gss_oid_desc *oid, gss_oid_set_desc **set) {
+    if (mi) *mi = 0;
+    if (!oid || !set || !*set) return GSS_S_FAILURE;
+    gss_oid_set_desc *s = *set;
+    for (size_t i = 0; i < s->count; i++) if (gss_oid_equal(&s->elements[i], oid)) return 0;
+    gss_oid_desc *e = realloc(s->elements, (s->count + 1) * sizeof *e);
+    if (!e) return GSS_S_FAILURE;
+    void *copy = malloc(oid->length ? oid->length : 1);
+    if (!copy) return GSS_S_FAILURE;
+    memcpy(copy, oid->elements, oid->length);
+    e[s->count].length = oid->length;
+    e[s->count].elements = copy;
+    s->elements = e;
+    s->count++;
+    return 0;
+}
+u32 gss_inquire_cred(u32 *mi, void *cred, void **name, u32 *lifetime, int *usage, void **mechs) {
+    if (name) *name = 0;
+    if (lifetime) *lifetime = 0;
+    if (usage) *usage = 0;
+    if (mechs) *mechs = 0;
+    if (mi) *mi = 0;
+    (void)cred;
+    return GSS_S_NO_CRED;
+}
+u32 gss_inquire_cred_by_oid(u32 *mi, void *cred, const gss_oid_desc *oid, void **set) { (void)cred; (void)oid; if (set) *set = 0; if (mi) *mi = 0; return GSS_S_NO_CRED; }
+u32 gss_destroy_cred(u32 *mi, void **cred) { if (mi) *mi = 0; if (cred) *cred = 0; return 0; }
+u32 gss_release_buffer_set(u32 *mi, void **set) { if (mi) *mi = 0; if (set) *set = 0; return 0; }
+u32 gss_export_name(u32 *mi, void *name, gss_buffer_desc *out) { (void)name; if (out) { out->length = 0; out->value = 0; } return gss_fail(mi); }
+u32 gss_compare_name(u32 *mi, void *a, void *b, int *eq) { if (eq) *eq = a == b; if (mi) *mi = 0; return 0; }
+u32 gss_aapl_initial_cred(void *name, const gss_oid_desc *mech, id attrs, void **cred, id *err) {
+    (void)name; (void)mech; (void)attrs;
+    if (cred) *cred = 0;
+    if (err) *err = 0;
+    return GSS_S_FAILURE;
+}
+void *GSSCreateName(id name, const gss_oid_desc *type, id *err) { (void)name; (void)type; if (err) *err = 0; return 0; }
+id GSSCredentialCopyUUID(void *cred) { (void)cred; return 0; }
 
 /* ================================================================ UniformTypeIdentifiers */
 /* UTType: identificador + extensão e MIME preferidos. Os campos ext/mime NULL são perguntados ao Launch Services
@@ -1066,6 +1153,8 @@ static uttype_t ut_png = {&ut_c, "public.png", "png", "image/png"}, ut_text = {&
                 ut_content = {&ut_c, "public.content", 0, 0}, ut_app = {&ut_c, "com.apple.application-bundle", "app", 0};
 const void *UTTypePNG = &ut_png, *UTTypeUTF8PlainText = &ut_text, *UTTypeImage = &ut_image, *UTTypeInternetShortcut = &ut_url,
            *UTTypeInternetLocation = &ut_iloc, *UTTypeSVG = &ut_svg, *UTTypeContent = &ut_content, *UTTypeApplicationBundle = &ut_app;
+UT(UTTypeWebArchive, "com.apple.webarchive") UT(UTTypeUTF16ExternalPlainText, "public.utf16-external-plain-text")
+UT(UTTypeRTFD, "com.apple.rtfd") UT(UTTypeFlatRTFD, "com.apple.flat-rtfd")
 UT(UTTypeItem, "public.item") UT(UTTypeData, "public.data") UT(UTTypeFolder, "public.folder") UT(UTTypeDirectory, "public.directory")
 UT(UTTypeVolume, "public.volume") UT(UTTypePackage, "com.apple.package") UT(UTTypeBundle, "com.apple.bundle")
 UT(UTTypeApplication, "com.apple.application") UT(UTTypeExecutable, "public.executable") UT(UTTypeUnixExecutable, "public.unix-executable")

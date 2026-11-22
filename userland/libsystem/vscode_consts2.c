@@ -82,3 +82,14 @@ int FFDeviceReleaseEffect(void *dev, void *eff) { (void)dev; (void)eff; return 0
 int FFEffectStart(void *eff, u32 iter, u32 flags) { (void)eff; (void)iter; (void)flags; return FFERR_NOINTERFACE; }
 int FFEffectStop(void *eff) { (void)eff; return FFERR_NOINTERFACE; }
 int FFEffectSetParameters(void *eff, void *p, u32 flags) { (void)eff; (void)p; (void)flags; return FFERR_NOINTERFACE; }
+int FFEffectGetEffectStatus(void *eff, u32 *status) { (void)eff; if (status) *status = 0; return FFERR_NOINTERFACE; }
+int FFEffectGetParameters(void *eff, void *p, u32 flags) { (void)eff; (void)p; (void)flags; return FFERR_NOINTERFACE; }
+int FFEffectDownload(void *eff) { (void)eff; return FFERR_NOINTERFACE; }
+int FFEffectUnload(void *eff) { (void)eff; return FFERR_NOINTERFACE; }
+int FFEffectEscape(void *eff, void *esc) { (void)eff; (void)esc; return FFERR_NOINTERFACE; }
+int FFDeviceGetForceFeedbackProperty(void *dev, u32 prop, void *val, u32 size) { (void)dev; (void)prop; (void)val; (void)size; return FFERR_NOINTERFACE; }
+int FFDeviceSetForceFeedbackProperty(void *dev, u32 prop, void *val) { (void)dev; (void)prop; (void)val; return FFERR_NOINTERFACE; }
+int FFDeviceGetForceFeedbackState(void *dev, u32 *state) { (void)dev; if (state) *state = 0; return FFERR_NOINTERFACE; }
+int FFDeviceSendForceFeedbackCommand(void *dev, u32 cmd) { (void)dev; (void)cmd; return FFERR_NOINTERFACE; }
+int FFDeviceSetCooperativeLevel(void *dev, void *task, u32 flags) { (void)dev; (void)task; (void)flags; return FFERR_NOINTERFACE; }
+int FFDeviceEscape(void *dev, void *esc) { (void)dev; (void)esc; return FFERR_NOINTERFACE; }

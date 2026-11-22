@@ -186,6 +186,43 @@ static void cd_fail(id *error, NSString *msg) {
 - (NSString *)entityName { return _entityName ? _entityName : _entity.name; }
 @end
 
+/* NSManagedObjectID: embrulha o objeto (o contexto do mOS guarda os próprios objetos, não uma tabela de ids).
+ * objectWithID:/existingObjectWithID: aceitam o id e devolvem o objeto; a URI é estável enquanto o objeto vive. */
+@interface NSManagedObjectID : NSObject <NSCopying>
+- (instancetype)_mos_initWithObject:(id)obj entity:(id)entity oid:(unsigned long)oid;
+- (id)_mos_object;
+- (NSEntityDescription *)entity;
+- (id)persistentStore;
+- (BOOL)isTemporaryID;
+- (id)URIRepresentation;
+@end
+@implementation NSManagedObjectID {
+    id _obj;                       /* fraco: o objeto é dono do id */
+    id _entity;
+    unsigned long _oid;
+}
+- (instancetype)_mos_initWithObject:(id)obj entity:(id)entity oid:(unsigned long)oid {
+    if ((self = [super init])) { _obj = obj; _entity = [entity retain]; _oid = oid; }
+    return self;
+}
+- (void)dealloc { [_entity release]; [super dealloc]; }
+- (id)_mos_object { return _obj; }
+- (NSEntityDescription *)entity { return _entity; }
+- (id)persistentStore { return nil; }
+- (BOOL)isTemporaryID { return _oid == 0; }
+- (id)URIRepresentation {      /* NSURL (o SDK do mOS não declara a classe: vai pelo nome) */
+    NSString *name = [_entity respondsToSelector:@selector(name)] ? [(NSEntityDescription *)_entity name] : @"Entity";
+    NSString *s = _oid ? [NSString stringWithFormat:@"x-coredata://mOS/%@/p%lu", name, _oid]
+                       : [NSString stringWithFormat:@"x-coredata:///%@/t%p", name, _obj];
+    return [(id)NSClassFromString(@"NSURL") performSelector:@selector(URLWithString:) withObject:s];
+}
+- (id)copyWithZone:(void *)zone { return [self retain]; }
+- (BOOL)isEqual:(id)o { return o == self || ([o isKindOfClass:[NSManagedObjectID class]] && [(NSManagedObjectID *)o _mos_object] == _obj); }
+- (unsigned long)hash { return (unsigned long)_obj >> 4; }
+- (NSString *)description { return [[self URIRepresentation] absoluteString]; }
+@end
+static id cd_unwrap(id oid) { return [oid isKindOfClass:[NSManagedObjectID class]] ? [(NSManagedObjectID *)oid _mos_object] : oid; }
+
 @implementation NSManagedObject {
     NSMutableDictionary *_values;
     NSEntityDescription *_entity;
@@ -193,7 +230,9 @@ static void cd_fail(id *error, NSString *msg) {
     cd_store *_st;
     unsigned long _oid;
     BOOL _deleted;
+    NSManagedObjectID *_mid;
 }
+- (void)dealloc { [_mid release]; [_values release]; [_entity release]; [super dealloc]; }
 - (instancetype)initWithEntity:(NSEntityDescription *)entity insertIntoManagedObjectContext:(NSManagedObjectContext *)ctx {
     if ((self = [super init])) {
         _values = [[NSMutableDictionary alloc] init];
@@ -213,7 +252,10 @@ static void cd_fail(id *error, NSString *msg) {
 - (void)_mos_setContext:(NSManagedObjectContext *)c { _ctx = c; }
 - (unsigned long)_mos_oid { return _oid; }
 - (void)_mos_setDeleted:(BOOL)d { _deleted = d; }
-- (id)objectID { return self; }
+- (id)objectID {
+    if (!_mid) _mid = [[NSManagedObjectID alloc] _mos_initWithObject:self entity:_entity oid:_oid];
+    return _mid;
+}
 - (BOOL)isInserted { return _ctx != nil; }
 - (BOOL)isDeleted { return _deleted; }
 - (BOOL)isFault { return NO; }
@@ -363,8 +405,8 @@ static void cd_fail(id *error, NSString *msg) {
 - (void)performBlockAndWait:(void (^)(void))block { if (block) block(); }
 - (void)rollback { _changed = NO; }
 - (void)reset { [_objects removeAllObjects]; _changed = NO; }
-- (id)existingObjectWithID:(id)oid error:(id *)error { return [_objects containsObject:oid] ? oid : nil; }
-- (id)objectWithID:(id)oid { return oid; }
+- (id)existingObjectWithID:(id)oid error:(id *)error { id o = cd_unwrap(oid); return [_objects containsObject:o] ? o : nil; }
+- (id)objectWithID:(id)oid { return cd_unwrap(oid); }
 @end
 
 /* ---- migração (NSMigrationManager, NSMappingModel, NSEntityMigrationPolicy, NSPropertyMapping)
@@ -496,4 +538,235 @@ int strcmp(const char *a, const char *b);
 - (BOOL)endRelationshipCreationForEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error { return YES; }
 - (BOOL)performCustomValidationForEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error { return YES; }
 - (BOOL)endEntityMapping:(id)mapping manager:(NSMigrationManager *)manager error:(id *)error { return YES; }
+@end
+
+/* ---- descrições de propriedade, conflitos e requisições em lote que o corpus referencia (docs/lacunas/eduardo.md).
+ * O mOS ainda não lê modelos compilados (.momd): as descrições guardam o que o app monta no código. */
+@interface NSPropertyDescription : NSObject <NSCopying>
+@property (copy) NSString *name;
+@property (getter=isOptional) BOOL optional;
+@property (getter=isTransient) BOOL transient;
+@property (getter=isIndexed) BOOL indexed;
+@property (retain) id entity;
+@property (retain) NSDictionary *userInfo;
+@property (copy) NSString *renamingIdentifier;
+@end
+@implementation NSPropertyDescription
+@synthesize name, optional, transient, indexed, entity, userInfo, renamingIdentifier;
+- (id)copyWithZone:(void *)zone {
+    NSPropertyDescription *c = [[[self class] alloc] init];
+    c.name = self.name; c.optional = self.optional; c.transient = self.transient; c.indexed = self.indexed;
+    c.userInfo = self.userInfo; c.renamingIdentifier = self.renamingIdentifier;
+    return c;
+}
+@end
+@interface NSAttributeDescription : NSPropertyDescription
+@property unsigned long attributeType;
+@property (copy) NSString *attributeValueClassName;
+@property (retain) id defaultValue;
+@property BOOL allowsExternalBinaryDataStorage;
+@property BOOL preservesValueInHistoryOnDeletion;
+@property (copy) NSString *valueTransformerName;
+@end
+@implementation NSAttributeDescription
+@synthesize attributeType, attributeValueClassName, defaultValue, allowsExternalBinaryDataStorage, preservesValueInHistoryOnDeletion,
+    valueTransformerName;
+@end
+@interface NSRelationshipDescription : NSPropertyDescription
+@property (retain) id destinationEntity;
+@property (assign) id inverseRelationship;
+@property unsigned long maxCount, minCount, deleteRule;
+@property (getter=isOrdered) BOOL ordered;
+@end
+@implementation NSRelationshipDescription
+@synthesize destinationEntity, inverseRelationship, maxCount, minCount, deleteRule, ordered;
+- (BOOL)isToMany { return self.maxCount != 1; }
+@end
+@interface NSFetchedPropertyDescription : NSPropertyDescription
+@property (retain) id fetchRequest;
+@end
+@implementation NSFetchedPropertyDescription
+@synthesize fetchRequest;
+@end
+@interface NSExpressionDescription : NSPropertyDescription
+@property (retain) id expression;
+@property unsigned long expressionResultType;
+@end
+@implementation NSExpressionDescription
+@synthesize expression, expressionResultType;
+@end
+@interface NSFetchIndexElementDescription : NSObject
+@property (retain) id property;
+@property (getter=isAscending) BOOL ascending;
+@property unsigned long collationType;
+@end
+@implementation NSFetchIndexElementDescription
+@synthesize property, ascending, collationType;
+- (instancetype)initWithProperty:(id)p collationType:(unsigned long)t {
+    if ((self = [super init])) { self.property = p; self.collationType = t; self.ascending = YES; }
+    return self;
+}
+@end
+@interface NSFetchIndexDescription : NSObject
+@property (copy) NSString *name;
+@property (copy) NSArray *elements;
+@property (retain) id partialIndexPredicate;
+@end
+@implementation NSFetchIndexDescription
+@synthesize name, elements, partialIndexPredicate;
+- (instancetype)initWithName:(NSString *)n elements:(NSArray *)e {
+    if ((self = [super init])) { self.name = n; self.elements = e; }
+    return self;
+}
+@end
+@interface NSMergeConflict : NSObject
+@property (readonly, retain) id sourceObject;
+@property (readonly, retain) NSDictionary *objectSnapshot, *cachedSnapshot, *persistedSnapshot;
+@property (readonly) unsigned long newVersionNumber, oldVersionNumber;
+@end
+@implementation NSMergeConflict {
+    id _src;
+    NSDictionary *_obj, *_cached, *_persisted;
+    unsigned long _newv, _oldv;
+}
+- (instancetype)initWithSource:(id)src newVersion:(unsigned long)nv oldVersion:(unsigned long)ov cachedSnapshot:(NSDictionary *)c
+               persistedSnapshot:(NSDictionary *)p {
+    if ((self = [super init])) { _src = [src retain]; _newv = nv; _oldv = ov; _cached = [c retain]; _persisted = [p retain]; }
+    return self;
+}
+- (id)sourceObject { return _src; }
+- (NSDictionary *)objectSnapshot { return _obj; }
+- (NSDictionary *)cachedSnapshot { return _cached; }
+- (NSDictionary *)persistedSnapshot { return _persisted; }
+- (unsigned long)newVersionNumber { return _newv; }
+- (unsigned long)oldVersionNumber { return _oldv; }
+@end
+@interface NSQueryGenerationToken : NSObject
++ (instancetype)currentQueryGenerationToken;
+@end
+@implementation NSQueryGenerationToken
++ (instancetype)currentQueryGenerationToken { static id t; if (!t) t = [[self alloc] init]; return t; }
+@end
+@interface NSPersistentStoreRequest : NSObject
+@property (copy) NSArray *affectedStores;
+@end
+@implementation NSPersistentStoreRequest
+@synthesize affectedStores;
+@end
+@interface NSPersistentStoreResult : NSObject
+@end
+@implementation NSPersistentStoreResult
+@end
+@interface NSBatchDeleteResult : NSPersistentStoreResult
+@property (retain) id result;
+@property unsigned long resultType;
+@end
+@implementation NSBatchDeleteResult
+@synthesize result, resultType;
+@end
+@interface NSBatchUpdateResult : NSPersistentStoreResult
+@property (retain) id result;
+@property unsigned long resultType;
+@end
+@implementation NSBatchUpdateResult
+@synthesize result, resultType;
+@end
+/* lote: o contexto do mOS executa apagando objeto a objeto (executeRequest:error: abaixo) */
+@interface NSBatchDeleteRequest : NSPersistentStoreRequest
+@property (readonly, retain) NSFetchRequest *fetchRequest;
+@property unsigned long resultType;
+- (instancetype)initWithFetchRequest:(NSFetchRequest *)r;
+- (instancetype)initWithObjectIDs:(NSArray *)ids;
+@end
+@implementation NSBatchDeleteRequest {
+    NSFetchRequest *_fr;
+    NSArray *_ids;
+    unsigned long _rt;
+}
+- (instancetype)initWithFetchRequest:(NSFetchRequest *)r { if ((self = [super init])) _fr = [r retain]; return self; }
+- (instancetype)initWithObjectIDs:(NSArray *)ids { if ((self = [super init])) _ids = [ids copy]; return self; }
+- (NSFetchRequest *)fetchRequest { return _fr; }
+- (NSArray *)_mos_ids { return _ids; }
+- (unsigned long)resultType { return _rt; }
+- (void)setResultType:(unsigned long)t { _rt = t; }
+@end
+@interface NSBatchUpdateRequest : NSPersistentStoreRequest
+@property (copy) NSString *entityName;
+@property (retain) id predicate;
+@property (copy) NSDictionary *propertiesToUpdate;
+@property unsigned long resultType;
+@end
+@implementation NSBatchUpdateRequest
+@synthesize entityName, predicate, propertiesToUpdate, resultType;
++ (instancetype)batchUpdateRequestWithEntityName:(NSString *)n { NSBatchUpdateRequest *r = [[[self alloc] init] autorelease]; r.entityName = n; return r; }
+- (instancetype)initWithEntityName:(NSString *)n { if ((self = [super init])) self.entityName = n; return self; }
+@end
+@interface NSBatchInsertRequest : NSPersistentStoreRequest
+@property (copy) NSString *entityName;
+@property (copy) NSArray *objectsToInsert;
+@property unsigned long resultType;
+@end
+@implementation NSBatchInsertRequest
+@synthesize entityName, objectsToInsert, resultType;
+- (instancetype)initWithEntityName:(NSString *)n objects:(NSArray *)o { if ((self = [super init])) { self.entityName = n; self.objectsToInsert = o; } return self; }
+@end
+@implementation NSManagedObjectContext (MOSBatch)
+- (id)executeRequest:(id)req error:(id *)error {
+    if (error) *error = nil;
+    if ([req isKindOfClass:[NSBatchDeleteRequest class]]) {
+        NSBatchDeleteRequest *r = req;
+        NSArray *objs = [r _mos_ids];
+        NSMutableArray *gone = [NSMutableArray array];
+        if (!objs && r.fetchRequest) objs = [self executeFetchRequest:r.fetchRequest error:error];
+        for (id o in objs) { id obj = cd_unwrap(o); [gone addObject:[obj respondsToSelector:@selector(objectID)] ? [obj objectID] : obj]; [self deleteObject:obj]; }
+        NSBatchDeleteResult *res = [[[NSBatchDeleteResult alloc] init] autorelease];
+        res.resultType = r.resultType;
+        res.result = r.resultType == 1 ? (id)gone : r.resultType == 2 ? (id)[NSNumber numberWithUnsignedLong:gone.count] : (id)[NSNumber numberWithBool:YES];
+        return res;
+    }
+    if ([req isKindOfClass:[NSFetchRequest class]]) return [self executeFetchRequest:req error:error];
+    return nil;
+}
+@end
+/* NSFetchedResultsController: busca uma vez e divide em seções pelo keyPath (sem acompanhar mudanças) */
+@interface NSFetchedResultsController : NSObject
+@property (readonly, retain) NSFetchRequest *fetchRequest;
+@property (readonly, retain) NSManagedObjectContext *managedObjectContext;
+@property (readonly, copy) NSString *sectionNameKeyPath, *cacheName;
+@property (assign) id delegate;
+@property (readonly, retain) NSArray *fetchedObjects;
+@end
+@implementation NSFetchedResultsController {
+    NSFetchRequest *_fr;
+    NSManagedObjectContext *_ctx;
+    NSString *_kp, *_cache;
+    NSArray *_objs;
+    id _delegate;
+}
+- (instancetype)initWithFetchRequest:(NSFetchRequest *)fr managedObjectContext:(NSManagedObjectContext *)ctx sectionNameKeyPath:(NSString *)kp cacheName:(NSString *)cn {
+    if ((self = [super init])) { _fr = [fr retain]; _ctx = [ctx retain]; _kp = [kp copy]; _cache = [cn copy]; }
+    return self;
+}
+- (NSFetchRequest *)fetchRequest { return _fr; }
+- (NSManagedObjectContext *)managedObjectContext { return _ctx; }
+- (NSString *)sectionNameKeyPath { return _kp; }
+- (NSString *)cacheName { return _cache; }
+- (id)delegate { return _delegate; }
+- (void)setDelegate:(id)d { _delegate = d; }
+- (BOOL)performFetch:(id *)error {
+    NSArray *r = [_ctx executeFetchRequest:_fr error:error];
+    [_objs release];
+    _objs = [r retain];
+    return r != nil;
+}
+- (NSArray *)fetchedObjects { return _objs; }
+- (id)objectAtIndexPath:(id)ip {
+    long row = [ip respondsToSelector:@selector(indexAtPosition:)] ? (long)[ip indexAtPosition:1] : 0;
+    return row >= 0 && row < (long)_objs.count ? [_objs objectAtIndex:row] : nil;
+}
+- (NSArray *)sections { return _objs ? [NSArray arrayWithObject:self] : nil; }
+- (unsigned long)numberOfObjects { return _objs.count; }
+- (NSArray *)objects { return _objs; }
+- (NSString *)name { return @""; }
++ (void)deleteCacheWithName:(NSString *)n {}
 @end

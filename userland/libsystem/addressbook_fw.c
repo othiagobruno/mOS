@@ -38,6 +38,13 @@ CK(kABPhonePagerLabel, "_$!<Pager>!$_") CK(kABPhoneWorkFAXLabel, "_$!<WorkFAX>!$
 CK(kABAddressWorkLabel, "_$!<Work>!$_") CK(kABAnniversaryLabel, "_$!<Anniversary>!$_") CK(kABOtherLabel, "_$!<Other>!$_")
 CK(kABAddressStreetKey, "Street") CK(kABAddressCityKey, "City") CK(kABAddressStateKey, "State") CK(kABAddressZIPKey, "ZIP")
 CK(kABAddressCountryKey, "Country") CK(kABAddressCountryCodeKey, "CountryCode")
+CK(kABEmailHomeLabel, "_$!<Home>!$_") CK(kABEmailWorkLabel, "_$!<Work>!$_") CK(kABHomePageLabel, "_$!<HomePage>!$_")
+CK(kABPhoneMainLabel, "_$!<Main>!$_") CK(kABPhoneHomeFAXLabel, "_$!<HomeFAX>!$_") CK(kABPhoneiPhoneLabel, "iPhone")
+CK(kABMaidenNameProperty, "MaidenName") CK(kABRelatedNamesProperty, "ABRelatedNames") CK(kABSpouseLabel, "_$!<Spouse>!$_")
+CK(kABMotherLabel, "_$!<Mother>!$_") CK(kABFatherLabel, "_$!<Father>!$_") CK(kABChildLabel, "_$!<Child>!$_")
+CK(kABFriendLabel, "_$!<Friend>!$_") CK(kABPartnerLabel, "_$!<Partner>!$_") CK(kABAssistantLabel, "_$!<Assistant>!$_")
+CK(kABManagerLabel, "_$!<Manager>!$_") CK(kABParentLabel, "_$!<Parent>!$_") CK(kABSisterLabel, "_$!<Sister>!$_")
+CK(kABBrotherLabel, "_$!<Brother>!$_")
 CK(kABInstantMessageServiceKey, "InstantMessageService") CK(kABInstantMessageUsernameKey, "username")
 CK(kABInstantMessageServiceAIM, "AIMInstant") CK(kABInstantMessageServiceFacebook, "FacebookInstant")
 CK(kABInstantMessageServiceGaduGadu, "GaduGaduInstant") CK(kABInstantMessageServiceGoogleTalk, "GoogleTalkInstant")
@@ -416,6 +423,40 @@ id ABCopyArrayOfPropertiesForRecordType(id book, id recordType) {
     return objc_retain(MSG(id, cls("NSArray"), "arrayWithObjects:count:", p, (u64)(sizeof p / sizeof p[0])));
 }
 id ABGroupCopyArrayOfAllMembers(id group) { (void)group; return objc_retain(MSG0(id, cls("NSArray"), "array")); }
+/* a agenda do mOS não tem grupos aninhados */
+id ABGroupCopyArrayOfAllSubgroups(id group) { (void)group; return objc_retain(MSG0(id, cls("NSArray"), "array")); }
+id ABGetMe(id book) { return book ? book_me(book, 0) : 0; }
+id ABCopyRecordForUniqueId(id book, id uid) { id r = book && uid ? book_record_for(book, 0, uid) : 0; return r ? objc_retain(r) : 0; }
+id ABMultiValueCopyPrimaryIdentifier(id mvv) { id v = mvv ? mv_primary(mvv, 0) : 0; return v ? objc_retain(v) : 0; }
+long ABMultiValueIndexForIdentifier(id mvv, id ident) {
+    if (!mvv || !ident) return -1;                 /* kCFNotFound */
+    u64 i = mv_index_for(mvv, 0, ident);
+    return i == (u64)0x7fffffffffffffffULL || i == (u64)-1 ? -1 : (long)i;
+}
+id ABMultiValueCopyIdentifierAtIndex(id mvv, long i) { id v = mvv && i >= 0 ? mv_ident(mvv, 0, (u64)i) : 0; return v ? objc_retain(v) : 0; }
+/* endereço formatado como o padrão do macOS para a maioria dos países: rua / cidade estado CEP / país */
+id ABCreateFormattedAddressFromDictionary(id book, id addr) {
+    (void)book;
+    if (!addr) return 0;
+    id parts[3] = {0, 0, 0};
+    id street = MSG(id, addr, "objectForKey:", kABAddressStreetKey), city = MSG(id, addr, "objectForKey:", kABAddressCityKey);
+    id state = MSG(id, addr, "objectForKey:", kABAddressStateKey), zip = MSG(id, addr, "objectForKey:", kABAddressZIPKey);
+    id country = MSG(id, addr, "objectForKey:", kABAddressCountryKey);
+    id line2 = MSG0(id, cls("NSMutableString"), "string");
+    id items[3] = {city, state, zip};
+    for (int i = 0; i < 3; i++) if (items[i] && MSG0(u64, items[i], "length")) {
+        if (MSG0(u64, line2, "length")) MSG(void, line2, "appendString:", cx_str(i == 1 ? ", " : " "));
+        MSG(void, line2, "appendString:", items[i]);
+    }
+    parts[0] = street; parts[1] = MSG0(u64, line2, "length") ? line2 : 0; parts[2] = country;
+    id out = MSG0(id, cls("NSMutableString"), "string");
+    for (int i = 0; i < 3; i++) if (parts[i] && MSG0(u64, parts[i], "length")) {
+        if (MSG0(u64, out, "length")) MSG(void, out, "appendString:", cx_str("\n"));
+        MSG(void, out, "appendString:", parts[i]);
+    }
+    id as = MSG(id, MSG0(id, cls("NSAttributedString"), "alloc"), "initWithString:", out);
+    return as;                                     /* NSAttributedString +1, como o original */
+}
 /* rótulos "_$!<Work>!$_" viram "Work"; propriedades viram o nome em português */
 id ABCopyLocalizedPropertyOrLabel(id key) {
     const char *k = key && cx_is_str(key) ? cx_cstr(key) : 0;

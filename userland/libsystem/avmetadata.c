@@ -39,6 +39,27 @@ K(AVMetadataKeySpaceiTunes, "itsk") K(AVMetadataKeySpaceQuickTimeUserData, "udta
 QT(Album, "album") QT(Artist, "artist") QT(Artwork, "artwork") QT(Author, "author") QT(Comment, "comment") QT(Composer, "composer")
 QT(Copyright, "copyright") QT(CreationDate, "creationdate") QT(Description, "description") QT(Genre, "genre") QT(Performer, "performer")
 QT(Publisher, "publisher") QT(Title, "title") QT(ContentIdentifier, "content.identifier")
+QT(VideoOrientation, "video-orientation") QT(CameraFrameReadoutTime, "camera-frame-readout-time")
+K(AVMetadataQuickTimeMetadataKeySoftware, "com.apple.quicktime.software")
+/* ID3 (id3/<quadro>) */
+#define ID3(n, f) K(AVMetadataIdentifierID3Metadata##n, "id3/" f)
+ID3(TitleDescription, "TIT2") ID3(LeadPerformer, "TPE1") ID3(TrackNumber, "TRCK") ID3(Publisher, "TPUB")
+ID3(OfficialAudioSourceWebpage, "WOAS") ID3(Length, "TLEN") ID3(Language, "TLAN") ID3(FileType, "TFLT") ID3(Date, "TDAT")
+ID3(Copyright, "TCOP") ID3(ContentType, "TCON") ID3(Composer, "TCOM") ID3(Comments, "COMM") ID3(AttachedPicture, "APIC")
+ID3(AlbumTitle, "TALB") ID3(Band, "TPE2") ID3(Year, "TYER") ID3(Conductor, "TPE3")
+/* iTunes (itsk/<chave>, com o © codificado em %A9 como no AVFoundation) */
+#define ITS(n, f) K(AVMetadataIdentifieriTunesMetadata##n, "itsk/" f)
+ITS(Album, "%A9alb") ITS(Artist, "%A9ART") ITS(AlbumArtist, "aART") ITS(Author, "%A9aut") ITS(Composer, "%A9wrt")
+ITS(Copyright, "cprt") ITS(CoverArt, "covr") ITS(Description, "desc") ITS(Performer, "perf") ITS(Publisher, "%A9pub")
+ITS(ReleaseDate, "%A9day") ITS(SongName, "%A9nam") ITS(TrackNumber, "trkn") ITS(UserComment, "%A9cmt") ITS(UserGenre, "%A9gen")
+ITS(DiscNumber, "disk") ITS(Grouping, "%A9grp") ITS(Lyrics, "%A9lyr") ITS(EncodedBy, "%A9enc")
+/* QuickTime udta: chaves de quatro caracteres com © (U+00A9) */
+#define QTU(n, f) K(AVMetadataQuickTimeUserDataKey##n, "\xc2\xa9" f)
+QTU(Artist, "ART") QTU(Genre, "gen") QTU(Description, "des") QTU(CreationDate, "day") QTU(Copyright, "cpy")
+QTU(Comment, "cmt") QTU(Author, "aut") QTU(Album, "alb") QTU(FullName, "nam") QTU(Software, "swr")
+K(AVMetadataISOUserDataKeyDate, "date")
+K(AVVideoCodecTypeAppleProRes4444, "ap4h") K(AVVideoCodecTypeAppleProRes422, "apcn")
+K(AVVideoCodecTypeAppleProRes422HQ, "apch") K(AVVideoCodecTypeAppleProRes422LT, "apcs") K(AVVideoCodecTypeAppleProRes422Proxy, "apco")
 /* 3GPP (TS 26.244, caixas de udta) */
 K(AVMetadata3GPUserDataKeyAlbumAndTrack, "albm") K(AVMetadata3GPUserDataKeyAuthor, "auth") K(AVMetadata3GPUserDataKeyDescription, "dscp")
 K(AVMetadata3GPUserDataKeyGenre, "gnre") K(AVMetadata3GPUserDataKeyPerformer, "perf") K(AVMetadata3GPUserDataKeyTitle, "titl")

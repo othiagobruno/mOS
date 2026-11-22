@@ -417,6 +417,23 @@ JSC_EXPORT JSStringRef JSStringCreateWithUTF8CString(const char *c) {
     s->len = k;
     return s;
 }
+/* CFString <-> JSString: o CoreFoundation é o do libSystem do processo (o framework liga com -undefined dynamic_lookup) */
+typedef struct { long loc, len; } jsc_cfrange;
+long CFStringGetLength(const void *s);
+void CFStringGetCharacters(const void *s, jsc_cfrange r, u16 *buf);
+const void *CFStringCreateWithCharacters(const void *alloc, const u16 *chars, long n);
+JSC_EXPORT JSStringRef JSStringCreateWithCFString(const void *cf) {
+    long n = cf ? CFStringGetLength(cf) : 0;
+    if (n < 0) n = 0;
+    JSStringRef s = str_new((u32)n);
+    if (!s) return NULL;
+    if (n) { jsc_cfrange r = {0, n}; CFStringGetCharacters(cf, r, s->u); }
+    s->len = (u32)n;
+    return s;
+}
+JSC_EXPORT const void *JSStringCopyCFString(const void *alloc, JSStringRef s) {
+    return CFStringCreateWithCharacters(alloc, s ? s->u : (const u16 *)"", s ? (long)s->len : 0);
+}
 JSC_EXPORT JSStringRef JSStringRetain(JSStringRef s) { if (s) __atomic_add_fetch(&s->rc, 1, __ATOMIC_RELAXED); return s; }
 JSC_EXPORT void JSStringRelease(JSStringRef s) {
     if (!s || __atomic_sub_fetch(&s->rc, 1, __ATOMIC_ACQ_REL)) return;

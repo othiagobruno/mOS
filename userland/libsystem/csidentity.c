@@ -127,6 +127,27 @@ unsigned CSIdentityGetPosixID(id ident) { ident_t *t = ident_of(ident); return t
 int CSIdentityGetClass(id ident) { ident_t *t = ident_of(ident); return t ? t->cls : 0; }
 id CSIdentityGetAuthority(id ident) { (void)ident; return CSGetLocalIdentityAuthority(); }
 u8 CSIdentityIsEnabled(id ident) { return ident_of(ident) != 0; }
+/* UUID estável por conta: versão 5 (nome) sobre a classe e o nome POSIX; o mOS não guarda GeneratedUID */
+id CFUUIDCreateFromString(void *alloc, id s);
+int snprintf(char *b, size_t n, const char *f, ...);
+id CSIdentityGetUUID(id ident) {
+    ident_t *t = ident_of(ident);
+    if (!t) return 0;
+    u8 b[16];
+    u32 h = 2166136261u;
+    for (int r = 0; r < 16; r++) {
+        for (const char *p = t->name; *p; p++) h = (h ^ (u8)*p) * 16777619u;
+        h = (h ^ (u32)(r + 31 * t->cls)) * 16777619u;
+        b[r] = (u8)(h >> 8);
+    }
+    b[6] = (u8)((b[6] & 0x0f) | 0x50);
+    b[8] = (u8)((b[8] & 0x3f) | 0x80);
+    char s[40];
+    snprintf(s, sizeof s, "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X", b[0], b[1], b[2], b[3], b[4], b[5], b[6],
+             b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+    id u = CFUUIDCreateFromString(0, cx_str(s));
+    return u ? objc_autorelease(u) : 0;                /* "Get": o original não dá +1 */
+}
 u8 CSIdentityIsHidden(id ident) { (void)ident; return 0; }
 u8 CSIdentityIsMemberOfGroup(id ident, id group) {
     ident_t *u = ident_of(ident), *g = ident_of(group);

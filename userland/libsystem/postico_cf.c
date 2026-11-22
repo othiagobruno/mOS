@@ -68,6 +68,12 @@ id CFBitVectorCreate(void *alloc, const u8 *bytes, long n) {
     return bv;
 }
 typedef struct { long loc, len; } bv_range_t;
+/* copia os bits do intervalo para 'out', empacotados a partir do bit mais significativo do primeiro byte */
+void CFBitVectorGetBits(id bv, bv_range_t r, u8 *out) {
+    if (!bv || !out || r.len <= 0) return;
+    memset(out, 0, (size_t)(r.len + 7) / 8);
+    for (long i = 0; i < r.len; i++) if (CFBitVectorGetBitAtIndex(bv, r.loc + i)) out[i / 8] |= (u8)(0x80 >> (i % 8));
+}
 long CFBitVectorGetFirstIndexOfBit(id bv, bv_range_t r, u32 bit) {
     for (long i = r.loc; i < r.loc + r.len; i++) if (CFBitVectorGetBitAtIndex(bv, i) == (bit & 1)) return i;
     return -1;   /* kCFNotFound */

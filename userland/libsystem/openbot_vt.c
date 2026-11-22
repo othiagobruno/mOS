@@ -142,3 +142,71 @@ int VTCompressionSessionGetTimeRangesForNextPass(void *session, long *count, con
     *ranges = 0;
     return 0;
 }
+
+/* ---- VTPixelRotationSession: girar 90/180/270 e espelhar CVPixelBuffer de 32 bits por pixel (BGRA/ARGB/RGBA),
+ * de verdade. As propriedades chegam pelo VTSessionSetProperty (vscode_media.c chama cx_vt_rot_property primeiro). */
+CFCONST(kVTPixelRotationPropertyKey_Rotation, "Rotation")
+CFCONST(kVTPixelRotationPropertyKey_FlipHorizontalOrientation, "FlipHorizontalOrientation")
+CFCONST(kVTPixelRotationPropertyKey_FlipVerticalOrientation, "FlipVerticalOrientation")
+CFCONST(kVTRotation_0, "Rotation_0") CFCONST(kVTRotation_CW90, "Rotation_CW90")
+CFCONST(kVTRotation_180, "Rotation_180") CFCONST(kVTRotation_CCW90, "Rotation_CCW90")
+CFCONST(kVTScalingMode_Normal, "Normal") CFCONST(kVTScalingMode_Letterbox, "Letterbox")
+CFCONST(kVTCompressionPropertyKey_AllowTemporalCompression, "AllowTemporalCompression")
+int strcmp(const char *a, const char *b);
+#define ROT_MAGIC 0x524f5431u
+typedef struct { u32 magic; int quarter; int fliph, flipv; int live; } vtrot_t;
+int VTPixelRotationSessionCreate(void *alloc, void **out) {
+    (void)alloc;
+    if (!out) return kVTPropertyNotSupportedErr;
+    vtrot_t *r = malloc(sizeof *r);
+    if (!r) return -108;
+    r->magic = ROT_MAGIC; r->quarter = 0; r->fliph = r->flipv = 0; r->live = 1;
+    *out = r;
+    return 0;
+}
+void VTPixelRotationSessionInvalidate(void *s) { vtrot_t *r = s; if (r && r->magic == ROT_MAGIC) r->live = 0; }
+u64 VTPixelRotationSessionGetTypeID(void) { return 0x2E0; }
+/* 1 = era sessão de rotação (o resultado em *rc) */
+int cx_vt_rot_property(void *s, id key, id val, int *rc) {
+    vtrot_t *r = s;
+    if (!r || r->magic != ROT_MAGIC) return 0;
+    const char *k = key ? cx_cstr(key) : "";
+    *rc = 0;
+    if (!strcmp(k, "Rotation")) {
+        const char *v = val ? cx_cstr(val) : "";
+        r->quarter = !strcmp(v, "Rotation_CW90") ? 1 : !strcmp(v, "Rotation_180") ? 2 : !strcmp(v, "Rotation_CCW90") ? 3 : 0;
+    } else if (!strcmp(k, "FlipHorizontalOrientation")) r->fliph = val && MSG0(BOOL, val, "boolValue");
+    else if (!strcmp(k, "FlipVerticalOrientation")) r->flipv = val && MSG0(BOOL, val, "boolValue");
+    else *rc = kVTPropertyNotSupportedErr;
+    return 1;
+}
+int VTPixelRotationSessionRotateImage(void *s, void *src, void *dst) {
+    vtrot_t *r = s;
+    if (!r || r->magic != ROT_MAGIC || !r->live || !src || !dst) return kVTPropertyNotSupportedErr;
+    if (CVPixelBufferGetPixelFormatType(src) != CVPixelBufferGetPixelFormatType(dst)) return kVTPropertyNotSupportedErr;
+    u64 w = CVPixelBufferGetWidth(src), h = CVPixelBufferGetHeight(src);
+    u64 ow = r->quarter & 1 ? h : w, oh = r->quarter & 1 ? w : h;
+    if (!w || CVPixelBufferGetWidth(dst) != ow || CVPixelBufferGetHeight(dst) != oh) return kVTPropertyNotSupportedErr;
+    if (CVPixelBufferLockBaseAddress(src, 1) || CVPixelBufferLockBaseAddress(dst, 0)) return kVTPropertyNotSupportedErr;
+    const u8 *from = CVPixelBufferGetBaseAddress(src);
+    u8 *to = CVPixelBufferGetBaseAddress(dst);
+    u64 sb = CVPixelBufferGetBytesPerRow(src), db = CVPixelBufferGetBytesPerRow(dst);
+    int rc = 0;
+    if (!from || !to || sb < w * 4 || db < ow * 4) rc = kVTPropertyNotSupportedErr;
+    else
+        for (u64 y = 0; y < oh; y++)
+            for (u64 x = 0; x < ow; x++) {
+                u64 dx = r->fliph ? ow - 1 - x : x, dy = r->flipv ? oh - 1 - y : y;   /* espelho depois da rotação */
+                u64 sx, sy;
+                switch (r->quarter) {
+                case 1: sx = dy; sy = h - 1 - dx; break;             /* 90° horário */
+                case 2: sx = w - 1 - dx; sy = h - 1 - dy; break;
+                case 3: sx = w - 1 - dy; sy = dx; break;             /* 90° anti-horário */
+                default: sx = dx; sy = dy;
+                }
+                memcpy(to + y * db + x * 4, from + sy * sb + sx * 4, 4);
+            }
+    CVPixelBufferUnlockBaseAddress(src, 1);
+    CVPixelBufferUnlockBaseAddress(dst, 0);
+    return rc;
+}

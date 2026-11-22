@@ -60,9 +60,10 @@ static int nswift_lazy_any(void);
 /* classes de fachada do libSystem para frameworks que o mOS não tinha (vscode_fwclasses.c): quando um framework de
  * verdade com o mesmo nome carrega depois (o WebKit.framework do mOS e o WKWebView), a busca por nome
  * (NSClassFromString, nibs, objc_getClass) fica com a de verdade; a fachada só vale se não houver outra */
-static cx_class_t *stub_classes[256];
+#define MAX_STUB_CLASSES 1024     /* vscode_fwclasses.c (~95) + classes_corpus.c (~300) + os outros */
+static cx_class_t *stub_classes[MAX_STUB_CLASSES];
 static u32 nstub_classes;
-void cx_mark_stub_class(cx_class_t *c) { if (c && nstub_classes < 256) stub_classes[nstub_classes++] = c; }
+void cx_mark_stub_class(cx_class_t *c) { if (c && nstub_classes < MAX_STUB_CLASSES) stub_classes[nstub_classes++] = c; }
 static int is_stub_class(cx_class_t *c) {
     for (u32 i = 0; i < nstub_classes; i++) if (stub_classes[i] == c) return 1;
     return 0;
@@ -1233,6 +1234,8 @@ void cx_objc_boot(u64 sects, u64 n) {
     { extern void cx_fdn_charset_init(void); cx_fdn_charset_init(); } /* fdn_charset.c: NSCharacterSet/CFCharacterSet sobre a ICU */       /* fdn_coll.c: NSArray/NSDictionary completos, por cima do básico */
     { extern void cx_fdn_string_init(void); cx_fdn_string_init(); }   /* fdn_string.c: NSString/NSMutableString em UTF-16 sobre a ICU, por cima do básico */
     { extern void cx_fdn_string_enc_init(void); cx_fdn_string_enc_init(); }   /* fdn_string_enc.c: codificações do NSString/CFString (ICU) */
+    { extern void cx_corpus_classes_init(void); cx_corpus_classes_init(); }   /* classes_corpus.c: fachadas do corpus, por último (a superclasse é procurada pelo nome) */
+    { extern void cx_corpus2_init(void); cx_corpus2_init(); }   /* corpus2.c: a classe Protocol */
     }
     if (n) cx_objc_init_image(sects, n);
 }

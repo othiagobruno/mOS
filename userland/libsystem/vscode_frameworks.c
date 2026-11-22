@@ -368,8 +368,9 @@ id CGWindowListCreateDescriptionFromArray(id arr) {
 }
 /* nível da janela de proteção das telas capturadas (CGDisplayCapture): o máximo, kCGMaximumWindowLevelKey */
 int CGShieldingWindowLevel(void) { return CGWindowLevelForKey(14); }
-size_t CGDisplayModeGetWidth(void *m) { (void)m; return CGDisplayPixelsWide(CGMainDisplayID()); }
-size_t CGDisplayModeGetHeight(void *m) { (void)m; return CGDisplayPixelsHigh(CGMainDisplayID()); }
+size_t cx_cg_mode_width(const void *mode), cx_cg_mode_height(const void *mode);
+size_t CGDisplayModeGetWidth(void *m) { return m ? cx_cg_mode_width(m) : 0; }
+size_t CGDisplayModeGetHeight(void *m) { return m ? cx_cg_mode_height(m) : 0; }
 u32 CGDisplayIDToOpenGLDisplayMask(u32 d) { (void)d; return 1; }
 void *CGDirectDisplayCopyCurrentMetalDevice(u32 d) { (void)d; return 0; }   /* sem GPU */
 /* CGRect*DictionaryRepresentation está em cgdict.c (mesmo layout de quatro doubles). */

@@ -179,6 +179,16 @@ double CFRunLoopTimerGetTolerance(void *t) { (void)t; return 0; }
 void CFRunLoopAddTimer(void *rl, void *t, void *mode) { (void)mode; add_item(rl, t); }
 void CFRunLoopRemoveTimer(void *rl, void *t, void *mode) { (void)mode; remove_item(rl, t); }
 u64 CFRunLoopTimerGetTypeID(void) { return 41; }
+/* o contexto guardado é só o info (o retain/release do contexto não fica no objeto) */
+void CFRunLoopTimerGetContext(void *t, obj_ctx_t *ctx) {
+    if (!ctx) return;
+    ctx->version = 0; ctx->info = t ? ((cf_obj_t *)t)->info : 0; ctx->retain = 0; ctx->release = 0; ctx->copyDescription = 0;
+}
+void CFRunLoopObserverGetContext(void *o, obj_ctx_t *ctx) { CFRunLoopTimerGetContext(o, ctx); }
+long CFRunLoopTimerGetOrder(void *t) { (void)t; return 0; }
+long CFRunLoopObserverGetOrder(void *o) { (void)o; return 0; }
+unsigned long CFRunLoopObserverGetActivities(void *o) { return o ? ((cf_obj_t *)o)->activities : 0; }
+unsigned char CFRunLoopObserverDoesRepeat(void *o) { return o && ((cf_obj_t *)o)->repeats; }
 u64 CFRunLoopGetTypeID(void) { return 40; }
 typedef struct { void *isa; int flags, reserved; void (*invoke)(void *block, void *timer); } cf_timer_blk_t;
 static void timer_from_block(void *t, void *info) {

@@ -77,6 +77,11 @@ int main(void) {
     Cb[0] = 90; Cr[0] = 240;
     vImageConvert_420Yp8_Cb8_Cr8ToARGB8888(&yb, &cbb, &crb, &ob, info, argb, 255, 0);
     expect(out[9] >= 250 && out[10] <= 5 && out[11] <= 5, "YpCbCr 601 vídeo: vermelho (81, 90, 240)");
+    /* tom médio, onde o croma não satura: (Y, Cb, Cr) = (132, 81, 169) é RGB (200, 120, 40) no BT.601 de vídeo */
+    Y[2] = 132; Cb[0] = 81; Cr[0] = 169;
+    vImageConvert_420Yp8_Cb8_Cr8ToARGB8888(&yb, &cbb, &crb, &ob, info, argb, 255, 0);
+    expect(out[9] >= 197 && out[9] <= 203 && out[10] >= 117 && out[10] <= 123 && out[11] >= 37 && out[11] <= 43,
+           "YpCbCr 601 vídeo: tom médio sem saturar (escala do croma)");
     vf rgba = {8, 32, 0, 3, 0, 0, 0}, bgra_pm = {8, 32, 0, 2 | 0x2000, 0, 0, 0}, rgb = {8, 24, 0, 0, 0, 0, 0}, gray = {8, 8, 0, 0, 0, 0, 0};
     long err = 1;
     void *cv = vImageConverter_CreateWithCGImageFormat(&rgba, &bgra_pm, 0, 0, &err);

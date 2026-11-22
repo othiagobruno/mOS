@@ -236,6 +236,10 @@ void _start(const char *arg) {
         int dob = spawn("darwinobjcteste", 0);
         CHECK(dob > 0 && wait(dob) == 0, "darwinobjcteste (Mach-O): categoria, @try, super, stret/fpret, +load e a ponte CF");
     }
+    if (file_size("/Sistema/Programas/corpusteste") > 0) {   /* Mach-O: lacunas do corpus (userland/tests-corpus) */
+        int ct = spawn("corpusteste", 0);
+        CHECK(ct > 0 && wait(ct) == 0, "corpusteste (Mach-O): swprintf, libffi x86_64, ndbm, CGDisplayMode, NSArchiver e fachadas");
+    }
     if (file_size("/Sistema/Programas/unixipc") > 0) {   /* ELF: AF_UNIX entre processos (userland/unixipc.c) */
         int ux = spawn("unixipc", 0);
         CHECK(ux > 0 && wait(ux) == 0, "unixipc: bind/listen/accept, send/recv e SCM_RIGHTS");
