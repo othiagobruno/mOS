@@ -91,7 +91,29 @@ static char *wfmt_to_narrow(const wchar_t_ *wfmt) {
     return nf;
 }
 
-/* swprintf fica em swiftsupport.c e vswprintf em vscode_libc.c (já existiam; não duplicar aqui) */
+/* swprintf/vswprintf moram aqui. O beffd626 tirou estas achando que swiftsupport.c e vscode_libc.c tinham as suas, e
+ * o 547c8faf tirou aquelas no mesmo dia achando que estas ficavam: sobrou nenhuma (88 apps do corpus importam). */
+int vswprintf(wchar_t_ *ws, size_t n, const wchar_t_ *fmt, va_list ap) {
+    if (!ws || n == 0) return -1;
+    char *nf = wfmt_to_narrow(fmt);
+    if (!nf) return -1;
+    va_list c; va_copy(c, ap);
+    int len = vsnprintf(0, 0, nf, c);
+    va_end(c);
+    if (len < 0) { free(nf); ws[0] = 0; return -1; }
+    char *nb = malloc((size_t)len + 1);
+    if (!nb) { free(nf); ws[0] = 0; return -1; }
+    vsnprintf(nb, (size_t)len + 1, nf, ap);
+    free(nf);
+    size_t w = mbstowcs(ws, nb, n);
+    free(nb);
+    if (w == (size_t)-1) { ws[0] = 0; return -1; }
+    if (w >= n) { ws[n - 1] = 0; return -1; }   /* não coube (contrato do swprintf) */
+    return (int)w;
+}
+int swprintf(wchar_t_ *ws, size_t n, const wchar_t_ *fmt, ...) {
+    va_list ap; va_start(ap, fmt); int r = vswprintf(ws, n, fmt, ap); va_end(ap); return r;
+}
 int vfwprintf(FILE *f, const wchar_t_ *fmt, va_list ap) {
     char *nf = wfmt_to_narrow(fmt);
     if (!nf) return -1;

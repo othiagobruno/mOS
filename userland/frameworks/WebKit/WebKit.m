@@ -2251,6 +2251,38 @@ NSString *const WebActionElementKey = @"WebActionElementKey";
 NSString *const WebActionButtonKey = @"WebActionButtonKey";
 NSString *const WebActionModifierFlagsKey = @"WebActionModifierFlagsKey";
 NSString *const WebActionOriginalURLKey = @"WebActionOriginalURLKey";
+/* chaves do dicionário de elemento (menu de contexto, WebUIDelegate) e notificações de progresso do WebView legado */
+NSString *const WebElementLinkURLKey = @"WebElementLinkURL";
+NSString *const WebElementLinkTargetFrameKey = @"WebElementTargetFrame";
+NSString *const WebElementLinkLabelKey = @"WebElementLinkLabel";
+NSString *const WebElementLinkTitleKey = @"WebElementLinkTitle";
+NSString *const WebElementImageURLKey = @"WebElementImageURL";
+NSString *const WebElementImageKey = @"WebElementImage";
+NSString *const WebElementImageAltStringKey = @"WebElementImageAltString";
+NSString *const WebElementImageRectKey = @"WebElementImageRect";
+NSString *const WebElementFrameKey = @"WebElementFrame";
+NSString *const WebElementIsSelectedKey = @"WebElementIsSelected";
+NSString *const WebElementDOMNodeKey = @"WebElementDOMNode";
+NSString *const WebElementIsContentEditableKey = @"WebElementIsContentEditableKey";
+NSString *const WebViewProgressStartedNotification = @"WebProgressStartedNotification";
+NSString *const WebViewProgressEstimateChangedNotification = @"WebProgressEstimateChangedNotification";
+NSString *const WebViewProgressFinishedNotification = @"WebProgressFinishedNotification";
+/* WebUndefined: o valor "undefined" do JavaScript nas pontes do WebScriptObject */
+@interface WebUndefined : NSObject <NSCopying>
++ (WebUndefined *)undefined;
+@end
+@implementation WebUndefined
++ (WebUndefined *)undefined { static WebUndefined *u; if (!u) u = [[WebUndefined alloc] init]; return u; }
+- (id)copyWithZone:(void *)z { (void)z; return self; }
+- (NSString *)description { return @"undefined"; }
+@end
+/* WebDownload: o NSURLDownload do libSystem (foundation_corpus.c), que avisa o delegate de que falhou */
+@interface NSURLDownload : NSObject
+@end
+@interface WebDownload : NSURLDownload
+@end
+@implementation WebDownload
+@end
 
 static NSString *const kDomShim =
     @"(window.__mosDom||(window.__mosDom={n:[null],d:document,id:function(x){if(!x)return 0;var t=this;if(t.d!==document){t.n=[null];t.d=document;}"

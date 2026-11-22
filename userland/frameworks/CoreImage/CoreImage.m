@@ -42,6 +42,10 @@ int kCIFormatBGRA8 = MOS_CI_BGRA8;
 int kCIFormatRGBA8 = MOS_CI_RGBA8;
 int kCIFormatABGR8 = MOS_CI_ABGR8;
 int kCIFormatRGBAh = MOS_CI_RGBAh;
+int kCIFormatRGBAf = 34;             /* float 32 por canal: o renderizador de CPU do mOS não escreve este formato */
+int kCIFormatRGBA16 = 26;
+int kCIFormatR8 = 1;
+int kCIFormatA8 = 2;
 
 NSString *const kCIInputImageKey = @"inputImage";
 NSString *const kCIInputBackgroundImageKey = @"inputBackgroundImage";
@@ -896,6 +900,73 @@ static void free_bytes(void *info, const void *data, size_t size) {
 @end
 @implementation CIColorKernel
 @end
+@interface CIWarpKernel : CIKernel
+@end
+@implementation CIWarpKernel
+@end
+/* CIBlendKernel: os modos nomeados da Apple (+sourceOver...) não têm implementação de CPU aqui; o kernel por
+ * string não compila (nil, como os outros) */
+@interface CIBlendKernel : CIColorKernel
+@end
+@implementation CIBlendKernel
++ (instancetype)componentAdd { return nil; }
++ (instancetype)componentMultiply { return nil; }
++ (instancetype)sourceOver { return nil; }
++ (instancetype)multiply { return nil; }
++ (instancetype)screen { return nil; }
++ (instancetype)overlay { return nil; }
++ (instancetype)darken { return nil; }
++ (instancetype)lighten { return nil; }
+- (CIImage *)applyWithForeground:(CIImage *)fg background:(CIImage *)bg { (void)bg; return fg; }
+@end
+/* CISampler: guarda a imagem e as opções; os kernels que o usariam não compilam no mOS */
+@interface CISampler : NSObject {
+    CIImage *_img;
+    NSDictionary *_opts;
+}
+@end
+@implementation CISampler
++ (instancetype)samplerWithImage:(CIImage *)img { return [[[self alloc] initWithImage:img options:nil] autorelease]; }
++ (instancetype)samplerWithImage:(CIImage *)img options:(NSDictionary *)o { return [[[self alloc] initWithImage:img options:o] autorelease]; }
+- (instancetype)initWithImage:(CIImage *)img { return [self initWithImage:img options:nil]; }
+- (instancetype)initWithImage:(CIImage *)img options:(NSDictionary *)o {
+    if ((self = [super init])) { _img = [img retain]; _opts = [o copy]; }
+    return self;
+}
+- (void)dealloc { [_img release]; [_opts release]; [super dealloc]; }
+- (CIImage *)_mos_image { return _img; }
+- (id)definition { return _img; }
+@end
+/* CIImageProcessorKernel: o app herda e implementa +processWithInputs:...; sem CIRenderDestination de GPU, o
+ * resultado é a primeira entrada (a extensão pedida não muda a imagem) */
+@interface CIImageProcessorKernel : NSObject
+@end
+@implementation CIImageProcessorKernel
++ (CIImage *)applyWithExtent:(CGRect)extent inputs:(NSArray *)inputs arguments:(NSDictionary *)args error:(id *)error {
+    (void)extent; (void)args;
+    if (error) *error = nil;
+    return inputs.count ? [inputs objectAtIndex:0] : nil;
+}
++ (int)outputFormat { return kCIFormatBGRA8; }
++ (BOOL)outputIsOpaque { return NO; }
++ (BOOL)synchronizeInputs { return YES; }
+@end
+NSString *const kCIApplyOptionDefinition = @"definition";
+NSString *const kCIApplyOptionExtent = @"extent";
+NSString *const kCIApplyOptionUserInfo = @"user_info";
+NSString *const kCIApplyOptionColorSpace = @"color_space";
+NSString *const kCISamplerAffineMatrix = @"CIAffineMatrix";
+NSString *const kCISamplerWrapMode = @"CIWrapMode";
+NSString *const kCISamplerFilterMode = @"CIFilterMode";
+NSString *const kCISamplerWrapBlack = @"CIWrapBlack";
+NSString *const kCISamplerWrapClamp = @"CIWrapClamp";
+NSString *const kCISamplerFilterNearest = @"CIFilterNearest";
+NSString *const kCISamplerFilterLinear = @"CIFilterLinear";
+NSString *const kCISamplerColorSpace = @"CIColorSpace";
+NSString *const kCIContextAllowLowPower = @"allow_low_power";
+NSString *const kCIContextHighQualityDownsample = @"high_quality_downsample";
+NSString *const kCIContextPriorityRequestLow = @"priority_request_low";
+NSString *const kCIContextCacheIntermediatesKey = @"kCIContextCacheIntermediates";
 
 /* ---------------------------------------------------------------- CIRenderDestination para bitmap */
 @interface CIRenderDestination : NSObject {

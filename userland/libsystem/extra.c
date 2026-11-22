@@ -1113,6 +1113,12 @@ int posix_spawnattr_setflags(void *a, short f) {
     t->flags = (unsigned)(unsigned short)f;
     return 0;
 }
+int posix_spawnattr_getflags(const void *a, short *f) {
+    cx_at *t = a ? *(cx_at *const *)a : 0;
+    if (!t || t->magic != AT_MAGIC || !f) return 22;
+    *f = (short)t->flags;
+    return 0;
+}
 int posix_spawnattr_setpgroup(void *a, int g) { (void)a; (void)g; return 0; }
 int posix_spawnattr_setsigdefault(void *a, const void *s) { (void)a; (void)s; return 0; }
 int posix_spawnattr_setsigmask(void *a, const void *s) { (void)a; (void)s; return 0; }

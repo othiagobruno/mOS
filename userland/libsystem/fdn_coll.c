@@ -522,12 +522,57 @@ static id t_copy_zone(id s, SEL c, void *z) { (void)z; return t_copy(s, c); }
 static void t_encode(id s, SEL c, id coder) { (void)c; MSG(void, coder, "encodeDouble:forKey:", dt(s) - REF_1970, cx_str("NS.time")); }
 static id t_decode(id s, SEL c, id coder) { (void)c; return dt_set(s, MSG(double, coder, "decodeDoubleForKey:", cx_str("NS.time")) + REF_1970); }
 
+/* igualdade de conteúdo (faltava: NSArray/NSDictionary/NSData caíam no isEqual: do NSObject, que compara ponteiro) */
+static BOOL kind(id o, const char *c) { cx_class_t *k = cx_class_named(c); return o && k && cx_is_subclass(object_getClass(o), k); }
+static BOOL a_eq_arr(id s, SEL c, id o) {
+    (void)c;
+    if (s == o) return YES;
+    if (!o || !kind(o, "NSArray")) return NO;
+    u64 n = cnt(s);
+    if (n != cnt(o)) return NO;
+    for (u64 i = 0; i < n; i++) if (!eq(at(s, i), at(o, i))) return NO;
+    return YES;
+}
+static u64 a_hash(id s, SEL c) { (void)c; return cnt(s); }
+static BOOL d_eq_dict(id s, SEL c, id o) {
+    (void)c;
+    if (s == o) return YES;
+    if (!o || !kind(o, "NSDictionary")) return NO;
+    u64 n = cnt(s);
+    if (n != cnt(o)) return NO;
+    id keys = MSG0(id, s, "allKeys");
+    for (u64 i = 0; i < n; i++) {
+        id k = at(keys, i);
+        if (!eq(MSG(id, s, "objectForKey:", k), MSG(id, o, "objectForKey:", k))) return NO;
+    }
+    return YES;
+}
+static BOOL data_eq(id s, SEL c, id o) {
+    (void)c;
+    if (s == o) return YES;
+    if (!o || !kind(o, "NSData")) return NO;
+    u64 n = MSG0(u64, s, "length");
+    if (n != MSG0(u64, o, "length")) return NO;
+    const u8 *a = MSG0(const u8 *, s, "bytes"), *b = MSG0(const u8 *, o, "bytes");
+    return !n || (a && b && !memcmp(a, b, n));
+}
+static u64 data_hash(id s, SEL c) {
+    (void)c;
+    u64 n = MSG0(u64, s, "length"), h = 1469598103934665603ULL;
+    const u8 *p = MSG0(const u8 *, s, "bytes");
+    for (u64 i = 0; p && i < n && i < 80; i++) h = (h ^ p[i]) * 1099511628211ULL;   /* os primeiros 80 bytes, como o CF */
+    return h ^ n;
+}
 void cx_fdn_coll_init(void) {
     cx_class_t *A = cx_class_named("NSArray"), *MA = cx_class_named("NSMutableArray");
     cx_class_t *D = cx_class_named("NSDictionary"), *MD = cx_class_named("NSMutableDictionary");
     if (!A || !MA || !D || !MD) return;
 #define M(k, s, f) cx_add_method(k, s, (void *)(f))
 #define CM(k, s, f) cx_add_cmethod(k, s, (void *)(f))
+    M(A, "isEqual:", a_eq_arr); M(A, "isEqualToArray:", a_eq_arr); M(A, "hash", a_hash);
+    M(D, "isEqual:", d_eq_dict); M(D, "isEqualToDictionary:", d_eq_dict); M(D, "hash", a_hash);
+    { cx_class_t *Dt = cx_class_named("NSData");
+      if (Dt) { M(Dt, "isEqual:", data_eq); M(Dt, "isEqualToData:", data_eq); M(Dt, "hash", data_hash); } }
     M(A, "subarrayWithRange:", a_sub); M(A, "getObjects:range:", a_get_range); M(A, "getObjects:", a_get);
     M(A, "indexOfObject:inRange:", a_index_in); M(A, "firstObjectCommonWithArray:", a_common);
     M(A, "objectEnumerator", a_obj_enum); M(A, "reverseObjectEnumerator", a_reverse_enum); M(A, "sortedArrayHint", a_hint);

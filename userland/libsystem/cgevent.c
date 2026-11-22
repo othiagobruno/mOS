@@ -11,6 +11,7 @@
 #include "cgpid.h"
 
 void *memset(void *d, int c, size_t n);
+void *memcpy(void *d, const void *s, size_t n);
 void *malloc(size_t n);
 void free(void *p);
 void cx_post_key_event(u16 mac, u64 flags, int down);
@@ -101,6 +102,21 @@ void *CGEventCreateScrollWheelEvent(void *src, i32 units, u32 count, ...) {
     if (count >= 3) w3 = __builtin_va_arg(ap, i32);
     __builtin_va_end(ap);
     return CGEventCreateScrollWheelEvent2(src, units, count, w1, w2, w3);
+}
+/* cópia independente: a string Unicode é duplicada, o resto é valor */
+void *CGEventCreateCopy(void *e) {
+    cgev_t *x = ev(e);
+    if (!x) return 0;
+    cgev_t *c = mk(x->type);
+    void *isa = c->isa;
+    memcpy(c, x, sizeof *c);
+    c->isa = isa;
+    c->uni = 0; c->nuni = 0;
+    if (x->uni && x->nuni) {
+        c->uni = malloc(x->nuni * sizeof(u16));
+        if (c->uni) { memcpy(c->uni, x->uni, x->nuni * sizeof(u16)); c->nuni = x->nuni; }
+    }
+    return c;
 }
 u32 CGEventGetType(void *e) { cgev_t *x = ev(e); return x ? x->type : 0; }
 void CGEventSetType(void *e, u32 t) { cgev_t *x = ev(e); if (x) { x->type = t; if (t == 10 || t == 11) x->down = t == 10; } }

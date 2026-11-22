@@ -1074,3 +1074,136 @@ CSSM_RETURN CSSM_CL_FreeFieldValue(intptr_t cl, const cdata_t *oid, cdata_t *val
     free(value);                                                                 /* o CSSM_DATA é o começo do bloco */
     return CSSM_OK;
 }
+
+/* ================================================================ digest, geração de chave e módulos (corpus) */
+/* GUIDs dos módulos da Apple (cssmapple.h): os apps passam estes ao CSSM_ModuleLoad/Attach */
+const guid_t gGuidAppleFileDL = {0x87191ca0, 0x0fc9, 0x11d4, {0x84, 0x9a, 0x00, 0x05, 0x02, 0xb5, 0x21, 0x22}};
+const guid_t gGuidAppleCSPDL = {0x87191ca1, 0x0fc9, 0x11d4, {0x84, 0x9a, 0x00, 0x05, 0x02, 0xb5, 0x21, 0x22}};
+const guid_t gGuidAppleCSP = {0x87191ca2, 0x0fc9, 0x11d4, {0x84, 0x9a, 0x00, 0x05, 0x02, 0xb5, 0x21, 0x22}};
+const guid_t gGuidAppleX509CL = {0x87191ca3, 0x0fc9, 0x11d4, {0x84, 0x9a, 0x00, 0x05, 0x02, 0xb5, 0x21, 0x22}};
+const guid_t gGuidAppleX509TP = {0x87191ca4, 0x0fc9, 0x11d4, {0x84, 0x9a, 0x00, 0x05, 0x02, 0xb5, 0x21, 0x22}};
+const guid_t gGuidAppleDotMacTP = {0x87191ca5, 0x0fc9, 0x11d4, {0x84, 0x9a, 0x00, 0x05, 0x02, 0xb5, 0x21, 0x22}};
+const guid_t gGuidCssm = {0x87191ca6, 0x0fc9, 0x11d4, {0x84, 0x9a, 0x00, 0x05, 0x02, 0xb5, 0x21, 0x22}};
+CSSM_RETURN CSSM_ModuleLoad(const guid_t *guid, u32 level, void *cb, void *ctx) { (void)level; (void)cb; (void)ctx; return guid ? CSSM_OK : ERR_POINTER; }
+CSSM_RETURN CSSM_ModuleUnload(const guid_t *guid, void *cb, void *ctx) { (void)cb; (void)ctx; return guid ? CSSM_OK : ERR_POINTER; }
+/* o CSP e o CSPDL respondem com o CSP do mOS; o X509CL com o CL; o resto não tem módulo */
+CSSM_RETURN CSSM_ModuleAttach(const guid_t *guid, const void *ver, const void *mem, u32 sub, u32 type, u32 flags, u32 key_hier,
+                              void *fn_tab, u32 nfn, const void *reserved, intptr_t *out) {
+    (void)ver; (void)mem; (void)sub; (void)type; (void)flags; (void)key_hier; (void)fn_tab; (void)nfn; (void)reserved;
+    if (!guid || !out) return ERR_POINTER;
+    if (!memcmp(guid, &gGuidAppleCSP, sizeof *guid) || !memcmp(guid, &gGuidAppleCSPDL, sizeof *guid)) { *out = CSP_HANDLE; return CSSM_OK; }
+    if (!memcmp(guid, &gGuidAppleX509CL, sizeof *guid)) { *out = CL_HANDLE; return CSSM_OK; }
+    *out = 0;
+    return E_CSSM(0x10a);                                 /* CSSMERR_CSSM_INVALID_GUID */
+}
+CSSM_RETURN CSSM_ModuleDetach(intptr_t h) { return h == CSP_HANDLE || h == CL_HANDLE ? CSSM_OK : ERR_ADDIN_HANDLE; }
+/* CSSM_API_MEMORY_FUNCS: malloc/free/realloc/calloc + AllocRef; os do mOS são os da libc */
+typedef struct { void *(*malloc_func)(size_t, void *); void (*free_func)(void *, void *); void *(*realloc_func)(void *, size_t, void *);
+                 void *(*calloc_func)(u32, size_t, void *); void *ref; } cssm_mem_t;
+static void *m_malloc(size_t n, void *r) { (void)r; return malloc(n); }
+static void m_free(void *p, void *r) { (void)r; free(p); }
+static void *m_realloc(void *p, size_t n, void *r) { (void)r; return realloc(p, n); }
+static void *m_calloc(u32 k, size_t n, void *r) { (void)r; return calloc(k, n); }
+CSSM_RETURN CSSM_GetAPIMemoryFunctions(intptr_t h, cssm_mem_t *f) {
+    (void)h;
+    if (!f) return ERR_POINTER;
+    f->malloc_func = m_malloc; f->free_func = m_free; f->realloc_func = m_realloc; f->calloc_func = m_calloc; f->ref = 0;
+    return CSSM_OK;
+}
+/* digest: o contexto junta os bytes (acc) e o Final calcula pelo CommonCrypto */
+enum { CC_DIGEST = 4, CC_KEYGEN = 6 };
+unsigned char *CC_MD5(const void *d, u32 n, unsigned char *md);
+unsigned char *CC_SHA1(const void *d, u32 n, unsigned char *md);
+unsigned char *CC_SHA224(const void *d, u32 n, unsigned char *md);
+unsigned char *CC_SHA256(const void *d, u32 n, unsigned char *md);
+unsigned char *CC_SHA384(const void *d, u32 n, unsigned char *md);
+unsigned char *CC_SHA512(const void *d, u32 n, unsigned char *md);
+static int digest_len(u32 alg) {
+    switch (alg) {
+    case ALG_MD5: return 16;
+    case ALG_SHA1: return 20;
+    case ALG_SHA224: return 28;
+    case ALG_SHA256: return 32;
+    case ALG_SHA384: return 48;
+    case ALG_SHA512: return 64;
+    default: return 0;
+    }
+}
+CSSM_RETURN CSSM_CSP_CreateDigestContext(intptr_t csp, u32 alg, u64 *out) {
+    if (csp != CSP_HANDLE) return ERR_ADDIN_HANDLE;
+    if (!out) return ERR_POINTER;
+    if (!digest_len(alg)) return ERR_ALG;
+    ctx_t *c = ctx_new(CC_DIGEST, alg);
+    if (!c) return ERR_MEMORY;
+    *out = (u64)(uintptr_t)c;
+    return CSSM_OK;
+}
+CSSM_RETURN CSSM_DigestDataInit(u64 h) { ctx_t *c = ctx_of(h); if (!c || c->type != CC_DIGEST) return ERR_CONTEXT; acc_reset(c); return CSSM_OK; }
+CSSM_RETURN CSSM_DigestDataUpdate(u64 h, const cdata_t *bufs, u32 count) {
+    ctx_t *c = ctx_of(h);
+    if (!c || c->type != CC_DIGEST) return ERR_CONTEXT;
+    for (u32 i = 0; i < count; i++) if (bufs && bufs[i].Data) acc_add(c, bufs[i].Data, bufs[i].Length);
+    return CSSM_OK;
+}
+CSSM_RETURN CSSM_DigestDataFinal(u64 h, cdata_t *out) {
+    ctx_t *c = ctx_of(h);
+    if (!c || c->type != CC_DIGEST) return ERR_CONTEXT;
+    if (!out) return ERR_POINTER;
+    int n = digest_len(c->alg);
+    u8 md[64];
+    const u8 *d = c->acc ? c->acc : (const u8 *)"";
+    u32 len = (u32)c->accn;
+    switch (c->alg) {
+    case ALG_MD5: CC_MD5(d, len, md); break;
+    case ALG_SHA1: CC_SHA1(d, len, md); break;
+    case ALG_SHA224: CC_SHA224(d, len, md); break;
+    case ALG_SHA256: CC_SHA256(d, len, md); break;
+    case ALG_SHA384: CC_SHA384(d, len, md); break;
+    default: CC_SHA512(d, len, md); break;
+    }
+    acc_reset(c);
+    if (!out->Data) { out->Data = malloc((size_t)n); if (!out->Data) return ERR_MEMORY; }
+    else if (out->Length < (size_t)n) return ERR_OUTPUT_LEN;
+    memcpy(out->Data, md, (size_t)n);
+    out->Length = (size_t)n;
+    return CSSM_OK;
+}
+CSSM_RETURN CSSM_DigestData(u64 h, const cdata_t *bufs, u32 count, cdata_t *out) {
+    CSSM_RETURN r = CSSM_DigestDataInit(h);
+    if (!r) r = CSSM_DigestDataUpdate(h, bufs, count);
+    return r ? r : CSSM_DigestDataFinal(h, out);
+}
+/* geração de chave simétrica (AES, DES, 3DES, RC2, RC4, Blowfish): bytes do gerador do sistema, blob cru */
+int SecRandomCopyBytes(void *rnd, size_t n, void *buf);
+CSSM_RETURN CSSM_CSP_CreateKeyGenContext(intptr_t csp, u32 alg, u32 bits, const cdata_t *seed, const cdata_t *salt, const void *start,
+                                         const void *end, const cdata_t *params, u64 *out) {
+    (void)seed; (void)salt; (void)start; (void)end; (void)params;
+    if (csp != CSP_HANDLE) return ERR_ADDIN_HANDLE;
+    if (!out) return ERR_POINTER;
+    if (alg != ALG_AES && alg != ALG_DES && alg != ALG_3DES && alg != ALG_RC2 && alg != ALG_RC4 && alg != ALG_BLOWFISH && alg != ALG_CAST)
+        return ERR_ALG;                                  /* pares RSA/EC: SecKeyCreateRandomKey */
+    ctx_t *c = ctx_new(CC_KEYGEN, alg);
+    if (!c) return ERR_MEMORY;
+    c->derive_bits = bits;
+    *out = (u64)(uintptr_t)c;
+    return CSSM_OK;
+}
+CSSM_RETURN CSSM_GenerateKey(u64 h, u32 usage, u32 attr, const cdata_t *label, const void *acl, ckey_t *out) {
+    (void)label; (void)acl;
+    ctx_t *c = ctx_of(h);
+    if (!c || c->type != CC_KEYGEN) return ERR_CONTEXT;
+    if (!out) return ERR_POINTER;
+    size_t n = (c->derive_bits + 7) / 8;
+    if (c->alg == ALG_AES && n != 16 && n != 24 && n != 32) return ERR_KEY_SIZE;
+    if (c->alg == ALG_DES) n = 8;
+    if (c->alg == ALG_3DES) n = 24;
+    if (!n || n > 256) return ERR_KEY_SIZE;
+    u8 k[256];
+    SecRandomCopyBytes(0, n, k);
+    raw_key_out(out, c->alg, KC_SESSION, k, n, usage, attr, FMT_OCTET);
+    memset(k, 0, sizeof k);
+    return CSSM_OK;
+}
+/* SecKeychain e SSL que vinham junto */
+u64 SecKeychainGetTypeID(void) { return 0x2F0; }
+int SSLGetClientCertificateState(void *ctx, int *state) { (void)ctx; if (!state) return -50; *state = 0; return 0; }   /* kSSLClientCertNone */

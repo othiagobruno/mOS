@@ -340,6 +340,9 @@ if ($LASTEXITCODE -ne 0) {
         if ($LASTEXITCODE -ne 0) { Write-Host "darwincxxteste FAILED" -ForegroundColor Red; exit 1 }
         & $zig cc -target x86_64-macos -O1 -x objective-c -Wno-deprecated-declarations "-I$root\userland\sdk\include" "$root\userland\tests-darwinobjc\main.m" -o "$pdir\darwinobjcteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
         if ($LASTEXITCODE -ne 0) { Write-Host "darwinobjcteste FAILED" -ForegroundColor Red; exit 1 }
+        # lacunas do corpus (swprintf, libffi x86_64, ndbm, CGDisplayMode, NSArchiver, fachadas de classe): o "teste" o chama
+        & $zig cc -target x86_64-macos -O1 -x objective-c -Wno-objc-root-class "-I$root\userland\sdk\include" "$root\userland\tests-corpus\main.m" -o "$pdir\corpusteste" "-Wl,-undefined,dynamic_lookup" 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Host "corpusteste FAILED" -ForegroundColor Red; exit 1 }
         # simulated Wi-Fi radio + access point (kernel/wifi/sim.c); boot with run.ps1 -NoNet to test it end to end
         Set-Content -Path "$esp\mOS\Sistema\Biblioteca\wifi-simulado" -Value 'mOS-Teste' -Encoding ascii
     }

@@ -3,10 +3,14 @@
  *   +0 x0..x7   +64 x8 (resultado indireto)   +72 bytes de pilha (múltiplo de 16)   +80 ponteiro da pilha montada
  *   +96 v0..v7 (16 bytes cada)   +224 x0/x1 na volta   +240 q0..q3 na volta */
 #if defined(__aarch64__)
+/* nomes do C: vazio no ELF do mOS, "_" no Mach-O do teste de host (tools/ffi_mos_test.sh) */
+#define CAT2(a, b) a##b
+#define CAT(a, b) CAT2(a, b)
+#define SYM(x) CAT(__USER_LABEL_PREFIX__, x)
     .text
-    .globl cx_a64_call
+    .globl SYM(cx_a64_call)
     .p2align 4
-cx_a64_call:
+SYM(cx_a64_call):
     stp x29, x30, [sp, #-32]!
     mov x29, sp
     stp x19, x20, [sp, #16]
@@ -37,5 +41,33 @@ cx_a64_call:
     mov sp, x29
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
+    ret
+
+/* entrada dos closures da libffi (ffi_mos.c): o trampolim deixou o cabeçalho em x17. Guarda x0..x8 e q0..q7 num
+ * ffi_a64_regs_t (288 bytes), chama cx_ffi_a64_closure_inner(meta, regs, args da pilha) e carrega x0/x1 e q0..q3. */
+    .globl SYM(cx_ffi_a64_closure_entry)
+    .p2align 4
+SYM(cx_ffi_a64_closure_entry):
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    sub sp, sp, #288
+    stp x0, x1, [sp, #0]
+    stp x2, x3, [sp, #16]
+    stp x4, x5, [sp, #32]
+    stp x6, x7, [sp, #48]
+    str x8, [sp, #64]
+    stp q0, q1, [sp, #80]
+    stp q2, q3, [sp, #112]
+    stp q4, q5, [sp, #144]
+    stp q6, q7, [sp, #176]
+    mov x0, x17
+    mov x1, sp
+    add x2, x29, #16
+    bl SYM(cx_ffi_a64_closure_inner)
+    ldp x0, x1, [sp, #208]
+    ldp q0, q1, [sp, #224]
+    ldp q2, q3, [sp, #256]
+    mov sp, x29
+    ldp x29, x30, [sp], #16
     ret
 #endif

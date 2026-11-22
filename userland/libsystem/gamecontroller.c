@@ -75,7 +75,8 @@ id GCInputButtonA, GCInputButtonB, GCInputButtonX, GCInputButtonY, GCInputLeftSh
    GCInputLeftTrigger, GCInputRightTrigger, GCInputLeftThumbstick, GCInputRightThumbstick,
    GCInputLeftThumbstickButton, GCInputRightThumbstickButton, GCInputDirectionPad, GCInputButtonMenu,
    GCInputButtonOptions, GCInputButtonHome, GCInputDualShockTouchpadButton, GCInputXboxPaddleOne, GCInputXboxPaddleTwo,
-   GCInputXboxPaddleThree, GCInputXboxPaddleFour, GCInputButtonShare, GCInputLeftPaddle, GCInputRightPaddle;
+   GCInputXboxPaddleThree, GCInputXboxPaddleFour, GCInputButtonShare, GCInputLeftPaddle, GCInputRightPaddle,
+   GCInputDualShockTouchpadOne, GCInputDualShockTouchpadTwo;
 id GCProductCategoryDualShock4, GCProductCategoryDualSense, GCProductCategoryXboxOne, GCProductCategoryMFi,
    GCProductCategoryHID, GCProductCategoryKeyboard, GCProductCategoryMouse, GCProductCategoryCoalesced;
 id GCHapticsLocalityDefault, GCHapticsLocalityAll, GCHapticsLocalityHandles, GCHapticsLocalityLeftHandle,
@@ -1247,7 +1248,7 @@ void cx_gamecontroller_init(void) {
     GCInputLeftThumbstick = S("Left Thumbstick"); GCInputRightThumbstick = S("Right Thumbstick");
     GCInputLeftThumbstickButton = S("Left Thumbstick Button"); GCInputRightThumbstickButton = S("Right Thumbstick Button");
     GCInputDirectionPad = S("Direction Pad"); GCInputButtonMenu = S("Button Menu"); GCInputButtonOptions = S("Button Options");
-    GCInputButtonHome = S("Button Home"); GCInputDualShockTouchpadButton = S("Touchpad Button"); GCInputButtonShare = S("Button Share");
+    GCInputButtonHome = S("Button Home"); GCInputDualShockTouchpadButton = S("Touchpad Button"); GCInputDualShockTouchpadOne = S("Touchpad 1"); GCInputDualShockTouchpadTwo = S("Touchpad 2"); GCInputButtonShare = S("Button Share");
     GCInputXboxPaddleOne = S("Paddle 1"); GCInputXboxPaddleTwo = S("Paddle 2"); GCInputXboxPaddleThree = S("Paddle 3"); GCInputXboxPaddleFour = S("Paddle 4");
     GCInputLeftPaddle = S("Left Paddle"); GCInputRightPaddle = S("Right Paddle");
     GCProductCategoryDualShock4 = S("DualShock 4"); GCProductCategoryDualSense = S("DualSense"); GCProductCategoryXboxOne = S("Xbox One");

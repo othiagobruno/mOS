@@ -521,14 +521,11 @@ void $ss8DurationV10FoundationE15TimeFormatStyleVMa(void) {}
 void $ss8DurationV10FoundationE9formattedy12FormatOutputQzxAC0D5StyleRzAB0D5InputRtzlF(void) {}
 void SecTaskCopyTeamIdentifier(void) {}
 void SecTaskCreateWithAuditToken(void) {}
-void __invert_f3(void) {}
 void endfsent(void) {}
 void getfsent(void) {}
 void mach_port_guard(void) {}
 void mach_port_set_mscount(void) {}
 void mach_port_unguard(void) {}
-void matrix_identity_double3x3(void) {}
-void matrix_identity_float4x4(void) {}
 void nftw$INODE64(void) {}
 void setfsent(void) {}
 void vm_read(void) {}

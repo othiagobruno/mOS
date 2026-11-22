@@ -247,7 +247,7 @@ long vImageConvert_420Yp8_Cb8_Cr8ToARGB8888(const vimg_t *Y, const vimg_t *Cb, c
             yy = yy < i->ymin ? i->ymin : yy > i->ymax ? i->ymax : yy;
             u = u < i->cmin ? i->cmin : u > i->cmax ? i->cmax : u;
             v = v < i->cmin ? i->cmin : v > i->cmax ? i->cmax : v;
-            float L = (yy - i->yb) * i->ys, U = (u - i->cb) * i->cs * 2, V = (v - i->cb) * i->cs * 2;
+            float L = (yy - i->yb) * i->ys, U = (u - i->cb) * i->cs, V = (v - i->cb) * i->cs;   /* cs = 127,5 / (CbCrRangeMax - viés): o croma vai a ±127,5 */
             uint8_t argb[4] = {alpha, sat8(L + i->cr_r * V), sat8(L + i->cr_g * V + i->cb_g * U), sat8(L + i->cb_b * U)};
             uint8_t *o = ROW(d, y) + x * 4;
             for (int c = 0; c < 4; c++) o[c] = map ? argb[map[c] & 3] : argb[c];

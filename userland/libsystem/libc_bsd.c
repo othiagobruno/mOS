@@ -125,6 +125,12 @@ const NXArchInfo *NXGetArchInfoFromCpuType(int cputype, int cpusubtype) {
     }
     return best;
 }
+int strcmp(const char *a, const char *b);
+const NXArchInfo *NXGetArchInfoFromName(const char *name) {
+    if (!name) return 0;
+    for (const NXArchInfo *a = nx_table; a->name; a++) if (!strcmp(a->name, name)) return a;
+    return 0;
+}
 const NXArchInfo *NXGetLocalArchInfo(void) {
 #if defined(__aarch64__)
     return NXGetArchInfoFromCpuType(CPU_TYPE_ARM64, -1);

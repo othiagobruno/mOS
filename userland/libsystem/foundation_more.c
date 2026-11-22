@@ -2061,6 +2061,7 @@ void cx_foundation_more_init(void) {
     M(NSProxy, "init", box_init); M(NSProxy, "dealloc", noop); M(NSProxy, "description", proxy_desc);
     M(NSProxy, "isKindOfClass:", proxy_kind); M(NSProxy, "forwardInvocation:", proxy_fwd);
     M(NSProxy, "methodSignatureForSelector:", proxy_sig);
+    { extern void cx_foundation_corpus_init(void); cx_foundation_corpus_init(); }   /* NSPort, NSConnection, NSArchiver... (foundation_corpus.c) */
 
     /* NSError já existe desde o Foundation; estes métodos ficam por cima dos antigos */
     CM(NSError, "errorWithDomain:code:userInfo:", err_with);
@@ -2317,7 +2318,8 @@ void cx_foundation_more_init(void) {
     DEF(&NSMachBootstrapServer_c, &NSMachBootstrapServer_m, "NSMachBootstrapServer", ob, 0);
     CM(NSMachBootstrapServer, "sharedInstance", mach_boot);
     M(NSMachBootstrapServer, "servicePortWithName:", mach_lookup);
-    DEF(&NSMachPort_c, &NSMachPort_m, "NSMachPort", ob, BEX);
+    { extern cx_class_t NSPort_c __asm__("OBJC_CLASS_$_NSPort");     /* NSMachPort : NSPort, como no Foundation */
+      DEF(&NSMachPort_c, &NSMachPort_m, "NSMachPort", &NSPort_c, BEX); }
     CM(NSMachPort, "port", port_new); M(NSMachPort, "machPort", port_mach);
 
     DEF(&NSNetService_c, &NSNetService_m, "NSNetService", ob, BEX);

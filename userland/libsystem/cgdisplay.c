@@ -53,18 +53,16 @@ u32 CGDisplayUnitNumber(u32 d) { (void)d; return 0; }
 int CGDisplayRegisterReconfigurationCallback(void *cb, void *info) { (void)cb; (void)info; return 0; }
 int CGDisplayRemoveReconfigurationCallback(void *cb, void *info) { (void)cb; (void)info; return 0; }
 void *CGDisplayCopyColorSpace(u32 d) { (void)d; return 0; }
-static const int cg_display_mode = 1;
-void *CGDisplayCopyDisplayMode(u32 d) { (void)d; return (void *)&cg_display_mode; }
-double CGDisplayModeGetRefreshRate(void *mode) { (void)mode; return 60.0; }
-void CGDisplayModeRelease(void *mode) { (void)mode; }
-size_t CGDisplayModeGetPixelWidth(void *mode) {
-    if (!mode) return 0;
-    return CGDisplayPixelsWide(MAIN_DISPLAY);
-}
-size_t CGDisplayModeGetPixelHeight(void *mode) {
-    if (!mode) return 0;
-    return CGDisplayPixelsHigh(MAIN_DISPLAY);
-}
+/* o modo é um objeto CF (CGDisplayModeMOS, cg_corpus.c): CFRetain/CFRelease/CFGetTypeID e o cast do Swift funcionam */
+void *cx_cg_current_mode(u32 d);
+size_t cx_cg_mode_pixel_width(const void *mode), cx_cg_mode_pixel_height(const void *mode);
+double cx_cg_mode_refresh(const void *mode);
+void objc_release(id o);
+void *CGDisplayCopyDisplayMode(u32 d) { return cx_cg_current_mode(d); }
+double CGDisplayModeGetRefreshRate(void *mode) { return mode ? cx_cg_mode_refresh(mode) : 0.0; }
+void CGDisplayModeRelease(void *mode) { if (mode) objc_release((id)mode); }
+size_t CGDisplayModeGetPixelWidth(void *mode) { return mode ? cx_cg_mode_pixel_width(mode) : 0; }
+size_t CGDisplayModeGetPixelHeight(void *mode) { return mode ? cx_cg_mode_pixel_height(mode) : 0; }
 void *CGDisplayCreateUUIDFromDisplayID(u32 d) { (void)d; return 0; }
 u32 CGDisplayGetDisplayIDFromUUID(void *uuid) { (void)uuid; return MAIN_DISPLAY; }
 

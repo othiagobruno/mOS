@@ -406,6 +406,15 @@ static void strip_zeros(char *s) {
     memmove(q, end, strlen(end) + 1);
 }
 
+/* um ponto de código em UTF-8 (inválido vira U+FFFD) */
+static int fmt_utf8(u32 c, char *o) {
+    if (c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) c = 0xFFFD;
+    if (c < 0x80) { o[0] = (char)c; return 1; }
+    if (c < 0x800) { o[0] = (char)(0xC0 | c >> 6); o[1] = (char)(0x80 | (c & 63)); return 2; }
+    if (c < 0x10000) { o[0] = (char)(0xE0 | c >> 12); o[1] = (char)(0x80 | ((c >> 6) & 63)); o[2] = (char)(0x80 | (c & 63)); return 3; }
+    o[0] = (char)(0xF0 | c >> 18); o[1] = (char)(0x80 | ((c >> 12) & 63)); o[2] = (char)(0x80 | ((c >> 6) & 63)); o[3] = (char)(0x80 | (c & 63));
+    return 4;
+}
 static void format_core(sink_t *k, const char *f, va_list ap) {
     for (; *f; f++) {
         if (*f != '%') {
@@ -442,6 +451,7 @@ static void format_core(sink_t *k, const char *f, va_list ap) {
         }
         char c = *f;
         char buf[512];
+        char wtmp[2048];                                   /* %ls convertido para UTF-8 */
         const char *s = buf;
         int len = 0;
         char sign = 0;
@@ -486,15 +496,32 @@ static void format_core(sink_t *k, const char *f, va_list ap) {
             if (prec >= 0) zero = 0;
             break;
         }
-        case 'c':
-            buf[0] = (char)va_arg(ap, int);
-            len = 1;
-            break;
-        case 'C':
+        case 'c': case 'C':
+            if (c == 'C' || lng >= 1) {                  /* %lc / %C: wint_t (UTF-32) vira UTF-8 */
+                len = fmt_utf8((u32)va_arg(ap, int), buf);
+                break;
+            }
             buf[0] = (char)va_arg(ap, int);
             len = 1;
             break;
         case 's': case 'S':
+            if (c == 'S' || lng >= 1) {                  /* %ls / %S: wchar_t * (4 bytes no macOS); a precisão conta bytes */
+                const int *ws = va_arg(ap, const int *);
+                if (!ws) { s = "(null)"; len = (int)(prec >= 0 ? strnlen(s, (size_t)prec) : strlen(s)); zero = 0; break; }
+                size_t o = 0;
+                for (; *ws && o + 4 < sizeof wtmp; ws++) {
+                    char e[4];
+                    int k2 = fmt_utf8((u32)*ws, e);
+                    if (prec >= 0 && (int)(o + (size_t)k2) > prec) break;
+                    memcpy(wtmp + o, e, (size_t)k2);
+                    o += (size_t)k2;
+                }
+                wtmp[o] = 0;
+                s = wtmp;
+                len = (int)o;
+                zero = 0;
+                break;
+            }
             s = va_arg(ap, const char *);
             if (!s) s = "(null)";
             len = (int)(prec >= 0 ? strnlen(s, (size_t)prec) : strlen(s));

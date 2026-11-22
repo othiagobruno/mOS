@@ -39,6 +39,9 @@ long write(int fd, const void *b, size_t n);
 /* ================================================================ constantes (CFString com o valor do macOS) */
 extern cx_class_t NSConstantString_c __asm__("__CFConstantStringClassReference");
 #define CK(sym, val) static nsstr_t sym##_o = { &NSConstantString_c, 0, (char *)val, sizeof(val) - 1 }; id sym = (id)&sym##_o;
+CK(kUTTypeICO, "com.microsoft.ico") CK(kUTTypeRTFD, "com.apple.rtfd") CK(kUTTypeFlatRTFD, "com.apple.flat-rtfd")
+CK(kUTImportedTypeDeclarationsKey, "UTImportedTypeDeclarations") CK(kUTExportedTypeDeclarationsKey, "UTExportedTypeDeclarations")
+CK(kUTTypeIconFileKey, "UTTypeIconFile")
 CK(kUTTagClassNSPboardType, "com.apple.nspboard-type") CK(kUTTagClassOSType, "com.apple.ostype")
 CK(kUTTypeItem, "public.item") CK(kUTTypeContent, "public.content") CK(kUTTypeCompositeContent, "public.composite-content")
 CK(kUTTypeMessage, "public.message") CK(kUTTypeContact, "public.contact") CK(kUTTypeArchive, "public.archive")

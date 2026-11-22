@@ -22,9 +22,9 @@ void NSRectFill(R r);
 void NSFrameRect(R r);
 
 cx_class_t PDFView_c __asm__("OBJC_CLASS_$_PDFView");
-static cx_class_t PDFView_m __asm__("OBJC_METACLASS_$_PDFView");
+cx_class_t PDFView_m __asm__("OBJC_METACLASS_$_PDFView");        /* exportado: apps herdam de PDFView */
 cx_class_t PDFThumbnailView_c __asm__("OBJC_CLASS_$_PDFThumbnailView");
-static cx_class_t PDFThumbnailView_m __asm__("OBJC_METACLASS_$_PDFThumbnailView");
+cx_class_t PDFThumbnailView_m __asm__("OBJC_METACLASS_$_PDFThumbnailView");
 
 extern char pv_cfconst_isa[] __asm__("__CFConstantStringClassReference");
 typedef struct { void *isa; u64 flags; const char *s; u64 n; } pv_const_t;

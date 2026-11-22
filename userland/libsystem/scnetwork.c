@@ -33,7 +33,8 @@ K(kSCPropNetDNSServerAddresses, "ServerAddresses") K(kSCPropNetDNSSearchDomains,
 K(kSCPropNetDNSDomainName, "DomainName") K(kSCPropNetDNSServerPort, "ServerPort")
 K(kSCPropNetIPv4Addresses, "Addresses") K(kSCPropNetIPv4SubnetMasks, "SubnetMasks") K(kSCPropNetIPv4Router, "Router")
 K(kSCPropNetIPv4ConfigMethod, "ConfigMethod") K(kSCValNetIPv4ConfigMethodDHCP, "DHCP")
-K(kSCPropNetIPv6Addresses, "Addresses6") K(kSCPropNetIPv6Router, "Router6")
+K(kSCPropNetIPv6Addresses, "Addresses6") K(kSCPropNetIPv6Router, "Router6") K(kSCPropNetIPv6PrefixLength, "PrefixLength6")
+K(kSCDynamicStoreKeyConsoleUser_s, "State:/Users/ConsoleUser")
 K(kSCPropInterfaceName, "InterfaceName") K(kSCPropNetInterfaceType, "Type") K(kSCPropNetInterfaceDeviceName, "DeviceName")
 K(kSCPropNetInterfaceHardware, "Hardware") K(kSCPropUserDefinedName, "UserDefinedName")
 K(kSCPropNetLinkActive, "Active") K(kSCPropNetServiceOrder, "ServiceOrder")
@@ -51,7 +52,7 @@ id objc_autorelease(id o);
 id cx_plist_parse(const u8 *b, u64 n);
 
 #define CLASS(N) static cx_class_t N##_c, N##_m;
-CLASS(MOSSCNetworkInterface) CLASS(MOSSCNetworkService) CLASS(MOSSCPreferences)
+CLASS(MOSSCNetworkInterface) CLASS(MOSSCNetworkService) CLASS(MOSSCPreferences) CLASS(MOSSCNetworkSet)
 typedef struct { cx_class_t *isa; cx_netif_t f; } MOSSCNetworkInterface_t;
 typedef struct { cx_class_t *isa; id iface; char sid[40]; char name[64]; int enabled; } MOSSCNetworkService_t;
 typedef struct { cx_class_t *isa; id name, prefs_id; id dict; int locked, dirty; char path[256]; } MOSSCPreferences_t;
@@ -263,4 +264,37 @@ static void sc_init(void) {
     cx_define_class(&MOSSCPreferences_c, &MOSSCPreferences_m, "MOSSCPreferences", ob, (u32)(sizeof(MOSSCPreferences_t) - 8));
     cx_add_method(&MOSSCNetworkService_c, "dealloc", (void *)svc_dealloc);
     cx_add_method(&MOSSCPreferences_c, "dealloc", (void *)pref_dealloc);
+    cx_define_class(&MOSSCNetworkSet_c, &MOSSCNetworkSet_m, "MOSSCNetworkSet", ob, 8);
 }
+/* conjuntos de rede ("locais" do Ajustes): o mOS tem um, o Automático, com todos os serviços */
+static int is_set(void *s) { return s && object_getClass((id)s) == &MOSSCNetworkSet_c; }
+id SCNetworkSetCopyCurrent(void *prefs) { (void)prefs; sc_init(); return cx_alloc_instance(&MOSSCNetworkSet_c); }
+id SCNetworkSetCopyAll(void *prefs) {
+    id s = SCNetworkSetCopyCurrent(prefs);
+    id a = MSG0(id, MSG0(id, cls("NSMutableArray"), "alloc"), "init");
+    MSG(void, a, "addObject:", s);
+    objc_release(s);
+    return a;
+}
+id SCNetworkSetCopyServices(void *set) { return is_set(set) ? SCNetworkServiceCopyAll(0) : 0; }
+id SCNetworkSetGetName(void *set) { return is_set(set) ? objc_autorelease(cx_str("Automático")) : 0; }
+id SCNetworkSetGetSetID(void *set) { return is_set(set) ? objc_autorelease(cx_str("6D4F5300-0000-4000-8000-000000000001")) : 0; }
+id SCNetworkSetGetServiceOrder(void *set) {
+    if (!is_set(set)) return 0;
+    id svcs = SCNetworkServiceCopyAll(0), ids = MSG0(id, cls("NSMutableArray"), "array");
+    u64 n = MSG0(u64, svcs, "count");
+    for (u64 k = 0; k < n; k++) { id sv = MSG(id, svcs, "objectAtIndex:", k); MSG(void, ids, "addObject:", SCNetworkServiceGetServiceID(sv)); }
+    objc_release(svcs);
+    return ids;
+}
+u8 SCNetworkSetContainsInterface(void *set, void *iface) { (void)iface; return is_set(set); }
+unsigned long SCNetworkSetGetTypeID(void) { sc_init(); return (unsigned long)(void *)&MOSSCNetworkSet_c; }
+/* chaves e informações do configd */
+id SCDynamicStoreKeyCreateConsoleUser(void *alloc) { (void)alloc; return objc_retain((id)kSCDynamicStoreKeyConsoleUser_s); }
+id SCDynamicStoreCopyDHCPInfo(void *store, id service) { (void)store; (void)service; return 0; }   /* sem o lease do DHCP no espaço do app */
+id DHCPInfoGetOptionData(id info, u8 code) { (void)code; return info ? MSG(id, info, "objectForKey:", cx_str("Option")) : 0; }
+id DHCPInfoGetLeaseStartTime(id info) { (void)info; return 0; }
+id DHCPInfoGetLeaseExpirationTime(id info) { (void)info; return 0; }
+/* conexões PPP/VPN do SystemConfiguration: o mOS não tem serviço desse tipo */
+void *SCNetworkConnectionCreateWithServiceID(void *alloc, id sid, void *cb, void *ctx) { (void)alloc; (void)sid; (void)cb; (void)ctx; return 0; }
+u8 SCNetworkConnectionCopyUserPreferences(id opts, id *sid, id *uopts) { (void)opts; if (sid) *sid = 0; if (uopts) *uopts = 0; return 0; }

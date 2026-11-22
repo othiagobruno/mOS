@@ -85,6 +85,13 @@ id CFBagCreateMutable(void *alloc, long cap, const void *cb) { (void)cap; return
 void CFBagAddValue(id o, const void *v) { bag_o *b = as_bag(o); if (b) cf_bag_add(&b->bag, v); }
 void CFBagRemoveValue(id o, const void *v) { bag_o *b = as_bag(o); if (b) cf_bag_remove(&b->bag, v); }
 void CFBagRemoveAllValues(id o) { bag_o *b = as_bag(o); if (b) b->bag.n = 0; }
+/* cada valor aparece tantas vezes quanto foi adicionado, como no CF */
+void CFBagGetValues(id o, const void **out) {
+    bag_o *b = as_bag(o);
+    if (!b || !out) return;
+    long k = 0;
+    for (int i = 0; i < b->bag.n; i++) for (int j = 0; j < b->bag.s[i].n; j++) out[k++] = b->bag.s[i].p;
+}
 const void *CFBagGetValue(id o, const void *v) { return CFBagGetCountOfValue(o, v) ? v : 0; }
 
 static void box_free_payload(void *p) {

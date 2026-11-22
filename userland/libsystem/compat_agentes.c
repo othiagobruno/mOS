@@ -298,30 +298,7 @@ id_ SCDynamicStoreCopyConsoleUser(void *store, u32 *uid, u32 *gid) {
     return CFStringCreateWithCString(0, "visitante", 0x08000100);
 }
 
-/* ---- libbz2, lado da compressão: o mOS só descomprime (bzip2.c). Quem comprime recebe BZ_CONFIG_ERROR (-9), o erro
- * de "biblioteca sem essa função"; o Sparkle usa isto só para montar patches delta e cai para a atualização inteira. */
-void *BZ2_bzWriteOpen(int *bzerror, void *f, int blockSize100k, int verbosity, int workFactor) {
-    (void)f; (void)blockSize100k; (void)verbosity; (void)workFactor;
-    if (bzerror) *bzerror = -9;
-    return 0;
-}
-void BZ2_bzWrite(int *bzerror, void *b, void *buf, int len) { (void)b; (void)buf; (void)len; if (bzerror) *bzerror = -9; }
-void BZ2_bzWriteClose64(int *bzerror, void *b, int abandon, u32 *in_lo, u32 *in_hi, u32 *out_lo, u32 *out_hi) {
-    (void)b; (void)abandon;
-    if (in_lo) *in_lo = 0; if (in_hi) *in_hi = 0; if (out_lo) *out_lo = 0; if (out_hi) *out_hi = 0;
-    if (bzerror) *bzerror = -9;
-}
-int BZ2_bzBuffToBuffCompress(char *dest, unsigned *destlen, char *src, unsigned srclen, int b, int v, int w) {
-    (void)dest; (void)destlen; (void)src; (void)srclen; (void)b; (void)v; (void)w;
-    return -9;
-}
-/* o Codex liga a API de fluxo (bzCompress*). Sem compressor: BZ_CONFIG_ERROR, o mesmo -9 de cima. */
-int BZ2_bzCompressInit(void *strm, int block, int verbosity, int work) {
-    (void)strm; (void)block; (void)verbosity; (void)work;
-    return -9;
-}
-int BZ2_bzCompress(void *strm, int action) { (void)strm; (void)action; return -9; }
-int BZ2_bzCompressEnd(void *strm) { (void)strm; return 0; }
+/* libbz2, lado da compressão: bzip2_enc.c */
 
 /* ---- libxar (arquivos .xar dos patches delta do Sparkle): o mOS não lê nem grava xar. xar_open devolve NULL, como
  * para um arquivo inválido, e o resto responde "vazio" sem tocar em nada; o Sparkle trata e usa a atualização inteira. */
