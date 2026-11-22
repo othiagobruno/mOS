@@ -5,9 +5,12 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ZIG=${1:-$(command -v zig)}
 OUT=${2:-/tmp/mos-darwin-swift}
 mkdir -p "$OUT"
-"$ZIG" cc -target x86_64-linux-gnu -O2 -DMOS_HOST_TEST \
+# o teste roda no host: x86_64-linux-gnu no Linux x86_64; nos outros (macOS arm64...) o alvo nativo
+HOSTT=(-target x86_64-linux-gnu)
+[ "$(uname -s)-$(uname -m)" = Linux-x86_64 ] || HOSTT=()
+"$ZIG" cc "${HOSTT[@]}" -O2 -DMOS_HOST_TEST \
     -c "$ROOT/userland/libsystem/darwin_swift.c" -o "$OUT/darwin_swift.o"
-"$ZIG" cc -target x86_64-linux-gnu -O2 \
+"$ZIG" cc "${HOSTT[@]}" -O2 \
     "$OUT/darwin_swift.o" "$ROOT/tools/darwin_swift_test.c" -o "$OUT/darwin_swift_test" -pthread
 "$OUT/darwin_swift_test"
 "$ZIG" cc -target aarch64-macos -O2 -c "$ROOT/userland/libsystem/darwin_swift.c" -o "$OUT/darwin_swift_arm64.o"

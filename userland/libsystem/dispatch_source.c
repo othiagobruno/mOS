@@ -67,11 +67,18 @@ static void vstat(int fd, dp_vstat_t *v) {
     v->ok = fstat(fd, &st) == 0;
     if (!v->ok) return;
     v->ino = st.st_ino; v->mode = st.st_mode; v->nlink = (u32)st.st_nlink; v->uid = st.st_uid; v->gid = st.st_gid;
+#if defined(__APPLE__)                         /* host macOS (tools/build-mac.sh): st_mtimespec e F_GETPATH */
+    v->size = (u64)st.st_size; v->mtime_ns = (u64)st.st_mtimespec.tv_sec * 1000000000ull + (u64)st.st_mtimespec.tv_nsec;
+    char full[1024];
+    if (fcntl(fd, F_GETPATH, full) == 0) { strncpy(v->path, full, sizeof v->path - 1); v->path[sizeof v->path - 1] = 0; }
+    else v->path[0] = 0;
+#else
     v->size = (u64)st.st_size; v->mtime_ns = (u64)st.st_mtim.tv_sec * 1000000000ull + (u64)st.st_mtim.tv_nsec;
     char lp[64];
     snprintf(lp, sizeof lp, "/proc/self/fd/%d", fd);
     long n = readlink(lp, v->path, sizeof v->path - 1);
     v->path[n > 0 ? n : 0] = 0;
+#endif
 }
 typedef void (*dp_sig_t)(int);
 static dp_sig_t sig_install(int s, dp_sig_t h) { return signal(s, h); }

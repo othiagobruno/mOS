@@ -26,6 +26,7 @@ RES=/tmp/mos-swift-resdir
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fails=0
+. "$ROOT/tools/zig-link.sh"   # zig_link: no macOS, refaz com o clang do Xcode quando o linker do zig cai
 # runtime Swift real em dois níveis para o código Swift de um framework: libswiftCore, libswift_Concurrency e o
 # libswift<X>.dylib de cada módulo X que o overlay importa (Foundation, Dispatch, Observation...). Em busca plana os
 # swift_* iam para os do libSystem (openbot_swift.c: swift_task_switch não retoma a tarefa e o await salta para lixo)
@@ -183,7 +184,7 @@ PY
     [ -f "$TMP/${name}_swift.o" ] && [ -z "$swdylib" ] && mapfile -t swrt < <(swift_rt "$fw")
     # o zig não aceita o binário do framework sem extensão: liga o SwiftUI por um link .dylib
     if [ -n "$suirsp" ]; then ln -sf "$suibin" "$TMP/SwiftUI.dylib"; swrt+=("$TMP/SwiftUI.dylib"); fi
-    if ! "$ZIG" cc -target "$TARGET" -shared -o "$out" "-Wl,-install_name,$install" -Wl,-undefined,dynamic_lookup "${objs[@]}" \
+    if ! zig_link "$ZIG" cc -target "$TARGET" -shared -o "$out" "-Wl,-install_name,$install" -Wl,-undefined,dynamic_lookup "${objs[@]}" \
             "${swrt[@]}" 2>"$TMP/$name.link"; then
         head -8 "$TMP/$name.link" | sed 's/^/  /' >&2
         echo "$name: link FALHOU" >&2
@@ -196,7 +197,7 @@ PY
         # o runtime Swift real em dois níveis, quando existe (swift_rt acima)
         swcore=()
         mapfile -t swcore < <(swift_rt "$fw")
-        if ! "$ZIG" cc -target "$TARGET" -shared -o "$DST$swdylib" "-Wl,-install_name,$swdylib" -Wl,-undefined,dynamic_lookup \
+        if ! zig_link "$ZIG" cc -target "$TARGET" -shared -o "$DST$swdylib" "-Wl,-install_name,$swdylib" -Wl,-undefined,dynamic_lookup \
                 "${swobjs[@]}" "${swcore[@]}" 2>"$TMP/$name.swlink"; then
             head -8 "$TMP/$name.swlink" | sed 's/^/  /' >&2
             echo "$name: link do overlay Swift FALHOU" >&2

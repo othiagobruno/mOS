@@ -95,7 +95,8 @@ extrair "$DL/git-$VER.tar.xz" "$OUT"
 [ -f "$SRC/git.c" ] || { echo "git: extrair o fonte falhou" >&2; exit 1; }
 sed -i 's|$(call version_gen,"$(shell pwd)",|$(call version_gen,.,|' "$SRC/Makefile"
 ln -s "$OUT" "$W/o"
-cp "$MAKE" "$W/make"
+# link, não cópia: no macOS o /usr/bin/make é um binário de plataforma assinado e a cópia morre com SIGKILL
+ln -s "$MAKE" "$W/make"
 G=$W/o/git-$VER
 
 # cabeçalhos e bibliotecas do -I/-l: as nossas; o install name continua /usr/lib/...
@@ -134,6 +135,7 @@ GITMAKE=(
     NO_EXPAT=YesPlease NO_RUST=YesPlease NO_REGEX=YesPlease NO_APPLE_COMMON_CRYPTO=YesPlease
     NO_INSTALL_HARDLINKS=YesPlease SKIP_DASHED_BUILT_INS=YesPlease INSTALL_SYMLINKS=
     NO_GITWEB=YesPlease
+    LD_MAJOR_VERSION=   # o config do git lê o ld do host; no macOS ele poria -no_warn_duplicate_libraries, que o zig não aceita
 )
 echo "==> git $VER ($JOBS jobs)"
 (cd "$G" && "$W/make" -j"$JOBS" "${GITMAKE[@]}" all) >"$OUT/make.log" 2>&1 || { tail -40 "$OUT/make.log" >&2; exit 1; }

@@ -355,10 +355,11 @@ for b in libswiftCore libswift_Concurrency libswiftDarwin libswiftObjectiveC lib
          libswiftDispatch libswiftos; do
     [ -f "$dest/$b.dylib" ] && base_dylibs+=("$dest/$b.dylib")
 done
+. "$root/tools/zig-link.sh"   # zig_link: no macOS, refaz com o clang do Xcode quando o linker do zig cai
 link_dylib() {
     local name=$1
     shift
-    if "$zig" c++ -target "$zt" -shared -o "$dest/$name.dylib" \
+    if zig_link "$zig" c++ -target "$zt" -shared -o "$dest/$name.dylib" \
         -Wl,-install_name,/usr/lib/swift/$name.dylib -Wl,-undefined,dynamic_lookup "$@" "${base_dylibs[@]}"; then
         echo "$name: $(wc -c < "$dest/$name.dylib") bytes"
     else
@@ -380,7 +381,7 @@ fi
 if [ $fails -eq 0 ] && [ -f "$out/System.o" ]; then
     sysfw="$objc/dylib/System/Library/Frameworks/System.framework/Versions/A"
     mkdir -p "$sysfw"
-    if "$zig" c++ -target "$zt" -shared -o "$sysfw/System" \
+    if zig_link "$zig" c++ -target "$zt" -shared -o "$sysfw/System" \
         -Wl,-install_name,/System/Library/Frameworks/System.framework/Versions/A/System -Wl,-undefined,dynamic_lookup \
         "$out/System.o" "${base_dylibs[@]}"; then
         ln -sfn A "$objc/dylib/System/Library/Frameworks/System.framework/Versions/Current"

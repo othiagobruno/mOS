@@ -5,11 +5,14 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ZIG=${1:-$(command -v zig)}
 OUT=${2:-/tmp/mos-runtime-block-task}
 mkdir -p "$OUT"
-"$ZIG" cc -target x86_64-linux-gnu -O2 -DMOS_HOST_TEST \
+# o teste roda no host: x86_64-linux-gnu no Linux x86_64; nos outros (macOS arm64...) o alvo nativo
+HOSTT=(-target x86_64-linux-gnu)
+[ "$(uname -s)-$(uname -m)" = Linux-x86_64 ] || HOSTT=()
+"$ZIG" cc "${HOSTT[@]}" -O2 -DMOS_HOST_TEST \
     -c "$ROOT/userland/libsystem/dispatch_block.c" -o "$OUT/dispatch_block.o"
-"$ZIG" cc -target x86_64-linux-gnu -O2 -DMOS_HOST_TEST \
+"$ZIG" cc "${HOSTT[@]}" -O2 -DMOS_HOST_TEST \
     -c "$ROOT/userland/libsystem/swift_task.c" -o "$OUT/swift_task.o"
-"$ZIG" cc -target x86_64-linux-gnu -O2 \
+"$ZIG" cc "${HOSTT[@]}" -O2 \
     "$OUT/dispatch_block.o" "$OUT/swift_task.o" "$ROOT/tools/runtime_block_task_test.c" \
     -o "$OUT/runtime_block_task_test"
 "$OUT/runtime_block_task_test"

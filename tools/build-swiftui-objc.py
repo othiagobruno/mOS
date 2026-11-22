@@ -692,6 +692,14 @@ def stage_link():
         if os.path.exists(p):
             libs.append(p)
     code, txt = run([ZIG, 'c++', '-target', ZIGT, '-shared', '-o', out, '-Wl,-install_name,' + install, '-Wl,-undefined,dynamic_lookup'] + objs + libs)
+    if code and sys.platform == 'darwin' and shutil.which('xcrun'):
+        # o linker Mach-O do zig 0.17.1 cai com SIGSEGV no macOS (tools/zig-link.sh): o mesmo link pelo clang do Xcode
+        log('SwiftUI.framework: o zig falhou (%d); repetindo com o clang++ do Xcode' % code)
+        arch = 'arm64' if ZIGT.startswith(('aarch64', 'arm64')) else 'x86_64'
+        code, txt = run(['xcrun', 'clang++', '-arch', arch, '-mmacosx-version-min=11', '-w', '-Wl,-not_for_dyld_shared_cache',
+                         '-shared', '-o', out, '-Wl,-install_name,' + install, '-Wl,-undefined,dynamic_lookup'] + objs + libs)
+        if code and os.path.exists(out):
+            os.remove(out)
     if code:
         log('\n'.join(txt.splitlines()[:15]))
         log('SwiftUI.framework: link FALHOU')

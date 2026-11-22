@@ -114,6 +114,23 @@ if [ -d "$SRC/Frameworks" ]; then
             mkdir -p "$DST/Frameworks/$fw.framework/Versions/A"
             python3 "$ROOT/tools/extrair-framework.py" --copiar "$bin" "$DST/Frameworks/$fw.framework/Versions/A/$fw"
         fi
+        # versão com outro nome (o "Codex Framework" do ChatGPT: Versions/157.0.8103.39, Current -> ela): a pasta inteira
+        # (recursos .pak, bibliotecas) vai para Versions/A, uma cópia só (o FAT não tem links). O carregador do mOS
+        # (kernel/compat/macho.c, locate) leva Versions/<qualquer>/X para Versions/A/X quando a versão pedida não existe.
+        cur=$(readlink "$fwdir/Versions/Current" 2>/dev/null || true)
+        # extraído sem links (o zip do app por python): o link vira um arquivo pequeno com o nome da versão
+        if [ -z "$cur" ] && [ -f "$fwdir/Versions/Current" ] && [ "$(wc -c < "$fwdir/Versions/Current")" -lt 128 ]; then
+            cur=$(tr -d '\r\n' < "$fwdir/Versions/Current")
+        fi
+        if [ -n "$cur" ] && [ "$cur" != A ] && [ -d "$fwdir/Versions/$cur" ]; then
+            vd="$DST/Frameworks/$fw.framework/Versions/A"
+            mkdir -p "$vd"
+            (cd "$fwdir/Versions/$cur" && find . -path ./_CodeSignature -prune -o -type f ! -name "$fw" -print) | while IFS= read -r rel; do
+                mkdir -p "$vd/$(dirname "$rel")"
+                cp -fL "$fwdir/Versions/$cur/$rel" "$vd/$rel"
+            done
+            [ -f "$fwdir/Versions/$cur/$fw" ] && python3 "$ROOT/tools/extrair-framework.py" --copiar "$fwdir/Versions/$cur/$fw" "$vd/$fw"
+        fi
     done
     for h in "$SRC/Frameworks"/*Helper*.app; do
         [ -d "$h" ] || continue

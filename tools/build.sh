@@ -17,6 +17,22 @@ while [ $# -gt 0 ]; do
 done
 mkdir -p "$OUT"
 cd "$ROOT"
+# testes de host que ligam símbolos weak indefinidos (viram NULL): o ld do Linux aceita, o do macOS precisa disto
+# ht <script> [args]: roda um teste de host. No macOS, os scripts que ainda só sabem o caminho do Linux x86_64
+# (objeto ELF x86_64 ligado com o cc do host) ficam de fora, com aviso; os que têm o ramo Darwin rodam.
+HT_PULADOS=()
+ht() {
+    local sc=$1; shift
+    if [ "$(uname -s)" = Darwin ] && ! grep -q Darwin "$sc"; then
+        echo "  $(basename "$sc"): pulado no macOS (o script ainda só tem o caminho do Linux x86_64)"
+        HT_PULADOS+=("$(basename "$sc")")
+        return 0
+    fi
+    "$@" "$sc"
+}
+ht_bash() { local sc=${@: -1}; local a=("${@:1:$#-1}"); ZIG="$ZIG" bash "$sc" "${a[@]}"; }
+HOSTWEAK=()
+[ "$(uname -s)" = Darwin ] && HOSTWEAK=(-Wl,-undefined,dynamic_lookup)
 gcc -O2 -Wall -Wextra -I kernel/include tools/cred_host.c kernel/proc/cred.c -o /tmp/cred_host
 /tmp/cred_host
 gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/include -I tools tools/resto_host.c \
@@ -93,14 +109,21 @@ gcc -O2 -Wall -Wextra -DMOS_HOST_TEST -I kernel/dev/amdgpu -I tools tools/amdgpu
 /tmp/amdgpu_dcn_host > /tmp/amdgpu_dcn_host.log || { cat /tmp/amdgpu_dcn_host.log; exit 1; }
 tail -1 /tmp/amdgpu_dcn_host.log
 # sysctl do libSystem (docs/darwin-bsd-mach.md, F1): kernel falso de SYS_DARWIN e o CPUID real do host
-gcc -O1 -Wall -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/sysctl.c -o /tmp/sysctl_ls.o
-gcc -O1 -Wall tools/sysctl_host.c /tmp/sysctl_ls.o -o /tmp/sysctl_host
-/tmp/sysctl_host | tail -1
+# o sysctl_host compara hw.optional.* com o cpuid do host: só num host x86_64 (no Mac arm64 não há cpuid)
+if [ "$(uname -m)" = x86_64 ]; then
+    gcc -O1 -Wall -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/sysctl.c -o /tmp/sysctl_ls.o
+    gcc -O1 -Wall tools/sysctl_host.c /tmp/sysctl_ls.o -o /tmp/sysctl_host
+    /tmp/sysctl_host | tail -1
+else
+    echo "sysctl_host: pulado (host $(uname -m), o teste lê o cpuid do x86)"
+fi
 # libproc do libSystem (F2): proc_pidinfo/pidfdinfo/rusage/listpids/terminate contra um kernel falso
 gcc -O1 -Wall -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/procinfo.c -o /tmp/procinfo_ls.o
 gcc -O1 -Wall tools/procinfo_host.c /tmp/procinfo_ls.o -o /tmp/procinfo_host
 /tmp/procinfo_host | tail -1
 # IPC System V do libSystem (F7): semáforos, shm e filas entre processos (fork) sobre MAP_SHARED + futex
+# (os dois emulam o futex do kernel do mOS com o futex(2) do Linux: no macOS ficam de fora)
+if [ "$(uname -s)" = Linux ]; then
 gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -Dopen=h_open -I userland/libsystem -c userland/libsystem/sysv_ipc.c -o /tmp/sysv_ls.o
 gcc -O1 -Wall tools/sysv_ipc_host.c /tmp/sysv_ls.o -o /tmp/sysv_ipc_host
 timeout 60 /tmp/sysv_ipc_host | tail -1
@@ -108,9 +131,12 @@ timeout 60 /tmp/sysv_ipc_host | tail -1
 gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/oslock.c -o /tmp/oslock_ls.o
 gcc -O1 -Wall -pthread tools/oslock_host.c /tmp/oslock_ls.o -o /tmp/oslock_host
 timeout 120 /tmp/oslock_host | tail -1
+else
+    echo "sysv_ipc_host, oslock_host: pulados (usam o futex(2) do Linux)"
+fi
 # kqueue/kevent (F6): todos os filtros contra um kernel falso (journal do VFS, processos, pressão de memória)
 gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/kqueue.c -o /tmp/kqueue_ls.o
-gcc -O1 -Wall tools/kqueue_host.c /tmp/kqueue_ls.o -o /tmp/kqueue_host
+gcc -O1 -Wall tools/kqueue_host.c /tmp/kqueue_ls.o "${HOSTWEAK[@]}" -o /tmp/kqueue_host
 timeout 30 /tmp/kqueue_host | tail -1
 # API cliente do launchd (F9): launch_data_*, launch_msg CheckIn, vproc_*
 gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/launchdata.c -o /tmp/launchdata_ls.o
@@ -118,7 +144,8 @@ gcc -O1 -Wall tools/launchdata_host.c /tmp/launchdata_ls.o -o /tmp/launchdata_ho
 /tmp/launchdata_host | tail -1
 # sandbox do libSystem (F10): checagens, extensões com token, contêiner e spawnattrs
 gcc -O1 -w -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/darwin.c -o /tmp/darwin_ls.o
-gcc -O1 tools/sandbox_host.c /tmp/darwin_ls.o -Wl,--unresolved-symbols=ignore-all -o /tmp/sandbox_host
+if [ "$(uname -s)" = Darwin ]; then gcc -O1 -c tools/sandbox_host.c -o /tmp/sandbox_host_t.o; python3 tools/mac_undef_stubs.py /tmp/sandbox_undef.c /tmp/darwin_ls.o /tmp/sandbox_host_t.o; IGNUNDEF=(-Wl,-undefined,dynamic_lookup /tmp/sandbox_undef.c); else IGNUNDEF=(-Wl,--unresolved-symbols=ignore-all); fi
+gcc -O1 tools/sandbox_host.c /tmp/darwin_ls.o "${IGNUNDEF[@]}" -o /tmp/sandbox_host
 /tmp/sandbox_host | tail -1
 # rotinas de portas Mach (F3): mach_port_names/space_info/get_srights/get_set_status/kobject
 gcc -O1 -Wall -Wno-builtin-declaration-mismatch -DMOS_LIBSYS_SYSCALL -I userland/libsystem -c userland/libsystem/machports.c -o /tmp/machports_ls.o
@@ -148,7 +175,10 @@ tail -1 /tmp/cgpid_host.log
 
 # OpenGL por software: fixed function, GLSL (core e compat), texturas, FBO, UBO, transform feedback
 L=userland/libsystem
-gcc -std=gnu11 -O1 -w -fno-builtin -I tools/hostinc -I $L -o /tmp/gl_host tools/gl_host.c tools/gl_host_glsl.c \
+# exp10: no libSystem do mOS e na glibc; no macOS o nome é __exp10
+HOSTMATH=()
+[ "$(uname -s)" = Darwin ] && HOSTMATH=(-Dexp10=__exp10 -Dexp10f=__exp10f)
+gcc -std=gnu11 -O1 -w -fno-builtin "${HOSTMATH[@]}" -I tools/hostinc -I $L -o /tmp/gl_host tools/gl_host.c tools/gl_host_glsl.c \
     $L/gl_ctx.c $L/gl_buf.c $L/gl_tex.c $L/gl_fbo.c $L/gl_raster.c $L/gl_tess.c $L/gl_ffp.c $L/gl_misc.c $L/gl_eval.c $L/gl_arbprog.c $L/gl_debug.c $L/gl_glsl.c $L/gl_glsl_tr.c \
     $L/gl_glsl_pre.c $L/mtltex.c $L/mtlshader.c $L/mtlexec.c $L/mslspirv.c -lm -lpthread
 /tmp/gl_host > /tmp/gl_host.log || { cat /tmp/gl_host.log; exit 1; }
@@ -290,11 +320,16 @@ for f in libunwind.cpp UnwindLevel1.c UnwindLevel1-gcc-ext.c UnwindRegistersSave
 done
 
 echo "==> unw_hosttest (API pública da libunwind no host)"
+# o cxx_unwind.c é o desenrolador x86_64 do libSystem (DWARF e registradores do x86): só num host x86_64
+if [ "$(uname -m)" = x86_64 ]; then
 cc -O1 -fno-omit-frame-pointer -funwind-tables -rdynamic \
     -I"$ROOT/userland/libsystem" \
     "$ROOT/tools/unw_hosttest.c" "$ROOT/userland/libsystem/cxx_unwind.c" "$ROOT/userland/libsystem/unw_alias.S" \
     -ldl -o "$OUT/unw_hosttest"
 "$OUT/unw_hosttest"
+else
+    echo "unw_hosttest: pulado (host $(uname -m); o desenrolador testado é o do x86_64)"
+fi
 
 echo "==> libdispatch, runtime de blocos e Unicode do libSystem (testes de host)"
 sh "$ROOT/tools/dispatch_hosttest.sh"
@@ -385,6 +420,8 @@ while IFS= read -r src; do
 done < <(find "$BR/c/common" "$BR/c/dec" "$BR/c/enc" -name '*.c' | sort)
 comp_one -c "$ROOT/userland/libsystem/compression_z.c" -o "$OUT/compression_z.o"
 echo "==> compression no ELF (ida e volta pelos símbolos)"
+# liga os .o ELF x86_64 do próprio libSystem com o cc do host: só num Linux x86_64
+if [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
 cc -O2 -I"$ROOT/userland/third_party/zlib" \
     "$ROOT/tools/compression_libsystem_host.c" \
     "$OUT/compression.o" "$OUT/compression_z.o" \
@@ -394,56 +431,59 @@ cc -O2 -I"$ROOT/userland/third_party/zlib" \
     "${LZMA_OBJS[@]}" "${BR_OBJS[@]}" \
     -lm -o "$OUT/compression_libsystem_host"
 "$OUT/compression_libsystem_host"
+else
+    echo "compression no ELF: pulado (host $(uname -s) $(uname -m); os objetos são ELF x86_64)"
+fi
 echo "==> libm (musl 1.2.5, MIT; teste de host contra a glibc)"
 bash "$ROOT/tools/build-libm-musl.sh" "$ZIG" x86_64 "$OUT/libm-x86" "$JOBS"
 mapfile -t LIBM_OBJS < "$OUT/libm-x86/objs.txt"
-ZIG="$ZIG" bash "$ROOT/tools/libm_hosttest.sh" "$OUT/libm-hosttest" "$OUT/libm-x86"
+ht "$ROOT/tools/libm_hosttest.sh" ht_bash "$OUT/libm-hosttest" "$OUT/libm-x86"
 echo "==> libc_bsd (random BSD, ffs/fls, lldiv, NXArchInfo, backtrace; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/libc_bsd_hosttest.sh" "$OUT/libc-bsd-hosttest"
+ht "$ROOT/tools/libc_bsd_hosttest.sh" ht_bash "$OUT/libc-bsd-hosttest"
 echo "==> multibyte (UTF-8 estrito, estado parcial; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/multibyte_hosttest.sh" "$OUT/multibyte-hosttest"
+ht "$ROOT/tools/multibyte_hosttest.sh" ht_bash "$OUT/multibyte-hosttest"
 echo "==> wctype largo (tabelas Unicode do musl; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/wctype_hosttest.sh" "$OUT/wctype-hosttest"
+ht "$ROOT/tools/wctype_hosttest.sh" ht_bash "$OUT/wctype-hosttest"
 echo "==> rand48 (família drand48 vs glibc; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/rand48_hosttest.sh" "$OUT/rand48-hosttest"
+ht "$ROOT/tools/rand48_hosttest.sh" ht_bash "$OUT/rand48-hosttest"
 echo "==> libc de apps (swab/putenv/getproto/getloadavg...; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/libc_apps_hosttest.sh" "$OUT/libc-apps-hosttest"
+ht "$ROOT/tools/libc_apps_hosttest.sh" ht_bash "$OUT/libc-apps-hosttest"
 echo "==> libc do corpus (wide wcs*/pthread attr/getsect*fromheader_64/swap_fat; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/libc_corpus_hosttest.sh" "$OUT/libc-corpus-hosttest"
+ht "$ROOT/tools/libc_corpus_hosttest.sh" ht_bash "$OUT/libc-corpus-hosttest"
 echo "==> libc do corpus 2 (complex cexp/clog/cpow/catanh/OSAtomicEnqueue/tmpnam; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/libc_corpus2_hosttest.sh" "$OUT/libc-corpus2-hosttest"
+ht "$ROOT/tools/libc_corpus2_hosttest.sh" ht_bash "$OUT/libc-corpus2-hosttest"
 echo "==> funopen (fluxo stdio por callbacks de cookie; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/funopen_hosttest.sh" "$OUT/funopen-hosttest"
+ht "$ROOT/tools/funopen_hosttest.sh" ht_bash "$OUT/funopen-hosttest"
 echo "==> libc do corpus 3 (getpass/readpassphrase + wide stdio swprintf/fwprintf/fputws; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/libc_corpus3_hosttest.sh" "$OUT/libc-corpus3-hosttest"
+ht "$ROOT/tools/libc_corpus3_hosttest.sh" ht_bash "$OUT/libc-corpus3-hosttest"
 echo "==> libc do corpus 4 (ndbm, memstream, hash, strfmon, inet_net_pton, simd, complexos; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/libc_corpus4_hosttest.sh" "$OUT/libc-corpus4-hosttest"
+ht "$ROOT/tools/libc_corpus4_hosttest.sh" ht_bash "$OUT/libc-corpus4-hosttest"
 echo "==> readline do libedit e opções do CUPS (teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/readline_cups_hosttest.sh" "$OUT/readline-cups-hosttest"
+ht "$ROOT/tools/readline_cups_hosttest.sh" ht_bash "$OUT/readline-cups-hosttest"
 echo "==> serviços ausentes e libc pequena (vis, wordexp, TXT do DNS-SD, GLU; teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/services_corpus_hosttest.sh" "$OUT/services-corpus-hosttest"
+ht "$ROOT/tools/services_corpus_hosttest.sh" ht_bash "$OUT/services-corpus-hosttest"
 echo "==> Accelerate: vImage (inclui YpCbCr de tom médio), vDSP, vBigNum, posv/gels (testes de host)"
 cc -O1 -w -o "$OUT/accelerate_vimage_test" "$ROOT/tools/accelerate_vimage_test.c" "$ROOT/userland/libsystem/accelerate_vimage.c" -lm
 "$OUT/accelerate_vimage_test"
-ZIG="$ZIG" bash "$ROOT/tools/accelerate_corpus_test.sh" "$OUT/accelerate-corpus-test"
+ht "$ROOT/tools/accelerate_corpus_test.sh" ht_bash "$OUT/accelerate-corpus-test"
 echo "==> Accelerate do corpus (2 apps): vImage de rotação/composição/convolução, CVPixelBuffer e FFT complexa (teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/accelerate_corpus2_test.sh" "$OUT/accelerate-corpus2-test"
+ht "$ROOT/tools/accelerate_corpus2_test.sh" ht_bash "$OUT/accelerate-corpus2-test"
 echo "==> libffi do mOS (teste de host; só roda em macOS arm64, o mesmo PCS do libSystem arm64)"
-ZIG="$ZIG" bash "$ROOT/tools/ffi_mos_test.sh" "$OUT/ffi-mos-test"
+ht "$ROOT/tools/ffi_mos_test.sh" ht_bash "$OUT/ffi-mos-test"
 echo "==> NaturalLanguage: NLTokenizer/NLTagger (teste de host; só no macOS, contra o Foundation de verdade)"
-bash "$ROOT/tools/naturallanguage_host_test.sh" "$OUT/naturallanguage-host-test"
+ht "$ROOT/tools/naturallanguage_host_test.sh" ht_bash "$OUT/naturallanguage-host-test"
 echo "==> libresolv: ns_initparse/ns_parserr (teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/resolv_ns_test.sh" "$OUT/resolv-ns-test"
+ht "$ROOT/tools/resolv_ns_test.sh" ht_bash "$OUT/resolv-ns-test"
 echo "==> libarchive do mOS: tar gzip/bzip2 contra o tar do host (teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/libarchive_mos_test.sh" "$OUT/libarchive-mos-test"
+ht "$ROOT/tools/libarchive_mos_test.sh" ht_bash "$OUT/libarchive-mos-test"
 echo "==> libbz2 do mOS: compressor (bzip2_enc.c) contra o libbz2 do host (teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/bzip2_enc_hosttest.sh" "$OUT/bzip2-enc-hosttest"
+ht "$ROOT/tools/bzip2_enc_hosttest.sh" ht_bash "$OUT/bzip2-enc-hosttest"
 echo "==> GLU do mOS: tesselador, gluProject e quádricas (teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/glu_mos_test.sh" "$OUT/glu-mos-test"
+ht "$ROOT/tools/glu_mos_test.sh" ht_bash "$OUT/glu-mos-test"
 echo "==> expat (parse de XML real; teste de host)"
-bash "$ROOT/tools/expat_hosttest.sh" "$OUT/expat-hosttest"
+ht "$ROOT/tools/expat_hosttest.sh" ht_bash "$OUT/expat-hosttest"
 echo "==> gethostbyname/gethostbyname2 sobre getaddrinfo (teste de host)"
-ZIG="$ZIG" bash "$ROOT/tools/gethostby_hosttest.sh" "$OUT/gethostby-hosttest"
+ht "$ROOT/tools/gethostby_hosttest.sh" ht_bash "$OUT/gethostby-hosttest"
 # UnwindLevel1.c, UnwindLevel1-gcc-ext.c, UnwindRegistersSave.S e libunwind.cpp repetem cxx_unwind.c.
 "$ZIG" cc -target x86_64-freestanding-none -O2 -g0 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -static -no-pie \
     -fpie -mno-red-zone -Wall -Wno-unused-parameter -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header \
@@ -483,11 +523,16 @@ echo "==> Foundation sobre a ICU: locale, fuso, calendário e formatters (teste 
 bash "$ROOT/tools/fdn-i18n-teste.sh" "$OUT/fdn-i18n"
 
 echo "==> compositor: sombra em cache igual à direta e tempo por quadro (teste de host)"
+# o gfx.c do kernel usa SSE (emmintrin.h): o teste só compila num host x86_64
+if [ "$(uname -m)" = x86_64 ]; then
 "$ZIG" cc -O2 -ffreestanding -fno-builtin -mno-red-zone -fshort-wchar -I"$ROOT/kernel/include" -I"$ROOT" -std=gnu11 -w \
     -c "$ROOT/kernel/gfx/gfx.c" -o "$OUT/gfx_host.o"
 "$ZIG" cc -O2 -I"$ROOT/kernel/include" -I"$ROOT" -std=gnu11 -w "$ROOT/tools/compositor_bench_host.c" "$OUT/gfx_host.o" -lm \
     -o "$OUT/compositor_bench_host"
 "$OUT/compositor_bench_host" 10
+else
+    echo "compositor_bench_host: pulado (host $(uname -m); o gfx.c usa SSE)"
+fi
 
 echo "==> kernel"
 mapfile -t KSRC < <(find "$ROOT/kernel" -type f \( -name '*.c' -o -name '*.S' \) | sort)
@@ -548,7 +593,7 @@ mkdir -p "$ESP/mOS/Sistema/Biblioteca/a64"
     -Wl,--image-base=0x400041000000 -Wl,-e,_start \
     "${A64SRC[@]}" -o "$ESP/mOS/Sistema/Biblioteca/a64/a64rt.mos"
 echo "==> libSystem arm64 (tools/build-libsystem-arm64.sh)"
-"$ROOT/tools/build-libsystem-arm64.sh"
+bash "$ROOT/tools/build-libsystem-arm64.sh"   # pelo bash do PATH: no macOS o /bin/bash é o 3.2, sem mapfile
 cp -f "$ROOT/build/libSystem-arm64.mos" "$ESP/mOS/Sistema/Biblioteca/a64/libSystem.mos"
 
 echo "==> /usr/lib (libc++ do LLVM, zlib 1.3.2, SQLite e libcurl 8.23.0; não são stub)"

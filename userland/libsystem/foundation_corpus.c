@@ -334,7 +334,53 @@ static void def(cx_class_t *c, cx_class_t *m, const char *n, cx_class_t *s) {
     cx_define_class(c, m, n, s, FEX);
     cx_add_method(c, "dealloc", (void *)box_dealloc);
 }
+/* ---------------------------------------------------------------- NSData: leitura com opções e erro (o Postico lê a
+ * licença com +dataWithContentsOfURL:options:error:). O arquivo inteiro vem do dataWithContentsOfFile: do libSystem;
+ * falhando, o erro é NSCocoaErrorDomain 260 (NSFileReadNoSuchFileError) com o caminho, como no macOS. */
+static id data_err(const char *path, id *err) {
+    if (err) {
+        id info = MSG(id, (id)cx_class_named("NSDictionary"), "dictionaryWithObject:forKey:", cx_str(path ? path : ""), cx_str("NSFilePath"));
+        *err = MSG(id, (id)cx_class_named("NSError"), "errorWithDomain:code:userInfo:", cx_str("NSCocoaErrorDomain"), (long)260, info);
+    }
+    return 0;
+}
+static id data_file_opts(id cls, SEL s, id path, u64 opts, id *err) {
+    (void)s; (void)opts;
+    if (err) *err = 0;
+    id d = path ? MSG(id, cls, "dataWithContentsOfFile:", path) : 0;
+    return d ? d : data_err(path ? cx_cstr(path) : 0, err);
+}
+static id data_url_opts(id cls, SEL s, id url, u64 opts, id *err) {
+    id path = url && MSG0(BOOL, url, "isFileURL") ? MSG0(id, url, "path") : 0;
+    if (!path) { if (err) *err = 0; return data_err(0, err); }
+    return data_file_opts(cls, s, path, opts, err);
+}
+static id data_init_file_opts(id self, SEL s, id path, u64 opts, id *err) {
+    id d = data_file_opts((id)object_getClass(self), s, path, opts, err);
+    objc_release(self);
+    return d ? objc_retain(d) : 0;
+}
+static id data_init_url_opts(id self, SEL s, id url, u64 opts, id *err) {
+    id d = data_url_opts((id)object_getClass(self), s, url, opts, err);
+    objc_release(self);
+    return d ? objc_retain(d) : 0;
+}
+static void data_opts_init(void) {
+    cx_class_t *d = cx_class_named("NSData");
+    if (!d) return;
+    cx_class_t *meta = object_getClass((id)d);
+    struct { cx_class_t *c; const char *sel; void *imp; } t[] = {
+        {meta, "dataWithContentsOfURL:options:error:", (void *)data_url_opts},
+        {meta, "dataWithContentsOfFile:options:error:", (void *)data_file_opts},
+        {d, "initWithContentsOfURL:options:error:", (void *)data_init_url_opts},
+        {d, "initWithContentsOfFile:options:error:", (void *)data_init_file_opts},
+    };
+    for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++)
+        if (!cx_lookup(t[i].c, sel_registerName(t[i].sel))) cx_add_method(t[i].c, t[i].sel, t[i].imp);   /* só se faltar */
+}
+
 void cx_foundation_corpus_init(void) {
+    data_opts_init();
     cx_class_t *ob = &NSObject_c;
     /* portas */
     def(&NSPort_c, &NSPort_m, "NSPort", ob);

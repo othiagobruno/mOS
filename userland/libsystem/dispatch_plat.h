@@ -1,7 +1,7 @@
 /*
  * mOS libSystem — camada de plataforma da libdispatch (dispatch.c, dispatch_source.c, dispatch_data.c).
  * No mOS: syscalls do kernel (futex, gettid, relógio) e o pthread do libSystem.
- * Com -DMOS_HOST_TEST: Linux (futex, pthread, clock_gettime), para o teste de host tools/dispatch_hosttest.c.
+ * Com -DMOS_HOST_TEST: o host (Linux ou macOS, host_futex.h), para o teste de host tools/dispatch_hosttest.c.
  */
 #ifndef MOS_DISPATCH_PLAT_H
 #define MOS_DISPATCH_PLAT_H
@@ -16,13 +16,12 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <signal.h>
-#include <linux/futex.h>
-#include <sys/syscall.h>
+#include "host_futex.h"
 typedef unsigned long long u64;
 typedef long long i64;
 typedef unsigned u32;
 typedef unsigned char u8;
-static inline int dp_tid(void) { return (int)syscall(SYS_gettid); }
+static inline int dp_tid(void) { return host_tid(); }
 static inline u64 dp_now_ns(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
@@ -35,11 +34,9 @@ static inline u64 dp_wall_ns(void) {
 }
 /* dorme enquanto *a == v; ms < 0 = sem prazo */
 static inline void dp_wait(volatile int *a, int v, long ms) {
-    struct timespec t, *tp = 0;
-    if (ms >= 0) { t.tv_sec = ms / 1000; t.tv_nsec = (ms % 1000) * 1000000L; tp = &t; }
-    syscall(SYS_futex, a, FUTEX_WAIT_PRIVATE, v, tp, 0, 0);
+    host_futex_wait(a, v, ms);
 }
-static inline void dp_wake(volatile int *a, int n) { syscall(SYS_futex, a, FUTEX_WAKE_PRIVATE, n, 0, 0, 0); }
+static inline void dp_wake(volatile int *a, int n) { host_futex_wake(a, n); }
 static inline int dp_thread(void *(*f)(void *), void *arg) {
     pthread_t t;
     int r = pthread_create(&t, 0, f, arg);
@@ -47,7 +44,7 @@ static inline int dp_thread(void *(*f)(void *), void *arg) {
     return r;
 }
 static inline int dp_ncpu(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (int)n : 1; }
-static inline int dp_is_main(void) { return dp_tid() == (int)getpid(); }
+static inline int dp_is_main(void) { return host_is_main(); }
 static inline void dp_yield(void) { sched_yield(); }
 static inline void dp_sleep_ms(long ms) { struct timespec t = {ms / 1000, (ms % 1000) * 1000000L}; nanosleep(&t, 0); }
 void *_Block_copy(const void *b);

@@ -86,6 +86,8 @@ typedef struct { int year, month, day, hour, minute, second, weekday; } datetime
 void rtc_now(datetime_t *dt) { if (dt) { dt->year=2026; dt->month=1; dt->day=1; } }
 void rtc_now_utc(datetime_t *dt) { rtc_now(dt); }
 uint32_t rand32(void) { return 1; }
+/* fat.c pede timer_ticks como weak: no Linux o ld deixa em 0; no macOS precisa existir */
+unsigned long long timer_ticks(void) { return 0; }
 EOF
     cc -O2 -DMOS_HOST_TEST -I"$ROOT/kernel/include" -I"$ROOT/tools" \
         "$ROOT/tools/dmgtest.c" "$OUT/dmghost.c" \

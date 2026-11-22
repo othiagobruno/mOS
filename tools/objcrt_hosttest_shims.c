@@ -1,5 +1,11 @@
-/* só para o teste de host: as dependências de fora do runtime ObjC */
+/* só para o teste de host: as dependências de fora do runtime ObjC. As classes vão com rótulo de asm: o nome
+ * OBJC_CLASS_$_... é o mesmo no ELF e no Mach-O (que poria um _ na frente do nome C). */
 void *cx_appkit_init(void){return 0;}
+void *cx_chrome_init(void){return 0;}
+void *cx_corpus_classes_init(void){return 0;}
+void *cx_corpus2_init(void){return 0;}
+void *cx_darwin_init(void){return 0;}
+void *cx_darwin_literals(void){return 0;}
 void *cx_cfcoll_init(void){return 0;}
 void *cx_compat_objc_extra_init(void){return 0;}
 void *cx_dispatch_release(void){return 0;}
@@ -30,16 +36,16 @@ void *_dyld_register_func_for_add_image(void){return 0;}
 void *objc_msgSend(void){return 0;}
 void *_objc_msgForward(void){return 0;}
 long cx_dispatch_retain_count(void*p){return 1;} int cx_fdprintf(int fd,const char*f,...){return 0;} unsigned _dyld_image_count(void){return 0;} void *_dyld_get_image_header(unsigned i){return 0;} char cx_imp_blocks[64], cx_imp_tramps[64], cx_imp_tramps_end[1]; void *cx_tsd(void){static void*t[256];return t;}
-char OBJC_CLASS_$_OS_dispatch_data[64];
-char OBJC_CLASS_$_OS_dispatch_group[64];
-char OBJC_CLASS_$_OS_dispatch_io[64];
-char OBJC_CLASS_$_OS_dispatch_object[64];
-char OBJC_CLASS_$_OS_dispatch_queue[64];
-char OBJC_CLASS_$_OS_dispatch_queue_attr[64];
-char OBJC_CLASS_$_OS_dispatch_queue_concurrent[64];
-char OBJC_CLASS_$_OS_dispatch_queue_global[64];
-char OBJC_CLASS_$_OS_dispatch_queue_main[64];
-char OBJC_CLASS_$_OS_dispatch_queue_serial[64];
-char OBJC_CLASS_$_OS_dispatch_semaphore[64];
-char OBJC_CLASS_$_OS_dispatch_source[64];
-char OBJC_CLASS_$_OS_dispatch_workloop[64];
+char shim_OBJC_CLASS___OS_dispatch_data[64] __asm__("OBJC_CLASS_$_OS_dispatch_data");
+char shim_OBJC_CLASS___OS_dispatch_group[64] __asm__("OBJC_CLASS_$_OS_dispatch_group");
+char shim_OBJC_CLASS___OS_dispatch_io[64] __asm__("OBJC_CLASS_$_OS_dispatch_io");
+char shim_OBJC_CLASS___OS_dispatch_object[64] __asm__("OBJC_CLASS_$_OS_dispatch_object");
+char shim_OBJC_CLASS___OS_dispatch_queue[64] __asm__("OBJC_CLASS_$_OS_dispatch_queue");
+char shim_OBJC_CLASS___OS_dispatch_queue_attr[64] __asm__("OBJC_CLASS_$_OS_dispatch_queue_attr");
+char shim_OBJC_CLASS___OS_dispatch_queue_concurrent[64] __asm__("OBJC_CLASS_$_OS_dispatch_queue_concurrent");
+char shim_OBJC_CLASS___OS_dispatch_queue_global[64] __asm__("OBJC_CLASS_$_OS_dispatch_queue_global");
+char shim_OBJC_CLASS___OS_dispatch_queue_main[64] __asm__("OBJC_CLASS_$_OS_dispatch_queue_main");
+char shim_OBJC_CLASS___OS_dispatch_queue_serial[64] __asm__("OBJC_CLASS_$_OS_dispatch_queue_serial");
+char shim_OBJC_CLASS___OS_dispatch_semaphore[64] __asm__("OBJC_CLASS_$_OS_dispatch_semaphore");
+char shim_OBJC_CLASS___OS_dispatch_source[64] __asm__("OBJC_CLASS_$_OS_dispatch_source");
+char shim_OBJC_CLASS___OS_dispatch_workloop[64] __asm__("OBJC_CLASS_$_OS_dispatch_workloop");

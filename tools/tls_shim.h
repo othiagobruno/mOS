@@ -28,9 +28,15 @@ typedef size_t usize;
 #define kprintf(...) fprintf(stderr, __VA_ARGS__)
 
 static inline u64 rdtsc(void) {
+#if defined(__aarch64__)
+    u64 v;
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v));   /* host arm64 (macOS em Apple silicon): contador virtual */
+    return v;
+#else
     u32 lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return (u64)hi << 32 | lo;
+#endif
 }
 u64 timer_ticks(void);
 

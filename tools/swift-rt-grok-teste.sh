@@ -11,7 +11,10 @@ mkdir -p "$OUT"
     -I"$ROOT/userland/libsystem/kshim" -I"$ROOT/userland/libsystem/fsinc" -I"$ROOT/kernel/include" \
     -isystem "$ZIGDIR/lib/include" \
     -c "$ROOT/userland/libsystem/swift_rt_grok.c" -o "$OUT/swift_rt_grok_fs.o"
-"$ZIG" cc -target x86_64-linux-gnu -O2 \
+# o teste roda no host: x86_64-linux-gnu no Linux x86_64 (o de sempre); nos outros (macOS arm64...) o alvo nativo
+HOSTT=(-target x86_64-linux-gnu)
+[ "$(uname -s)-$(uname -m)" = Linux-x86_64 ] || HOSTT=()
+"$ZIG" cc "${HOSTT[@]}" -O2 \
     "$ROOT/userland/libsystem/swift_refcount.c" \
     "$ROOT/userland/libsystem/swift_rt_grok.c" "$ROOT/tools/swift_rt_grok_test.c" -o "$OUT/swift_rt_grok_test"
 "$OUT/swift_rt_grok_test"

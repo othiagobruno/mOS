@@ -22,7 +22,10 @@ tc="$root/.tools/swift-$VER"
 src="$root/.tools/swift-src"
 mkdir -p "$dl"
 
-if [ -x "$tc/usr/bin/swift-frontend" ]; then
+if [ -n "${SWIFTC:-}" ] && [ -x "$SWIFTC" ]; then
+    echo "fetch-swift-toolchain: usando SWIFTC=$SWIFTC (o toolchain do Linux não é baixado)"
+    tc=$(dirname "$(dirname "$(dirname "$SWIFTC")")")
+elif [ -x "$tc/usr/bin/swift-frontend" ]; then
     echo "fetch-swift-toolchain: toolchain já está em $tc"
 else
     baixar "$TC_URL" "$dl/swift-$VER-RELEASE-ubuntu24.04.tar.gz" "$TC_SHA"
@@ -47,5 +50,5 @@ else
     mv "$src.partial" "$src"
     echo "fetch-swift-toolchain: fonte em $src"
 fi
-# o frontend do Linux precisa rodar nesta máquina (Ubuntu 24.04 ou mais novo)
-"$tc/usr/bin/swift-frontend" -version | head -1
+# o frontend precisa rodar nesta máquina (o do Linux pede Ubuntu 24.04+; no macOS, SWIFTC = o do Xcode)
+"${SWIFTC:-$tc/usr/bin/swift-frontend}" -version | head -1
