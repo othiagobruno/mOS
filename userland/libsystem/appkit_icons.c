@@ -611,6 +611,7 @@ static id ws_icon_for_content_type(id self, SEL c, id uttype) {
 
 /* ================================================================ +imageNamed: (depois dos recursos do app) */
 id cx_catalog_image(id bundle, id name);   /* appkit_catalog.c: Assets.car */
+id cx_named_registered(id name) { return g_names && name ? MSG(id, g_names, "objectForKey:", name) : 0; }
 id cx_named_image_more(id cls, id name) {
     (void)cls;
     if (g_names) { id img = MSG(id, g_names, "objectForKey:", name); if (img) return img; }

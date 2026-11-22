@@ -13,6 +13,7 @@
 # Sem toolchain: avisa e sai 0 (o stage completa com stub). Com toolchain e erro de compilação: sai 1.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+. "$root/tools/zig-link.sh"   # zig_link: no macOS, refaz com o clang do Xcode quando o linker do zig cai
 case "${MOS_ARCH:-x86_64}" in
     x86_64) zt=x86_64-macos; st=x86_64-apple-macos26; objc="$root/build/swift/objc" ;;
     arm64) zt=aarch64-macos; st=arm64-apple-macos26; objc="$root/build/swift/objc-arm64" ;;
@@ -59,7 +60,9 @@ echo "build-libswift-real: $fe"
 rm -rf "$res"
 mkdir -p "$res/shims"
 if [ -d "$tc/clang" ]; then ln -s "$tc/clang" "$res/clang"; fi
-find "$tc/shims" -maxdepth 1 -type f ! -name 'module.modulemap' -exec cp {} "$res/shims/" \;
+# o toolchain do Linux traz lib/swift/shims; o do Xcode não: aí vão os mesmos cabeçalhos do fonte (SwiftShims)
+if [ -d "$tc/shims" ]; then shd="$tc/shims"; else shd="$shims"; fi
+find "$shd" -maxdepth 1 -type f ! -name 'module.modulemap' -exec cp {} "$res/shims/" \;
 
 # --- gyb da stdlib ---
 for g in "$src"/stdlib/public/core/*.gyb; do
@@ -186,7 +189,7 @@ link_one() {
     # runtime do caminho sem ObjC), que não sabem lidar com objetos do runtime real
     dep_core=()
     [ "$name" != libswiftCore ] && dep_core=("$dest/libswiftCore.dylib")
-    "$zig" c++ -target "$zt" -shared -o "$dest/$name.dylib" \
+    zig_link "$zig" c++ -target "$zt" -shared -o "$dest/$name.dylib" \
         -Wl,-install_name,/usr/lib/swift/$name.dylib -Wl,-undefined,dynamic_lookup "$@" "${dep_core[@]}"
     if grep -a -q 'STUB mOS libswift' "$dest/$name.dylib"; then
         echo "$name ainda tem a marca de stub" >&2
@@ -209,6 +212,7 @@ rm -rf "$inc"
 mkdir -p "$(dirname "$inc")"
 cp -a "$root/.tools/zig-x86_64-linux-0.17.1/lib/libc/include/any-darwin-any" "$inc" 2>/dev/null || \
     cp -a "$(dirname "$(readlink -f "$zig")")/lib/libc/include/any-darwin-any" "$inc"   # o zig do PATH pode ser um link
+chmod -R u+w "$inc"   # o zig do Homebrew guarda a lib somente leitura e o cp -a preserva: o python abaixo reescreve
 python3 - "$inc" << 'PY'
 import os, sys
 root = sys.argv[1]

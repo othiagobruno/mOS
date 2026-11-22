@@ -4919,8 +4919,25 @@ static id im_init_file(id self, SEL c, id path) {
     return d ? MSG(id, self, "initWithData:", d) : 0;
 }
 static id im_init_data(id self, SEL c, id data) { (void)c; nsdata_t *d = (nsdata_t *)data; return d && decode_into(self, d->bytes, d->len) ? self : 0; }
+/* +imageNamed: guarda a imagem por nome, como o AppKit (a mesma instância volta nas chamadas seguintes). Sem o cache,
+ * um app que chama imageNamed: dentro do drawRect: (o Postico) decodificava o Assets.car e reamostrava o bitmap a cada
+ * quadro: a janela não terminava de pintar. Os nomes registrados por -setName: continuam vencendo. */
+static id im_named_lookup(id cls, id name);
 static id im_named(id cls, SEL c, id name) {
     (void)c;
+    if (!name || !cx_is_str(name)) return 0;
+    extern id cx_named_registered(id name);              /* appkit_icons.c: -[NSImage setName:] */
+    id reg = cx_named_registered(name);
+    if (reg) return reg;
+    static id cache;
+    if (!cache) cache = objc_retain(MSG0(id, cx_class_named("NSMutableDictionary"), "dictionary"));
+    id hit = MSG(id, cache, "objectForKey:", name);
+    if (hit) return hit;
+    id img = im_named_lookup(cls, name);
+    if (img) MSG(void, cache, "setObject:forKey:", img, MSG0(id, name, "copy"));
+    return img;
+}
+static id im_named_lookup(id cls, id name) {
     id bundle = MSG0(id, cx_class_named("NSBundle"), "mainBundle");
     id res = MSG0(id, bundle, "resourcePath");
     static const char *exts[] = {"", ".png", "@2x.png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".icns", ".pdf"};

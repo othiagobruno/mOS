@@ -14,7 +14,9 @@
 #include "storage.h"
 #include "origin.h"
 
-#define MAX_FILE_LOAD (256ull << 20)
+/* o exec e o dlopen pedem a imagem inteira na memória (vfs_ensure): o WhatsApp tem 469 MB, o Codex Framework do ChatGPT
+ * 280 MB e o Codex CLI 270 MB. Até 1 GiB; sem memória, o kmalloc falha e o caminho de erro é o mesmo de antes. */
+#define MAX_FILE_LOAD (1024ull << 20)
 #define CACHE_BUDGET  (32ull << 20)   /* conteúdo de arquivos de volumes mantido em RAM */
 #define KEEP_RECENT   4               /* nunca descarta os últimos carregados */
 #define NAME_MAX_VFS  (sizeof(((vnode_t *)0)->name) - 1)

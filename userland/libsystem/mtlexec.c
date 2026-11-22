@@ -1391,8 +1391,9 @@ __asm__(".text\n"
         "  call msl_fiber_main\n"
         "  ud2\n");
 #endif
-void msl_ctx_switch(void **save, void *to);
-void msl_fiber_start(void);
+/* rótulos de asm explícitos: o assembly acima usa os nomes sem o '_' que o Mach-O (teste de host no macOS) poria */
+void msl_ctx_switch(void **save, void *to) __asm__("msl_ctx_switch");
+void msl_fiber_start(void) __asm__("msl_fiber_start");
 #define FIBER_STACK (96 * 1024)
 #define MAX_FIBERS 1024
 typedef struct fiber {
@@ -1410,6 +1411,7 @@ static void *fiber_yield(void) {
     if (f) msl_ctx_switch(&f->sp, g_sched_sp);
     return 0;
 }
+void msl_fiber_main(fiber_t *f) __asm__("msl_fiber_main");
 void msl_fiber_main(fiber_t *f) {
     msl_run(f->fn, &f->ctx, 0);
     f->done = 1;

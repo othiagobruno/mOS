@@ -2356,6 +2356,12 @@ static bool sig_fault(int_frame_t *f, thread_t *t, process_t *p, u64 cr2) {
     /* bloqueado, ignorado ou sem tratador: o macOS mata (repetir a instrução daria a mesma falta para sempre) */
     if (p->sig_handler[sig] <= MOS_SIG_IGN || (t->sig_mask & SIG_BIT(sig))) {
         if (f->vector == 13 && sig == MOS_SIGTRAP) f->rip -= 1;
+        if (sig == MOS_SIGTRAP || sig == MOS_SIGILL) {          /* sem tratador: diz onde (CHECK/brk do app) */
+            u8 ib[4] = {0};
+            uvm_copy_in(p, ib, f->rip, sizeof ib);
+            kprintf("proc: %s (pid %d): %s sem tratador em rip 0x%llx (%02x %02x %02x %02x) rsp 0x%llx\n", p->name, p->pid,
+                    sig == MOS_SIGTRAP ? "SIGTRAP" : "SIGILL", f->rip, ib[0], ib[1], ib[2], ib[3], f->rsp);
+        }
         return false;
     }
     /* CHECK do Chromium é ud2. O crashpad instala tratador e sai em silêncio; sem esta linha

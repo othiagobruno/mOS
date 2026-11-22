@@ -277,7 +277,7 @@ static bool map_libsystem(process_t *p, char *err, usize errlen) {
 #define MAX_SEGS   16
 #define MAX_DYLIBS 160
 #define MAX_RPATHS 8
-#define MAX_IMAGES 96          /* executável + dylibs/frameworks do bundle + as carregadas com dlopen */
+#define MAX_IMAGES 256         /* executável + dylibs/frameworks do bundle + as carregadas com dlopen (o Setapp passa de 96) */
 #define MAX_OBJC   128         /* seções ObjC somando todas as imagens */
 
 typedef struct {
@@ -1646,6 +1646,17 @@ static int locate(link_t *K, char *cand, usize cap, const u8 **data, usize *len)
             if (p != cand) snprintf(cand, cap, "%s", p);
             return -1;
         }
+    }
+    /* X.framework/Versions/<v>/X pedido explicitamente (o dlopen do ChatGPT pede Versions/157.0.8103.39/Codex Framework):
+     * a imagem do mOS guarda a versão em Versions/A (tools/stage-image.sh), sem o link Current */
+    const char *fwv = strstr(cand, ".framework/Versions/");
+    const char *vs = fwv ? strchr(fwv + 20, '/') : NULL;
+    if (vs && !strchr(vs + 1, '/') && strncmp(fwv + 20, "A/", 2)) {
+        snprintf(alt, sizeof alt, "%.*sVersions/A%s", (int)(fwv + 11 - cand), cand, vs);
+        int i = find_loaded(K, alt);
+        if (i >= 0) return i;
+        *data = dep_read(alt, len);
+        if (*data) { snprintf(cand, cap, "%s", alt); return -1; }
     }
     return -1;
 }

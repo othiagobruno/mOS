@@ -145,7 +145,11 @@ int main(void) {
     CHECK(proc_pidinfo(42, 13, 0, b, 64) == 64 && r32(b, 0) == 42 && r32(b, 8) == 42 && !strcmp((char *)b + 16, "Teste"), "shortbsdinfo");
     CHECK(proc_pidinfo(42, 17, 0, b, 56) == 56 && r64(b, 16) != 0 && r64(b, 24) != 0, "uniqidentifier");
     CHECK(proc_pidinfo(42, 18, 0, b, 192) == 192, "bsdinfowithuniqid");
+    #if defined(__aarch64__)
+    CHECK(proc_pidinfo(42, 19, 0, b, 8) == 8 && r32(b, 0) == 0x0100000c, "archinfo");   /* CPU_TYPE_ARM64 no host arm64 */
+#else
     CHECK(proc_pidinfo(42, 19, 0, b, 8) == 8 && r32(b, 0) == 0x01000007, "archinfo");
+#endif
     CHECK(proc_pidinfo(42, 12, 0, b, 16) == 16 && r32(b, 0) == 2 && r32(b, 4) == 1, "workqueueinfo");
     CHECK(proc_pidinfo(42, 7, 0, b, 512) == 0 && err == 45, "regioninfo ENOTSUP");
     /* rusage */

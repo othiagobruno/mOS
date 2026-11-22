@@ -27,6 +27,9 @@ extern long long g_live_allocs, g_live_bytes;
 #if defined(_WIN32)
 #include <malloc.h>
 static inline size_t mos_usable(void *p) { return _msize(p); }
+#elif defined(__APPLE__)
+#include <malloc/malloc.h>
+static inline size_t mos_usable(void *p) { return malloc_size(p); }
 #else
 #include <malloc.h>
 extern size_t malloc_usable_size(void *);

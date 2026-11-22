@@ -14,15 +14,9 @@
 #include <time.h>
 typedef unsigned long long u64;
 static void mos_yield(void) { sched_yield(); }
-#include <linux/futex.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-static void mos_futex_wait(volatile int *a, int v, long ms) {
-    struct timespec t, *tp = 0;
-    if (ms >= 0) { t.tv_sec = ms / 1000; t.tv_nsec = (ms % 1000) * 1000000L; tp = &t; }
-    syscall(SYS_futex, a, FUTEX_WAIT_PRIVATE, v, tp, 0, 0);
-}
-static void mos_futex_wake(volatile int *a) { syscall(SYS_futex, a, FUTEX_WAKE_PRIVATE, 0x7fffffff, 0, 0, 0); }
+#include "host_futex.h"
+static void mos_futex_wait(volatile int *a, int v, long ms) { host_futex_wait(a, v, ms); }
+static void mos_futex_wake(volatile int *a) { host_futex_wake(a, 0x7fffffff); }
 static u64 mos_now_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);

@@ -10,6 +10,7 @@
 #   tools/build-swift-uikit-objc.sh                  (MOS_ARCH=arm64: fatia arm64 em build/swift/objc-arm64)
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
+. "$root/tools/zig-link.sh"   # zig_link: no macOS, refaz com o clang do Xcode quando o linker do zig cai
 zig=${MOS_ZIG:-}
 if [ -z "$zig" ]; then for z in "$root"/.tools/zig-*/zig; do [ -x "$z" ] && { zig=$z; break; }; done; fi
 [ -z "$zig" ] && zig=$(command -v zig || true)
@@ -83,7 +84,7 @@ overlay() {
         echo "$name (Swift): FALHOU ($nerr erros, saída $rc)"; return 1
     fi
     echo "$name (Swift): ok ($(( $(stat -c %s "$out/$low/$name.o") / 1024 )) KB, ${#files[@]} fontes)"
-    if ! "$zig" c++ -target "$zt" -shared -o "$dir/libswift$name.dylib" \
+    if ! zig_link "$zig" c++ -target "$zt" -shared -o "$dir/libswift$name.dylib" \
             -Wl,-install_name,/System/iOSSupport/usr/lib/swift/libswift$name.dylib -Wl,-undefined,dynamic_lookup \
             "$out/$low/$name.o" "$@" "${base[@]}"; then
         echo "libswift$name: link FALHOU"; return 1
